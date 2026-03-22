@@ -69,6 +69,7 @@ Rules:
 - provider secrets should flow through local secure storage hooks or trusted backend surfaces
 - the engine must support rate limits, spend caps, per-feature budgets, and provider allowlists
 - game projects must be able to disable external AI completely
+- assistant-triggered compile, load, hot reload, install, or apply actions must pass through explicit engine permission and code-trust policy surfaces
 
 ## Core Architecture
 
@@ -166,6 +167,15 @@ Recommended tool categories:
 - build, package, import, and bake flows
 - project and asset queries
 
+For level-authoring workflows, the subsystem should prefer explicit scene-bridge style tools over opaque editor-only mutation.
+
+Examples:
+
+- `dump_scene_region`
+- `apply_scene_patch`
+- `spawn_prefab_batch`
+- `query_scene_references`
+
 Recommended skill categories:
 
 - project setup and configuration
@@ -195,6 +205,8 @@ Examples of developer-assistant skills:
 - `create_pause_menu`
 - `package_windows_playtest_build`
 - `blockout_combat_arena`
+
+These workflows should be able to operate against structured scene and prefab data so that assistant-visible text assets, shell tools, and future native tools converge on the same source of truth.
 
 ## Authoring Model
 
@@ -245,6 +257,7 @@ Expected native in-engine assistant surfaces:
 - runtime-aware assistant panel
 - structured tool calls for scene, animation, audio, and runtime inspection/edit workflows
 - context-aware capability/skill routing for engine-native tasks
+- structured scene dump, query, and patch workflows for authoring tasks that need spatial context without hidden editor-only state
 
 The terminal coding assistant and the native in-engine assistant should be complementary, not mutually exclusive:
 
@@ -260,6 +273,11 @@ This implies a shared architecture:
 4. client-specific surfaces
 
 The clients should differ mainly in context, permissions, and UI, not in fundamental AI capability definitions.
+
+They should also share the same trust boundary:
+
+- a native in-engine assistant should not get more implicit execution authority than the terminal assistant
+- compile, hot reload, plugin install, and other risky transitions should route through the same explicit policy checks
 
 ## Sessiond Integration
 

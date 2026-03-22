@@ -130,6 +130,8 @@ Reference artifacts:
 - `docs/guides/ENGINE-PROFILING-BORROW-GUIDE.md`
 - `docs/guides/ENGINE-AUDIO-BORROW-GUIDE.md`
 - `docs/guides/ENGINE-ANIMATION-BORROW-GUIDE.md`
+- `docs/guides/ENGINE-SBOX-BORROW-GUIDE.md`
+- `docs/guides/ENGINE-CODE-ACCESS-BORROW-GUIDE.md`
 
 Use rules:
 - use the guides to decide where to inspect prior art before each phase expands
@@ -256,7 +258,7 @@ Scope:
 - gameplay, UI, and tool input contexts
 
 Reference inputs:
-- for input backend and action-map design, consult the [Input borrow guide](../docs/guides/ENGINE-INPUT-BORROW-GUIDE.md)
+- for input backend and action-map design, consult the [Input borrow guide](../docs/guides/ENGINE-INPUT-BORROW-GUIDE.md) and the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md) for tool-context keybinding file ideas
 
 Exit criteria:
 - gameplay and UI code can consume named actions and axes
@@ -410,7 +412,7 @@ Scope:
 - borrow the Hell2025 native editor save/reload/world-refresh workflow patterns as reference input for Shader Forge native tooling while keeping shell-driven workflow integration
 
 Reference inputs:
-- for authoring UX and prefab/scene editing patterns, consult the [Godot guide](../docs/guides/ENGINE-GODOT-BORROW-GUIDE.md), [Fyrox guide](../docs/guides/ENGINE-FYROX-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), [Stride guide](../docs/guides/ENGINE-STRIDE-BORROW-GUIDE.md), and [Hell2025 borrow plan](../docs/guides/ENGINE-HELL2025-BORROW-PLAN.md)
+- for authoring UX and prefab/scene editing patterns, consult the [Godot guide](../docs/guides/ENGINE-GODOT-BORROW-GUIDE.md), [Fyrox guide](../docs/guides/ENGINE-FYROX-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), [Stride guide](../docs/guides/ENGINE-STRIDE-BORROW-GUIDE.md), the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md), and the [Hell2025 borrow plan](../docs/guides/ENGINE-HELL2025-BORROW-PLAN.md)
 
 Exit criteria:
 - a user can open a scene, make visual edits, save to text assets, and reload those edits
@@ -467,20 +469,45 @@ Scope:
 - structured output and action-schema model
 - shared tool registry for deterministic engine capabilities
 - shared skill registry for higher-level engine workflows
+- structured scene-bridge workflows for assistant-friendly scene inspection and scene patch application
 - shell and CLI inspection/test surfaces
 - native in-engine assistant surface for runtime/editor workflows
 - shared provider and tool/skill core for terminal and in-engine assistant clients
+- explicit policy hooks for assistant-triggered compile, hot reload, install, and apply operations
 - optional BYOK desktop mode
 
 Reference inputs:
-- for plugin/service boundary ideas, consult the [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md) and [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md)
+- for plugin/service boundary ideas, consult the [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md), and the [Code access borrow guide](../docs/guides/ENGINE-CODE-ACCESS-BORROW-GUIDE.md)
 
 Exit criteria:
 - a project can configure at least one local model path and one hosted-provider path
 - the engine can issue structured AI requests without blocking frame-critical systems
 - AI-facing gameplay outputs are validated through explicit schemas and deterministic code paths
 - terminal, shell, and native in-engine assistants can discover and execute shared tools and skills through explicit policies
+- assistant scene-authoring workflows can inspect and patch structured scene data without relying on hidden editor-only state
 - deterministic and optional real-provider harness lanes exist for the subsystem
+
+## Phase 5.95: Code Access, Trust, And Hot Reload Safety
+
+Goal:
+- define the trust boundary for user-authored, addon-authored, plugin, and assistant-generated code before Shader Forge expands in-engine execution and hot reload flows
+
+Scope:
+- trust tiers for engine, project, assistant-generated, external-plugin, and unsafe-dev override code paths
+- explicit allow and deny policy model for supported scripting or plugin surfaces
+- trusted-artifact verification and origin tracking
+- diagnostics for rejected code or blocked operations
+- policy hooks for assistant-triggered compile, install, load, and hot reload actions
+- deterministic hotload and policy harness coverage
+
+Reference inputs:
+- for trusted-code boundaries, policy design, and hotload test shape, consult the [Code access borrow guide](../docs/guides/ENGINE-CODE-ACCESS-BORROW-GUIDE.md) and the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md)
+
+Exit criteria:
+- risky code transitions run through explicit engine policy checks
+- accepted and rejected code paths produce actionable diagnostics
+- trusted origin and trust tier are inspectable in tooling
+- supported hotload paths have deterministic verification coverage before they are treated as normal workflows
 
 ## Phase 6: Game-Ready Loop
 
@@ -493,11 +520,12 @@ Scope:
 - materials and shaders
 - collision and physics integration
 - hot reload for assets and shaders
+- mounted project and package filesystem layering
 - editor/runtime scene handoff
 - initial AI-driven gameplay integration hooks
 
 Reference inputs:
-- for end-to-end runtime composition and iteration flow, consult the [Wicked Engine guide](../docs/guides/ENGINE-WICKED-ENGINE-BORROW-GUIDE.md), [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md), [The Forge guide](../docs/guides/ENGINE-THE-FORGE-BORROW-GUIDE.md), [Filament guide](../docs/guides/ENGINE-FILAMENT-BORROW-GUIDE.md), and [Distill guide](../docs/guides/ENGINE-DISTILL-BORROW-GUIDE.md)
+- for end-to-end runtime composition and iteration flow, consult the [Wicked Engine guide](../docs/guides/ENGINE-WICKED-ENGINE-BORROW-GUIDE.md), [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md), [The Forge guide](../docs/guides/ENGINE-THE-FORGE-BORROW-GUIDE.md), [Filament guide](../docs/guides/ENGINE-FILAMENT-BORROW-GUIDE.md), [Distill guide](../docs/guides/ENGINE-DISTILL-BORROW-GUIDE.md), and the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md)
 
 Exit criteria:
 - the engine can drive a small real project end to end
@@ -535,7 +563,7 @@ Scope:
 - platform-specific packaging hooks
 
 Reference inputs:
-- for export workflow and release-layout shape, consult the [Packaging borrow guide](../docs/guides/ENGINE-PACKAGING-BORROW-GUIDE.md)
+- for export workflow and release-layout shape, consult the [Packaging borrow guide](../docs/guides/ENGINE-PACKAGING-BORROW-GUIDE.md) and the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md)
 
 Exit criteria:
 - the engine can package a project into a reproducible release layout
@@ -596,10 +624,11 @@ Every major subsystem needs:
 13. source-engine conversion
 14. offline Unreal fallback
 15. reusable AI subsystem
-16. game-ready loop
-17. save and runtime persistence
-18. packaging and export
-19. profiling, diagnostics, and performance
+16. code access, trust, and hot reload safety
+17. game-ready loop
+18. save and runtime persistence
+19. packaging and export
+20. profiling, diagnostics, and performance
 
 ## Current Focus
 

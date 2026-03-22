@@ -40,6 +40,8 @@ These guides are reference inputs, not adoption plans. Shader Forge remains:
 - [Profiling Borrow Guide](./ENGINE-PROFILING-BORROW-GUIDE.md)
 - [Audio Borrow Guide](./ENGINE-AUDIO-BORROW-GUIDE.md)
 - [Animation Borrow Guide](./ENGINE-ANIMATION-BORROW-GUIDE.md)
+- [s&box Borrow Guide](./ENGINE-SBOX-BORROW-GUIDE.md)
+- [Code Access Borrow Guide](./ENGINE-CODE-ACCESS-BORROW-GUIDE.md)
 - [Hell2025 Borrow Plan](./ENGINE-HELL2025-BORROW-PLAN.md)
 
 ## Phase Lookup
@@ -64,6 +66,7 @@ These guides are reference inputs, not adoption plans. Shader Forge remains:
 ### Phase 4.2: Input And Action Mapping
 
 - use the [Input Borrow Guide](./ENGINE-INPUT-BORROW-GUIDE.md)
+- use the [s&box Borrow Guide](./ENGINE-SBOX-BORROW-GUIDE.md) for tool-context keybinding file ideas
 
 ### Phase 5: Assets And Procedural Geometry
 
@@ -92,14 +95,23 @@ These guides are reference inputs, not adoption plans. Shader Forge remains:
 ### Phase 5.75: Level Authoring
 
 - use [Godot](./ENGINE-GODOT-BORROW-GUIDE.md), [Fyrox](./ENGINE-FYROX-BORROW-GUIDE.md), [O3DE](./ENGINE-O3DE-BORROW-GUIDE.md), [Stride](./ENGINE-STRIDE-BORROW-GUIDE.md), and [Hell2025](./ENGINE-HELL2025-BORROW-PLAN.md)
+- use the [s&box Borrow Guide](./ENGINE-SBOX-BORROW-GUIDE.md) for assistant-friendly scene editing and scene/prefab text round-trip ideas
 
 ### Phase 5.9: Reusable AI Subsystem
 
 - use [Bevy](./ENGINE-BEVY-BORROW-GUIDE.md) and [O3DE](./ENGINE-O3DE-BORROW-GUIDE.md) for plugin/service boundary ideas only
+- use the [s&box Borrow Guide](./ENGINE-SBOX-BORROW-GUIDE.md) for assistant-facing scene bridge patterns
+- use the [Code Access Borrow Guide](./ENGINE-CODE-ACCESS-BORROW-GUIDE.md) for tool, skill, and code-trust boundaries
+
+### Phase 5.95: Code Access, Trust, And Hot Reload Safety
+
+- use the [Code Access Borrow Guide](./ENGINE-CODE-ACCESS-BORROW-GUIDE.md)
+- use the [s&box Borrow Guide](./ENGINE-SBOX-BORROW-GUIDE.md) for hotload test shape and trusted-code boundary ideas
 
 ### Phase 6: Game-Ready Loop
 
 - use [Wicked Engine](./ENGINE-WICKED-ENGINE-BORROW-GUIDE.md), [Bevy](./ENGINE-BEVY-BORROW-GUIDE.md), [The Forge](./ENGINE-THE-FORGE-BORROW-GUIDE.md), [Filament](./ENGINE-FILAMENT-BORROW-GUIDE.md), and [Distill](./ENGINE-DISTILL-BORROW-GUIDE.md)
+- use the [s&box Borrow Guide](./ENGINE-SBOX-BORROW-GUIDE.md) for mounted-filesystem, watcher, and hot iteration workflow ideas
 
 ### Phase 6.1: Save And Runtime Persistence
 
@@ -108,6 +120,7 @@ These guides are reference inputs, not adoption plans. Shader Forge remains:
 ### Phase 6.2: Packaging And Export
 
 - use the [Packaging Borrow Guide](./ENGINE-PACKAGING-BORROW-GUIDE.md)
+- use the [s&box Borrow Guide](./ENGINE-SBOX-BORROW-GUIDE.md) for publish-manifest preflight and transient packaging-config ideas
 
 ### Phase 6.3: Profiling, Diagnostics, And Performance
 
