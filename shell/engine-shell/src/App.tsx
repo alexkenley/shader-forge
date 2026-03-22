@@ -4,18 +4,27 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   closeTerminal,
   createSession,
+  fetchBuildStatus,
   fetchSessiondHealth,
+  fetchRuntimeStatus,
   getSessiondBaseUrl,
   listFiles,
   listSessions,
   openTerminal,
   readFile,
+  restartRuntime,
   resizeTerminal,
+  startRuntimeBuild,
+  startRuntime,
+  stopBuild,
+  stopRuntime,
   subscribeSessiondEvents,
+  type BuildStatus,
   type SessionFileEntry,
   type SessionTerminalOpen,
   type SessiondTerminalEvent,
   type EngineSession,
+  type RuntimeStatus,
   writeTerminalInput,
 } from './lib/sessiond';
 
@@ -24,12 +33,29 @@ const centerTabs = ['Code', 'Game', 'Scene', 'Preview'] as const;
 const rightTabs = ['Details', 'Assets', 'Inspector', 'Build', 'Run', 'Profiler'] as const;
 const bottomTabs = ['Terminal', 'Logs', 'Output', 'Console'] as const;
 const layoutModes = ['Code Focus', 'Code + Game', 'Triptych'] as const;
-const runtimeActions = ['Play', 'Pause', 'Restart', 'Capture'] as const;
 const menuItems = ['File', 'Edit', 'View', 'Build', 'Tools', 'Window', 'Help'] as const;
 const viewportModes = ['Perspective', 'Lit', 'Realtime'] as const;
 const transformModes = ['Select', 'Move', 'Rotate', 'Scale'] as const;
 const terminalShells = ['bash', 'zsh', 'sh'] as const;
 const legacyWorkspaceSrc = 'web/index.html#/code';
+const stoppedRuntimeStatus: RuntimeStatus = {
+  state: 'stopped',
+  scene: null,
+  pid: null,
+  startedAt: null,
+  executablePath: null,
+};
+const idleBuildStatus: BuildStatus = {
+  state: 'idle',
+  target: null,
+  config: null,
+  buildDir: null,
+  startedAt: null,
+  finishedAt: null,
+  command: null,
+  exitCode: null,
+  error: null,
+};
 
 type LeftTab = (typeof leftTabs)[number];
 type CenterTab = (typeof centerTabs)[number];
@@ -176,7 +202,13 @@ function ViewportShell({
   );
 }
 
-function renderRightPanel(activeTab: RightTab) {
+function renderRightPanel(
+  activeTab: RightTab,
+  runtimeStatus: RuntimeStatus,
+  buildStatus: BuildStatus,
+  onStartRuntimeBuild: () => void,
+  onStopBuild: () => void,
+) {
   if (activeTab === 'Details') {
     return (
       <div className="stack">
@@ -274,27 +306,88 @@ function renderRightPanel(activeTab: RightTab) {
 
   if (activeTab === 'Build') {
     return (
-      <section className="card compact-card">
-        <h3>Build Profiles</h3>
-        <ul className="detail-list">
-          <li>`debug-shell` for UI iteration</li>
-          <li>`runtime-sandbox` for native Vulkan bring-up</li>
-          <li>`migration-fixtures` for cross-engine conversion tests</li>
-        </ul>
-      </section>
+      <div className="stack">
+        <section className="card compact-card">
+          <div className="section-titlebar">
+            <h3>Build Profiles</h3>
+            <span>{buildStatus.state}</span>
+          </div>
+          <ul className="detail-list">
+            <li>`debug-shell` for UI iteration</li>
+            <li>`runtime-sandbox` for native Vulkan bring-up</li>
+            <li>`migration-fixtures` for cross-engine conversion tests</li>
+          </ul>
+          <div className="inline-actions">
+            <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={onStartRuntimeBuild} type="button">
+              Build runtime
+            </button>
+            <button className="ghost-button" disabled={buildStatus.state !== 'running'} onClick={onStopBuild} type="button">
+              Stop build
+            </button>
+          </div>
+        </section>
+        <section className="card compact-card">
+          <h3>Build Status</h3>
+          <dl className="fact-list">
+            <div>
+              <dt>State</dt>
+              <dd>{buildStatus.state}</dd>
+            </div>
+            <div>
+              <dt>Target</dt>
+              <dd>{buildStatus.target || 'runtime'}</dd>
+            </div>
+            <div>
+              <dt>Config</dt>
+              <dd>{buildStatus.config || 'Debug'}</dd>
+            </div>
+            <div>
+              <dt>Build dir</dt>
+              <dd>{buildStatus.buildDir || 'build/runtime'}</dd>
+            </div>
+            <div>
+              <dt>Command</dt>
+              <dd>{buildStatus.command || 'waiting'}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
     );
   }
 
   if (activeTab === 'Run') {
     return (
-      <section className="card compact-card">
-        <h3>Runtime Targets</h3>
-        <ul className="detail-list">
-          <li>Windows native runtime window first</li>
-          <li>WSL-backed shell and terminal workflow</li>
-          <li>Streamed `Game` tab later, not before the runtime is stable</li>
-        </ul>
-      </section>
+      <div className="stack">
+        <section className="card compact-card">
+          <h3>Runtime Targets</h3>
+          <ul className="detail-list">
+            <li>Windows native runtime window first</li>
+            <li>WSL-backed shell and terminal workflow</li>
+            <li>Streamed `Game` tab later, not before the runtime is stable</li>
+          </ul>
+        </section>
+        <section className="card compact-card">
+          <h3>Runtime Status</h3>
+          <dl className="fact-list">
+            <div>
+              <dt>State</dt>
+              <dd>{runtimeStatus.state}</dd>
+            </div>
+            <div>
+              <dt>Scene</dt>
+              <dd>{runtimeStatus.scene || 'sandbox'}</dd>
+            </div>
+            <div>
+              <dt>Process</dt>
+              <dd>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</dd>
+            </div>
+            <div>
+              <dt>Binary</dt>
+              <dd>{runtimeStatus.executablePath || 'build/runtime/bin/shader_forge_runtime'}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
     );
   }
 
@@ -516,28 +609,25 @@ function TerminalDock({
   );
 }
 
-function renderBottomPanel(activeTab: BottomTab, terminalDock: ReactNode) {
+function renderBottomPanel(
+  activeTab: BottomTab,
+  terminalDock: ReactNode,
+  runtimeLog: string,
+  buildLog: string,
+) {
   if (activeTab === 'Terminal') {
     return terminalDock;
   }
 
   if (activeTab === 'Logs') {
     return (
-      <pre className="dock-output">[shell] mounted React frame
-[bridge] loading preserved code workspace
-[runtime] native viewer remains external in Phase 1
-[migration] Unity, Unreal, and Godot lanes planned
-</pre>
+      <pre className="dock-output">{runtimeLog}</pre>
     );
   }
 
   if (activeTab === 'Output') {
     return (
-      <pre className="dock-output">shell smoke: PASS
-legacy editor contract: PASS
-migration specs: indexed
-AI subsystem spec: indexed
-</pre>
+      <pre className="dock-output">{buildLog}</pre>
     );
   }
 
@@ -658,6 +748,11 @@ function renderCenterContent(
   layoutMode: LayoutMode,
   showLegacyBridge: boolean,
   onToggleLegacyBridge: () => void,
+  runtimeStatus: RuntimeStatus,
+  buildStatus: BuildStatus,
+  onStartRuntime: () => void,
+  onStopRuntime: () => void,
+  onRestartRuntime: () => void,
 ) {
   if (activeTab === 'Code') {
     return renderCodeBridge(layoutMode, showLegacyBridge, onToggleLegacyBridge);
@@ -673,11 +768,30 @@ function renderCenterContent(
               <h2>Game Viewer</h2>
             </div>
             <div className="inline-actions">
-              {runtimeActions.map((action) => (
-                <button className="ghost-button" key={action} type="button">
-                  {action}
-                </button>
-              ))}
+              <button
+                className="ghost-button"
+                disabled={buildStatus.state === 'running'}
+                onClick={onStartRuntime}
+                type="button"
+              >
+                Play
+              </button>
+              <button
+                className="ghost-button"
+                disabled={runtimeStatus.state !== 'running' || buildStatus.state === 'running'}
+                onClick={onStopRuntime}
+                type="button"
+              >
+                Stop
+              </button>
+              <button
+                className="ghost-button"
+                disabled={buildStatus.state === 'running'}
+                onClick={onRestartRuntime}
+                type="button"
+              >
+                Restart
+              </button>
             </div>
           </div>
           <ViewportShell
@@ -690,15 +804,15 @@ function renderCenterContent(
           <div className="metric-stack">
             <article className="mini-card">
               <span>Status</span>
-              <strong>Idle</strong>
+              <strong>{runtimeStatus.state === 'running' ? 'Running' : 'Stopped'}</strong>
             </article>
             <article className="mini-card">
-              <span>Latest capture</span>
-              <strong>pending</strong>
+              <span>Scene</span>
+              <strong>{runtimeStatus.scene || 'sandbox'}</strong>
             </article>
             <article className="mini-card">
-              <span>Hot reload</span>
-              <strong>Shaders + assets</strong>
+              <span>Process</span>
+              <strong>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</strong>
             </article>
           </div>
         </section>
@@ -793,6 +907,10 @@ export default function App() {
   const [explorerBusy, setExplorerBusy] = useState(false);
   const [terminalTabs, setTerminalTabs] = useState<TerminalTabState[]>([]);
   const [activeTerminalTabId, setActiveTerminalTabId] = useState('');
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>(stoppedRuntimeStatus);
+  const [runtimeLog, setRuntimeLog] = useState('[runtime] idle\n');
+  const [buildStatus, setBuildStatus] = useState<BuildStatus>(idleBuildStatus);
+  const [buildLog, setBuildLog] = useState('[build] idle\n');
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
 
@@ -844,6 +962,12 @@ export default function App() {
         }
         setSessiondState('connected');
         setSessiondMessage(`${health.service} online at ${getSessiondBaseUrl()}`);
+        const nextRuntimeStatus = await fetchRuntimeStatus().catch(() => stoppedRuntimeStatus);
+        const nextBuildStatus = await fetchBuildStatus().catch(() => idleBuildStatus);
+        if (!cancelled) {
+          setRuntimeStatus(nextRuntimeStatus);
+          setBuildStatus(nextBuildStatus);
+        }
         const nextSessions = await listSessions();
         if (cancelled) {
           return;
@@ -913,6 +1037,41 @@ export default function App() {
               : tab,
           ),
         );
+        return;
+      }
+
+      if (event.type === 'runtime.log') {
+        setRuntimeLog((current) => trimTerminalOutput(`${current}${event.data.data}`));
+        return;
+      }
+
+      if (event.type === 'runtime.status' || event.type === 'runtime.started') {
+        setRuntimeStatus(event.data);
+        return;
+      }
+
+      if (event.type === 'runtime.exit') {
+        setRuntimeStatus({
+          ...stoppedRuntimeStatus,
+          executablePath: event.data.executablePath,
+        });
+        setRuntimeLog((current) =>
+          trimTerminalOutput(`${current}[runtime] exited with code ${event.data.exitCode ?? 'null'}\n`),
+        );
+        return;
+      }
+
+      if (event.type === 'build.log') {
+        setBuildLog((current) => trimTerminalOutput(`${current}${event.data.data}`));
+        return;
+      }
+
+      if (
+        event.type === 'build.status' ||
+        event.type === 'build.started' ||
+        event.type === 'build.completed'
+      ) {
+        setBuildStatus(event.data);
       }
     });
 
@@ -1143,6 +1302,84 @@ export default function App() {
       .catch(() => {});
   }
 
+  async function handleStartRuntime() {
+    try {
+      const nextStatus = await startRuntime(runtimeStatus.scene || 'sandbox');
+      setRuntimeStatus(nextStatus);
+      setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested\n`));
+      setActiveBottomTab('Logs');
+    } catch (error) {
+      setRuntimeLog((current) =>
+        trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+      );
+    }
+  }
+
+  async function handleStopRuntime() {
+    try {
+      const nextStatus = await stopRuntime();
+      setRuntimeStatus(nextStatus);
+      setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] stop requested\n`));
+      setActiveBottomTab('Logs');
+    } catch (error) {
+      setRuntimeLog((current) =>
+        trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+      );
+    }
+  }
+
+  async function handleRestartRuntime() {
+    try {
+      const nextStatus = await restartRuntime(runtimeStatus.scene || 'sandbox');
+      setRuntimeStatus(nextStatus);
+      setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested\n`));
+      setActiveBottomTab('Logs');
+    } catch (error) {
+      setRuntimeLog((current) =>
+        trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+      );
+    }
+  }
+
+  async function handleStartRuntimeBuild() {
+    try {
+      const nextStatus = await startRuntimeBuild();
+      setBuildStatus(nextStatus);
+      setBuildLog((current) => trimTerminalOutput(`${current}[build] runtime build requested\n`));
+      setActiveBottomTab('Output');
+      setActiveRightTab('Build');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBuildStatus({
+        ...idleBuildStatus,
+        state: 'failed',
+        target: 'runtime',
+        config: 'Debug',
+        buildDir: 'build/runtime',
+        finishedAt: new Date().toISOString(),
+        error: message,
+      });
+      setBuildLog((current) =>
+        trimTerminalOutput(`${current}[build] ${message}\n`),
+      );
+      setActiveBottomTab('Output');
+    }
+  }
+
+  async function handleStopBuild() {
+    try {
+      const nextStatus = await stopBuild();
+      setBuildStatus(nextStatus);
+      setBuildLog((current) => trimTerminalOutput(`${current}[build] stop requested\n`));
+      setActiveBottomTab('Output');
+    } catch (error) {
+      setBuildLog((current) =>
+        trimTerminalOutput(`${current}[build] ${error instanceof Error ? error.message : String(error)}\n`),
+      );
+      setActiveBottomTab('Output');
+    }
+  }
+
   const terminalDock = (
     <TerminalDock
       activeSession={activeSession}
@@ -1181,14 +1418,20 @@ export default function App() {
           <span className="toolbar-chip">Target: sandbox</span>
           <span className="toolbar-chip">Renderer: Vulkan-first</span>
         </div>
-        <div className="toolbar-cluster toolbar-cluster--right">
-          <span className="toolbar-chip">WSL shell primary</span>
-          <span className={`toolbar-chip${sessiondState === 'offline' ? ' toolbar-chip--warning' : ''}`}>
-            {sessiondState === 'connected' ? 'engine_sessiond online' : 'engine_sessiond pending'}
-          </span>
-          <span className="toolbar-chip toolbar-chip--muted">{sessiondMessage}</span>
+          <div className="toolbar-cluster toolbar-cluster--right">
+            <span className="toolbar-chip">WSL shell primary</span>
+            <span className={`toolbar-chip${sessiondState === 'offline' ? ' toolbar-chip--warning' : ''}`}>
+              {sessiondState === 'connected' ? 'engine_sessiond online' : 'engine_sessiond pending'}
+            </span>
+            <span className={`toolbar-chip${buildStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
+              Build: {buildStatus.state}
+            </span>
+            <span className={`toolbar-chip${runtimeStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
+              Runtime: {runtimeStatus.state}
+            </span>
+            <span className="toolbar-chip toolbar-chip--muted">{sessiondMessage}</span>
+          </div>
         </div>
-      </div>
 
       <main className="shell-grid">
         <aside className="pane rail-pane">
@@ -1325,21 +1568,60 @@ export default function App() {
             </div>
             <div className="viewport-commandbar">
               <div className="viewport-commandbar__group">
-                {runtimeActions.map((action) => (
-                  <button className="ghost-button" key={action} type="button">
-                    {action}
-                  </button>
-                ))}
+                <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={handleStartRuntimeBuild} type="button">
+                  Build
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={buildStatus.state === 'running'}
+                  onClick={handleStartRuntime}
+                  type="button"
+                >
+                  Play
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={runtimeStatus.state !== 'running' || buildStatus.state === 'running'}
+                  onClick={handleStopRuntime}
+                  type="button"
+                >
+                  Stop
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={buildStatus.state === 'running'}
+                  onClick={handleRestartRuntime}
+                  type="button"
+                >
+                  Restart
+                </button>
+                <button className="ghost-button" disabled type="button">
+                  Capture
+                </button>
               </div>
               <div className="viewport-commandbar__group">
                 <span className="toolbar-chip">Scene: CastleEntrance</span>
                 <span className="toolbar-chip">Mode: Edit</span>
+                <span className={`toolbar-chip${buildStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
+                  Build: {buildStatus.state}
+                </span>
+                <span className={`toolbar-chip${runtimeStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
+                  Runtime: {runtimeStatus.state}
+                </span>
               </div>
             </div>
           </section>
 
-          {renderCenterContent(activeCenterTab, layoutMode, showLegacyBridge, () =>
-            setShowLegacyBridge((current) => !current),
+          {renderCenterContent(
+            activeCenterTab,
+            layoutMode,
+            showLegacyBridge,
+            () => setShowLegacyBridge((current) => !current),
+            runtimeStatus,
+            buildStatus,
+            handleStartRuntime,
+            handleStopRuntime,
+            handleRestartRuntime,
           )}
         </section>
 
@@ -1374,7 +1656,13 @@ export default function App() {
               </dl>
             </section>
           ) : null}
-          {renderRightPanel(activeRightTab)}
+          {renderRightPanel(
+            activeRightTab,
+            runtimeStatus,
+            buildStatus,
+            handleStartRuntimeBuild,
+            handleStopBuild,
+          )}
         </aside>
       </main>
 
@@ -1390,7 +1678,7 @@ export default function App() {
             </TabButton>
           ))}
         </div>
-        {renderBottomPanel(activeBottomTab, terminalDock)}
+        {renderBottomPanel(activeBottomTab, terminalDock, runtimeLog, buildLog)}
       </section>
     </div>
   );

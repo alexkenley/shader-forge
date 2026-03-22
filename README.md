@@ -18,6 +18,8 @@ Project status:
 - architecture, implementation plan, and system specs are in place
 - the React shell frame, preserved code-editor search implementation, and initial shell-to-sessiond bridge are in the repo
 - a minimal local `engine_sessiond` backend and `engine` CLI slice are implemented
+- a native runtime scaffold, `CMake` layout, and `engine build` / `engine run sandbox` CLI path are in the repo
+- the shell can now drive runtime build and runtime start/stop flows through `engine_sessiond`, with separate build and runtime log docks
 - harness testing scaffolding exists for shell smoke validation, session backend validation, and local Ollama smoke checks
 
 Key docs:
@@ -34,7 +36,21 @@ npm run sessiond:start
 npm run shell:serve
 npm test
 npm run test:sessiond
+npm run test:runtime-scaffold
 ```
+
+Runtime scaffold:
+
+```bash
+node tools/engine-cli/shaderforge.mjs build
+node tools/engine-cli/shaderforge.mjs run sandbox
+```
+
+Notes:
+
+- `cmake` is required for `engine build` / `engine run`
+- if `SDL3` and `Vulkan` development packages are available, the runtime target will use them
+- if they are not available, the runtime still builds in stub mode and prints a clear dependency message at launch
 
 Unix clean start:
 
@@ -50,7 +66,14 @@ Windows clean start:
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1
 ```
 
-This removes generated build outputs and shell caches, runs the shell and sessiond harnesses, starts `engine_sessiond`, and then starts the React shell through WSL.
+This removes generated build outputs and shell caches, runs the shell, sessiond, and runtime scaffold harnesses, starts `engine_sessiond`, and then starts the React shell through WSL.
+
+Shell workflow notes:
+
+- `Build` in the shell drives the runtime build lane exposed by `engine_sessiond`
+- `Play` / `Stop` / `Restart` in the shell drive the native runtime lifecycle
+- `Output` shows build logs and `Logs` shows runtime logs
+- if `cmake` is missing, the build lane will report that directly in the shell
 
 License:
 

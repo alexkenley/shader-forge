@@ -43,6 +43,26 @@ export type SessionTerminalOpen = {
   rows: number;
 };
 
+export type RuntimeStatus = {
+  state: 'stopped' | 'running';
+  scene: string | null;
+  pid: number | null;
+  startedAt: string | null;
+  executablePath: string | null;
+};
+
+export type BuildStatus = {
+  state: 'idle' | 'running' | 'succeeded' | 'failed' | 'stopped';
+  target: string | null;
+  config: string | null;
+  buildDir: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  command: string | null;
+  exitCode: number | null;
+  error: string | null;
+};
+
 export type SessiondTerminalEvent =
   | {
       type: 'terminal.output';
@@ -58,6 +78,49 @@ export type SessiondTerminalEvent =
         exitCode: number;
         signal?: number;
       };
+    }
+  | {
+      type: 'runtime.log';
+      data: {
+        stream: 'stdout' | 'stderr';
+        data: string;
+      };
+    }
+  | {
+      type: 'runtime.exit';
+      data: {
+        scene: string;
+        exitCode: number | null;
+        signal: number | null;
+        executablePath: string;
+      };
+    }
+  | {
+      type: 'runtime.status';
+      data: RuntimeStatus;
+    }
+  | {
+      type: 'runtime.started';
+      data: RuntimeStatus;
+    }
+  | {
+      type: 'build.log';
+      data: {
+        stream: 'stdout' | 'stderr';
+        data: string;
+      };
+    }
+  | {
+      type: 'build.status';
+      data: BuildStatus;
+    }
+  | {
+      type: 'build.started';
+      data: BuildStatus;
+    }
+  | {
+      type: 'build.completed';
+      data: BuildStatus;
     };
 
 const DEFAULT_SESSIOND_BASE_URL = 'http://127.0.0.1:41741';
@@ -154,6 +217,52 @@ export async function closeTerminal(terminalId: string) {
   });
 }
 
+export async function fetchRuntimeStatus() {
+  return requestJson<RuntimeStatus>('/api/runtime/status');
+}
+
+export async function startRuntime(scene = 'sandbox') {
+  return requestJson<RuntimeStatus>('/api/runtime/start', {
+    method: 'POST',
+    body: JSON.stringify({ scene }),
+  });
+}
+
+export async function stopRuntime() {
+  return requestJson<RuntimeStatus>('/api/runtime/stop', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function restartRuntime(scene = 'sandbox') {
+  return requestJson<RuntimeStatus>('/api/runtime/restart', {
+    method: 'POST',
+    body: JSON.stringify({ scene }),
+  });
+}
+
+export async function fetchBuildStatus() {
+  return requestJson<BuildStatus>('/api/build/status');
+}
+
+export async function startRuntimeBuild(config = 'Debug', buildDir?: string) {
+  return requestJson<BuildStatus>('/api/build/runtime', {
+    method: 'POST',
+    body: JSON.stringify({
+      config,
+      ...(buildDir ? { buildDir } : {}),
+    }),
+  });
+}
+
+export async function stopBuild() {
+  return requestJson<BuildStatus>('/api/build/stop', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
 export function subscribeSessiondEvents(onEvent: (event: SessiondTerminalEvent) => void) {
   const eventSource = new EventSource(new URL('/api/events', getSessiondBaseUrl()).toString());
   const outputHandler = (message: MessageEvent<string>) => {
@@ -168,13 +277,77 @@ export function subscribeSessiondEvents(onEvent: (event: SessiondTerminalEvent) 
       data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'terminal.exit' }>['data'],
     });
   };
+  const runtimeLogHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'runtime.log',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'runtime.log' }>['data'],
+    });
+  };
+  const runtimeExitHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'runtime.exit',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'runtime.exit' }>['data'],
+    });
+  };
+  const runtimeStatusHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'runtime.status',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'runtime.status' }>['data'],
+    });
+  };
+  const runtimeStartedHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'runtime.started',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'runtime.started' }>['data'],
+    });
+  };
+  const buildLogHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'build.log',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'build.log' }>['data'],
+    });
+  };
+  const buildStatusHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'build.status',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'build.status' }>['data'],
+    });
+  };
+  const buildStartedHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'build.started',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'build.started' }>['data'],
+    });
+  };
+  const buildCompletedHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'build.completed',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'build.completed' }>['data'],
+    });
+  };
 
   eventSource.addEventListener('terminal.output', outputHandler as EventListener);
   eventSource.addEventListener('terminal.exit', exitHandler as EventListener);
+  eventSource.addEventListener('runtime.log', runtimeLogHandler as EventListener);
+  eventSource.addEventListener('runtime.exit', runtimeExitHandler as EventListener);
+  eventSource.addEventListener('runtime.status', runtimeStatusHandler as EventListener);
+  eventSource.addEventListener('runtime.started', runtimeStartedHandler as EventListener);
+  eventSource.addEventListener('build.log', buildLogHandler as EventListener);
+  eventSource.addEventListener('build.status', buildStatusHandler as EventListener);
+  eventSource.addEventListener('build.started', buildStartedHandler as EventListener);
+  eventSource.addEventListener('build.completed', buildCompletedHandler as EventListener);
 
   return () => {
     eventSource.removeEventListener('terminal.output', outputHandler as EventListener);
     eventSource.removeEventListener('terminal.exit', exitHandler as EventListener);
+    eventSource.removeEventListener('runtime.log', runtimeLogHandler as EventListener);
+    eventSource.removeEventListener('runtime.exit', runtimeExitHandler as EventListener);
+    eventSource.removeEventListener('runtime.status', runtimeStatusHandler as EventListener);
+    eventSource.removeEventListener('runtime.started', runtimeStartedHandler as EventListener);
+    eventSource.removeEventListener('build.log', buildLogHandler as EventListener);
+    eventSource.removeEventListener('build.status', buildStatusHandler as EventListener);
+    eventSource.removeEventListener('build.started', buildStartedHandler as EventListener);
+    eventSource.removeEventListener('build.completed', buildCompletedHandler as EventListener);
     eventSource.close();
   };
 }

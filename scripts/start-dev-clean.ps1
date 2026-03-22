@@ -135,6 +135,8 @@ if [ '__SKIP_TESTS__' != '1' ]; then
   npm test
   printf '[shader-forge] Running sessiond smoke harness...\n'
   npm run test:sessiond
+  printf '[shader-forge] Running runtime scaffold harness...\n'
+  npm run test:runtime-scaffold
   printf '[shader-forge] Running shell build validation...\n'
   npm run shell:build
 fi

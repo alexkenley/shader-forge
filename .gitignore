@@ -6,6 +6,11 @@ out/
 .cache/
 tmp/
 .harness/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+cmake-build*/
 playwright-report/
 test-results/
 *.log

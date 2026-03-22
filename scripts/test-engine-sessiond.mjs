@@ -4,7 +4,32 @@ import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
-const service = await startEngineSessiond({ host: '127.0.0.1', port: 0 });
+const service = await startEngineSessiond({
+  host: '127.0.0.1',
+  port: 0,
+  runtimeLaunchFactory: ({ scene }) => ({
+    command: process.execPath,
+    args: ['-e', `console.log("runtime:${scene}:boot"); setInterval(() => {}, 1000);`],
+    cwd: repoRoot,
+    displayPath: 'test-runtime',
+  }),
+  buildLaunchFactory: ({ target, config, buildDir }) => ({
+    target,
+    config,
+    buildDir: buildDir || path.join(repoRoot, 'build', 'runtime'),
+    steps: [
+      {
+        label: 'FakeBuild',
+        command: process.execPath,
+        args: [
+          '-e',
+          'console.log("build:runtime:boot"); setTimeout(() => process.exit(0), 50);',
+        ],
+        cwd: repoRoot,
+      },
+    ],
+  }),
+});
 
 async function waitForSseEvent(streamUrl, predicate, timeoutMs = 8000) {
   const controller = new AbortController();
@@ -136,11 +161,63 @@ try {
     'DELETE',
   );
 
+  const runtimeLogPromise = waitForSseEvent(
+    `${service.baseUrl}/api/events`,
+    (event) => event.type === 'runtime.log' && String(event.data?.data || '').includes('runtime:sandbox:boot'),
+  );
+
+  const runtimeStartPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/start`, 'POST', {
+    scene: 'sandbox',
+  });
+  assert.equal(runtimeStartPayload.state, 'running');
+  assert.equal(runtimeStartPayload.scene, 'sandbox');
+  assert.equal(runtimeStartPayload.executablePath, 'test-runtime');
+
+  const runtimeStatusPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/status`);
+  assert.equal(runtimeStatusPayload.state, 'running');
+  assert.equal(runtimeStatusPayload.scene, 'sandbox');
+
+  const runtimeLogEvent = await runtimeLogPromise;
+  assert.equal(runtimeLogEvent.type, 'runtime.log');
+  assert.match(runtimeLogEvent.data.data, /runtime:sandbox:boot/);
+
+  const runtimeStopPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/stop`, 'POST', {});
+  assert.equal(runtimeStopPayload.state, 'stopped');
+
+  const buildLogPromise = waitForSseEvent(
+    `${service.baseUrl}/api/events`,
+    (event) => event.type === 'build.log' && String(event.data?.data || '').includes('build:runtime:boot'),
+  );
+  const buildCompletedPromise = waitForSseEvent(
+    `${service.baseUrl}/api/events`,
+    (event) => event.type === 'build.completed' && event.data?.target === 'runtime',
+  );
+
+  const buildStartPayload = await requestJsonNoAuth(`${service.baseUrl}/api/build/runtime`, 'POST', {
+    config: 'Debug',
+  });
+  assert.equal(buildStartPayload.state, 'running');
+  assert.equal(buildStartPayload.target, 'runtime');
+
+  const buildLogEvent = await buildLogPromise;
+  assert.equal(buildLogEvent.type, 'build.log');
+  assert.match(buildLogEvent.data.data, /build:runtime:boot/);
+
+  const buildCompletedEvent = await buildCompletedPromise;
+  assert.equal(buildCompletedEvent.type, 'build.completed');
+  assert.equal(buildCompletedEvent.data.state, 'succeeded');
+
+  const buildStatusPayload = await requestJsonNoAuth(`${service.baseUrl}/api/build/status`);
+  assert.equal(buildStatusPayload.state, 'succeeded');
+  assert.equal(buildStatusPayload.target, 'runtime');
+
   console.log('Engine sessiond smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log(`- Created session for ${path.basename(repoRoot)}`);
   console.log('- Verified session list/get plus safe file list/read APIs');
   console.log('- Verified PTY terminal open/input/stream/close flow');
+  console.log('- Verified runtime start/status/log/stop lifecycle');
+  console.log('- Verified runtime build start/log/completion lifecycle');
 } finally {
   await service.close();
 }

@@ -43,8 +43,13 @@ try {
   assert.match(shellApp, /Create session/);
   assert.match(shellApp, /Sessiond Bridge/);
   assert.match(shellApp, /Root Explorer/);
+  assert.match(shellApp, /Build runtime/);
+  assert.match(shellApp, /Build: /);
+  assert.match(shellApp, /Runtime: /);
   assert.match(shellApp, /readFile/);
   assert.match(shellApp, /listFiles/);
+  assert.match(shellApp, /startRuntimeBuild/);
+  assert.match(shellApp, /fetchBuildStatus/);
 
   console.log('Engine shell smoke passed.');
   console.log(`- Served shell from ${server.rootDir}`);
@@ -53,6 +58,7 @@ try {
   console.log('- Verified the React/Vite shell frame bridges to the preserved editor assets');
   console.log('- Verified the React shell references the session backend bridge contract');
   console.log('- Verified the Explorer tab references backend file list/read flows');
+  console.log('- Verified the shell references runtime build and runtime lifecycle controls');
 } finally {
   await server.close();
 }

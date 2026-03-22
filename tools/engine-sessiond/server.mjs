@@ -1,7 +1,9 @@
 import http from 'node:http';
 import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
+import { BuildStore } from './lib/build-store.mjs';
 import { SessionStore } from './lib/session-store.mjs';
+import { RuntimeStore } from './lib/runtime-store.mjs';
 import { TerminalStore } from './lib/terminal-store.mjs';
 
 function corsHeaders() {
@@ -96,7 +98,7 @@ function resolveTerminalCwd({ sessionStore, sessionId, cwd }) {
   return path.resolve(cwd || process.cwd());
 }
 
-function createRouter({ sessionStore, terminalStore, eventHub }) {
+function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, eventHub }) {
   return async function route(request, response) {
     if (!request.url) {
       writeJson(response, 400, { error: 'Request URL is required.' });
@@ -118,7 +120,15 @@ function createRouter({ sessionStore, terminalStore, eventHub }) {
           ok: true,
           service: 'engine_sessiond',
           now: new Date().toISOString(),
-          capabilities: ['sessions', 'files:list', 'files:read', 'terminals', 'events'],
+          capabilities: [
+            'sessions',
+            'files:list',
+            'files:read',
+            'terminals',
+            'runtime:lifecycle',
+            'build:lifecycle',
+            'events',
+          ],
         });
         return;
       }
@@ -167,6 +177,57 @@ function createRouter({ sessionStore, terminalStore, eventHub }) {
         const relativePath = searchParams.get('path') || '';
         const result = await sessionStore.readFile(sessionId, relativePath);
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/runtime/status') {
+        writeJson(response, 200, runtimeStore.status());
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/build/status') {
+        writeJson(response, 200, buildStore.status());
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/runtime/start') {
+        const body = await readJsonBody(request);
+        const status = runtimeStore.startRuntime({
+          scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
+        });
+        writeJson(response, 200, status);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/build/runtime') {
+        const body = await readJsonBody(request);
+        const status = buildStore.startBuild({
+          target: 'runtime',
+          config: typeof body.config === 'string' && body.config.trim() ? body.config.trim() : 'Debug',
+          buildDir: typeof body.buildDir === 'string' && body.buildDir.trim() ? body.buildDir.trim() : undefined,
+        });
+        writeJson(response, 200, status);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/runtime/stop') {
+        const status = await runtimeStore.stopRuntime();
+        writeJson(response, 200, status);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/build/stop') {
+        const status = await buildStore.stopBuild();
+        writeJson(response, 200, status);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/runtime/restart') {
+        const body = await readJsonBody(request);
+        const status = await runtimeStore.restartRuntime({
+          scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
+        });
+        writeJson(response, 200, status);
         return;
       }
 
@@ -230,6 +291,8 @@ export async function startEngineSessiond({
   host = '127.0.0.1',
   port = 41741,
   sessionStore = new SessionStore(),
+  runtimeLaunchFactory,
+  buildLaunchFactory,
 } = {}) {
   const eventHub = createEventHub();
   const terminalStore = new TerminalStore({
@@ -237,7 +300,19 @@ export async function startEngineSessiond({
       eventHub.emit(type, data);
     },
   });
-  const server = http.createServer(createRouter({ sessionStore, terminalStore, eventHub }));
+  const runtimeStore = new RuntimeStore({
+    emitEvent: (type, data) => {
+      eventHub.emit(type, data);
+    },
+    launchFactory: runtimeLaunchFactory,
+  });
+  const buildStore = new BuildStore({
+    emitEvent: (type, data) => {
+      eventHub.emit(type, data);
+    },
+    launchFactory: buildLaunchFactory,
+  });
+  const server = http.createServer(createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, eventHub }));
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -255,7 +330,11 @@ export async function startEngineSessiond({
     baseUrl: `http://${address.address}:${address.port}`,
     sessionStore,
     terminalStore,
+    runtimeStore,
+    buildStore,
     close: async () => {
+      await buildStore.close();
+      await runtimeStore.close();
       terminalStore.closeAll();
       eventHub.closeAll();
       await new Promise((resolve, reject) => {

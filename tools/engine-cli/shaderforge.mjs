@@ -1,7 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { startEngineSessiond } from '../engine-sessiond/server.mjs';
 
 const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http://127.0.0.1:41741';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const defaultRuntimeBuildDir = path.join(repoRoot, 'build', 'runtime');
+const runtimeBinaryName = process.platform === 'win32' ? 'shader_forge_runtime.exe' : 'shader_forge_runtime';
 
 function printHelp() {
   console.log(`Shader Forge CLI
@@ -12,10 +19,10 @@ Usage:
   engine session list [--base-url <url>]
   engine file list <path> --session <id> [--base-url <url>]
   engine file read <path> --session <id> [--base-url <url>]
+  engine build [runtime] [--config Debug] [--build-dir build/runtime]
+  engine run [scene] [--config Debug] [--build-dir build/runtime]
 
 Reserved commands:
-  engine run
-  engine build
   engine test
   engine import
   engine bake
@@ -65,8 +72,87 @@ function resolvedBaseUrl(flags) {
 }
 
 async function runReservedPlaceholder(commandName) {
-  console.log(`engine ${commandName} is not implemented yet in this Phase 2 slice.`);
-  console.log('Current implemented surfaces: sessiond start, session create/list, file list/read.');
+  console.log(`engine ${commandName} is not implemented yet in this slice.`);
+  console.log('Current implemented surfaces: sessiond, files, runtime build, and runtime run.');
+}
+
+function commandExists(command) {
+  const result = spawnSync(command, ['--version'], { encoding: 'utf8' });
+  return result.status === 0;
+}
+
+function requireCommand(command, guidance) {
+  if (commandExists(command)) {
+    return;
+  }
+  throw new Error(guidance);
+}
+
+function normalizeBuildConfig(flags) {
+  return String(flags.config || 'Debug');
+}
+
+function resolveBuildDirectory(flags) {
+  const requested = String(flags['build-dir'] || defaultRuntimeBuildDir);
+  return path.isAbsolute(requested) ? requested : path.join(repoRoot, requested);
+}
+
+function runtimeBinaryPath(buildDir) {
+  return path.join(buildDir, 'bin', runtimeBinaryName);
+}
+
+async function runCommand(command, args, options = {}) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || repoRoot,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        ...(options.env || {}),
+      },
+    });
+
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve(undefined);
+        return;
+      }
+      reject(new Error(`${command} ${args.join(' ')} exited with code ${code ?? 'unknown'}.`));
+    });
+    child.on('error', reject);
+  });
+}
+
+async function buildRuntime(flags) {
+  requireCommand('cmake', 'cmake is required for runtime build. Install cmake to use `engine build` or `engine run`.');
+
+  const buildDir = resolveBuildDirectory(flags);
+  const config = normalizeBuildConfig(flags);
+  const generator = process.env.CMAKE_GENERATOR?.trim() || '';
+  const configureArgs = ['-S', repoRoot, '-B', buildDir, `-DCMAKE_BUILD_TYPE=${config}`, '-DSHADER_FORGE_BUILD_RUNTIME=ON'];
+
+  if (generator) {
+    configureArgs.push('-G', generator);
+  }
+
+  await runCommand('cmake', configureArgs);
+  await runCommand('cmake', ['--build', buildDir, '--config', config, '--target', 'shader_forge_runtime']);
+
+  return {
+    buildDir,
+    config,
+    binaryPath: runtimeBinaryPath(buildDir),
+  };
+}
+
+async function runRuntime(sceneName, flags) {
+  const buildResult = await buildRuntime(flags);
+  if (!fs.existsSync(buildResult.binaryPath)) {
+    throw new Error(`Runtime binary was not produced at ${buildResult.binaryPath}`);
+  }
+
+  const args = ['--scene', sceneName || 'sandbox'];
+  await runCommand(buildResult.binaryPath, args, { cwd: repoRoot });
 }
 
 async function run() {
@@ -77,13 +163,31 @@ async function run() {
   }
 
   const command = argv[0];
-  const subcommand = argv[1];
-  const { positionals, flags } = parseFlags(argv.slice(2));
 
-  if (['run', 'build', 'test', 'import', 'bake'].includes(command)) {
+  if (['test', 'import', 'bake'].includes(command)) {
     await runReservedPlaceholder(command);
     return;
   }
+
+  if (command === 'build') {
+    const { positionals, flags } = parseFlags(argv.slice(1));
+    const buildTarget = positionals[0] || 'runtime';
+    if (buildTarget !== 'runtime') {
+      throw new Error(`Unknown build target: ${buildTarget}`);
+    }
+    await buildRuntime(flags);
+    return;
+  }
+
+  if (command === 'run') {
+    const { positionals, flags } = parseFlags(argv.slice(1));
+    const sceneName = positionals[0] || 'sandbox';
+    await runRuntime(sceneName, flags);
+    return;
+  }
+
+  const subcommand = argv[1];
+  const { positionals, flags } = parseFlags(argv.slice(2));
 
   if (command === 'sessiond' && subcommand === 'start') {
     const host = String(flags.host || '127.0.0.1');

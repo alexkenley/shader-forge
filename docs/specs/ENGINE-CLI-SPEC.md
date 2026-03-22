@@ -15,6 +15,8 @@ Current implemented commands:
 - `engine session list`
 - `engine file list`
 - `engine file read`
+- `engine build`
+- `engine run`
 
 ## Initial Commands
 
@@ -24,7 +26,13 @@ Current implemented commands:
 - `engine import`
 - `engine bake`
 
-The initial build/run/import/bake command family still exists as reserved command space, but not yet as real execution paths.
+The initial build/run command family now targets the native runtime scaffold:
+
+- `engine build` configures and builds `shader_forge_runtime` through `cmake`
+- `engine run sandbox` builds and launches the native runtime target
+- `engine_sessiond` also exposes a runtime build lifecycle surface so the shell can trigger native builds and stream logs without scraping a PTY
+
+`engine test`, `engine import`, and `engine bake` remain reserved command space.
 
 ## Future Migration Commands
 
