@@ -16,6 +16,9 @@ const rightTabs = ['Details', 'Assets', 'Inspector', 'Build', 'Run', 'Profiler']
 const bottomTabs = ['Terminal', 'Logs', 'Output', 'Console'] as const;
 const layoutModes = ['Code Focus', 'Code + Game', 'Triptych'] as const;
 const runtimeActions = ['Play', 'Pause', 'Restart', 'Capture'] as const;
+const menuItems = ['File', 'Edit', 'View', 'Build', 'Tools', 'Window', 'Help'] as const;
+const viewportModes = ['Perspective', 'Lit', 'Realtime'] as const;
+const transformModes = ['Select', 'Move', 'Rotate', 'Scale'] as const;
 const legacyWorkspaceSrc = 'web/index.html#/code';
 
 type LeftTab = (typeof leftTabs)[number];
@@ -44,19 +47,6 @@ function TabButton({
   );
 }
 
-function ShellStatusStrip() {
-  return (
-    <div className="status-strip">
-      <span className="status-chip status-chip--accent">Phase 1 shell frame</span>
-      <span className="status-chip">React + TS + Vite</span>
-      <span className="status-chip">Dear ImGui tooling</span>
-      <span className="status-chip">RmlUi game UI</span>
-      <span className="status-chip">Effekseer VFX</span>
-      <span className="status-chip">TOML + FlatBuffers + SQLite</span>
-    </div>
-  );
-}
-
 function formatSessionTimestamp(value: string) {
   const timestamp = new Date(value);
   if (Number.isNaN(timestamp.getTime())) {
@@ -75,35 +65,112 @@ function formatFileSize(bytes: number) {
   return `${bytes} B`;
 }
 
+function getParentExplorerPath(value: string) {
+  if (!value || value === '.') {
+    return '.';
+  }
+  const parts = value.split('/').filter(Boolean);
+  if (parts.length <= 1) {
+    return '.';
+  }
+  return parts.slice(0, -1).join('/');
+}
+
+function ViewportShell({
+  title,
+  subtitle,
+  footer,
+}: {
+  title: string;
+  subtitle: string;
+  footer: string;
+}) {
+  return (
+    <div className="viewport-shell">
+      <div className="viewport-toolbar">
+        <div className="viewport-toolbar__group">
+          {viewportModes.map((mode) => (
+            <span className="viewport-token" key={mode}>
+              {mode}
+            </span>
+          ))}
+        </div>
+        <div className="viewport-toolbar__group">
+          {transformModes.map((mode) => (
+            <span className="viewport-token viewport-token--dim" key={mode}>
+              {mode}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="viewport-canvas">
+        <div className="viewport-canvas__label">
+          <strong>{title}</strong>
+          <span>{subtitle}</span>
+        </div>
+        <div className="viewport-canvas__guide viewport-canvas__guide--horizontal" />
+        <div className="viewport-canvas__guide viewport-canvas__guide--vertical" />
+      </div>
+      <div className="viewport-statusbar">{footer}</div>
+    </div>
+  );
+}
+
 function renderRightPanel(activeTab: RightTab) {
   if (activeTab === 'Details') {
     return (
       <div className="stack">
         <section className="card compact-card">
-          <h3>Selection</h3>
-          <dl className="fact-list">
+          <div className="section-titlebar">
+            <h3>Details</h3>
+            <span>Actor</span>
+          </div>
+          <dl className="property-grid">
             <div>
-              <dt>Actor</dt>
+              <dt>Name</dt>
               <dd>BP_CitadelGate</dd>
+            </div>
+            <div>
+              <dt>Label</dt>
+              <dd>Castle Gate A</dd>
             </div>
             <div>
               <dt>Transform</dt>
               <dd>1240, -330, 64</dd>
             </div>
             <div>
-              <dt>Mode</dt>
-              <dd>Edit</dd>
+              <dt>Mobility</dt>
+              <dd>Static</dd>
+            </div>
+            <div>
+              <dt>Layer</dt>
+              <dd>Gameplay.Blockout</dd>
             </div>
           </dl>
         </section>
         <section className="card compact-card">
-          <h3>Component Fields</h3>
-          <ul className="detail-list">
-            <li>StaticMesh: `SM_Gate_A`</li>
-            <li>Collision: `BlockAll`</li>
-            <li>Gameplay Tag: `Encounter.Entry`</li>
-            <li>Mobility: `Static`</li>
-          </ul>
+          <div className="section-titlebar">
+            <h3>Components</h3>
+            <span>4 items</span>
+          </div>
+          <dl className="property-grid">
+            <div>
+              <dt>StaticMesh</dt>
+              <dd>SM_Gate_A</dd>
+            </div>
+            <div>
+              <dt>Collision</dt>
+              <dd>BlockAll</dd>
+            </div>
+            <div>
+              <dt>Gameplay Tag</dt>
+              <dd>Encounter.Entry</dd>
+            </div>
+            <div>
+              <dt>Blueprint</dt>
+              <dd>BP_CitadelGate</dd>
+            </div>
+          </dl>
         </section>
       </div>
     );
@@ -234,42 +301,78 @@ engine ai providers
   );
 }
 
-function renderCodeBridge(layoutMode: LayoutMode) {
+function renderCodeBridge(
+  layoutMode: LayoutMode,
+  showLegacyBridge: boolean,
+  onToggleLegacyBridge: () => void,
+) {
   return (
     <div className={`workspace-layout workspace-layout--${layoutModeClassName(layoutMode)}`}>
       <section className="surface legacy-surface">
         <div className="surface-header">
           <div>
-            <div className="surface-eyebrow">Preserved Workspace Bridge</div>
+            <div className="surface-eyebrow">Code Workspace</div>
             <h2>Code</h2>
-            <p>
-              The Monaco workspace and inline file-search toolbar remain inside the preserved layer while the
-              React shell takes over the outer dock layout.
-            </p>
+            <p>The preserved Monaco/search work stays intact, but the old app chrome is no longer the default shell.</p>
           </div>
-          <a className="surface-link" href={legacyWorkspaceSrc} rel="noreferrer" target="_blank">
-            Open standalone
-          </a>
+          <div className="inline-actions">
+            <button className="ghost-button" onClick={onToggleLegacyBridge} type="button">
+              {showLegacyBridge ? 'Hide legacy bridge' : 'Load legacy bridge'}
+            </button>
+            <a className="surface-link" href={legacyWorkspaceSrc} rel="noreferrer" target="_blank">
+              Open standalone
+            </a>
+          </div>
         </div>
-        <iframe
-          className="legacy-frame"
-          loading="lazy"
-          src={legacyWorkspaceSrc}
-          title="Shader Forge preserved code workspace"
-        />
+        {showLegacyBridge ? (
+          <iframe
+            className="legacy-frame"
+            loading="lazy"
+            src={legacyWorkspaceSrc}
+            title="Shader Forge preserved code workspace"
+          />
+        ) : (
+          <div className="bridge-placeholder">
+            <div className="bridge-placeholder__summary">
+              <strong>Legacy bridge quarantined</strong>
+              <p>
+                The preserved code surface is kept as a compatibility baseline while the real Shader Forge code
+                dock is extracted around it.
+              </p>
+            </div>
+            <div className="bridge-placeholder__grid">
+              <article className="mini-card">
+                <span>Preserved</span>
+                <strong>Monaco editor</strong>
+                <p>Inline find, diffing, and file semantics remain in `web/`.</p>
+              </article>
+              <article className="mini-card">
+                <span>Replacing</span>
+                <strong>Legacy chrome</strong>
+                <p>Guardian-shaped nav, panels, and terminal chrome are being removed.</p>
+              </article>
+              <article className="mini-card">
+                <span>Next</span>
+                <strong>Native code dock</strong>
+                <p>Shader Forge will own the tabs, split panes, and terminal host directly.</p>
+              </article>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="surface">
         <div className="surface-header">
           <div>
-            <div className="surface-eyebrow">Companion Viewer</div>
-            <h2>Game / Scene Partner</h2>
+            <div className="surface-eyebrow">Viewport Companion</div>
+            <h2>Game / Scene Pair</h2>
           </div>
         </div>
-        <div className="placeholder-view placeholder-view--viewer">
-          <span>Native runtime first</span>
-          <p>Use split layouts now. Stream the runtime here after the viewer bridge exists.</p>
-        </div>
+        <ViewportShell
+          footer="Viewport dock placeholder. Native runtime stream lands here after the viewer bridge."
+          subtitle="Split layout partner"
+          title="Companion viewport"
+        />
       </section>
 
       {layoutMode === 'Triptych' ? (
@@ -300,9 +403,14 @@ function renderCodeBridge(layoutMode: LayoutMode) {
   );
 }
 
-function renderCenterContent(activeTab: CenterTab, layoutMode: LayoutMode) {
+function renderCenterContent(
+  activeTab: CenterTab,
+  layoutMode: LayoutMode,
+  showLegacyBridge: boolean,
+  onToggleLegacyBridge: () => void,
+) {
   if (activeTab === 'Code') {
-    return renderCodeBridge(layoutMode);
+    return renderCodeBridge(layoutMode, showLegacyBridge, onToggleLegacyBridge);
   }
 
   if (activeTab === 'Game') {
@@ -322,10 +430,11 @@ function renderCenterContent(activeTab: CenterTab, layoutMode: LayoutMode) {
               ))}
             </div>
           </div>
-          <div className="placeholder-view placeholder-view--runtime">
-            <span>Runtime window launches natively</span>
-            <p>The embedded viewer becomes a stream bridge later. The shell still owns run controls now.</p>
-          </div>
+          <ViewportShell
+            footer="Windows native runtime window first. Embedded streaming viewer comes after runtime stabilization."
+            subtitle="Run target: sandbox"
+            title="Game viewport"
+          />
         </section>
         <section className="surface">
           <div className="metric-stack">
@@ -358,10 +467,11 @@ function renderCenterContent(activeTab: CenterTab, layoutMode: LayoutMode) {
               <p>Levels stay text-backed. Viewport edits save deterministic `.scene.toml` and `.prefab.toml` assets.</p>
             </div>
           </div>
-          <div className="placeholder-view placeholder-view--scene">
-            <span>Edit Mode</span>
-            <p>Gizmos, selection, placement, and bake-from-procedural all land in persistent scene assets.</p>
-          </div>
+          <ViewportShell
+            footer="Edit mode persists to text-backed scene assets. Play mode remains discard-by-default."
+            subtitle="Authoring viewport"
+            title="Scene viewport"
+          />
         </section>
         <section className="surface">
           <div className="stack">
@@ -415,17 +525,19 @@ function renderCenterContent(activeTab: CenterTab, layoutMode: LayoutMode) {
 }
 
 export default function App() {
-  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('Sessions');
-  const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Code');
+  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('World');
+  const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Scene');
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('Details');
-  const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('Code + Game');
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Output');
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('Triptych');
+  const [showLegacyBridge, setShowLegacyBridge] = useState(false);
   const [sessiondState, setSessiondState] = useState<'connecting' | 'connected' | 'offline'>('connecting');
   const [sessiondMessage, setSessiondMessage] = useState('Checking engine_sessiond...');
   const [sessions, setSessions] = useState<EngineSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState('');
   const [sessionActionBusy, setSessionActionBusy] = useState(false);
   const [explorerEntries, setExplorerEntries] = useState<SessionFileEntry[]>([]);
+  const [explorerPath, setExplorerPath] = useState('.');
   const [selectedExplorerPath, setSelectedExplorerPath] = useState('');
   const [selectedFilePreview, setSelectedFilePreview] = useState('');
   const [explorerBusy, setExplorerBusy] = useState(false);
@@ -439,24 +551,31 @@ export default function App() {
     return nextSessions;
   }
 
-  async function refreshExplorer(sessionId: string) {
+  async function refreshExplorer(sessionId: string, relativePath = '.') {
     if (!sessionId) {
       setExplorerEntries([]);
+      setExplorerPath('.');
       setSelectedExplorerPath('');
       setSelectedFilePreview('');
       return;
     }
 
-    const listing = await listFiles(sessionId);
-    setExplorerEntries(listing.entries);
-    const firstFile = listing.entries.find((entry) => entry.kind === 'file');
-    if (firstFile) {
-      setSelectedExplorerPath(firstFile.path);
-      const preview = await readFile(sessionId, firstFile.path);
-      setSelectedFilePreview(preview.content.slice(0, 1200));
-    } else {
-      setSelectedExplorerPath('');
-      setSelectedFilePreview('');
+    setExplorerBusy(true);
+    try {
+      const listing = await listFiles(sessionId, relativePath);
+      setExplorerPath(listing.path);
+      setExplorerEntries(listing.entries);
+      const firstFile = listing.entries.find((entry) => entry.kind === 'file');
+      if (firstFile) {
+        setSelectedExplorerPath(firstFile.path);
+        const preview = await readFile(sessionId, firstFile.path);
+        setSelectedFilePreview(preview.content.slice(0, 1200));
+      } else {
+        setSelectedExplorerPath('');
+        setSelectedFilePreview('');
+      }
+    } finally {
+      setExplorerBusy(false);
     }
   }
 
@@ -479,7 +598,7 @@ export default function App() {
         if (nextSessions.length) {
           const nextActiveSessionId = nextSessions[0].id;
           setActiveSessionId((current) => current || nextActiveSessionId);
-          await refreshExplorer(nextActiveSessionId);
+          await refreshExplorer(nextActiveSessionId, '.');
         }
       } catch (error) {
         if (cancelled) {
@@ -502,9 +621,9 @@ export default function App() {
       const session = await createSession();
       setSessiondState('connected');
       setSessiondMessage(`Created session ${session.name}`);
-      const nextSessions = await refreshSessions();
+      await refreshSessions();
       setActiveSessionId(session.id);
-      await refreshExplorer(session.id);
+      await refreshExplorer(session.id, '.');
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -521,7 +640,7 @@ export default function App() {
       setSessiondMessage(`Synced sessions from ${getSessiondBaseUrl()}`);
       const explorerSessionId = activeSessionId || nextSessions[0]?.id || '';
       if (explorerSessionId) {
-        await refreshExplorer(explorerSessionId);
+        await refreshExplorer(explorerSessionId, explorerPath);
       }
     } catch (error) {
       setSessiondState('offline');
@@ -532,12 +651,16 @@ export default function App() {
   }
 
   async function handleExplorerEntryClick(entry: SessionFileEntry) {
-    if (!activeSessionId || entry.kind !== 'file') {
+    if (!activeSessionId) {
       return;
     }
 
     try {
       setExplorerBusy(true);
+      if (entry.kind === 'directory') {
+        await refreshExplorer(activeSessionId, entry.path);
+        return;
+      }
       const preview = await readFile(activeSessionId, entry.path);
       setSelectedExplorerPath(entry.path);
       setSelectedFilePreview(preview.content.slice(0, 1200));
@@ -549,41 +672,57 @@ export default function App() {
     }
   }
 
+  async function handleExplorerUp() {
+    if (!activeSessionId) {
+      return;
+    }
+    try {
+      await refreshExplorer(activeSessionId, getParentExplorerPath(explorerPath));
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   const activeSession = sessions.find((session) => session.id === activeSessionId) || null;
 
   return (
     <div className="shell-app">
-      <header className="shell-header">
-        <div className="shell-header-copy">
-          <div className="shell-eyebrow">Shader Forge</div>
-          <h1>Engine Shell</h1>
-          <p>
-            React owns the shell frame, dock layout, and future runtime adapters. The preserved Monaco editor,
-            tabs, terminals, and inline find beside <code>Inspect</code> stay under <code>web/</code> until
-            the bridge layer is replaced deliberately.
-          </p>
+      <div className="chrome-bar chrome-bar--menu">
+        <div className="menu-strip">
+          {menuItems.map((item) => (
+            <button className="menu-button" key={item} type="button">
+              {item}
+            </button>
+          ))}
         </div>
-        <div className="shell-header-meta">
-          <div className="status-panel">
-            <span className="status-dot" />
-            <strong>WSL shell primary</strong>
-            <small>Windows native runtime window</small>
-          </div>
-          <div className="status-panel">
-            <span className={`status-dot${sessiondState === 'offline' ? ' status-dot--idle' : ''}`} />
-            <strong>{sessiondState === 'connected' ? 'engine_sessiond online' : 'engine_sessiond pending'}</strong>
-            <small>{sessiondMessage}</small>
-          </div>
+        <div className="chrome-title">Shader Forge Editor</div>
+        <div className="chrome-strip-meta">
+          <span className="chrome-meta-chip">Open source</span>
+          <span className="chrome-meta-chip">Windows + WSL2</span>
         </div>
-      </header>
-
-      <ShellStatusStrip />
+      </div>
+      <div className="chrome-bar chrome-bar--tools">
+        <div className="toolbar-cluster">
+          <span className="toolbar-chip toolbar-chip--accent">Project: shader-forge</span>
+          <span className="toolbar-chip">Branch: main</span>
+          <span className="toolbar-chip">Target: sandbox</span>
+          <span className="toolbar-chip">Renderer: Vulkan-first</span>
+        </div>
+        <div className="toolbar-cluster toolbar-cluster--right">
+          <span className="toolbar-chip">WSL shell primary</span>
+          <span className={`toolbar-chip${sessiondState === 'offline' ? ' toolbar-chip--warning' : ''}`}>
+            {sessiondState === 'connected' ? 'engine_sessiond online' : 'engine_sessiond pending'}
+          </span>
+          <span className="toolbar-chip toolbar-chip--muted">{sessiondMessage}</span>
+        </div>
+      </div>
 
       <main className="shell-grid">
         <aside className="pane rail-pane">
           <div className="pane-header">
-            <h2>Workspace</h2>
-            <span className="pane-caption">Project shell</span>
+            <h2>Left Dock</h2>
+            <span className="pane-caption">World, content, sessions</span>
           </div>
           <div className="stack">
             {leftTabs.map((tab) => (
@@ -614,7 +753,13 @@ export default function App() {
                   <li key={session.id}>
                     <button
                       className={`session-button${activeSessionId === session.id ? ' is-active' : ''}`}
-                      onClick={() => setActiveSessionId(session.id)}
+                      onClick={() => {
+                        setActiveSessionId(session.id);
+                        void refreshExplorer(session.id, '.').catch((error) => {
+                          setSessiondState('offline');
+                          setSessiondMessage(error instanceof Error ? error.message : String(error));
+                        });
+                      }}
                       type="button"
                     >
                       <strong>{session.name}</strong>
@@ -652,13 +797,19 @@ export default function App() {
                 <h3>Root Explorer</h3>
                 <span className="pane-caption">{activeSession ? activeSession.name : 'no session'}</span>
               </div>
+              <div className="inline-actions">
+                <button className="ghost-button" disabled={!activeSessionId || explorerPath === '.'} onClick={handleExplorerUp} type="button">
+                  Up
+                </button>
+                <span className="toolbar-chip toolbar-chip--muted">{explorerPath}</span>
+              </div>
               <ul className="explorer-list">
                 {explorerEntries.length ? (
                   explorerEntries.map((entry) => (
                     <li key={entry.path}>
                       <button
                         className={`explorer-entry${selectedExplorerPath === entry.path ? ' is-active' : ''}`}
-                        disabled={entry.kind === 'directory' || explorerBusy}
+                        disabled={explorerBusy}
                         onClick={() => handleExplorerEntryClick(entry)}
                         type="button"
                       >
@@ -683,23 +834,41 @@ export default function App() {
 
         <section className="center-column">
           <section className="pane dock-toolbar">
-            <div className="tab-row">
-              {centerTabs.map((tab) => (
-                <TabButton active={activeCenterTab === tab} key={tab} onClick={() => setActiveCenterTab(tab)}>
-                  {tab}
-                </TabButton>
-              ))}
+            <div className="toolbar-rack">
+              <div className="tab-row">
+                {centerTabs.map((tab) => (
+                  <TabButton active={activeCenterTab === tab} key={tab} onClick={() => setActiveCenterTab(tab)}>
+                    {tab}
+                  </TabButton>
+                ))}
+              </div>
+              <div className="toolbar-rack__spacer" />
+              <div className="tab-row tab-row--tight">
+                {layoutModes.map((mode) => (
+                  <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
+                    {mode}
+                  </TabButton>
+                ))}
+              </div>
             </div>
-            <div className="tab-row tab-row--tight">
-              {layoutModes.map((mode) => (
-                <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
-                  {mode}
-                </TabButton>
-              ))}
+            <div className="viewport-commandbar">
+              <div className="viewport-commandbar__group">
+                {runtimeActions.map((action) => (
+                  <button className="ghost-button" key={action} type="button">
+                    {action}
+                  </button>
+                ))}
+              </div>
+              <div className="viewport-commandbar__group">
+                <span className="toolbar-chip">Scene: CastleEntrance</span>
+                <span className="toolbar-chip">Mode: Edit</span>
+              </div>
             </div>
           </section>
 
-          {renderCenterContent(activeCenterTab, layoutMode)}
+          {renderCenterContent(activeCenterTab, layoutMode, showLegacyBridge, () =>
+            setShowLegacyBridge((current) => !current),
+          )}
         </section>
 
         <aside className="pane side-pane">

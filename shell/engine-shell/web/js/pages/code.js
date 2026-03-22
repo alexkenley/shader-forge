@@ -84,10 +84,10 @@ function loadMonaco() {
   monacoLoadPromise = new Promise((resolve, reject) => {
     if (window.monaco) { resolve(); return; }
     const script = document.createElement('script');
-    script.src = '/vendor/monaco/vs/loader.js';
+    script.src = new URL('../../vendor/monaco/vs/loader.js', import.meta.url).href;
     script.onload = () => {
       // Configure AMD require for Monaco
-      window.require.config({ paths: { vs: '/vendor/monaco/vs' } });
+      window.require.config({ paths: { vs: new URL('../../vendor/monaco/vs', import.meta.url).href } });
       window.require(['vs/editor/editor.main'], () => {
         if (!monacoThemesRegistered) {
           registerAllThemes(window.monaco);
@@ -1402,7 +1402,7 @@ function ensureTerminalCss() {
   terminalCssLoaded = true;
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = '/vendor/xterm/xterm.css';
+  link.href = new URL('../../vendor/xterm/xterm.css', import.meta.url).href;
   document.head.appendChild(link);
 }
 
@@ -1410,8 +1410,8 @@ async function loadTerminalLib() {
   if (!terminalLibPromise) {
     ensureTerminalCss();
     terminalLibPromise = Promise.all([
-      import('/vendor/xterm/xterm.mjs'),
-      import('/vendor/xterm/addon-fit.mjs'),
+      import(new URL('../../vendor/xterm/xterm.mjs', import.meta.url).href),
+      import(new URL('../../vendor/xterm/addon-fit.mjs', import.meta.url).href),
     ]).then(([xterm, addonFit]) => ({
       Terminal: xterm.Terminal,
       FitAddon: addonFit.FitAddon,
@@ -4831,7 +4831,7 @@ function renderCodeInspectorPopupDocument(session) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Shader Forge Code Inspector</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="${escAttr(new URL('../../css/style.css', import.meta.url).href)}">
   </head>
   <body class="code-inspector-popup-body">
     <div class="code-inspector-popup-shell">

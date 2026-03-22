@@ -21,7 +21,7 @@ try {
     requestTextNoAuth(`${server.baseUrl}/js/pages/code.js`),
   ]);
 
-  assert.match(html, /<script type="module" src="\/js\/app\.js"><\/script>/);
+  assert.match(html, /<script type="module" src="\.\/js\/app\.js"><\/script>/);
   assert.match(styleCss, /\.code-editor-search-match\s*\{/);
   assert.match(styleCss, /\.code-editor__toolbar-search\s*\{/);
   assert.match(codeJs, /data-code-editor-search-input/);
