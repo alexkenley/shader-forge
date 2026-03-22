@@ -25,6 +25,8 @@ Current implemented commands:
 - `engine test`
 - `engine import`
 - `engine bake`
+- `engine package`
+- `engine export`
 
 The initial build/run command family now targets the native runtime scaffold:
 
@@ -32,7 +34,16 @@ The initial build/run command family now targets the native runtime scaffold:
 - `engine run sandbox` builds and launches the native runtime target
 - `engine_sessiond` also exposes a runtime build lifecycle surface so the shell can trigger native builds and stream logs without scraping a PTY
 
-`engine test`, `engine import`, and `engine bake` remain reserved command space.
+`engine test`, `engine import`, `engine bake`, `engine package`, and `engine export` remain reserved command space.
+
+## Future Packaging And Diagnostics Commands
+
+- `engine package`
+- `engine export`
+- `engine save inspect`
+- `engine save migrate`
+- `engine profile capture`
+- `engine profile live`
 
 ## Future Migration Commands
 

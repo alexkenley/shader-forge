@@ -10,6 +10,7 @@ It exists to support:
 - high-level NPC and director-style decisions
 - quest, lore, and social interactions
 - assistant-friendly game tooling and test surfaces
+- native developer-assistant surfaces in the shell, CLI, and future in-engine tools
 
 It should not turn remote model output into the only source of core gameplay behavior.
 
@@ -20,8 +21,17 @@ Shader Forge should treat AI as a reusable engine service, not as a reusable gam
 Rules:
 
 - the engine owns provider adapters, request lifecycles, budgets, caching, and structured outputs
-- each game owns prompts, personas, tools, memory rules, and AI-facing gameplay policies
+- each game owns prompts, personas, tools, skills, memory rules, and AI-facing gameplay policies
 - deterministic systems such as combat resolution, movement, pathfinding, physics, and authoritative world mutation remain engine/game code, not raw model output
+
+The engine should support both:
+
+- developer-assistant surfaces
+  - shell, CLI, and native in-engine tool assistants for editing, inspection, testing, and workflow automation
+- game-facing AI surfaces
+  - dialogue, director, and other shipped gameplay-facing AI behaviors
+
+These should share the same provider core, policy controls, and structured tool architecture where practical.
 
 ## Supported Provider Model
 
@@ -74,6 +84,11 @@ Recommended modules:
 - `engine_ai_action_schema`
 - `engine_ai_budget_policy`
 - `engine_ai_cache`
+- `engine_ai_tool_registry`
+- `engine_ai_skill_registry`
+- `engine_ai_client_shell`
+- `engine_ai_client_cli`
+- `engine_ai_client_runtime`
 
 ## Request Lifecycle
 
@@ -123,7 +138,42 @@ Examples:
 
 The game or engine must validate and apply these outputs through deterministic code.
 
-## Tools And Action Bridge
+## Tools, Skills, And Action Bridge
+
+The AI subsystem should use both tools and skills.
+
+Definitions:
+
+- `tools`
+  - deterministic engine operations with explicit schemas, permissions, and return shapes
+- `skills`
+  - reusable higher-level workflows that orchestrate tools, prompts, validation rules, and step ordering
+
+Rules:
+
+- tools own capability
+- skills own workflow
+- tools and text assets remain the source of truth, not skill-local hidden state
+- terminal, shell, and native in-engine assistants should share the same underlying tool and skill registries where practical
+- skills may compose tools, but they should not bypass engine permission and validation layers
+
+Recommended tool categories:
+
+- scene and prefab editing
+- audio playback and routing control
+- animation graph and clip editing
+- runtime inspection and diagnostics
+- build, package, import, and bake flows
+- project and asset queries
+
+Recommended skill categories:
+
+- project setup and configuration
+- gameplay feature scaffolding
+- scene blockout and authoring flows
+- audio and animation wiring flows
+- packaging and diagnostics workflows
+- domain-specific assistant behaviors for particular game genres or project types
 
 The subsystem should expose tool-style integrations for game logic.
 
@@ -138,6 +188,14 @@ Examples:
 
 Games should explicitly choose which tools are exposed to each AI-driven role.
 
+Examples of developer-assistant skills:
+
+- `setup_third_person_controller`
+- `wire_animation_events_to_audio`
+- `create_pause_menu`
+- `package_windows_playtest_build`
+- `blockout_combat_arena`
+
 ## Authoring Model
 
 The engine should define reusable AI-facing asset patterns, while keeping project behavior game-specific.
@@ -148,9 +206,20 @@ Suggested data locations:
 - `ai/personas/*.toml`
 - `ai/prompts/*.toml`
 - `ai/tools/*.toml`
+- `ai/skills/*.toml`
 - `ai/policies/*.toml`
 
 Runtime-ready forms can be cooked into FlatBuffers alongside other engine data.
+
+Tool and skill assets should be able to declare:
+
+- capability names
+- input/output schemas
+- allowed clients
+- permission level
+- dry-run support
+- undo/apply behavior where relevant
+- dependency on other tools or skills
 
 ## Shell And CLI Surfaces
 
@@ -168,6 +237,29 @@ Expected CLI surfaces:
 - `engine ai test`
 - `engine ai request`
 - `engine ai budgets`
+- `engine ai tools`
+- `engine ai skills`
+
+Expected native in-engine assistant surfaces:
+
+- runtime-aware assistant panel
+- structured tool calls for scene, animation, audio, and runtime inspection/edit workflows
+- context-aware capability/skill routing for engine-native tasks
+
+The terminal coding assistant and the native in-engine assistant should be complementary, not mutually exclusive:
+
+- terminal/CLI assistant is best for repo-wide code, files, build, and test work
+- native in-engine assistant is best for structured engine-editing, runtime inspection, and tool-driven asset workflows
+- both should use the same underlying provider and policy layer where possible
+
+This implies a shared architecture:
+
+1. provider and policy core
+2. tool registry
+3. skill registry
+4. client-specific surfaces
+
+The clients should differ mainly in context, permissions, and UI, not in fundamental AI capability definitions.
 
 ## Sessiond Integration
 
@@ -178,6 +270,8 @@ Expected CLI surfaces:
 - AI request/event log streaming
 - local-model health checks
 - optional secure key-management hooks for local desktop workflows
+- tool discovery and invocation surfaces for shell and runtime clients
+- skill discovery and execution surfaces for shell and runtime clients
 
 ## Harness Requirements
 
@@ -186,6 +280,8 @@ The AI subsystem needs both deterministic and optional real-provider lanes.
 Deterministic lane:
 
 - fake provider harness for schema validation, queueing, timeout handling, retries, and fallback behavior
+- tool-registry harness for permission, schema, dry-run, and invocation behavior
+- skill-registry harness for workflow orchestration and validation behavior
 
 Optional real lanes:
 

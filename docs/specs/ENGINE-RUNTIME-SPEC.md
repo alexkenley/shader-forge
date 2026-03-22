@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`engine_runtime` is the native C++ application that owns rendering, simulation, input, timing, and gameplay execution.
+`engine_runtime` is the native C++ application that owns rendering, audio playback integration, simulation, input, timing, and gameplay execution.
 
 ## Initial Scope
 
@@ -12,6 +12,7 @@
 - frame loop
 - timing and input
 - logging
+- audio is intentionally deferred until after the first runtime window/render-loop slice; see the audio spec for the later subsystem plan
 
 ## Future AI Runtime Boundary
 
