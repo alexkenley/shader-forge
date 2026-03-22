@@ -44,6 +44,11 @@ export class SessionStore {
     return session ? structuredClone(session) : null;
   }
 
+  resolveSessionPath(sessionId, relativePath = '.') {
+    const session = this.#requireSession(sessionId);
+    return this.#resolveWithinSession(session, relativePath);
+  }
+
   async listFiles(sessionId, relativePath = '.') {
     const session = this.#requireSession(sessionId);
     const targetPath = this.#resolveWithinSession(session, relativePath);

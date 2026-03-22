@@ -1,13 +1,22 @@
-import { useEffect, useState } from 'react';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  closeTerminal,
   createSession,
   fetchSessiondHealth,
   getSessiondBaseUrl,
   listFiles,
   listSessions,
+  openTerminal,
   readFile,
+  resizeTerminal,
+  subscribeSessiondEvents,
   type SessionFileEntry,
+  type SessionTerminalOpen,
+  type SessiondTerminalEvent,
   type EngineSession,
+  writeTerminalInput,
 } from './lib/sessiond';
 
 const leftTabs = ['Sessions', 'Explorer', 'Source Control', 'World', 'Search'] as const;
@@ -19,6 +28,7 @@ const runtimeActions = ['Play', 'Pause', 'Restart', 'Capture'] as const;
 const menuItems = ['File', 'Edit', 'View', 'Build', 'Tools', 'Window', 'Help'] as const;
 const viewportModes = ['Perspective', 'Lit', 'Realtime'] as const;
 const transformModes = ['Select', 'Move', 'Rotate', 'Scale'] as const;
+const terminalShells = ['bash', 'zsh', 'sh'] as const;
 const legacyWorkspaceSrc = 'web/index.html#/code';
 
 type LeftTab = (typeof leftTabs)[number];
@@ -26,6 +36,33 @@ type CenterTab = (typeof centerTabs)[number];
 type RightTab = (typeof rightTabs)[number];
 type BottomTab = (typeof bottomTabs)[number];
 type LayoutMode = (typeof layoutModes)[number];
+type TerminalShell = (typeof terminalShells)[number];
+
+type TerminalTabState = {
+  id: string;
+  title: string;
+  shell: TerminalShell;
+  cwd: string;
+  runtimeTerminalId: string | null;
+  status: 'connecting' | 'connected' | 'error';
+  openError: string;
+  output: string;
+  cols: number;
+  rows: number;
+};
+
+type TerminalDockProps = {
+  tabs: TerminalTabState[];
+  activeTabId: string;
+  activeSession: EngineSession | null;
+  onActivateTab: (tabId: string) => void;
+  onAddTab: () => void;
+  onCloseTab: (tabId: string) => void;
+  onChangeShell: (tabId: string, shell: TerminalShell) => void;
+  onClearTab: (tabId: string) => void;
+  onTerminalInput: (tabId: string, input: string) => void;
+  onTerminalResize: (tabId: string, cols: number, rows: number) => void;
+};
 
 function layoutModeClassName(layoutMode: LayoutMode) {
   return layoutMode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -74,6 +111,29 @@ function getParentExplorerPath(value: string) {
     return '.';
   }
   return parts.slice(0, -1).join('/');
+}
+
+function trimTerminalOutput(value: string) {
+  const maxLength = 120000;
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return value.slice(-maxLength);
+}
+
+function createTerminalTab(index: number): TerminalTabState {
+  return {
+    id: crypto.randomUUID(),
+    title: `Terminal ${index}`,
+    shell: 'bash',
+    cwd: '.',
+    runtimeTerminalId: null,
+    status: 'connecting',
+    openError: '',
+    output: '',
+    cols: 120,
+    rows: 30,
+  };
 }
 
 function ViewportShell({
@@ -259,16 +319,206 @@ function renderRightPanel(activeTab: RightTab) {
   );
 }
 
-function renderBottomPanel(activeTab: BottomTab) {
-  if (activeTab === 'Terminal') {
+function TerminalDock({
+  tabs,
+  activeTabId,
+  activeSession,
+  onActivateTab,
+  onAddTab,
+  onCloseTab,
+  onChangeShell,
+  onClearTab,
+  onTerminalInput,
+  onTerminalResize,
+}: TerminalDockProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const terminalInstanceRef = useRef<{
+    tabId: string;
+    terminal: XTerm;
+    fitAddon: FitAddon;
+    resizeObserver: ResizeObserver;
+    writtenOutput: string;
+  } | null>(null);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null;
+
+  useEffect(() => {
+    if (!activeTab || !hostRef.current) {
+      return;
+    }
+
+    const disposeTerminal = () => {
+      const instance = terminalInstanceRef.current;
+      if (!instance) {
+        return;
+      }
+      instance.resizeObserver.disconnect();
+      instance.terminal.dispose();
+      terminalInstanceRef.current = null;
+    };
+
+    let instance = terminalInstanceRef.current;
+    if (!instance || instance.tabId !== activeTab.id) {
+      disposeTerminal();
+      hostRef.current.innerHTML = '';
+
+      const terminal = new XTerm({
+        cursorBlink: true,
+        fontFamily: '"JetBrains Mono", "Cascadia Mono", monospace',
+        fontSize: 13,
+        theme: {
+          background: '#11161b',
+          foreground: '#d9dee5',
+          cursor: '#f0a341',
+          selectionBackground: 'rgba(240, 163, 65, 0.24)',
+        },
+      });
+      const fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.open(hostRef.current);
+      fitAddon.fit();
+      if (activeTab.output) {
+        terminal.write(activeTab.output);
+      }
+
+      const resizeObserver = new ResizeObserver(() => {
+        fitAddon.fit();
+        const cols = terminal.cols;
+        const rows = terminal.rows;
+        onTerminalResize(activeTab.id, cols, rows);
+      });
+
+      resizeObserver.observe(hostRef.current);
+      terminal.onData((input) => {
+        onTerminalInput(activeTab.id, input);
+      });
+
+      terminalInstanceRef.current = {
+        tabId: activeTab.id,
+        terminal,
+        fitAddon,
+        resizeObserver,
+        writtenOutput: activeTab.output,
+      };
+      instance = terminalInstanceRef.current;
+    }
+
+    if (instance && instance.writtenOutput !== activeTab.output) {
+      if (activeTab.output.startsWith(instance.writtenOutput)) {
+        const delta = activeTab.output.slice(instance.writtenOutput.length);
+        if (delta) {
+          instance.terminal.write(delta);
+        }
+      } else {
+        instance.terminal.reset();
+        if (activeTab.output) {
+          instance.terminal.write(activeTab.output);
+        }
+      }
+      instance.writtenOutput = activeTab.output;
+    }
+
+    instance?.fitAddon.fit();
+    instance?.terminal.focus();
+
+    return () => {
+      if (!tabs.length) {
+        disposeTerminal();
+      }
+    };
+  }, [activeTab, onTerminalInput, onTerminalResize, tabs.length]);
+
+  useEffect(() => {
+    return () => {
+      const instance = terminalInstanceRef.current;
+      if (!instance) {
+        return;
+      }
+      instance.resizeObserver.disconnect();
+      instance.terminal.dispose();
+      terminalInstanceRef.current = null;
+    };
+  }, []);
+
+  if (!tabs.length || !activeTab) {
     return (
-      <pre className="dock-output">$ powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1
-$ engine run sandbox
-$ engine migrate unreal D:\Project\SourceGame
-[phase-1] clean shell frame ready
-[phase-1] preserved code workspace retained
-</pre>
+      <section className="terminal-dock">
+        <div className="terminal-toolbar">
+          <div className="terminal-toolbar__group">
+            <button className="ghost-button" onClick={onAddTab} type="button">
+              + Terminal
+            </button>
+          </div>
+        </div>
+        <div className="terminal-empty">Open a terminal to start driving the engine directly from the shell.</div>
+      </section>
     );
+  }
+
+  return (
+    <section className="terminal-dock">
+      <div className="terminal-tabs">
+        <div className="terminal-tabs__strip">
+          {tabs.map((tab) => (
+            <button
+              className={`terminal-tab${tab.id === activeTab.id ? ' is-active' : ''}`}
+              key={tab.id}
+              onClick={() => onActivateTab(tab.id)}
+              type="button"
+            >
+              <span className={`terminal-tab__dot terminal-tab__dot--${tab.status}`} />
+              <strong>{tab.title}</strong>
+              <span className="terminal-tab__shell">{tab.shell}</span>
+              {tabs.length > 1 ? (
+                <span
+                  className="terminal-tab__close"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCloseTab(tab.id);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  ×
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+        <button className="ghost-button" onClick={onAddTab} type="button">
+          + Terminal
+        </button>
+      </div>
+      <div className="terminal-toolbar">
+        <div className="terminal-toolbar__group">
+          <select
+            className="terminal-shell-select"
+            onChange={(event) => onChangeShell(activeTab.id, event.target.value as TerminalShell)}
+            value={activeTab.shell}
+          >
+            {terminalShells.map((shell) => (
+              <option key={shell} value={shell}>
+                {shell}
+              </option>
+            ))}
+          </select>
+          <span className="terminal-toolbar__meta">cwd: {activeSession?.rootPath || activeTab.cwd}</span>
+        </div>
+        <div className="terminal-toolbar__group">
+          <span className={`terminal-status terminal-status--${activeTab.status}`}>{activeTab.status}</span>
+          <button className="ghost-button" onClick={() => onClearTab(activeTab.id)} type="button">
+            Clear
+          </button>
+        </div>
+      </div>
+      {activeTab.openError ? <div className="terminal-error">{activeTab.openError}</div> : null}
+      <div className="terminal-viewport" ref={hostRef} />
+    </section>
+  );
+}
+
+function renderBottomPanel(activeTab: BottomTab, terminalDock: ReactNode) {
+  if (activeTab === 'Terminal') {
+    return terminalDock;
   }
 
   if (activeTab === 'Logs') {
@@ -528,7 +778,7 @@ export default function App() {
   const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('World');
   const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Scene');
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('Details');
-  const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Output');
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('Triptych');
   const [showLegacyBridge, setShowLegacyBridge] = useState(false);
   const [sessiondState, setSessiondState] = useState<'connecting' | 'connected' | 'offline'>('connecting');
@@ -541,6 +791,10 @@ export default function App() {
   const [selectedExplorerPath, setSelectedExplorerPath] = useState('');
   const [selectedFilePreview, setSelectedFilePreview] = useState('');
   const [explorerBusy, setExplorerBusy] = useState(false);
+  const [terminalTabs, setTerminalTabs] = useState<TerminalTabState[]>([]);
+  const [activeTerminalTabId, setActiveTerminalTabId] = useState('');
+  const terminalTabsRef = useRef<TerminalTabState[]>([]);
+  const terminalOpeningRef = useRef(new Set<string>());
 
   async function refreshSessions() {
     const nextSessions = await listSessions();
@@ -615,6 +869,110 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    terminalTabsRef.current = terminalTabs;
+  }, [terminalTabs]);
+
+  useEffect(() => {
+    if (terminalTabs.length) {
+      return;
+    }
+    const nextTab = createTerminalTab(1);
+    setTerminalTabs([nextTab]);
+    setActiveTerminalTabId(nextTab.id);
+  }, [terminalTabs.length]);
+
+  useEffect(() => {
+    if (!terminalTabs.length) {
+      return;
+    }
+    if (terminalTabs.some((tab) => tab.id === activeTerminalTabId)) {
+      return;
+    }
+    setActiveTerminalTabId(terminalTabs[0].id);
+  }, [activeTerminalTabId, terminalTabs]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeSessiondEvents((event: SessiondTerminalEvent) => {
+      if (event.type === 'terminal.output') {
+        setTerminalTabs((current) =>
+          current.map((tab) =>
+            tab.runtimeTerminalId === event.data.terminalId
+              ? { ...tab, output: trimTerminalOutput(`${tab.output}${event.data.data}`) }
+              : tab,
+          ),
+        );
+        return;
+      }
+
+      if (event.type === 'terminal.exit') {
+        setTerminalTabs((current) =>
+          current.map((tab) =>
+            tab.runtimeTerminalId === event.data.terminalId
+              ? { ...tab, runtimeTerminalId: null, status: 'error', openError: `Exited (${event.data.exitCode})` }
+              : tab,
+          ),
+        );
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    for (const tab of terminalTabs) {
+      if (tab.status !== 'connecting' || tab.runtimeTerminalId || terminalOpeningRef.current.has(tab.id)) {
+        continue;
+      }
+
+      terminalOpeningRef.current.add(tab.id);
+      void openTerminal({
+        sessionId: activeSessionId || undefined,
+        cwd: tab.cwd,
+        shell: tab.shell,
+        cols: tab.cols,
+        rows: tab.rows,
+      })
+        .then((result: SessionTerminalOpen) => {
+          setTerminalTabs((current) =>
+            current.map((candidate) =>
+              candidate.id === tab.id
+                ? {
+                    ...candidate,
+                    runtimeTerminalId: result.terminalId,
+                    cwd: result.cwd,
+                    cols: result.cols,
+                    rows: result.rows,
+                    status: 'connected',
+                    openError: '',
+                  }
+                : candidate,
+            ),
+          );
+          setSessiondState('connected');
+        })
+        .catch((error) => {
+          setTerminalTabs((current) =>
+            current.map((candidate) =>
+              candidate.id === tab.id
+                ? {
+                    ...candidate,
+                    runtimeTerminalId: null,
+                    status: 'error',
+                    openError: error instanceof Error ? error.message : String(error),
+                  }
+                : candidate,
+            ),
+          );
+          setSessiondState('offline');
+          setSessiondMessage(error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {
+          terminalOpeningRef.current.delete(tab.id);
+        });
+    }
+  }, [activeSessionId, terminalTabs]);
+
   async function handleCreateSession() {
     try {
       setSessionActionBusy(true);
@@ -685,6 +1043,120 @@ export default function App() {
   }
 
   const activeSession = sessions.find((session) => session.id === activeSessionId) || null;
+
+  function handleAddTerminal() {
+    setTerminalTabs((current) => {
+      const nextTab = createTerminalTab(current.length + 1);
+      setActiveTerminalTabId(nextTab.id);
+      return [...current, nextTab];
+    });
+    setActiveBottomTab('Terminal');
+  }
+
+  async function handleCloseTerminalTab(tabId: string) {
+    const tab = terminalTabsRef.current.find((candidate) => candidate.id === tabId);
+    if (tab?.runtimeTerminalId) {
+      try {
+        await closeTerminal(tab.runtimeTerminalId);
+      } catch {
+        // Best effort close.
+      }
+    }
+
+    setTerminalTabs((current) => current.filter((candidate) => candidate.id !== tabId));
+    if (activeTerminalTabId === tabId) {
+      const remaining = terminalTabsRef.current.filter((candidate) => candidate.id !== tabId);
+      setActiveTerminalTabId(remaining[0]?.id || '');
+    }
+  }
+
+  async function handleChangeTerminalShell(tabId: string, shell: TerminalShell) {
+    const tab = terminalTabsRef.current.find((candidate) => candidate.id === tabId);
+    if (tab?.runtimeTerminalId) {
+      try {
+        await closeTerminal(tab.runtimeTerminalId);
+      } catch {
+        // Best effort close.
+      }
+    }
+
+    setTerminalTabs((current) =>
+      current.map((candidate) =>
+        candidate.id === tabId
+          ? {
+              ...candidate,
+              shell,
+              runtimeTerminalId: null,
+              status: 'connecting',
+              openError: '',
+              output: '',
+            }
+          : candidate,
+      ),
+    );
+  }
+
+  function handleClearTerminal(tabId: string) {
+    setTerminalTabs((current) =>
+      current.map((candidate) => (candidate.id === tabId ? { ...candidate, output: '' } : candidate)),
+    );
+  }
+
+  function handleTerminalInput(tabId: string, input: string) {
+    const tab = terminalTabsRef.current.find((candidate) => candidate.id === tabId);
+    if (!tab?.runtimeTerminalId) {
+      return;
+    }
+    void writeTerminalInput(tab.runtimeTerminalId, input).catch((error) => {
+      setTerminalTabs((current) =>
+        current.map((candidate) =>
+          candidate.id === tabId
+            ? {
+                ...candidate,
+                status: 'error',
+                openError: error instanceof Error ? error.message : String(error),
+              }
+            : candidate,
+        ),
+      );
+    });
+  }
+
+  function handleTerminalResize(tabId: string, cols: number, rows: number) {
+    const tab = terminalTabsRef.current.find((candidate) => candidate.id === tabId);
+    if (!tab?.runtimeTerminalId) {
+      return;
+    }
+    if (tab.cols === cols && tab.rows === rows) {
+      return;
+    }
+    void resizeTerminal(tab.runtimeTerminalId, cols, rows)
+      .then((result) => {
+        setTerminalTabs((current) =>
+          current.map((candidate) =>
+            candidate.id === tabId
+              ? { ...candidate, cols: result.cols, rows: result.rows }
+              : candidate,
+          ),
+        );
+      })
+      .catch(() => {});
+  }
+
+  const terminalDock = (
+    <TerminalDock
+      activeSession={activeSession}
+      activeTabId={activeTerminalTabId}
+      onActivateTab={setActiveTerminalTabId}
+      onAddTab={handleAddTerminal}
+      onChangeShell={handleChangeTerminalShell}
+      onClearTab={handleClearTerminal}
+      onCloseTab={handleCloseTerminalTab}
+      onTerminalInput={handleTerminalInput}
+      onTerminalResize={handleTerminalResize}
+      tabs={terminalTabs}
+    />
+  );
 
   return (
     <div className="shell-app">
@@ -918,7 +1390,7 @@ export default function App() {
             </TabButton>
           ))}
         </div>
-        {renderBottomPanel(activeBottomTab)}
+        {renderBottomPanel(activeBottomTab, terminalDock)}
       </section>
     </div>
   );

@@ -50,17 +50,17 @@ pre {
 
 .shell-app {
   min-height: 100vh;
-  padding: 8px;
+  padding: 6px;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chrome-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 34px;
-  padding: 0 12px;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: linear-gradient(180deg, #262d36 0%, #1f252d 100%);
@@ -68,7 +68,7 @@ pre {
 }
 
 .chrome-bar--tools {
-  min-height: 42px;
+  min-height: 34px;
   background: linear-gradient(180deg, #232a33 0%, #1d232b 100%);
 }
 
@@ -127,7 +127,7 @@ pre {
 }
 
 .menu-button {
-  min-height: 24px;
+  min-height: 20px;
   padding: 0 8px;
   border-color: transparent;
   background: transparent;
@@ -143,7 +143,7 @@ pre {
 .toolbar-chip {
   background: rgba(255, 255, 255, 0.03);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .toolbar-chip--accent {
@@ -186,7 +186,7 @@ pre {
 .dock-toolbar,
 .surface,
 .card {
-  padding: 10px;
+  padding: 8px;
 }
 
 .center-column {
@@ -205,15 +205,15 @@ pre {
 }
 
 .pane-header {
-  min-height: 26px;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
+  min-height: 22px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .surface-header {
-  margin-bottom: 10px;
-  padding-bottom: 10px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
@@ -274,7 +274,7 @@ pre {
 }
 
 .pill-button {
-  min-height: 30px;
+  min-height: 26px;
   background: #2a313a;
 }
 
@@ -651,6 +651,139 @@ pre {
 
 .bottom-pane {
   margin-top: 8px;
+}
+
+.terminal-dock {
+  display: grid;
+  gap: 8px;
+}
+
+.terminal-tabs,
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.terminal-tabs__strip,
+.terminal-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #252c35 0%, #20262f 100%);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.terminal-tab.is-active {
+  border-color: rgba(240, 163, 65, 0.48);
+  background: linear-gradient(180deg, #4a3520 0%, #392a1d 100%);
+}
+
+.terminal-tab__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.terminal-tab__dot--connected {
+  background: var(--success);
+}
+
+.terminal-tab__dot--connecting {
+  background: var(--accent);
+}
+
+.terminal-tab__dot--error {
+  background: var(--warning);
+}
+
+.terminal-tab__shell,
+.terminal-toolbar__meta,
+.terminal-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.terminal-tab__close {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.terminal-shell-select {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #1b2128;
+  color: var(--text);
+}
+
+.terminal-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.terminal-status--connected {
+  color: var(--success);
+}
+
+.terminal-status--connecting {
+  color: var(--accent);
+}
+
+.terminal-status--error {
+  color: #ffd1b2;
+}
+
+.terminal-error {
+  padding: 8px 10px;
+  border: 1px solid rgba(216, 138, 87, 0.45);
+  border-radius: 6px;
+  background: rgba(216, 138, 87, 0.12);
+  color: #ffd1b2;
+  font-size: 12px;
+}
+
+.terminal-viewport {
+  min-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #11161b;
+  overflow: hidden;
+  padding: 6px;
+}
+
+.terminal-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: #11161b;
 }
 
 .dock-output {

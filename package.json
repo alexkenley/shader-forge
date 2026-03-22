@@ -26,5 +26,8 @@
     "test:shell-smoke": "node scripts/test-engine-shell-smoke.mjs",
     "test:sessiond": "node scripts/test-engine-sessiond.mjs",
     "test:ollama-smoke": "node scripts/test-ollama-smoke.mjs"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
   }
 }
