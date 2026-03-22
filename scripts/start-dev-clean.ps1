@@ -2,7 +2,8 @@
 param(
     [switch]$SkipInstall,
     [switch]$SkipTests,
-    [switch]$SkipShell
+    [switch]$SkipShell,
+    [switch]$SkipSessiond
 )
 
 Set-StrictMode -Version Latest
@@ -60,6 +61,7 @@ $quotedTargets = ($cleanTargets | ForEach-Object { "'$_'" }) -join ' '
 $skipInstallFlag = if ($SkipInstall) { '1' } else { '0' }
 $skipTestsFlag = if ($SkipTests) { '1' } else { '0' }
 $skipShellFlag = if ($SkipShell) { '1' } else { '0' }
+$skipSessiondFlag = if ($SkipSessiond) { '1' } else { '0' }
 
 Write-Host "[shader-forge] Repo root: $repoRoot"
 Write-Host "[shader-forge] WSL root:  $repoRootWsl"
@@ -91,11 +93,33 @@ fi
 if [ '$skipTestsFlag' != '1' ]; then
   printf '[shader-forge] Running shell smoke harness...\n'
   npm test
+  printf '[shader-forge] Running sessiond smoke harness...\n'
+  npm run test:sessiond
+fi
+
+sessiond_pid=''
+
+cleanup() {
+  if [ -n "$sessiond_pid" ]; then
+    kill "$sessiond_pid" >/dev/null 2>&1 || true
+    wait "$sessiond_pid" >/dev/null 2>&1 || true
+  fi
+}
+
+trap cleanup EXIT INT TERM
+
+if [ '$skipSessiondFlag' != '1' ]; then
+  printf '[shader-forge] Starting engine_sessiond...\n'
+  npm run sessiond:start &
+  sessiond_pid=$!
 fi
 
 if [ '$skipShellFlag' != '1' ]; then
   printf '[shader-forge] Starting shell dev server...\n'
   npm run shell:dev
+elif [ -n "$sessiond_pid" ]; then
+  printf '[shader-forge] engine_sessiond is running in the foreground hold state.\n'
+  wait "$sessiond_pid"
 fi
 "@
 

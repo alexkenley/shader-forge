@@ -16,8 +16,9 @@ Current direction:
 Project status:
 
 - architecture, implementation plan, and system specs are in place
-- the shell scaffold and preserved code-editor search implementation are in the repo
-- harness testing scaffolding exists for shell smoke validation and local Ollama smoke checks
+- the React shell frame and preserved code-editor search implementation are in the repo
+- a minimal local `engine_sessiond` backend and `engine` CLI slice are implemented
+- harness testing scaffolding exists for shell smoke validation, session backend validation, and local Ollama smoke checks
 
 Key docs:
 
@@ -29,9 +30,19 @@ Key docs:
 Quick start:
 
 ```bash
+npm run sessiond:start
 npm run shell:serve
 npm test
+npm run test:sessiond
 ```
+
+Unix clean start:
+
+```bash
+./scripts/start-dev-clean.sh
+```
+
+This removes generated build outputs and caches, runs the shell and sessiond harnesses, starts `engine_sessiond`, and then launches the shell dev server.
 
 Windows clean start:
 
@@ -39,7 +50,7 @@ Windows clean start:
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1
 ```
 
-This removes generated build outputs and shell caches, runs the smoke harness, and then starts the React shell through WSL.
+This removes generated build outputs and shell caches, runs the shell and sessiond harnesses, starts `engine_sessiond`, and then starts the React shell through WSL.
 
 License:
 

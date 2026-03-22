@@ -87,6 +87,15 @@ Exit criteria:
 - shell talks to `engine_sessiond`
 - CLI works both from the terminal and through the shell
 
+Implemented first slice:
+
+- dependency-free local `engine_sessiond`
+- session create/list/get over HTTP
+- safe file list/read APIs
+- initial `engine` CLI wrappers for backend bring-up and inspection
+- deterministic `test-engine-sessiond.mjs` harness
+- Unix and Windows clean-start scripts for dev boot plus harness execution
+
 ## Phase 3: Native Runtime Bring-Up
 
 Goal:
@@ -282,7 +291,7 @@ Every major subsystem needs:
 
 Current build target:
 
-- clean React shell scaffold
-- subsystem specs
-- deterministic shell harness
+- Phase 2 backend and CLI slice
+- shell frame plus preserved workspace bridge
+- deterministic shell and sessiond harnesses
 - optional Ollama smoke harness

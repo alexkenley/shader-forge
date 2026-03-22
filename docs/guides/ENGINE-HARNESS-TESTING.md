@@ -17,6 +17,7 @@ Rules:
 | Script | Purpose | Lane |
 | --- | --- | --- |
 | `scripts/test-engine-shell-smoke.mjs` | Serves `shell/engine-shell/web`, validates the shell assets load, and verifies the preserved inline file search is still present in the code editor module and CSS | deterministic |
+| `scripts/test-engine-sessiond.mjs` | Starts the local backend in-process, creates a project session, and validates safe file list/read behavior over HTTP | deterministic |
 | `scripts/test-ollama-smoke.mjs` | Resolves a reachable Ollama endpoint, optionally autostarts local WSL Ollama, and performs a minimal OpenAI-compatible chat completion smoke test | real local-model |
 
 ## Current Commands
@@ -24,6 +25,7 @@ Rules:
 ```bash
 npm test
 node scripts/test-engine-shell-smoke.mjs
+node scripts/test-engine-sessiond.mjs
 HARNESS_OLLAMA_MODEL=<your-model> node scripts/test-ollama-smoke.mjs
 node scripts/test-ollama-smoke.mjs --list-candidates
 node scripts/serve-engine-shell.mjs
@@ -35,7 +37,13 @@ Windows clean-start path:
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1
 ```
 
-This script is the preferred Windows entrypoint while the team is developing through WSL2. It removes generated outputs, reruns the deterministic shell smoke harness, and then starts the shell dev server inside WSL.
+Unix/WSL clean-start path:
+
+```bash
+./scripts/start-dev-clean.sh
+```
+
+These scripts are the preferred dev entrypoints while the stack is still shell-first. They remove generated outputs, rerun the deterministic shell and sessiond harnesses, start `engine_sessiond`, and then start the shell dev server.
 
 ## WSL And Windows-Hosted Ollama
 
@@ -50,7 +58,6 @@ The primary development workflow is Windows + WSL2, so the harness rules assume 
 
 These should be added as implementation reaches the relevant phase:
 
-- `scripts/test-engine-sessiond.mjs`
 - `scripts/test-engine-cli.mjs`
 - `scripts/test-engine-runtime-smoke.mjs`
 - `scripts/test-engine-viewer-bridge.mjs`
