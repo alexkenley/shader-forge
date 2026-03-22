@@ -71,6 +71,16 @@ Bottom panel:
 - text and code as the source of truth
 - `Scene` workflows should edit persistent text-backed scene and prefab assets rather than opaque editor state
 
+## Implemented Shell Bridge
+
+Current implemented bridge surfaces:
+
+- `engine_sessiond` health status in the shell header
+- session create/list state in the `Sessions` rail
+- file list/read preview in the `Explorer` rail
+
+The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.
+
 ## Preservation Rule
 
 The preserved code-editor implementation under `shell/engine-shell/web/` is the compatibility baseline.

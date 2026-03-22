@@ -16,7 +16,7 @@ Current direction:
 Project status:
 
 - architecture, implementation plan, and system specs are in place
-- the React shell frame and preserved code-editor search implementation are in the repo
+- the React shell frame, preserved code-editor search implementation, and initial shell-to-sessiond bridge are in the repo
 - a minimal local `engine_sessiond` backend and `engine` CLI slice are implemented
 - harness testing scaffolding exists for shell smoke validation, session backend validation, and local Ollama smoke checks
 

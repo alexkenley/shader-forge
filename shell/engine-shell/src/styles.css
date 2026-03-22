@@ -193,6 +193,10 @@ pre {
   margin-bottom: 14px;
 }
 
+.pane-header--compact {
+  margin-bottom: 8px;
+}
+
 .pane-caption,
 .surface-header p,
 .surface-link,
@@ -247,6 +251,117 @@ pre {
 
 .rail-card {
   margin-top: 14px;
+}
+
+.sessiond-copy {
+  margin: 0 0 12px;
+}
+
+.session-list {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-list-empty {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px dashed rgba(113, 148, 191, 0.24);
+  color: var(--muted);
+}
+
+.session-button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(113, 148, 191, 0.24);
+  border-radius: 16px;
+  background: rgba(12, 24, 40, 0.9);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-button span,
+.session-button em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.session-button.is-active {
+  border-color: rgba(83, 224, 213, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(83, 224, 213, 0.18);
+}
+
+.selected-session-card {
+  margin-bottom: 14px;
+}
+
+.explorer-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.explorer-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(113, 148, 191, 0.18);
+  border-radius: 14px;
+  background: rgba(12, 24, 40, 0.86);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.explorer-entry:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.explorer-entry span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.explorer-entry.is-active {
+  border-color: rgba(155, 210, 90, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(155, 210, 90, 0.18);
+}
+
+.file-preview {
+  margin-top: 12px;
+  border: 1px solid rgba(113, 148, 191, 0.18);
+  border-radius: 14px;
+  background: rgba(8, 16, 27, 0.95);
+  overflow: hidden;
+}
+
+.file-preview__path {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(113, 148, 191, 0.18);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.file-preview pre {
+  margin: 0;
+  max-height: 240px;
+  padding: 12px;
+  overflow: auto;
+  color: #b9f7d5;
 }
 
 .card p,

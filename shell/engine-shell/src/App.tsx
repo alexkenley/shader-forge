@@ -1,4 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import {
+  createSession,
+  fetchSessiondHealth,
+  getSessiondBaseUrl,
+  listFiles,
+  listSessions,
+  readFile,
+  type SessionFileEntry,
+  type EngineSession,
+} from './lib/sessiond';
 
 const leftTabs = ['Sessions', 'Explorer', 'Source Control', 'World', 'Search'] as const;
 const centerTabs = ['Code', 'Game', 'Scene', 'Preview'] as const;
@@ -45,6 +55,24 @@ function ShellStatusStrip() {
       <span className="status-chip">TOML + FlatBuffers + SQLite</span>
     </div>
   );
+}
+
+function formatSessionTimestamp(value: string) {
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
+  }
+  return timestamp.toLocaleString();
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
 }
 
 function renderRightPanel(activeTab: RightTab) {
@@ -392,6 +420,136 @@ export default function App() {
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('Details');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('Code + Game');
+  const [sessiondState, setSessiondState] = useState<'connecting' | 'connected' | 'offline'>('connecting');
+  const [sessiondMessage, setSessiondMessage] = useState('Checking engine_sessiond...');
+  const [sessions, setSessions] = useState<EngineSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState('');
+  const [sessionActionBusy, setSessionActionBusy] = useState(false);
+  const [explorerEntries, setExplorerEntries] = useState<SessionFileEntry[]>([]);
+  const [selectedExplorerPath, setSelectedExplorerPath] = useState('');
+  const [selectedFilePreview, setSelectedFilePreview] = useState('');
+  const [explorerBusy, setExplorerBusy] = useState(false);
+
+  async function refreshSessions() {
+    const nextSessions = await listSessions();
+    setSessions(nextSessions);
+    if (nextSessions.length && !nextSessions.some((session) => session.id === activeSessionId)) {
+      setActiveSessionId(nextSessions[0].id);
+    }
+    return nextSessions;
+  }
+
+  async function refreshExplorer(sessionId: string) {
+    if (!sessionId) {
+      setExplorerEntries([]);
+      setSelectedExplorerPath('');
+      setSelectedFilePreview('');
+      return;
+    }
+
+    const listing = await listFiles(sessionId);
+    setExplorerEntries(listing.entries);
+    const firstFile = listing.entries.find((entry) => entry.kind === 'file');
+    if (firstFile) {
+      setSelectedExplorerPath(firstFile.path);
+      const preview = await readFile(sessionId, firstFile.path);
+      setSelectedFilePreview(preview.content.slice(0, 1200));
+    } else {
+      setSelectedExplorerPath('');
+      setSelectedFilePreview('');
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBackendState() {
+      try {
+        const health = await fetchSessiondHealth();
+        if (cancelled) {
+          return;
+        }
+        setSessiondState('connected');
+        setSessiondMessage(`${health.service} online at ${getSessiondBaseUrl()}`);
+        const nextSessions = await listSessions();
+        if (cancelled) {
+          return;
+        }
+        setSessions(nextSessions);
+        if (nextSessions.length) {
+          const nextActiveSessionId = nextSessions[0].id;
+          setActiveSessionId((current) => current || nextActiveSessionId);
+          await refreshExplorer(nextActiveSessionId);
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setSessiondState('offline');
+        setSessiondMessage(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    loadBackendState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleCreateSession() {
+    try {
+      setSessionActionBusy(true);
+      const session = await createSession();
+      setSessiondState('connected');
+      setSessiondMessage(`Created session ${session.name}`);
+      const nextSessions = await refreshSessions();
+      setActiveSessionId(session.id);
+      await refreshExplorer(session.id);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionActionBusy(false);
+    }
+  }
+
+  async function handleRefreshSessions() {
+    try {
+      setSessionActionBusy(true);
+      const nextSessions = await refreshSessions();
+      setSessiondState('connected');
+      setSessiondMessage(`Synced sessions from ${getSessiondBaseUrl()}`);
+      const explorerSessionId = activeSessionId || nextSessions[0]?.id || '';
+      if (explorerSessionId) {
+        await refreshExplorer(explorerSessionId);
+      }
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionActionBusy(false);
+    }
+  }
+
+  async function handleExplorerEntryClick(entry: SessionFileEntry) {
+    if (!activeSessionId || entry.kind !== 'file') {
+      return;
+    }
+
+    try {
+      setExplorerBusy(true);
+      const preview = await readFile(activeSessionId, entry.path);
+      setSelectedExplorerPath(entry.path);
+      setSelectedFilePreview(preview.content.slice(0, 1200));
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExplorerBusy(false);
+    }
+  }
+
+  const activeSession = sessions.find((session) => session.id === activeSessionId) || null;
 
   return (
     <div className="shell-app">
@@ -412,9 +570,9 @@ export default function App() {
             <small>Windows native runtime window</small>
           </div>
           <div className="status-panel">
-            <span className="status-dot status-dot--idle" />
-            <strong>Viewer bridge pending</strong>
-            <small>Native runtime first</small>
+            <span className={`status-dot${sessiondState === 'offline' ? ' status-dot--idle' : ''}`} />
+            <strong>{sessiondState === 'connected' ? 'engine_sessiond online' : 'engine_sessiond pending'}</strong>
+            <small>{sessiondMessage}</small>
           </div>
         </div>
       </header>
@@ -435,19 +593,92 @@ export default function App() {
             ))}
           </div>
           <section className="card compact-card rail-card">
+            <div className="pane-header pane-header--compact">
+              <h3>Sessiond Bridge</h3>
+              <span className="pane-caption">{sessiondState}</span>
+            </div>
+            <p className="sessiond-copy">
+              Base URL: <code>{getSessiondBaseUrl()}</code>
+            </p>
+            <div className="inline-actions">
+              <button className="ghost-button" disabled={sessionActionBusy} onClick={handleCreateSession} type="button">
+                {sessionActionBusy ? 'Working...' : 'Create session'}
+              </button>
+              <button className="ghost-button" disabled={sessionActionBusy} onClick={handleRefreshSessions} type="button">
+                Refresh
+              </button>
+            </div>
+            <ul className="session-list">
+              {sessions.length ? (
+                sessions.map((session) => (
+                  <li key={session.id}>
+                    <button
+                      className={`session-button${activeSessionId === session.id ? ' is-active' : ''}`}
+                      onClick={() => setActiveSessionId(session.id)}
+                      type="button"
+                    >
+                      <strong>{session.name}</strong>
+                      <span>{session.rootPath}</span>
+                      <em>{formatSessionTimestamp(session.createdAt)}</em>
+                    </button>
+                  </li>
+                ))
+              ) : (
+                <li className="session-list-empty">
+                  {sessiondState === 'offline'
+                    ? 'Start engine_sessiond to populate shell sessions.'
+                    : 'No sessions yet. Create one from the shell.'}
+                </li>
+              )}
+            </ul>
+          </section>
+          <section className="card compact-card rail-card">
             <h3>{activeLeftTab}</h3>
             <p>
               {activeLeftTab === 'Sessions'
                 ? 'Project sessions, WSL terminals, and future engine_sessiond ownership live here.'
                 : activeLeftTab === 'Explorer'
                   ? 'Repo navigation stays text-first so AI and humans are editing the same sources.'
-                  : activeLeftTab === 'Source Control'
-                    ? 'Git status, diffs, and migration reports remain visible inside the shell.'
+                    : activeLeftTab === 'Source Control'
+                      ? 'Git status, diffs, and migration reports remain visible inside the shell.'
                     : activeLeftTab === 'World'
                       ? 'Outliner and scene hierarchy will graduate here as level authoring lands.'
                       : 'Search spans repo, assets, logs, and later scene data in one shell surface.'}
             </p>
           </section>
+          {activeLeftTab === 'Explorer' ? (
+            <section className="card compact-card rail-card">
+              <div className="pane-header pane-header--compact">
+                <h3>Root Explorer</h3>
+                <span className="pane-caption">{activeSession ? activeSession.name : 'no session'}</span>
+              </div>
+              <ul className="explorer-list">
+                {explorerEntries.length ? (
+                  explorerEntries.map((entry) => (
+                    <li key={entry.path}>
+                      <button
+                        className={`explorer-entry${selectedExplorerPath === entry.path ? ' is-active' : ''}`}
+                        disabled={entry.kind === 'directory' || explorerBusy}
+                        onClick={() => handleExplorerEntryClick(entry)}
+                        type="button"
+                      >
+                        <strong>{entry.name}</strong>
+                        <span>{entry.kind === 'directory' ? 'directory' : formatFileSize(entry.size)}</span>
+                      </button>
+                    </li>
+                  ))
+                ) : (
+                  <li className="session-list-empty">No file data yet. Start sessiond and create a session.</li>
+                )}
+              </ul>
+              {selectedExplorerPath ? (
+                <div className="file-preview">
+                  <div className="file-preview__path">{selectedExplorerPath}</div>
+                  <pre>{selectedFilePreview || '[empty file]'}</pre>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </aside>
 
         <section className="center-column">
@@ -483,6 +714,25 @@ export default function App() {
               </TabButton>
             ))}
           </div>
+          {activeSession ? (
+            <section className="card compact-card selected-session-card">
+              <h3>Active Session</h3>
+              <dl className="fact-list">
+                <div>
+                  <dt>Name</dt>
+                  <dd>{activeSession.name}</dd>
+                </div>
+                <div>
+                  <dt>Root</dt>
+                  <dd>{activeSession.rootPath}</dd>
+                </div>
+                <div>
+                  <dt>Created</dt>
+                  <dd>{formatSessionTimestamp(activeSession.createdAt)}</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
           {renderRightPanel(activeRightTab)}
         </aside>
       </main>

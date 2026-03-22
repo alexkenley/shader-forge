@@ -67,21 +67,21 @@ Write-Host "[shader-forge] Repo root: $repoRoot"
 Write-Host "[shader-forge] WSL root:  $repoRootWsl"
 Write-Host "[shader-forge] Cleaning generated outputs before startup..."
 
-$bashScript = @"
+$bashScript = @'
 set -euo pipefail
 
-cd '$repoRootWsl'
+cd '__REPO_ROOT_WSL__'
 
-targets=($quotedTargets)
-for target in "`${targets[@]}"; do
-  if [ -e "`$target" ]; then
-    rm -rf "`$target"
-    printf '[shader-forge] Removed %s\n' "`$target"
+targets=(__QUOTED_TARGETS__)
+for target in "${targets[@]}"; do
+  if [ -e "$target" ]; then
+    rm -rf "$target"
+    printf '[shader-forge] Removed %s\n' "$target"
   fi
 done
 
 if [ ! -d 'shell/engine-shell/node_modules' ]; then
-  if [ '$skipInstallFlag' = '1' ]; then
+  if [ '__SKIP_INSTALL__' = '1' ]; then
     printf '[shader-forge] shell/engine-shell/node_modules is missing and -SkipInstall was set.\n' >&2
     exit 1
   fi
@@ -90,7 +90,7 @@ if [ ! -d 'shell/engine-shell/node_modules' ]; then
   npm install --prefix shell/engine-shell
 fi
 
-if [ '$skipTestsFlag' != '1' ]; then
+if [ '__SKIP_TESTS__' != '1' ]; then
   printf '[shader-forge] Running shell smoke harness...\n'
   npm test
   printf '[shader-forge] Running sessiond smoke harness...\n'
@@ -108,19 +108,26 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-if [ '$skipSessiondFlag' != '1' ]; then
+if [ '__SKIP_SESSIOND__' != '1' ]; then
   printf '[shader-forge] Starting engine_sessiond...\n'
   npm run sessiond:start &
   sessiond_pid=$!
 fi
 
-if [ '$skipShellFlag' != '1' ]; then
+if [ '__SKIP_SHELL__' != '1' ]; then
   printf '[shader-forge] Starting shell dev server...\n'
   npm run shell:dev
 elif [ -n "$sessiond_pid" ]; then
   printf '[shader-forge] engine_sessiond is running in the foreground hold state.\n'
   wait "$sessiond_pid"
 fi
-"@
+'@
+
+$bashScript = $bashScript.Replace('__REPO_ROOT_WSL__', $repoRootWsl)
+$bashScript = $bashScript.Replace('__QUOTED_TARGETS__', $quotedTargets)
+$bashScript = $bashScript.Replace('__SKIP_INSTALL__', $skipInstallFlag)
+$bashScript = $bashScript.Replace('__SKIP_TESTS__', $skipTestsFlag)
+$bashScript = $bashScript.Replace('__SKIP_SHELL__', $skipShellFlag)
+$bashScript = $bashScript.Replace('__SKIP_SESSIOND__', $skipSessiondFlag)
 
 Invoke-WslBash -Script $bashScript

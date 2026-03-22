@@ -39,12 +39,20 @@ try {
   assert.match(shellApp, /Code Focus/);
   assert.match(shellApp, /Code \+ Game/);
   assert.match(shellApp, /Triptych/);
+  assert.match(shellApp, /engine_sessiond online/);
+  assert.match(shellApp, /Create session/);
+  assert.match(shellApp, /Sessiond Bridge/);
+  assert.match(shellApp, /Root Explorer/);
+  assert.match(shellApp, /readFile/);
+  assert.match(shellApp, /listFiles/);
 
   console.log('Engine shell smoke passed.');
   console.log(`- Served shell from ${server.rootDir}`);
   console.log('- Verified index, style sheet, and preserved code workspace module');
   console.log('- Verified inline editor search UI and Monaco match-finding hooks are present');
   console.log('- Verified the React/Vite shell frame bridges to the preserved editor assets');
+  console.log('- Verified the React shell references the session backend bridge contract');
+  console.log('- Verified the Explorer tab references backend file list/read flows');
 } finally {
   await server.close();
 }
