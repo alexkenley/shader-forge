@@ -1,13 +1,17 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Shader Forge is split between engine architecture docs and implementation scaffolding. `shell/engine-shell/` contains the browser-based developer shell. `docs/specs/` is the source of truth for subsystem design. `docs/guides/` holds operational runbooks such as harness testing. `plans/` holds phased execution plans. `scripts/` contains local dev servers and verification harnesses. Future runtime, tooling, and sample-game code should land under dedicated top-level folders such as `engine/`, `tools/`, and `games/`.
+Shader Forge is split between engine architecture docs and implementation scaffolding. `shell/engine-shell/` contains the browser-based developer shell. The new shell framework lives in `shell/engine-shell/src/`, while the preserved editor compatibility baseline remains under `shell/engine-shell/web/`. `docs/specs/` is the source of truth for subsystem design. `docs/guides/` holds operational runbooks such as harness testing. `plans/` holds phased execution plans. `scripts/` contains local dev servers and verification harnesses. Future runtime, tooling, and sample-game code should land under dedicated top-level folders such as `engine/`, `tools/`, and `games/`.
 
 ## Build, Test, and Development Commands
 - `npm run shell:serve`: serve the current shell scaffold from `shell/engine-shell/web/`.
+- `npm run shell:dev`: run the React/Vite shell package once dependencies are installed in `shell/engine-shell/`.
+- `npm run shell:build`: build the React/Vite shell package once dependencies are installed.
+- `npm run shell:typecheck`: type check the React/Vite shell package once dependencies are installed.
 - `npm test`: run the deterministic shell smoke harness.
 - `npm run test:shell-smoke`: explicit alias for the shell smoke harness.
 - `npm run test:ollama-smoke`: probe a local Ollama endpoint and run a minimal chat-completion smoke test.
+- `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1`: Windows clean-start path that removes generated outputs, runs the shell smoke harness, and starts the WSL-backed dev shell.
 
 ## Coding Style & Naming Conventions
 Prefer small, explicit modules and straightforward edits. Avoid broad rewrites unless they materially simplify the architecture. Default to ASCII. Use stable descriptive names such as `engine-session-record`, `test-engine-shell-smoke`, or `runtime-control-panel`. For docs, keep language concrete and implementation-oriented.
@@ -20,4 +24,3 @@ When you change a major subsystem, update the matching spec in `docs/specs/` in 
 
 ## Commit & Review Guidelines
 Keep commits scoped and explain what you verified. Call out changes that affect shell UX, runtime control, AI integration, or harness infrastructure. Prefer incremental follow-up patches over broad refactors that obscure what changed.
-

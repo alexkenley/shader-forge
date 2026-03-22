@@ -13,3 +13,6 @@
 - timing and input
 - logging
 
+## Future AI Runtime Boundary
+
+`engine_runtime` should consume AI outputs through validated asynchronous gameplay interfaces rather than direct arbitrary model control over frame-critical systems.

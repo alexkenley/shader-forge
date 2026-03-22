@@ -1,6 +1,9 @@
 node_modules/
 coverage/
 dist/
+build/
+out/
+.cache/
 tmp/
 .harness/
 playwright-report/
@@ -9,4 +12,3 @@ test-results/
 *.tmp
 *.tsbuildinfo
 .DS_Store
-

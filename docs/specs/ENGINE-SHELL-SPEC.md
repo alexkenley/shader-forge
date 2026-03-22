@@ -15,9 +15,18 @@ It is responsible for:
 - terminal access
 - runtime launch and control
 - asset/details/inspector surfaces
+- persistent scene authoring surfaces
 - viewer tabs for code and runtime-facing workflows
 
 It is not the engine runtime.
+
+## Framework Decision
+
+The shell framework target is:
+
+- React
+- TypeScript
+- Vite
 
 ## Primary Layout
 
@@ -57,8 +66,22 @@ Bottom panel:
 - browser shell in v1
 - native runtime window outside the browser
 - terminal-first workflow
+- Windows clean-start path through a PowerShell launcher that delegates into WSL
 - backend-owned sessions once `engine_sessiond` exists
 - text and code as the source of truth
+- `Scene` workflows should edit persistent text-backed scene and prefab assets rather than opaque editor state
+
+## Preservation Rule
+
+The preserved code-editor implementation under `shell/engine-shell/web/` is the compatibility baseline.
+
+Phase 1 should:
+
+- keep the preserved Monaco/editor behavior intact
+- keep the inline file-search behavior intact
+- build the new shell frame around it
+
+Phase 1 should not start by rewriting the editor internals.
 
 ## Phase 1 Requirement
 
@@ -83,3 +106,4 @@ The shell should eventually talk to:
 - `engine_runtime` through structured runtime control and viewer protocols
 - `engine_cli` through normal shell terminals and explicit command surfaces
 
+The shell should not be reused as the native tooling UI layer or the shipped in-game UI framework.

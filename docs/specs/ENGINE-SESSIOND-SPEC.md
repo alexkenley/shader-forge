@@ -13,3 +13,10 @@
 - runtime start/stop/restart
 - log streaming
 
+## Future AI APIs
+
+- provider status and health checks
+- AI request submit/cancel
+- AI request/event stream
+- local-model endpoint health probes
+- optional secure local key-management hooks

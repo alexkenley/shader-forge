@@ -5,7 +5,11 @@ Shader Forge is a code-first, AI-native game engine project focused on building 
 Current direction:
 
 - native C++ runtime with a Vulkan-first renderer
-- browser-based developer shell for editing, runtime control, and inspection
+- browser-based developer shell using React + TypeScript + Vite
+- native tooling UI using Dear ImGui
+- shipped game UI using RmlUi
+- visual effects direction using Effekseer plus engine-owned simple effect descriptors
+- data direction using TOML source, FlatBuffers cooked data, and SQLite tooling databases
 - terminal-first workflow with WSL2 on Windows and native Linux support
 - text-first assets, procedural geometry, and assistant-friendly development surfaces
 
@@ -29,7 +33,14 @@ npm run shell:serve
 npm test
 ```
 
+Windows clean start:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1
+```
+
+This removes generated build outputs and shell caches, runs the smoke harness, and then starts the React shell through WSL.
+
 License:
 
 MIT. See [LICENSE](LICENSE).
-

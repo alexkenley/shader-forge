@@ -16,6 +16,9 @@
   },
   "scripts": {
     "shell:serve": "node scripts/serve-engine-shell.mjs",
+    "shell:dev": "npm --prefix shell/engine-shell run dev",
+    "shell:build": "npm --prefix shell/engine-shell run build",
+    "shell:typecheck": "npm --prefix shell/engine-shell run typecheck",
     "test": "node scripts/test-engine-shell-smoke.mjs",
     "test:harness": "node scripts/test-engine-shell-smoke.mjs",
     "test:shell-smoke": "node scripts/test-engine-shell-smoke.mjs",

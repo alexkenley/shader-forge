@@ -29,6 +29,14 @@ node scripts/test-ollama-smoke.mjs --list-candidates
 node scripts/serve-engine-shell.mjs
 ```
 
+Windows clean-start path:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1
+```
+
+This script is the preferred Windows entrypoint while the team is developing through WSL2. It removes generated outputs, reruns the deterministic shell smoke harness, and then starts the shell dev server inside WSL.
+
 ## WSL And Windows-Hosted Ollama
 
 The primary development workflow is Windows + WSL2, so the harness rules assume that local model hosting may be split across environments.
@@ -47,5 +55,6 @@ These should be added as implementation reaches the relevant phase:
 - `scripts/test-engine-runtime-smoke.mjs`
 - `scripts/test-engine-viewer-bridge.mjs`
 - `scripts/test-engine-shell-ui.mjs`
+- `scripts/test-engine-migration-fixtures.mjs`
+- `scripts/test-engine-ai-service.mjs`
 - `scripts/test-engine-ai-bridge.mjs`
-
