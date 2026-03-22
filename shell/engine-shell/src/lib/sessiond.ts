@@ -5,6 +5,14 @@ export type SessiondHealth = {
   capabilities: string[];
 };
 
+export type PlatformInfo = {
+  platform: string;
+  isWSL: boolean;
+  homePath: string;
+  defaultBrowsePath: string;
+  windowsMounts: string[];
+};
+
 export type EngineSession = {
   id: string;
   name: string;
@@ -171,6 +179,10 @@ async function requestJson<T>(pathname: string, options: RequestInit = {}) {
 
 export async function fetchSessiondHealth() {
   return requestJson<SessiondHealth>('/health');
+}
+
+export async function fetchPlatformInfo() {
+  return requestJson<PlatformInfo>('/api/platform');
 }
 
 export async function listSessions() {

@@ -7,6 +7,7 @@ import {
   deleteSession,
   fetchBuildStatus,
   fetchGitStatus,
+  fetchPlatformInfo,
   fetchSessiondHealth,
   fetchRuntimeStatus,
   getSessiondBaseUrl,
@@ -25,6 +26,7 @@ import {
   subscribeSessiondEvents,
   updateSession,
   type BuildStatus,
+  type PlatformInfo,
   type SessionFileEntry,
   type SessionTerminalOpen,
   type SessiondTerminalEvent,
@@ -36,26 +38,18 @@ import {
 } from './lib/sessiond';
 
 const leftTabs = ['Sessions', 'Explorer', 'Source Control'] as const;
-const utilityTabs = ['World', 'Search'] as const;
 const centerTabs = ['Code', 'Game', 'Scene', 'Preview'] as const;
-const rightTabs = ['Details', 'Assets', 'Inspector', 'Build', 'Run', 'Profiler'] as const;
-const bottomTabs = ['Terminal', 'Logs', 'Output', 'Console'] as const;
+const rightTabs = ['Details', 'Build', 'Run'] as const;
+const bottomTabs = ['Terminal', 'Logs', 'Output'] as const;
 const layoutModes = ['Code Focus', 'Code + Game', 'Triptych'] as const;
 const menuItems = ['File', 'Edit', 'View', 'Build', 'Tools', 'Window', 'Help'] as const;
 const viewportModes = ['Perspective', 'Lit', 'Realtime'] as const;
 const transformModes = ['Select', 'Move', 'Rotate', 'Scale'] as const;
-const terminalShells = ['bash', 'zsh', 'sh'] as const;
+const unixShells = ['bash', 'zsh', 'sh'] as const;
+const windowsShells = ['powershell.exe', 'cmd.exe'] as const;
+const terminalShells = [...unixShells, ...windowsShells] as const;
 const buildConfigs = ['Debug', 'Release'] as const;
 const legacyWorkspaceSrc = 'web/index.html#/code';
-const leftTabMeta: Record<LeftTab, { icon: string; label: string }> = {
-  Sessions: { icon: 'SE', label: 'Sessions' },
-  Explorer: { icon: 'EX', label: 'Explorer' },
-  'Source Control': { icon: 'SC', label: 'Source Control' },
-};
-const utilityTabMeta: Record<(typeof utilityTabs)[number], { icon: string; label: string }> = {
-  World: { icon: 'WO', label: 'World' },
-  Search: { icon: 'SR', label: 'Search' },
-};
 const stoppedRuntimeStatus: RuntimeStatus = {
   state: 'stopped',
   scene: null,
@@ -84,7 +78,6 @@ const emptyGitStatus: GitStatus = {
 };
 
 type LeftTab = (typeof leftTabs)[number];
-type UtilityTab = (typeof utilityTabs)[number];
 type CenterTab = (typeof centerTabs)[number];
 type RightTab = (typeof rightTabs)[number];
 type BottomTab = (typeof bottomTabs)[number];
@@ -109,6 +102,7 @@ type TerminalDockProps = {
   tabs: TerminalTabState[];
   activeTabId: string;
   activeSession: EngineSession | null;
+  availableShells: TerminalShell[];
   onActivateTab: (tabId: string) => void;
   onAddTab: () => void;
   onCloseTab: (tabId: string) => void;
@@ -274,11 +268,11 @@ async function forwardTerminalInsertedText(
   writeInput(text);
 }
 
-function createTerminalTab(index: number): TerminalTabState {
+function createTerminalTab(index: number, defaultShell: TerminalShell = 'bash'): TerminalTabState {
   return {
     id: crypto.randomUUID(),
     title: `Terminal ${index}`,
-    shell: 'bash',
+    shell: defaultShell,
     cwd: '.',
     runtimeTerminalId: null,
     status: 'connecting',
@@ -403,49 +397,13 @@ function renderRightPanel(
     );
   }
 
-  if (activeTab === 'Assets') {
-    return (
-      <div className="stack">
-        <section className="card compact-card">
-          <h3>Import Queue</h3>
-          <ul className="detail-list">
-            <li>`robot.glb` ready for cook</li>
-            <li>`castle.scene.toml` validated</li>
-            <li>`fx_sparks.efk` waiting for runtime binding</li>
-          </ul>
-        </section>
-        <section className="card compact-card">
-          <h3>Migration Watch</h3>
-          <ul className="detail-list">
-            <li>Unity scene fixtures planned</li>
-            <li>Unreal exporter manifest lane planned</li>
-            <li>Godot text scene lane planned</li>
-          </ul>
-        </section>
-      </div>
-    );
-  }
-
-  if (activeTab === 'Inspector') {
-    return (
-      <section className="card compact-card">
-        <h3>Bridge Contract</h3>
-        <ul className="detail-list">
-          <li>The preserved code workspace stays under `web/`.</li>
-          <li>React owns the dock layout, runtime tabs, and future adapters.</li>
-          <li>Inline find beside `Inspect` remains a protected baseline behavior.</li>
-        </ul>
-      </section>
-    );
-  }
-
   if (activeTab === 'Build') {
     return (
       <div className="stack">
         <section className="card compact-card">
           <div className="section-titlebar">
-            <h3>Build Profiles</h3>
-            <span>{buildStatus.state}</span>
+            <h3>Build</h3>
+            <span className={`status-dot status-dot--${buildStatus.state === 'running' ? 'active' : buildStatus.state === 'failed' ? 'error' : 'idle'}`} />
           </div>
           <div className="form-grid">
             <label className="form-field">
@@ -463,25 +421,19 @@ function renderRightPanel(
               <input onChange={(event) => onBuildDirChange(event.target.value)} type="text" value={buildDir} />
             </label>
           </div>
-          <ul className="detail-list">
-            <li>`debug-shell` for UI iteration</li>
-            <li>`runtime-sandbox` for native Vulkan bring-up</li>
-            <li>`migration-fixtures` for cross-engine conversion tests</li>
-          </ul>
           <div className="inline-actions">
-            <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={onStartRuntimeBuild} type="button">
-              Build runtime
+            <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={onStartRuntimeBuild} type="button">
+              Build
             </button>
-            <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={onBuildAndPlay} type="button">
+            <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={onBuildAndPlay} type="button">
               Build + Play
             </button>
-            <button className="ghost-button" disabled={buildStatus.state !== 'running'} onClick={onStopBuild} type="button">
-              Stop build
+            <button className="ghost-button ghost-button--sm" disabled={buildStatus.state !== 'running'} onClick={onStopBuild} type="button">
+              Stop
             </button>
           </div>
         </section>
         <section className="card compact-card">
-          <h3>Build Status</h3>
           <dl className="fact-list">
             <div>
               <dt>State</dt>
@@ -492,21 +444,15 @@ function renderRightPanel(
               <dd>{buildStatus.target || 'runtime'}</dd>
             </div>
             <div>
-              <dt>Config</dt>
-              <dd>{buildStatus.config || buildConfig}</dd>
-            </div>
-            <div>
-              <dt>Build dir</dt>
-              <dd>{buildStatus.buildDir || buildDir}</dd>
-            </div>
-            <div>
               <dt>Command</dt>
               <dd>{buildStatus.command || 'waiting'}</dd>
             </div>
-            <div>
-              <dt>Launch queue</dt>
-              <dd>{pendingRunAfterBuild ? `armed for ${launchScene}` : 'idle'}</dd>
-            </div>
+            {pendingRunAfterBuild ? (
+              <div>
+                <dt>Queue</dt>
+                <dd>armed for {launchScene}</dd>
+              </div>
+            ) : null}
             {buildStatus.error ? (
               <div>
                 <dt>Error</dt>
@@ -519,66 +465,37 @@ function renderRightPanel(
     );
   }
 
-  if (activeTab === 'Run') {
-    return (
-      <div className="stack">
-        <section className="card compact-card">
-          <h3>Runtime Targets</h3>
-          <div className="form-grid">
-            <label className="form-field">
-              <span>Launch scene</span>
-              <input onChange={(event) => onLaunchSceneChange(event.target.value)} type="text" value={launchScene} />
-            </label>
-          </div>
-          <ul className="detail-list">
-            <li>Windows native runtime window first</li>
-            <li>WSL-backed shell and terminal workflow</li>
-            <li>Streamed `Game` tab later, not before the runtime is stable</li>
-          </ul>
-        </section>
-        <section className="card compact-card">
-          <h3>Runtime Status</h3>
-          <dl className="fact-list">
-            <div>
-              <dt>State</dt>
-              <dd>{runtimeStatus.state}</dd>
-            </div>
-            <div>
-              <dt>Scene</dt>
-              <dd>{runtimeStatus.scene || launchScene}</dd>
-            </div>
-            <div>
-              <dt>Process</dt>
-              <dd>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</dd>
-            </div>
-            <div>
-              <dt>Binary</dt>
-              <dd>{runtimeStatus.executablePath || 'build/runtime/bin/shader_forge_runtime'}</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
-    );
-  }
-
   return (
-    <section className="card compact-card">
-      <h3>Profiler</h3>
-      <dl className="fact-list">
-        <div>
-          <dt>Frame budget</dt>
-          <dd>16.6 ms target</dd>
+    <div className="stack">
+      <section className="card compact-card">
+        <div className="section-titlebar">
+          <h3>Runtime</h3>
+          <span className={`status-dot status-dot--${runtimeStatus.state === 'running' ? 'active' : 'idle'}`} />
         </div>
-        <div>
-          <dt>Shell budget</dt>
-          <dd>layout + bridge only</dd>
+        <div className="form-grid">
+          <label className="form-field">
+            <span>Launch scene</span>
+            <input onChange={(event) => onLaunchSceneChange(event.target.value)} type="text" value={launchScene} />
+          </label>
         </div>
-        <div>
-          <dt>Next step</dt>
-          <dd>runtime telemetry adapter</dd>
-        </div>
-      </dl>
-    </section>
+      </section>
+      <section className="card compact-card">
+        <dl className="fact-list">
+          <div>
+            <dt>State</dt>
+            <dd>{runtimeStatus.state}</dd>
+          </div>
+          <div>
+            <dt>Scene</dt>
+            <dd>{runtimeStatus.scene || launchScene}</dd>
+          </div>
+          <div>
+            <dt>Process</dt>
+            <dd>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</dd>
+          </div>
+        </dl>
+      </section>
+    </div>
   );
 }
 
@@ -586,6 +503,7 @@ function TerminalDock({
   tabs,
   activeTabId,
   activeSession,
+  availableShells,
   onActivateTab,
   onAddTab,
   onCloseTab,
@@ -841,7 +759,7 @@ function TerminalDock({
             onChange={(event) => onChangeShell(activeTab.id, event.target.value as TerminalShell)}
             value={activeTab.shell}
           >
-            {terminalShells.map((shell) => (
+            {availableShells.map((shell) => (
               <option key={shell} value={shell}>
                 {shell}
               </option>
@@ -878,19 +796,8 @@ function renderBottomPanel(
     );
   }
 
-  if (activeTab === 'Output') {
-    return (
-      <pre className="dock-output">{buildLog}</pre>
-    );
-  }
-
   return (
-    <pre className="dock-output">help
-engine run sandbox
-engine bake proc gate_arch
-engine migrate detect {'<path>'}
-engine ai providers
-</pre>
+    <pre className="dock-output">{buildLog}</pre>
   );
 }
 
@@ -1196,6 +1103,7 @@ export default function App() {
   const [showLegacyBridge, setShowLegacyBridge] = useState(false);
   const [sessiondState, setSessiondState] = useState<'connecting' | 'connected' | 'offline'>('connecting');
   const [sessiondMessage, setSessiondMessage] = useState('Checking engine_sessiond...');
+  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
   const [sessions, setSessions] = useState<EngineSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState('');
   const [sessionActionBusy, setSessionActionBusy] = useState(false);
@@ -1226,6 +1134,10 @@ export default function App() {
   const [pendingRunAfterBuild, setPendingRunAfterBuild] = useState(false);
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
+  const defaultShell: TerminalShell = platformInfo?.platform === 'win32' ? 'powershell.exe' : 'bash';
+  const availableShells: TerminalShell[] = platformInfo?.platform === 'win32'
+    ? [...windowsShells, ...unixShells]
+    : [...unixShells];
 
   async function refreshSessions() {
     const nextSessions = await listSessions();
@@ -1296,7 +1208,8 @@ export default function App() {
   }
 
   function openDirPicker(startPath: string) {
-    const nextPath = startPath.trim() || '/';
+    const fallback = platformInfo?.defaultBrowsePath || '/';
+    const nextPath = startPath.trim() || fallback;
     setDirPickerOpen(true);
     setDirPickerPath(nextPath);
     setDirPickerEntries([]);
@@ -1327,7 +1240,7 @@ export default function App() {
   function resetSessionForm() {
     setEditingSessionId('');
     setNewSessionName('');
-    setNewSessionRoot('');
+    setNewSessionRoot(platformInfo?.defaultBrowsePath || '');
     closeDirPicker();
   }
 
@@ -1341,7 +1254,15 @@ export default function App() {
           return;
         }
         setSessiondState('connected');
-        setSessiondMessage(`${health.service} online at ${getSessiondBaseUrl()}`);
+        setSessiondMessage(`${health.service} online`);
+        const nextPlatformInfo = await fetchPlatformInfo().catch(() => null);
+        if (!cancelled && nextPlatformInfo) {
+          setPlatformInfo(nextPlatformInfo);
+          if (nextPlatformInfo.defaultBrowsePath) {
+            setNewSessionRoot(nextPlatformInfo.defaultBrowsePath);
+            setDirPickerPath(nextPlatformInfo.defaultBrowsePath);
+          }
+        }
         const nextRuntimeStatus = await fetchRuntimeStatus().catch(() => stoppedRuntimeStatus);
         const nextBuildStatus = await fetchBuildStatus().catch(() => idleBuildStatus);
         if (!cancelled) {
@@ -1393,10 +1314,10 @@ export default function App() {
     if (terminalTabs.length) {
       return;
     }
-    const nextTab = createTerminalTab(1);
+    const nextTab = createTerminalTab(1, defaultShell);
     setTerminalTabs([nextTab]);
     setActiveTerminalTabId(nextTab.id);
-  }, [terminalTabs.length]);
+  }, [defaultShell, terminalTabs.length]);
 
   useEffect(() => {
     if (!terminalTabs.length) {
@@ -1732,7 +1653,7 @@ export default function App() {
 
   function handleAddTerminal() {
     setTerminalTabs((current) => {
-      const nextTab = createTerminalTab(current.length + 1);
+      const nextTab = createTerminalTab(current.length + 1, defaultShell);
       setActiveTerminalTabId(nextTab.id);
       return [...current, nextTab];
     });
@@ -1921,6 +1842,7 @@ export default function App() {
     <TerminalDock
       activeSession={activeSession}
       activeTabId={activeTerminalTabId}
+      availableShells={availableShells}
       onActivateTab={setActiveTerminalTabId}
       onAddTab={handleAddTerminal}
       onChangeShell={handleChangeTerminalShell}
@@ -1932,9 +1854,14 @@ export default function App() {
     />
   );
 
+  const defaultBrowsePath = platformInfo?.defaultBrowsePath || '/';
+  const workspaceRootPlaceholder = platformInfo?.isWSL
+    ? platformInfo.defaultBrowsePath || '/mnt/c/Users'
+    : '/home/user/projects/my-game';
+
   return (
     <div className="shell-app">
-      <div className="chrome-bar chrome-bar--menu">
+      <header className="chrome-bar chrome-bar--menu">
         <div className="menu-strip">
           {menuItems.map((item) => (
             <button className="menu-button" key={item} type="button">
@@ -1942,68 +1869,52 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="chrome-title">Shader Forge Editor</div>
+        <div className="chrome-title">Shader Forge</div>
+        <div className="toolbar-cluster toolbar-cluster--center">
+          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleStartRuntimeBuild} type="button">
+            Build
+          </button>
+          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleBuildAndPlay} type="button">
+            Build + Play
+          </button>
+          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleStartRuntime} type="button">
+            Play
+          </button>
+          <button className="ghost-button ghost-button--sm" disabled={runtimeStatus.state !== 'running' || buildStatus.state === 'running'} onClick={handleStopRuntime} type="button">
+            Stop
+          </button>
+        </div>
         <div className="chrome-strip-meta">
-          <span className="chrome-meta-chip">Open source</span>
-          <span className="chrome-meta-chip">Windows + WSL2</span>
+          <span className={`status-indicator${sessiondState === 'connected' ? ' status-indicator--ok' : sessiondState === 'offline' ? ' status-indicator--err' : ''}`} />
+          <span className="chrome-meta-chip">{buildConfig}</span>
+          {buildStatus.state === 'running' ? <span className="chrome-meta-chip chrome-meta-chip--accent">Building</span> : null}
+          {runtimeStatus.state === 'running' ? <span className="chrome-meta-chip chrome-meta-chip--accent">Running</span> : null}
         </div>
-      </div>
-      <div className="chrome-bar chrome-bar--tools">
-        <div className="toolbar-cluster">
-          <span className="toolbar-chip toolbar-chip--accent">Project: shader-forge</span>
-          <span className="toolbar-chip">Branch: main</span>
-          <span className="toolbar-chip">Target: {launchScene}</span>
-          <span className="toolbar-chip">Config: {buildConfig}</span>
-          <span className="toolbar-chip">Renderer: Vulkan-first</span>
-        </div>
-          <div className="toolbar-cluster toolbar-cluster--right">
-            <span className="toolbar-chip">WSL shell primary</span>
-            <span className={`toolbar-chip${sessiondState === 'offline' ? ' toolbar-chip--warning' : ''}`}>
-              {sessiondState === 'connected' ? 'engine_sessiond online' : 'engine_sessiond pending'}
-            </span>
-            <span className={`toolbar-chip${buildStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
-              Build: {buildStatus.state}
-            </span>
-            <span className={`toolbar-chip${runtimeStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
-              Runtime: {runtimeStatus.state}
-            </span>
-            <span className="toolbar-chip toolbar-chip--muted">{sessiondMessage}</span>
-          </div>
-        </div>
+      </header>
 
       <main className="shell-grid">
         <aside className="pane rail-pane">
-          <div className="pane-header">
-            <h2>Workspace</h2>
-            <span className="pane-caption">Sessions, files, source control</span>
-          </div>
-          <div className="rail-nav">
+          <nav className="rail-tabs">
             {leftTabs.map((tab) => (
               <button
-                className={`rail-nav__button${activeLeftTab === tab ? ' is-active' : ''}`}
+                className={`rail-tab${activeLeftTab === tab ? ' is-active' : ''}`}
                 key={tab}
                 onClick={() => setActiveLeftTab(tab)}
-                title={leftTabMeta[tab].label}
                 type="button"
               >
-                <span className="rail-nav__icon">{leftTabMeta[tab].icon}</span>
-                <span className="rail-nav__label">{leftTabMeta[tab].label}</span>
+                {tab}
               </button>
             ))}
-          </div>
+          </nav>
           {activeLeftTab === 'Sessions' ? (
-            <>
-              <section className="card compact-card rail-card">
-                <div className="pane-header pane-header--compact">
-                  <h3>{editingSessionId ? 'Edit Session' : 'Create Session'}</h3>
-                  <span className="pane-caption">{sessiondState}</span>
+            <div className="rail-content">
+              <section className="rail-section">
+                <div className="section-titlebar">
+                  <h3>{editingSessionId ? 'Edit Session' : 'New Session'}</h3>
                 </div>
-                <p className="sessiond-copy">
-                  Base URL: <code>{getSessiondBaseUrl()}</code>
-                </p>
                 <div className="form-grid">
                   <label className="form-field">
-                    <span>Session name</span>
+                    <span>Name</span>
                     <input
                       onChange={(event) => setNewSessionName(event.target.value)}
                       placeholder="my-game"
@@ -2016,16 +1927,16 @@ export default function App() {
                     <div className="form-field__row">
                       <input
                         onChange={(event) => setNewSessionRoot(event.target.value)}
-                        placeholder="/mnt/s/Development/Games/MyGame"
+                        placeholder={workspaceRootPlaceholder}
                         type="text"
                         value={newSessionRoot}
                       />
                       <button
-                        className="ghost-button"
-                        onClick={() => openDirPicker(newSessionRoot || activeSession?.rootPath || '/')}
+                        className="ghost-button ghost-button--sm"
+                        onClick={() => openDirPicker(newSessionRoot || activeSession?.rootPath || defaultBrowsePath)}
                         type="button"
                       >
-                        Browse
+                        ...
                       </button>
                     </div>
                   </label>
@@ -2033,6 +1944,20 @@ export default function App() {
                 {dirPickerOpen ? (
                   <div className="dir-picker">
                     <div className="dir-picker__path">{dirPickerPath}</div>
+                    {platformInfo?.isWSL && platformInfo.windowsMounts.length > 0 ? (
+                      <div className="dir-picker__drives">
+                        {platformInfo.windowsMounts.map((mount) => (
+                          <button
+                            className={`dir-picker__drive${dirPickerPath.startsWith(mount) ? ' is-active' : ''}`}
+                            key={mount}
+                            onClick={() => void navigateDirPicker(mount)}
+                            type="button"
+                          >
+                            {mount.split('/').pop()?.toUpperCase()}:
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                     {dirPickerError ? <div className="terminal-error">{dirPickerError}</div> : null}
                     <div className="dir-picker__list">
                       {dirPickerPath !== '/' ? (
@@ -2045,7 +1970,7 @@ export default function App() {
                         </button>
                       ) : null}
                       {dirPickerBusy ? (
-                        <div className="session-list-empty">Loading directories...</div>
+                        <div className="empty-hint">Loading...</div>
                       ) : dirPickerEntries.filter((entry) => entry.kind === 'directory').length ? (
                         dirPickerEntries
                           .filter((entry) => entry.kind === 'directory')
@@ -2060,12 +1985,12 @@ export default function App() {
                             </button>
                           ))
                       ) : (
-                        <div className="session-list-empty">No subdirectories.</div>
+                        <div className="empty-hint">No subdirectories.</div>
                       )}
                     </div>
                     <div className="inline-actions">
                       <button
-                        className="ghost-button"
+                        className="ghost-button ghost-button--sm"
                         onClick={() => {
                           setNewSessionRoot(dirPickerPath);
                           closeDirPicker();
@@ -2074,7 +1999,7 @@ export default function App() {
                       >
                         Select
                       </button>
-                      <button className="ghost-button" onClick={closeDirPicker} type="button">
+                      <button className="ghost-button ghost-button--sm" onClick={closeDirPicker} type="button">
                         Cancel
                       </button>
                     </div>
@@ -2082,95 +2007,82 @@ export default function App() {
                 ) : null}
                 <div className="inline-actions">
                   <button
-                    className="ghost-button"
+                    className="ghost-button ghost-button--sm ghost-button--primary"
                     disabled={sessionActionBusy}
                     onClick={editingSessionId ? handleSaveSession : handleCreateSession}
                     type="button"
                   >
-                    {sessionActionBusy ? 'Working...' : editingSessionId ? 'Save session' : 'Create session'}
+                    {sessionActionBusy ? 'Working...' : editingSessionId ? 'Save' : 'Create'}
                   </button>
                   {editingSessionId ? (
-                    <button className="ghost-button" disabled={sessionActionBusy} onClick={resetSessionForm} type="button">
+                    <button className="ghost-button ghost-button--sm" disabled={sessionActionBusy} onClick={resetSessionForm} type="button">
                       Cancel
                     </button>
                   ) : null}
-                  <button className="ghost-button" disabled={sessionActionBusy} onClick={handleRefreshSessions} type="button">
+                  <button className="ghost-button ghost-button--sm" disabled={sessionActionBusy} onClick={handleRefreshSessions} type="button">
                     Refresh
                   </button>
                 </div>
               </section>
-              <section className="card compact-card rail-card">
-                <div className="pane-header pane-header--compact">
-                  <h3>Sessions</h3>
-                  <span className="pane-caption">{sessions.length}</span>
-                </div>
-                <ul className="session-list">
-                  {sessions.length ? (
-                    sessions.map((session) => (
+              <ul className="session-list">
+                {sessions.length ? (
+                  sessions.map((session) => (
                     <li key={session.id}>
-                        <div className={`session-card${activeSessionId === session.id ? ' is-active' : ''}`}>
-                          <button
-                            className={`session-button${activeSessionId === session.id ? ' is-active' : ''}`}
-                            onClick={() => {
-                              void activateSession(session.id).catch((error) => {
-                                setSessiondState('offline');
-                                setSessiondMessage(error instanceof Error ? error.message : String(error));
-                              });
-                            }}
-                            type="button"
-                          >
-                            <strong>{session.name}</strong>
-                            <span>{session.rootPath}</span>
-                            <em>{formatSessionTimestamp(session.createdAt)}</em>
-                          </button>
-                          <div className="session-card__actions">
-                            <button
-                              className="session-card__action"
-                              onClick={() => loadSessionIntoForm(session)}
-                              title="Edit session"
-                              type="button"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="session-card__action session-card__action--danger"
-                              onClick={() => void handleDeleteSession(session.id)}
-                              title="Delete session"
-                              type="button"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
+                      <button
+                        className={`session-item${activeSessionId === session.id ? ' is-active' : ''}`}
+                        onClick={() => {
+                          void activateSession(session.id).catch((error) => {
+                            setSessiondState('offline');
+                            setSessiondMessage(error instanceof Error ? error.message : String(error));
+                          });
+                        }}
+                        type="button"
+                      >
+                        <strong>{session.name}</strong>
+                        <span>{session.rootPath}</span>
+                      </button>
+                      <div className="session-item__actions">
+                        <button
+                          className="session-action"
+                          onClick={() => loadSessionIntoForm(session)}
+                          title="Edit"
+                          type="button"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="session-action session-action--danger"
+                          onClick={() => void handleDeleteSession(session.id)}
+                          title="Delete"
+                          type="button"
+                        >
+                          Del
+                        </button>
+                      </div>
                     </li>
                   ))
                 ) : (
-                    <li className="session-list-empty">
-                      {sessiondState === 'offline'
-                        ? 'Start engine_sessiond to populate shell sessions.'
-                        : 'No sessions yet. Create one from the shell.'}
-                    </li>
-                  )}
-                </ul>
-              </section>
-            </>
+                  <li className="empty-hint">
+                    {sessiondState === 'offline'
+                      ? 'Start engine_sessiond to begin.'
+                      : 'No sessions yet.'}
+                  </li>
+                )}
+              </ul>
+            </div>
           ) : null}
           {activeLeftTab === 'Explorer' ? (
-            <section className="card compact-card rail-card">
-              <div className="pane-header pane-header--compact">
-                <h3>Explorer</h3>
-                <span className="pane-caption">{activeSession ? activeSession.name : 'no session'}</span>
-              </div>
+            <div className="rail-content">
               {activeSession ? (
                 <>
                   <div className="inline-actions">
-                    <button className="ghost-button" disabled={!activeSessionId || explorerPath === '.'} onClick={handleExplorerUp} type="button">
+                    <button className="ghost-button ghost-button--sm" disabled={!activeSessionId || explorerPath === '.'} onClick={handleExplorerUp} type="button">
                       Up
                     </button>
-                    <button className="ghost-button" disabled={!activeSessionId || explorerBusy} onClick={() => void refreshExplorer(activeSessionId, explorerPath)} type="button">
+                    <button className="ghost-button ghost-button--sm" disabled={!activeSessionId || explorerBusy} onClick={() => void refreshExplorer(activeSessionId, explorerPath)} type="button">
                       Refresh
                     </button>
-                    <span className="toolbar-chip toolbar-chip--muted">{explorerPath}</span>
+                    <span className="path-chip">{explorerPath}</span>
                   </div>
                   <ul className="explorer-list">
                     {explorerEntries.length ? (
@@ -2183,12 +2095,12 @@ export default function App() {
                             type="button"
                           >
                             <strong>{entry.name}</strong>
-                            <span>{entry.kind === 'directory' ? 'directory' : formatFileSize(entry.size)}</span>
+                            <span>{entry.kind === 'directory' ? 'dir' : formatFileSize(entry.size)}</span>
                           </button>
                         </li>
                       ))
                     ) : (
-                      <li className="session-list-empty">No file data yet for this session.</li>
+                      <li className="empty-hint">No file data yet.</li>
                     )}
                   </ul>
                   {selectedExplorerPath ? (
@@ -2199,144 +2111,65 @@ export default function App() {
                   ) : null}
                 </>
               ) : (
-                <div className="session-list-empty">Create or select a session to browse files.</div>
+                <div className="empty-hint">Select a session to browse files.</div>
               )}
-            </section>
+            </div>
           ) : null}
           {activeLeftTab === 'Source Control' ? (
-            <section className="card compact-card rail-card">
-              <div className="pane-header pane-header--compact">
-                <h3>Source Control</h3>
-                <span className="pane-caption">{activeSession ? activeSession.name : 'no session'}</span>
-              </div>
+            <div className="rail-content">
               {activeSession ? (
                 <>
                   <div className="inline-actions">
-                    <button className="ghost-button" disabled={gitBusy} onClick={() => void refreshGit(activeSessionId)} type="button">
+                    <button className="ghost-button ghost-button--sm" disabled={gitBusy} onClick={() => void refreshGit(activeSessionId)} type="button">
                       Refresh
                     </button>
-                    <button className="ghost-button" disabled={gitBusy || !gitStatus.notARepo} onClick={handleInitGitRepository} type="button">
-                      Init repo
-                    </button>
+                    {gitStatus.notARepo ? (
+                      <button className="ghost-button ghost-button--sm" disabled={gitBusy} onClick={handleInitGitRepository} type="button">
+                        Init repo
+                      </button>
+                    ) : null}
                   </div>
                   {gitBusy ? (
-                    <div className="session-list-empty">Loading git status...</div>
+                    <div className="empty-hint">Loading git status...</div>
                   ) : gitStatus.notARepo ? (
-                    <div className="session-list-empty">This session root is not a git repository yet.</div>
+                    <div className="empty-hint">Not a git repository.</div>
                   ) : (
                     <div className="git-panel">
-                      <div className="git-branch">{gitStatus.branch || 'detached / unknown branch'}</div>
+                      <div className="git-branch">{gitStatus.branch || 'detached'}</div>
                       {renderGitGroup('Staged Changes', gitStatus.staged)}
                       {renderGitGroup('Changes', gitStatus.unstaged)}
                       {renderGitGroup('Untracked Files', gitStatus.untracked)}
                       {!gitStatus.staged.length && !gitStatus.unstaged.length && !gitStatus.untracked.length ? (
-                        <div className="session-list-empty">Working tree clean.</div>
+                        <div className="empty-hint">Working tree clean.</div>
                       ) : null}
                     </div>
                   )}
                 </>
               ) : (
-                <div className="session-list-empty">Create or select a session to view source control.</div>
+                <div className="empty-hint">Select a session first.</div>
               )}
-            </section>
+            </div>
           ) : null}
-          <section className="card compact-card rail-card">
-            <div className="pane-header pane-header--compact">
-              <h3>Utilities</h3>
-              <span className="pane-caption">secondary tools</span>
-            </div>
-            <div className="utility-nav">
-              {utilityTabs.map((tab) => (
-                <button
-                  className="utility-nav__button"
-                  key={tab}
-                  onClick={() => {
-                    if (tab === 'World') {
-                      setActiveCenterTab('Scene');
-                      setActiveRightTab('Details');
-                      return;
-                    }
-                    setActiveCenterTab('Code');
-                    setShowLegacyBridge(true);
-                  }}
-                  type="button"
-                >
-                  <span className="utility-nav__icon">{utilityTabMeta[tab].icon}</span>
-                  <span className="utility-nav__label">{utilityTabMeta[tab].label}</span>
-                </button>
-              ))}
-            </div>
-          </section>
         </aside>
 
         <section className="center-column">
-          <section className="pane dock-toolbar">
-            <div className="toolbar-rack">
-              <div className="tab-row">
-                {centerTabs.map((tab) => (
-                  <TabButton active={activeCenterTab === tab} key={tab} onClick={() => setActiveCenterTab(tab)}>
-                    {tab}
-                  </TabButton>
-                ))}
-              </div>
-              <div className="toolbar-rack__spacer" />
-              <div className="tab-row tab-row--tight">
-                {layoutModes.map((mode) => (
-                  <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
-                    {mode}
-                  </TabButton>
-                ))}
-              </div>
+          <div className="center-toolbar">
+            <div className="tab-row">
+              {centerTabs.map((tab) => (
+                <TabButton active={activeCenterTab === tab} key={tab} onClick={() => setActiveCenterTab(tab)}>
+                  {tab}
+                </TabButton>
+              ))}
             </div>
-            <div className="viewport-commandbar">
-              <div className="viewport-commandbar__group">
-                <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={handleStartRuntimeBuild} type="button">
-                  Build
-                </button>
-                <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={handleBuildAndPlay} type="button">
-                  Build + Play
-                </button>
-                <button
-                  className="ghost-button"
-                  disabled={buildStatus.state === 'running'}
-                  onClick={handleStartRuntime}
-                  type="button"
-                >
-                  Play
-                </button>
-                <button
-                  className="ghost-button"
-                  disabled={runtimeStatus.state !== 'running' || buildStatus.state === 'running'}
-                  onClick={handleStopRuntime}
-                  type="button"
-                >
-                  Stop
-                </button>
-                <button
-                  className="ghost-button"
-                  disabled={buildStatus.state === 'running'}
-                  onClick={handleRestartRuntime}
-                  type="button"
-                >
-                  Restart
-                </button>
-                <button className="ghost-button" disabled type="button">
-                  Capture
-                </button>
-              </div>
-              <div className="viewport-commandbar__group">
-                <span className="toolbar-chip">Scene: {launchScene}</span>
-                <span className="toolbar-chip">Mode: Edit</span>
-                <span className="toolbar-chip">Config: {buildConfig}</span>
-                <span className={`toolbar-chip${buildStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
-                  Build: {buildStatus.state}
-                </span>
-                <span className={`toolbar-chip${runtimeStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
-                  Runtime: {runtimeStatus.state}
-                </span>
-              </div>
+            <div className="toolbar-rack__spacer" />
+            <div className="tab-row tab-row--tight">
+              {layoutModes.map((mode) => (
+                <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
+                  {mode}
+                </TabButton>
+              ))}
             </div>
-          </section>
+          </div>
 
           {renderCenterContent(
             activeCenterTab,
@@ -2355,11 +2188,7 @@ export default function App() {
         </section>
 
         <aside className="pane side-pane">
-          <div className="pane-header">
-            <h2>Inspector Dock</h2>
-            <span className="pane-caption">Details and runtime control</span>
-          </div>
-          <div className="stack stack--tabs">
+          <div className="tab-row tab-row--side">
             {rightTabs.map((tab) => (
               <TabButton active={activeRightTab === tab} key={tab} onClick={() => setActiveRightTab(tab)}>
                 {tab}
@@ -2367,23 +2196,10 @@ export default function App() {
             ))}
           </div>
           {activeSession ? (
-            <section className="card compact-card selected-session-card">
-              <h3>Active Session</h3>
-              <dl className="fact-list">
-                <div>
-                  <dt>Name</dt>
-                  <dd>{activeSession.name}</dd>
-                </div>
-                <div>
-                  <dt>Root</dt>
-                  <dd>{activeSession.rootPath}</dd>
-                </div>
-                <div>
-                  <dt>Created</dt>
-                  <dd>{formatSessionTimestamp(activeSession.createdAt)}</dd>
-                </div>
-              </dl>
-            </section>
+            <div className="active-session-bar">
+              <strong>{activeSession.name}</strong>
+              <span>{activeSession.rootPath}</span>
+            </div>
           ) : null}
           {renderRightPanel(
             activeRightTab,
@@ -2404,10 +2220,6 @@ export default function App() {
       </main>
 
       <section className="pane bottom-pane">
-        <div className="pane-header">
-          <h2>Bottom Dock</h2>
-          <span className="pane-caption">Terminal and log surfaces</span>
-        </div>
         <div className="tab-row">
           {bottomTabs.map((tab) => (
             <TabButton active={activeBottomTab === tab} key={tab} onClick={() => setActiveBottomTab(tab)}>

@@ -17,35 +17,43 @@ assert.match(cliSource, /engine run/);
 assert.match(runtimeHeader, /RuntimeConfig/);
 assert.match(runtimeHeader, /class RuntimeApp/);
 
-const syntaxCheck = spawnSync(
-  'g++',
-  [
-    '-std=c++20',
-    '-I',
-    includeRoot,
-    '-DSHADER_FORGE_HAS_SDL3=0',
-    '-DSHADER_FORGE_HAS_VULKAN=0',
-    '-fsyntax-only',
-    runtimeMain,
-    runtimeApp,
-  ],
-  {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  },
-);
+const isWindows = process.platform === 'win32';
+let syntaxChecked = false;
 
-if (syntaxCheck.error) {
-  throw syntaxCheck.error;
+if (!isWindows) {
+  const syntaxCheck = spawnSync(
+    'g++',
+    [
+      '-std=c++20',
+      '-I',
+      includeRoot,
+      '-DSHADER_FORGE_HAS_SDL3=0',
+      '-DSHADER_FORGE_HAS_VULKAN=0',
+      '-fsyntax-only',
+      runtimeMain,
+      runtimeApp,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  if (syntaxCheck.error) {
+    throw syntaxCheck.error;
+  }
+
+  assert.equal(
+    syntaxCheck.status,
+    0,
+    `Runtime scaffold syntax check failed.\n${syntaxCheck.stderr || syntaxCheck.stdout}`,
+  );
+  syntaxChecked = true;
 }
-
-assert.equal(
-  syntaxCheck.status,
-  0,
-  `Runtime scaffold syntax check failed.\n${syntaxCheck.stderr || syntaxCheck.stdout}`,
-);
 
 console.log('Engine runtime scaffold passed.');
 console.log(`- Verified runtime sources under ${runtimeRoot}`);
 console.log('- Verified CLI runtime build/run command surfaces are present');
-console.log('- Verified native runtime C++ sources pass fallback syntax-only compilation');
+console.log(syntaxChecked
+  ? '- Verified native runtime C++ sources pass fallback syntax-only compilation'
+  : '- Skipped g++ syntax check (not available on Windows — use WSL or CI for native compilation)');

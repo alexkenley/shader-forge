@@ -184,9 +184,15 @@ try {
     (event) => event.type === 'terminal.output' && String(event.data?.data || '').includes('__SF_TERM_OK__'),
   );
 
+  const isWindows = process.platform === 'win32';
+  const terminalShell = isWindows ? 'powershell.exe' : 'bash';
+  const terminalInput = isWindows
+    ? 'Write-Host "__SF_TERM_OK__"\r\n'
+    : 'printf "__SF_TERM_OK__\\n"\n';
+
   const terminalPayload = await requestJsonNoAuth(`${service.baseUrl}/api/terminals`, 'POST', {
     sessionId: createPayload.session.id,
-    shell: 'bash',
+    shell: terminalShell,
     cols: 120,
     rows: 24,
   });
@@ -196,7 +202,7 @@ try {
   await requestJsonNoAuth(
     `${service.baseUrl}/api/terminals/${encodeURIComponent(terminalPayload.terminalId)}/input`,
     'POST',
-    { input: 'printf "__SF_TERM_OK__\\n"\n' },
+    { input: terminalInput },
   );
 
   const outputEvent = await outputEventPromise;

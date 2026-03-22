@@ -1,0 +1,116 @@
+#include "HouseManager.h"
+#include <fstream>
+#include <Hell/Logging.h>
+#include "File/JSON.h"
+#include "World/World.h"
+#include "Util.h"
+
+namespace HouseManager {
+    std::vector<House> g_houses;
+
+    void Init() {
+        //g_houses.clear();
+        //for (FileInfo& fileInfo : Util::IterateDirectory("res/houses/", { "json" })) {
+        //    g_houses[fileInfo.name] = JSON::LoadHouse(fileInfo.path);
+        //}
+
+        LoadHouse("TestHouse");
+    }
+
+    void LoadHouse(const std::string& filename) {
+        const std::string path = "res/houses/" + filename + ".house";
+        std::ifstream file(path, std::ios::binary);
+        if (!file) {
+            Logging::Error() << "HouseManager::LoadHouse(): failed to open '" << path;
+            return;
+        }
+
+        nlohmann::json json;
+        if (!JSON::LoadJsonFromFile(json, path)) {
+            std::cerr << "HouseManager::LoadHouse() failed to open file: " << path;
+            return;
+        }
+
+        CreateInfoCollection createInfoCollection = JSON::CreateInfoCollectionFromJSONObject(json);
+
+        House& house = g_houses.emplace_back();
+        house.SetFilename(filename);
+        house.SetCreateInfoCollection(createInfoCollection);
+
+        for (size_t i = 0; i < createInfoCollection.genericObjects.size();) {
+            if (createInfoCollection.genericObjects[i].type == GenericObjectType::UNDEFINED) {
+                createInfoCollection.genericObjects.erase(createInfoCollection.genericObjects.begin() + i);
+                Logging::Error() << "Found UNDEFINED GenericGameObject in " << filename << " and removed it";
+            }
+            else {
+                ++i;
+            }
+        }
+
+        return;
+
+        // PRINTS HOUSE JSON ON LOAD
+
+        Logging::Debug()
+            << "Loaded: " << path
+            << "\n" << JSON::CreateInfoCollectionToJSON(createInfoCollection)
+            //<< "- signature:     " << header.signature << "\n"
+            //<< "- version:       " << header.version << "\n"
+            //<< "- chunk count x: " << header.chunkCountX << "\n"
+            //<< "- chunk count z: " << header.chunkCountZ << "\n"
+            //<< createInfoJson << "\n"
+            //<< additionalJson;
+            << "";
+    }
+    
+    void SaveHouse(const std::string& filename) {
+        House* house = GetHouseByName(filename);
+        if (!house) {
+            Logging::Error() << "HouseManager::SaveHouse(): failed because '" << filename << "' was not found.";
+            return;
+        }
+
+        // Construct the JSON string
+        CreateInfoCollection createInfoCollection = World::GetCreateInfoCollection();
+        house->SetCreateInfoCollection(createInfoCollection);
+
+        std::string createInfoJson = JSON::CreateInfoCollectionToJSON(createInfoCollection);
+
+        // Create the file
+        std::string outputPath = "res/houses/" + filename + ".house";
+        std::ofstream file(outputPath, std::ios::binary | std::ios::trunc);
+        if (!file.is_open()) {
+            std::cout << "Failed to open file for writing: " << outputPath << "\n";
+            return;
+        }
+
+        // Quick n dirty dump of the string to file
+        file.write(createInfoJson.data(), static_cast<std::streamsize>(createInfoJson.size()));
+
+        Logging::Debug() 
+            << "Saved: " << outputPath
+            << "\n" << createInfoJson
+            << "";
+    }
+
+    void UpdateCreateInfoCollectionFromWorld(const std::string& houseName) {
+        House* house = GetHouseByName(houseName);
+        if (!house) {
+            Logging::Error() << "HouseManager::UpdateCreateInfoCollectionFromWorld(): failed because '" << houseName << "' was not found.";
+            return;
+        }
+
+        CreateInfoCollection createInfoCollection = World::GetCreateInfoCollection();
+        house->SetCreateInfoCollection(createInfoCollection);
+    }
+
+    House* GetHouseByName(const std::string& filename) {
+        for (House& house : g_houses) {
+            if (house.GetFilename() == filename) {
+                return &house;
+            }
+        }
+        Logging::Error() << "HouseManager::GetHouseByName() failed coz '" << filename << "' was not found";
+        return nullptr;
+    }
+}

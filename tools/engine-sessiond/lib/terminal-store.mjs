@@ -9,15 +9,35 @@ function clamp(value, min, max, fallback) {
   return Math.max(min, Math.min(max, numeric));
 }
 
+const isWindows = process.platform === 'win32';
+
 function normalizeShell(shell) {
   const requested = String(shell || '').trim().toLowerCase();
-  if (requested === 'zsh' || requested === 'sh') {
-    return requested;
-  }
-  return 'bash';
+  if (requested === 'cmd' || requested === 'cmd.exe') return 'cmd.exe';
+  if (requested === 'powershell' || requested === 'powershell.exe') return 'powershell.exe';
+  if (requested === 'zsh') return 'zsh';
+  if (requested === 'sh') return 'sh';
+  if (requested === 'bash') return 'bash';
+  return isWindows ? 'powershell.exe' : 'bash';
 }
 
 function buildShellLaunch(shell) {
+  if (shell === 'cmd.exe') {
+    return { file: 'cmd.exe', args: [] };
+  }
+  if (shell === 'powershell.exe') {
+    return { file: 'powershell.exe', args: ['-NoLogo'] };
+  }
+  // Unix shells — on Windows, launch through wsl.exe
+  if (isWindows) {
+    if (shell === 'zsh') {
+      return { file: 'wsl.exe', args: ['-e', 'zsh', '-l'] };
+    }
+    if (shell === 'sh') {
+      return { file: 'wsl.exe', args: ['-e', 'sh'] };
+    }
+    return { file: 'wsl.exe', args: ['-e', 'bash', '-l'] };
+  }
   if (shell === 'zsh') {
     return { file: 'zsh', args: ['-l'] };
   }

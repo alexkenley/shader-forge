@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { getPlatformInfo } from './host-fs-service.mjs';
 
 function normalizeDisplayPath(rootPath, targetPath) {
   const relativePath = path.relative(rootPath, targetPath);
@@ -13,7 +14,11 @@ function normalizeDisplayPath(rootPath, targetPath) {
 export class SessionStore {
   #sessions = new Map();
 
-  async createSession({ name = '', rootPath = process.cwd() } = {}) {
+  async createSession({ name = '', rootPath } = {}) {
+    if (!rootPath) {
+      const platform = getPlatformInfo();
+      rootPath = platform.defaultBrowsePath || process.cwd();
+    }
     const resolvedRoot = await this.#resolveAndValidateRoot(rootPath);
 
     const timestamp = new Date().toISOString();

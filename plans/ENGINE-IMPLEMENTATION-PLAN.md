@@ -66,6 +66,7 @@ What is already done:
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
 - The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, and runtime build/run/log controls.
 - Deterministic harnesses exist for the shell, session backend, and runtime scaffold.
+- A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
 
@@ -73,6 +74,30 @@ Where the build is currently up to:
 - session management is now UI-driven rather than terminal-only
 - source control and project-root workflows are in the shell, but still need UX refinement
 - the next major engine step remains native runtime bring-up and tighter shell/runtime integration around real project execution
+
+## External Reference Track: Hell2025
+
+Goal:
+- preserve the useful parts of Hell2025 as a bounded reference source without turning Shader Forge into a derivative copy or inheriting mismatched architecture
+
+Status:
+- reference snapshot captured, no direct integration work started yet
+
+Reference artifacts:
+- `docs/references/hell2025/`
+- `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`
+
+Borrow targets:
+- Vulkan runtime manager split and upload/helper patterns
+- text-backed authored-asset serialization patterns from the house/create-info path
+- native editor save/reload and world-refresh workflow patterns
+- shader include expansion and compile error line-mapping ideas
+
+Explicit non-goals:
+- do not adopt the OpenGL runtime as the Shader Forge baseline
+- do not adopt the Hell2025 custom binary `.map` source format for authored engine assets
+- do not import bundled third-party middleware, SDKs, or vendor code wholesale
+- do not import game-specific assets or gameplay systems into the engine baseline
 
 ## Phase 1: Engine Shell Scaffold
 
@@ -144,6 +169,7 @@ Scope:
 - input and timing
 - logging and error surfaces
 - a basic rendered scene
+- use the Hell2025 Vulkan reference snapshot only as a structure guide for manager boundaries and upload paths while keeping Shader Forge SDL3-first and CMake-first
 
 Exit criteria:
 - `engine run sandbox` opens a native runtime window
@@ -177,6 +203,7 @@ Scope:
 - generated meshes
 - preview surfaces
 - validation and import status
+- carry forward the Hell2025 shader include and line-mapping reference ideas into the Shader Forge shader toolchain rather than reusing the OpenGL compile path directly
 
 Exit criteria:
 - imported and generated assets flow through a single engine pipeline
@@ -210,6 +237,7 @@ Scope:
 - SQLite tooling/session/asset database path
 - Effekseer runtime integration plan
 - code-defined simple effect descriptor model
+- adapt the Hell2025 create-info serialization approach into engine-generic TOML scene/prefab source schemas instead of adopting its JSON and binary map formats directly
 
 Exit criteria:
 - data and effects frameworks are chosen, documented, and represented in the repo structure
@@ -228,6 +256,7 @@ Scope:
 - save, reload, revert, duplicate, undo, and redo
 - bake procedural results into editable scenes or prefabs
 - edit mode and play mode separation
+- borrow the Hell2025 native editor save/reload/world-refresh workflow patterns as reference input for Shader Forge native tooling while keeping shell-driven workflow integration
 
 Exit criteria:
 - a user can open a scene, make visual edits, save to text assets, and reload those edits

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import { BuildStore } from './lib/build-store.mjs';
 import { initGitRepository, readGitStatus } from './lib/git-service.mjs';
-import { listHostDirectory } from './lib/host-fs-service.mjs';
+import { getPlatformInfo, listHostDirectory } from './lib/host-fs-service.mjs';
 import { SessionStore } from './lib/session-store.mjs';
 import { RuntimeStore } from './lib/runtime-store.mjs';
 import { TerminalStore } from './lib/terminal-store.mjs';
@@ -137,6 +137,11 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
             'events',
           ],
         });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/platform') {
+        writeJson(response, 200, getPlatformInfo());
         return;
       }
 

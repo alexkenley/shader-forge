@@ -9,37 +9,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Convert-ToWslPath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$WindowsPath
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($WindowsPath)
-    if ($fullPath -notmatch '^(?<drive>[A-Za-z]):(?<rest>.*)$') {
-        throw "Only drive-letter paths are supported: $fullPath"
-    }
-
-    $drive = $Matches['drive'].ToLowerInvariant()
-    $rest = ($Matches['rest'] -replace '\\', '/')
-    return "/mnt/$drive$rest"
-}
-
-function Invoke-WslBash {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Script
-    )
-
-    & wsl.exe bash -lc $Script
-    if ($LASTEXITCODE -ne 0) {
-        throw "WSL command failed with exit code $LASTEXITCODE"
-    }
-}
-
 $scriptDir = Split-Path -Parent $PSCommandPath
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..')).ProviderPath
-$repoRootWsl = Convert-ToWslPath -WindowsPath $repoRoot
+
+Write-Host "[shader-forge] Repo root: $repoRoot"
+
+# ─── Clean generated outputs ───
+
+Write-Host "[shader-forge] Cleaning generated outputs..."
 
 $cleanTargets = @(
     'build',
@@ -48,130 +25,139 @@ $cleanTargets = @(
     'tmp',
     '.harness',
     'coverage',
-    'engine/build',
-    'engine/out',
-    'tools/build',
-    'tools/out',
-    'shell/engine-shell/dist',
-    'shell/engine-shell/.vite',
-    'shell/engine-shell/node_modules/.vite',
-    'shell/engine-shell/vite.config.d.ts',
-    'shell/engine-shell/vite.config.js'
+    'engine\build',
+    'engine\out',
+    'tools\build',
+    'tools\out',
+    'shell\engine-shell\dist',
+    'shell\engine-shell\.vite',
+    'shell\engine-shell\node_modules\.vite',
+    'shell\engine-shell\vite.config.d.ts',
+    'shell\engine-shell\vite.config.js'
 )
 
-$quotedTargets = ($cleanTargets | ForEach-Object { "'$_'" }) -join ' '
-$skipInstallFlag = if ($SkipInstall) { '1' } else { '0' }
-$skipTestsFlag = if ($SkipTests) { '1' } else { '0' }
-$skipShellFlag = if ($SkipShell) { '1' } else { '0' }
-$skipSessiondFlag = if ($SkipSessiond) { '1' } else { '0' }
-
-Write-Host "[shader-forge] Repo root: $repoRoot"
-Write-Host "[shader-forge] WSL root:  $repoRootWsl"
-Write-Host "[shader-forge] Cleaning generated outputs before startup..."
-
-$bashScript = @'
-set -euo pipefail
-
-cd '__REPO_ROOT_WSL__'
-
-targets=(__QUOTED_TARGETS__)
-for target in "${targets[@]}"; do
-  if [ -e "$target" ]; then
-    rm -rf "$target"
-    printf '[shader-forge] Removed %s\n' "$target"
-  fi
-done
-
-root_install_stamp='node_modules/.shader-forge-install-stamp'
-needs_root_install='0'
-
-if [ ! -d 'node_modules' ]; then
-  needs_root_install='1'
-elif [ ! -f "$root_install_stamp" ]; then
-  needs_root_install='1'
-elif [ 'package.json' -nt "$root_install_stamp" ]; then
-  needs_root_install='1'
-elif [ -f 'package-lock.json' ] && [ 'package-lock.json' -nt "$root_install_stamp" ]; then
-  needs_root_install='1'
-fi
-
-if [ "$needs_root_install" = '1' ]; then
-  if [ '__SKIP_INSTALL__' = '1' ]; then
-    printf '[shader-forge] root dependencies are stale or missing and -SkipInstall was set.\n' >&2
-    exit 1
-  fi
-
-  printf '[shader-forge] Installing root dependencies...\n'
-  npm install
-  touch "$root_install_stamp"
-fi
-
-shell_install_stamp='shell/engine-shell/node_modules/.shader-forge-install-stamp'
-needs_shell_install='0'
-
-if [ ! -d 'shell/engine-shell/node_modules' ]; then
-  needs_shell_install='1'
-elif [ ! -f "$shell_install_stamp" ]; then
-  needs_shell_install='1'
-elif [ 'shell/engine-shell/package.json' -nt "$shell_install_stamp" ]; then
-  needs_shell_install='1'
-elif [ -f 'shell/engine-shell/package-lock.json' ] && [ 'shell/engine-shell/package-lock.json' -nt "$shell_install_stamp" ]; then
-  needs_shell_install='1'
-fi
-
-if [ "$needs_shell_install" = '1' ]; then
-  if [ '__SKIP_INSTALL__' = '1' ]; then
-    printf '[shader-forge] shell/engine-shell dependencies are stale or missing and -SkipInstall was set.\n' >&2
-    exit 1
-  fi
-
-  printf '[shader-forge] Installing shell dependencies...\n'
-  npm install --prefix shell/engine-shell
-  touch "$shell_install_stamp"
-fi
-
-if [ '__SKIP_TESTS__' != '1' ]; then
-  printf '[shader-forge] Running shell smoke harness...\n'
-  npm test
-  printf '[shader-forge] Running sessiond smoke harness...\n'
-  npm run test:sessiond
-  printf '[shader-forge] Running runtime scaffold harness...\n'
-  npm run test:runtime-scaffold
-  printf '[shader-forge] Running shell build validation...\n'
-  npm run shell:build
-fi
-
-sessiond_pid=''
-
-cleanup() {
-  if [ -n "$sessiond_pid" ]; then
-    kill "$sessiond_pid" >/dev/null 2>&1 || true
-    wait "$sessiond_pid" >/dev/null 2>&1 || true
-  fi
+foreach ($target in $cleanTargets) {
+    $fullTarget = Join-Path $repoRoot $target
+    if (Test-Path $fullTarget) {
+        Remove-Item -Recurse -Force $fullTarget
+        Write-Host "[shader-forge] Removed $target"
+    }
 }
 
-trap cleanup EXIT INT TERM
+# ─── Install dependencies ───
 
-if [ '__SKIP_SESSIOND__' != '1' ]; then
-  printf '[shader-forge] Starting engine_sessiond...\n'
-  npm run sessiond:start &
-  sessiond_pid=$!
-fi
+Push-Location $repoRoot
+try {
+    if (-not $SkipInstall) {
+        # Check if node-pty native module matches this platform
+        $ptyNode = Join-Path $repoRoot 'node_modules\node-pty\build\Release\pty.node'
+        $needsRebuild = $false
+        if (Test-Path $ptyNode) {
+            # If pty.node exists but is an ELF binary (installed from WSL), force reinstall
+            $header = [System.IO.File]::ReadAllBytes($ptyNode)[0..3]
+            if ($header[0] -eq 0x7F -and $header[1] -eq 0x45 -and $header[2] -eq 0x4C -and $header[3] -eq 0x46) {
+                Write-Host "[shader-forge] node-pty was built for Linux — rebuilding for Windows..."
+                $needsRebuild = $true
+            }
+        }
 
-if [ '__SKIP_SHELL__' != '1' ]; then
-  printf '[shader-forge] Starting shell dev server...\n'
-  npm run shell:dev
-elif [ -n "$sessiond_pid" ]; then
-  printf '[shader-forge] engine_sessiond is running in the foreground hold state.\n'
-  wait "$sessiond_pid"
-fi
-'@
+        $rootStamp = Join-Path $repoRoot 'node_modules\.shader-forge-install-stamp'
+        $needsRootInstall = $false
 
-$bashScript = $bashScript.Replace('__REPO_ROOT_WSL__', $repoRootWsl)
-$bashScript = $bashScript.Replace('__QUOTED_TARGETS__', $quotedTargets)
-$bashScript = $bashScript.Replace('__SKIP_INSTALL__', $skipInstallFlag)
-$bashScript = $bashScript.Replace('__SKIP_TESTS__', $skipTestsFlag)
-$bashScript = $bashScript.Replace('__SKIP_SHELL__', $skipShellFlag)
-$bashScript = $bashScript.Replace('__SKIP_SESSIOND__', $skipSessiondFlag)
+        if ($needsRebuild) {
+            $needsRootInstall = $true
+        } elseif (-not (Test-Path (Join-Path $repoRoot 'node_modules'))) {
+            $needsRootInstall = $true
+        } elseif (-not (Test-Path $rootStamp)) {
+            $needsRootInstall = $true
+        } elseif ((Get-Item (Join-Path $repoRoot 'package.json')).LastWriteTime -gt (Get-Item $rootStamp).LastWriteTime) {
+            $needsRootInstall = $true
+        }
 
-Invoke-WslBash -Script $bashScript
+        if ($needsRebuild) {
+            # Rebuild native modules for this platform
+            & npm rebuild node-pty
+            if ($LASTEXITCODE -ne 0) { throw "npm rebuild node-pty failed" }
+            Write-Host "[shader-forge] node-pty rebuilt for Windows."
+        }
+
+        if ($needsRootInstall) {
+            Write-Host "[shader-forge] Installing root dependencies..."
+            & npm install
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+            New-Item -ItemType File -Path $rootStamp -Force | Out-Null
+        }
+
+        $shellDir = Join-Path $repoRoot 'shell\engine-shell'
+        $shellStamp = Join-Path $shellDir 'node_modules\.shader-forge-install-stamp'
+        $needsShellInstall = $false
+
+        if (-not (Test-Path (Join-Path $shellDir 'node_modules'))) {
+            $needsShellInstall = $true
+        } elseif (-not (Test-Path $shellStamp)) {
+            $needsShellInstall = $true
+        } elseif ((Get-Item (Join-Path $shellDir 'package.json')).LastWriteTime -gt (Get-Item $shellStamp).LastWriteTime) {
+            $needsShellInstall = $true
+        }
+
+        if ($needsShellInstall) {
+            Write-Host "[shader-forge] Installing shell dependencies..."
+            & npm install --prefix shell/engine-shell
+            if ($LASTEXITCODE -ne 0) { throw "shell npm install failed" }
+            New-Item -ItemType File -Path $shellStamp -Force | Out-Null
+        }
+    }
+
+    # ─── Run tests ───
+
+    if (-not $SkipTests) {
+        Write-Host "[shader-forge] Running shell smoke harness..."
+        & npm test
+        if ($LASTEXITCODE -ne 0) { throw "Shell smoke test failed" }
+
+        Write-Host "[shader-forge] Running sessiond smoke harness..."
+        & npm run test:sessiond
+        if ($LASTEXITCODE -ne 0) { throw "Sessiond test failed" }
+
+        Write-Host "[shader-forge] Running runtime scaffold harness..."
+        & npm run test:runtime-scaffold
+        if ($LASTEXITCODE -ne 0) { throw "Runtime scaffold test failed" }
+
+        Write-Host "[shader-forge] Running shell build validation..."
+        & npm run shell:build
+        if ($LASTEXITCODE -ne 0) { throw "Shell build failed" }
+    }
+
+    # ─── Start services ───
+
+    $sessiondJob = $null
+
+    try {
+        if (-not $SkipSessiond) {
+            Write-Host "[shader-forge] Starting engine_sessiond..."
+            $sessiondJob = Start-Job -ScriptBlock {
+                param($dir)
+                Set-Location $dir
+                & npm run sessiond:start 2>&1
+            } -ArgumentList $repoRoot
+        }
+
+        if (-not $SkipShell) {
+            Write-Host "[shader-forge] Starting shell dev server..."
+            # Give sessiond a moment to bind its port
+            if ($sessiondJob) { Start-Sleep -Milliseconds 800 }
+            & npm run shell:dev
+        } elseif ($sessiondJob) {
+            Write-Host "[shader-forge] engine_sessiond running. Press Ctrl+C to stop."
+            Wait-Job $sessiondJob | Out-Null
+            Receive-Job $sessiondJob
+        }
+    } finally {
+        if ($sessiondJob) {
+            Stop-Job $sessiondJob -ErrorAction SilentlyContinue
+            Remove-Job $sessiondJob -Force -ErrorAction SilentlyContinue
+        }
+    }
+} finally {
+    Pop-Location
+}

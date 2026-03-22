@@ -1,0 +1,7 @@
+{
+  "files.associations": {
+    "**/docs/references/hell2025/src/**/*.cpp": "plaintext",
+    "**/docs/references/hell2025/src/**/*.h": "plaintext",
+    "**/docs/references/hell2025/src/**/*.hpp": "plaintext"
+  }
+}

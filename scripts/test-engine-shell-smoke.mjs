@@ -39,13 +39,11 @@ try {
   assert.match(shellApp, /Code Focus/);
   assert.match(shellApp, /Code \+ Game/);
   assert.match(shellApp, /Triptych/);
-  assert.match(shellApp, /engine_sessiond online/);
-  assert.match(shellApp, /Create session/);
+  assert.match(shellApp, /engine_sessiond/);
   assert.match(shellApp, /Edit Session/);
   assert.match(shellApp, /Explorer/);
   assert.match(shellApp, /Source Control/);
   assert.match(shellApp, /Workspace root/);
-  assert.match(shellApp, /Browse/);
   assert.match(shellApp, /Init repo/);
   assert.match(shellApp, /fetchGitStatus/);
   assert.match(shellApp, /initGitRepository/);
@@ -53,10 +51,7 @@ try {
   assert.match(shellApp, /deleteSession/);
   assert.match(shellApp, /listHostDirectories/);
   assert.match(shellApp, /dir-picker/);
-  assert.match(shellApp, /Utilities/);
-  assert.match(shellApp, /Build runtime/);
-  assert.match(shellApp, /Build: /);
-  assert.match(shellApp, /Runtime: /);
+  assert.match(shellApp, /fetchPlatformInfo/);
   assert.match(shellApp, /readFile/);
   assert.match(shellApp, /listFiles/);
   assert.match(shellApp, /startRuntimeBuild/);
