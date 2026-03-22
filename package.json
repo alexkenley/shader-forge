@@ -1,0 +1,24 @@
+{
+  "name": "shader-forge",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexkenley/shader-forge.git"
+  },
+  "homepage": "https://github.com/alexkenley/shader-forge",
+  "bugs": {
+    "url": "https://github.com/alexkenley/shader-forge/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "shell:serve": "node scripts/serve-engine-shell.mjs",
+    "test": "node scripts/test-engine-shell-smoke.mjs",
+    "test:harness": "node scripts/test-engine-shell-smoke.mjs",
+    "test:shell-smoke": "node scripts/test-engine-shell-smoke.mjs",
+    "test:ollama-smoke": "node scripts/test-ollama-smoke.mjs"
+  }
+}

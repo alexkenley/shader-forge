@@ -1,0 +1,12 @@
+node_modules/
+coverage/
+dist/
+tmp/
+.harness/
+playwright-report/
+test-results/
+*.log
+*.tmp
+*.tsbuildinfo
+.DS_Store
+
