@@ -2,6 +2,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import { BuildStore } from './lib/build-store.mjs';
+import { initGitRepository, readGitStatus } from './lib/git-service.mjs';
+import { listHostDirectory } from './lib/host-fs-service.mjs';
 import { SessionStore } from './lib/session-store.mjs';
 import { RuntimeStore } from './lib/runtime-store.mjs';
 import { TerminalStore } from './lib/terminal-store.mjs';
@@ -122,8 +124,13 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
           now: new Date().toISOString(),
           capabilities: [
             'sessions',
+            'sessions:update',
+            'sessions:delete',
             'files:list',
             'files:read',
+            'hostfs:list',
+            'git:status',
+            'git:init',
             'terminals',
             'runtime:lifecycle',
             'build:lifecycle',
@@ -164,6 +171,24 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
         return;
       }
 
+      if (request.method === 'PATCH' && pathname.startsWith('/api/sessions/')) {
+        const sessionId = pathname.slice('/api/sessions/'.length);
+        const body = await readJsonBody(request);
+        const session = await sessionStore.updateSession(sessionId, {
+          name: body.name,
+          rootPath: body.rootPath,
+        });
+        writeJson(response, 200, { session });
+        return;
+      }
+
+      if (request.method === 'DELETE' && pathname.startsWith('/api/sessions/')) {
+        const sessionId = pathname.slice('/api/sessions/'.length);
+        const result = sessionStore.deleteSession(sessionId);
+        writeJson(response, 200, result);
+        return;
+      }
+
       if (request.method === 'GET' && pathname === '/api/files/list') {
         const sessionId = searchParams.get('sessionId') || '';
         const relativePath = searchParams.get('path') || '.';
@@ -177,6 +202,20 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
         const relativePath = searchParams.get('path') || '';
         const result = await sessionStore.readFile(sessionId, relativePath);
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/hostfs/list') {
+        const targetPath = searchParams.get('path') || '/';
+        const result = await listHostDirectory(targetPath);
+        writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/git/status') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const sessionRoot = sessionStore.resolveSessionPath(sessionId, '.');
+        writeJson(response, 200, readGitStatus(sessionRoot));
         return;
       }
 
@@ -207,6 +246,14 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
           buildDir: typeof body.buildDir === 'string' && body.buildDir.trim() ? body.buildDir.trim() : undefined,
         });
         writeJson(response, 200, status);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/git/init') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+        const sessionRoot = sessionStore.resolveSessionPath(sessionId, '.');
+        writeJson(response, 200, initGitRepository(sessionRoot));
         return;
       }
 

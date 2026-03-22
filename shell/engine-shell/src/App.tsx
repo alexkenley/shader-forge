@@ -4,10 +4,14 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   closeTerminal,
   createSession,
+  deleteSession,
   fetchBuildStatus,
+  fetchGitStatus,
   fetchSessiondHealth,
   fetchRuntimeStatus,
   getSessiondBaseUrl,
+  initGitRepository,
+  listHostDirectories,
   listFiles,
   listSessions,
   openTerminal,
@@ -19,16 +23,20 @@ import {
   stopBuild,
   stopRuntime,
   subscribeSessiondEvents,
+  updateSession,
   type BuildStatus,
   type SessionFileEntry,
   type SessionTerminalOpen,
   type SessiondTerminalEvent,
   type EngineSession,
+  type GitStatus,
+  type HostDirectoryList,
   type RuntimeStatus,
   writeTerminalInput,
 } from './lib/sessiond';
 
-const leftTabs = ['Sessions', 'Explorer', 'Source Control', 'World', 'Search'] as const;
+const leftTabs = ['Sessions', 'Explorer', 'Source Control'] as const;
+const utilityTabs = ['World', 'Search'] as const;
 const centerTabs = ['Code', 'Game', 'Scene', 'Preview'] as const;
 const rightTabs = ['Details', 'Assets', 'Inspector', 'Build', 'Run', 'Profiler'] as const;
 const bottomTabs = ['Terminal', 'Logs', 'Output', 'Console'] as const;
@@ -37,7 +45,17 @@ const menuItems = ['File', 'Edit', 'View', 'Build', 'Tools', 'Window', 'Help'] a
 const viewportModes = ['Perspective', 'Lit', 'Realtime'] as const;
 const transformModes = ['Select', 'Move', 'Rotate', 'Scale'] as const;
 const terminalShells = ['bash', 'zsh', 'sh'] as const;
+const buildConfigs = ['Debug', 'Release'] as const;
 const legacyWorkspaceSrc = 'web/index.html#/code';
+const leftTabMeta: Record<LeftTab, { icon: string; label: string }> = {
+  Sessions: { icon: 'SE', label: 'Sessions' },
+  Explorer: { icon: 'EX', label: 'Explorer' },
+  'Source Control': { icon: 'SC', label: 'Source Control' },
+};
+const utilityTabMeta: Record<(typeof utilityTabs)[number], { icon: string; label: string }> = {
+  World: { icon: 'WO', label: 'World' },
+  Search: { icon: 'SR', label: 'Search' },
+};
 const stoppedRuntimeStatus: RuntimeStatus = {
   state: 'stopped',
   scene: null,
@@ -56,13 +74,23 @@ const idleBuildStatus: BuildStatus = {
   exitCode: null,
   error: null,
 };
+const emptyGitStatus: GitStatus = {
+  rootPath: '',
+  branch: '',
+  staged: [],
+  unstaged: [],
+  untracked: [],
+  notARepo: true,
+};
 
 type LeftTab = (typeof leftTabs)[number];
+type UtilityTab = (typeof utilityTabs)[number];
 type CenterTab = (typeof centerTabs)[number];
 type RightTab = (typeof rightTabs)[number];
 type BottomTab = (typeof bottomTabs)[number];
 type LayoutMode = (typeof layoutModes)[number];
 type TerminalShell = (typeof terminalShells)[number];
+type BuildConfig = (typeof buildConfigs)[number];
 
 type TerminalTabState = {
   id: string;
@@ -139,12 +167,111 @@ function getParentExplorerPath(value: string) {
   return parts.slice(0, -1).join('/');
 }
 
+function getParentHostPath(value: string) {
+  const normalized = String(value || '').trim() || '/';
+  if (normalized === '/' || !normalized.includes('/')) {
+    return '/';
+  }
+  const trimmed = normalized.endsWith('/') && normalized !== '/' ? normalized.slice(0, -1) : normalized;
+  const lastSlashIndex = trimmed.lastIndexOf('/');
+  if (lastSlashIndex <= 0) {
+    return '/';
+  }
+  return trimmed.slice(0, lastSlashIndex);
+}
+
 function trimTerminalOutput(value: string) {
   const maxLength = 120000;
   if (value.length <= maxLength) {
     return value;
   }
   return value.slice(-maxLength);
+}
+
+async function copyTextToClipboard(text: string) {
+  if (!text) {
+    return;
+  }
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+}
+
+async function readClipboardTextFromEvent(event?: ClipboardEvent | InputEvent | KeyboardEvent) {
+  const directText = event && 'clipboardData' in event ? event.clipboardData?.getData?.('text/plain') : '';
+  if (typeof directText === 'string' && directText.length > 0) {
+    return directText;
+  }
+  if (navigator.clipboard?.readText) {
+    try {
+      return await navigator.clipboard.readText();
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function isClipboardPasteSentinel(text: string) {
+  return text === '^V' || text === '\u0016';
+}
+
+function shouldBridgeTerminalTextInput(event?: InputEvent, text = '') {
+  const inputType = String(event?.inputType || '');
+  if (inputType === 'insertFromPaste' || inputType === 'insertFromDrop' || inputType === 'insertReplacementText') {
+    return true;
+  }
+
+  const candidate = typeof text === 'string' && text
+    ? text
+    : typeof event?.data === 'string'
+      ? event.data
+      : '';
+
+  if (!candidate) {
+    return false;
+  }
+  if (isClipboardPasteSentinel(candidate)) {
+    return true;
+  }
+  if (/[\r\n\t]/.test(candidate)) {
+    return true;
+  }
+  return candidate.length >= 4;
+}
+
+async function forwardTerminalPaste(
+  event: ClipboardEvent | InputEvent | KeyboardEvent,
+  writeInput: (text: string) => void,
+) {
+  const text = await readClipboardTextFromEvent(event);
+  if (!text) {
+    return;
+  }
+  writeInput(text);
+}
+
+async function forwardTerminalInsertedText(
+  event: ClipboardEvent | InputEvent | KeyboardEvent,
+  writeInput: (text: string) => void,
+  text = '',
+) {
+  if (!text || isClipboardPasteSentinel(text)) {
+    await forwardTerminalPaste(event, writeInput);
+    return;
+  }
+  writeInput(text);
 }
 
 function createTerminalTab(index: number): TerminalTabState {
@@ -206,7 +333,15 @@ function renderRightPanel(
   activeTab: RightTab,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
+  launchScene: string,
+  buildConfig: BuildConfig,
+  buildDir: string,
+  pendingRunAfterBuild: boolean,
+  onLaunchSceneChange: (value: string) => void,
+  onBuildConfigChange: (value: BuildConfig) => void,
+  onBuildDirChange: (value: string) => void,
   onStartRuntimeBuild: () => void,
+  onBuildAndPlay: () => void,
   onStopBuild: () => void,
 ) {
   if (activeTab === 'Details') {
@@ -312,6 +447,22 @@ function renderRightPanel(
             <h3>Build Profiles</h3>
             <span>{buildStatus.state}</span>
           </div>
+          <div className="form-grid">
+            <label className="form-field">
+              <span>Config</span>
+              <select onChange={(event) => onBuildConfigChange(event.target.value as BuildConfig)} value={buildConfig}>
+                {buildConfigs.map((config) => (
+                  <option key={config} value={config}>
+                    {config}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="form-field">
+              <span>Build dir</span>
+              <input onChange={(event) => onBuildDirChange(event.target.value)} type="text" value={buildDir} />
+            </label>
+          </div>
           <ul className="detail-list">
             <li>`debug-shell` for UI iteration</li>
             <li>`runtime-sandbox` for native Vulkan bring-up</li>
@@ -320,6 +471,9 @@ function renderRightPanel(
           <div className="inline-actions">
             <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={onStartRuntimeBuild} type="button">
               Build runtime
+            </button>
+            <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={onBuildAndPlay} type="button">
+              Build + Play
             </button>
             <button className="ghost-button" disabled={buildStatus.state !== 'running'} onClick={onStopBuild} type="button">
               Stop build
@@ -339,16 +493,26 @@ function renderRightPanel(
             </div>
             <div>
               <dt>Config</dt>
-              <dd>{buildStatus.config || 'Debug'}</dd>
+              <dd>{buildStatus.config || buildConfig}</dd>
             </div>
             <div>
               <dt>Build dir</dt>
-              <dd>{buildStatus.buildDir || 'build/runtime'}</dd>
+              <dd>{buildStatus.buildDir || buildDir}</dd>
             </div>
             <div>
               <dt>Command</dt>
               <dd>{buildStatus.command || 'waiting'}</dd>
             </div>
+            <div>
+              <dt>Launch queue</dt>
+              <dd>{pendingRunAfterBuild ? `armed for ${launchScene}` : 'idle'}</dd>
+            </div>
+            {buildStatus.error ? (
+              <div>
+                <dt>Error</dt>
+                <dd>{buildStatus.error}</dd>
+              </div>
+            ) : null}
           </dl>
         </section>
       </div>
@@ -360,6 +524,12 @@ function renderRightPanel(
       <div className="stack">
         <section className="card compact-card">
           <h3>Runtime Targets</h3>
+          <div className="form-grid">
+            <label className="form-field">
+              <span>Launch scene</span>
+              <input onChange={(event) => onLaunchSceneChange(event.target.value)} type="text" value={launchScene} />
+            </label>
+          </div>
           <ul className="detail-list">
             <li>Windows native runtime window first</li>
             <li>WSL-backed shell and terminal workflow</li>
@@ -375,7 +545,7 @@ function renderRightPanel(
             </div>
             <div>
               <dt>Scene</dt>
-              <dd>{runtimeStatus.scene || 'sandbox'}</dd>
+              <dd>{runtimeStatus.scene || launchScene}</dd>
             </div>
             <div>
               <dt>Process</dt>
@@ -431,6 +601,7 @@ function TerminalDock({
     fitAddon: FitAddon;
     resizeObserver: ResizeObserver;
     writtenOutput: string;
+    disposeDomListeners: () => void;
   } | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null;
 
@@ -445,6 +616,7 @@ function TerminalDock({
         return;
       }
       instance.resizeObserver.disconnect();
+      instance.disposeDomListeners();
       instance.terminal.dispose();
       terminalInstanceRef.current = null;
     };
@@ -453,6 +625,7 @@ function TerminalDock({
     if (!instance || instance.tabId !== activeTab.id) {
       disposeTerminal();
       hostRef.current.innerHTML = '';
+      const terminalHost = hostRef.current;
 
       const terminal = new XTerm({
         cursorBlink: true,
@@ -467,11 +640,44 @@ function TerminalDock({
       });
       const fitAddon = new FitAddon();
       terminal.loadAddon(fitAddon);
-      terminal.open(hostRef.current);
+      terminal.open(terminalHost);
+      const helperTextarea = terminalHost.querySelector('textarea');
       fitAddon.fit();
       if (activeTab.output) {
         terminal.write(activeTab.output);
       }
+
+      const writeInput = (text: string) => {
+        if (!text) {
+          return;
+        }
+        onTerminalInput(activeTab.id, text);
+      };
+
+      terminal.attachCustomKeyEventHandler((event) => {
+        const isCopy =
+          event.type === 'keydown' &&
+          event.key.toLowerCase() === 'c' &&
+          (event.ctrlKey || event.metaKey);
+        if (isCopy && terminal.hasSelection()) {
+          void copyTextToClipboard(terminal.getSelection());
+          terminal.clearSelection();
+          event.preventDefault();
+          return false;
+        }
+
+        const isPaste =
+          event.type === 'keydown' &&
+          ((event.key.toLowerCase() === 'v' && (event.ctrlKey || event.metaKey)) ||
+            (event.key === 'Insert' && event.shiftKey));
+        if (isPaste) {
+          event.preventDefault();
+          void forwardTerminalPaste(event, writeInput);
+          return false;
+        }
+
+        return true;
+      });
 
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit();
@@ -480,10 +686,55 @@ function TerminalDock({
         onTerminalResize(activeTab.id, cols, rows);
       });
 
-      resizeObserver.observe(hostRef.current);
+      resizeObserver.observe(terminalHost);
       terminal.onData((input) => {
+        if (isClipboardPasteSentinel(input)) {
+          return;
+        }
         onTerminalInput(activeTab.id, input);
       });
+
+      const handlePaste = (event: ClipboardEvent) => {
+        event.preventDefault();
+        void forwardTerminalPaste(event, writeInput);
+      };
+      const handleBeforeInput = (event: InputEvent) => {
+        if (!shouldBridgeTerminalTextInput(event)) {
+          return;
+        }
+        event.preventDefault();
+        const text = typeof event.data === 'string' ? event.data : '';
+        void forwardTerminalInsertedText(event, writeInput, text);
+      };
+      const handleInput = (event: Event) => {
+        const inputEvent = event as InputEvent;
+        const text = helperTextarea instanceof HTMLTextAreaElement ? helperTextarea.value : '';
+        if (!shouldBridgeTerminalTextInput(inputEvent, text)) {
+          return;
+        }
+        if (helperTextarea instanceof HTMLTextAreaElement) {
+          helperTextarea.value = '';
+        }
+        inputEvent.preventDefault?.();
+        void forwardTerminalInsertedText(inputEvent, writeInput, text);
+      };
+
+      const handleHostClick = () => terminal.focus();
+      terminalHost.addEventListener('click', handleHostClick);
+      terminalHost.addEventListener('paste', handlePaste, true);
+      terminalHost.addEventListener('beforeinput', handleBeforeInput, true);
+      helperTextarea?.addEventListener('paste', handlePaste, true);
+      helperTextarea?.addEventListener('beforeinput', handleBeforeInput, true);
+      helperTextarea?.addEventListener('input', handleInput, true);
+
+      const disposeDomListeners = () => {
+        terminalHost.removeEventListener('click', handleHostClick);
+        terminalHost.removeEventListener('paste', handlePaste, true);
+        terminalHost.removeEventListener('beforeinput', handleBeforeInput, true);
+        helperTextarea?.removeEventListener('paste', handlePaste, true);
+        helperTextarea?.removeEventListener('beforeinput', handleBeforeInput, true);
+        helperTextarea?.removeEventListener('input', handleInput, true);
+      };
 
       terminalInstanceRef.current = {
         tabId: activeTab.id,
@@ -491,6 +742,7 @@ function TerminalDock({
         fitAddon,
         resizeObserver,
         writtenOutput: activeTab.output,
+        disposeDomListeners,
       };
       instance = terminalInstanceRef.current;
     }
@@ -527,6 +779,7 @@ function TerminalDock({
         return;
       }
       instance.resizeObserver.disconnect();
+      instance.disposeDomListeners();
       instance.terminal.dispose();
       terminalInstanceRef.current = null;
     };
@@ -641,6 +894,37 @@ engine ai providers
   );
 }
 
+function gitStatusClassName(status: string) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === '?') {
+    return 'unknown';
+  }
+  return normalized || 'default';
+}
+
+function renderGitGroup(title: string, entries: GitStatus['staged']) {
+  if (!entries.length) {
+    return null;
+  }
+
+  return (
+    <section className="git-group">
+      <div className="git-group__header">
+        <strong>{title}</strong>
+        <span>{entries.length}</span>
+      </div>
+      <ul className="git-file-list">
+        {entries.map((entry) => (
+          <li className="git-file-row" key={`${title}-${entry.status}-${entry.path}`}>
+            <span className={`git-status-chip git-status-chip--${gitStatusClassName(entry.status)}`}>{entry.status}</span>
+            <span className="git-file-path">{entry.path}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function renderCodeBridge(
   layoutMode: LayoutMode,
   showLegacyBridge: boolean,
@@ -750,6 +1034,9 @@ function renderCenterContent(
   onToggleLegacyBridge: () => void,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
+  launchScene: string,
+  buildConfig: BuildConfig,
+  onBuildAndPlay: () => void,
   onStartRuntime: () => void,
   onStopRuntime: () => void,
   onRestartRuntime: () => void,
@@ -768,6 +1055,14 @@ function renderCenterContent(
               <h2>Game Viewer</h2>
             </div>
             <div className="inline-actions">
+              <button
+                className="ghost-button"
+                disabled={buildStatus.state === 'running'}
+                onClick={onBuildAndPlay}
+                type="button"
+              >
+                Build + Play
+              </button>
               <button
                 className="ghost-button"
                 disabled={buildStatus.state === 'running'}
@@ -796,7 +1091,7 @@ function renderCenterContent(
           </div>
           <ViewportShell
             footer="Windows native runtime window first. Embedded streaming viewer comes after runtime stabilization."
-            subtitle="Run target: sandbox"
+            subtitle={`Run target: ${launchScene}`}
             title="Game viewport"
           />
         </section>
@@ -808,11 +1103,15 @@ function renderCenterContent(
             </article>
             <article className="mini-card">
               <span>Scene</span>
-              <strong>{runtimeStatus.scene || 'sandbox'}</strong>
+              <strong>{runtimeStatus.scene || launchScene}</strong>
             </article>
             <article className="mini-card">
               <span>Process</span>
               <strong>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</strong>
+            </article>
+            <article className="mini-card">
+              <span>Build config</span>
+              <strong>{buildConfig}</strong>
             </article>
           </div>
         </section>
@@ -889,7 +1188,7 @@ function renderCenterContent(
 }
 
 export default function App() {
-  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('World');
+  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('Sessions');
   const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Scene');
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('Details');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
@@ -900,17 +1199,31 @@ export default function App() {
   const [sessions, setSessions] = useState<EngineSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState('');
   const [sessionActionBusy, setSessionActionBusy] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState('');
+  const [newSessionName, setNewSessionName] = useState('');
+  const [newSessionRoot, setNewSessionRoot] = useState('');
+  const [dirPickerOpen, setDirPickerOpen] = useState(false);
+  const [dirPickerPath, setDirPickerPath] = useState('/');
+  const [dirPickerEntries, setDirPickerEntries] = useState<HostDirectoryList['entries']>([]);
+  const [dirPickerBusy, setDirPickerBusy] = useState(false);
+  const [dirPickerError, setDirPickerError] = useState('');
   const [explorerEntries, setExplorerEntries] = useState<SessionFileEntry[]>([]);
   const [explorerPath, setExplorerPath] = useState('.');
   const [selectedExplorerPath, setSelectedExplorerPath] = useState('');
   const [selectedFilePreview, setSelectedFilePreview] = useState('');
   const [explorerBusy, setExplorerBusy] = useState(false);
+  const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus);
+  const [gitBusy, setGitBusy] = useState(false);
   const [terminalTabs, setTerminalTabs] = useState<TerminalTabState[]>([]);
   const [activeTerminalTabId, setActiveTerminalTabId] = useState('');
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>(stoppedRuntimeStatus);
   const [runtimeLog, setRuntimeLog] = useState('[runtime] idle\n');
   const [buildStatus, setBuildStatus] = useState<BuildStatus>(idleBuildStatus);
   const [buildLog, setBuildLog] = useState('[build] idle\n');
+  const [launchScene, setLaunchScene] = useState('sandbox');
+  const [buildConfig, setBuildConfig] = useState<BuildConfig>('Debug');
+  const [buildDir, setBuildDir] = useState('build/runtime');
+  const [pendingRunAfterBuild, setPendingRunAfterBuild] = useState(false);
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
 
@@ -949,6 +1262,73 @@ export default function App() {
     } finally {
       setExplorerBusy(false);
     }
+  }
+
+  async function refreshGit(sessionId: string) {
+    if (!sessionId) {
+      setGitStatus(emptyGitStatus);
+      return;
+    }
+
+    setGitBusy(true);
+    try {
+      const nextStatus = await fetchGitStatus(sessionId);
+      setGitStatus(nextStatus);
+    } finally {
+      setGitBusy(false);
+    }
+  }
+
+  async function navigateDirPicker(nextPath: string) {
+    setDirPickerBusy(true);
+    setDirPickerError('');
+    setDirPickerPath(nextPath);
+    try {
+      const listing = await listHostDirectories(nextPath);
+      setDirPickerPath(listing.path);
+      setDirPickerEntries(listing.entries);
+    } catch (error) {
+      setDirPickerError(error instanceof Error ? error.message : String(error));
+      setDirPickerEntries([]);
+    } finally {
+      setDirPickerBusy(false);
+    }
+  }
+
+  function openDirPicker(startPath: string) {
+    const nextPath = startPath.trim() || '/';
+    setDirPickerOpen(true);
+    setDirPickerPath(nextPath);
+    setDirPickerEntries([]);
+    setDirPickerError('');
+    void navigateDirPicker(nextPath);
+  }
+
+  function closeDirPicker() {
+    setDirPickerOpen(false);
+    setDirPickerPath('/');
+    setDirPickerEntries([]);
+    setDirPickerError('');
+    setDirPickerBusy(false);
+  }
+
+  async function activateSession(sessionId: string) {
+    setActiveSessionId(sessionId);
+    await Promise.all([refreshExplorer(sessionId, '.'), refreshGit(sessionId)]);
+  }
+
+  function loadSessionIntoForm(session: EngineSession) {
+    setEditingSessionId(session.id);
+    setNewSessionName(session.name);
+    setNewSessionRoot(session.rootPath);
+    closeDirPicker();
+  }
+
+  function resetSessionForm() {
+    setEditingSessionId('');
+    setNewSessionName('');
+    setNewSessionRoot('');
+    closeDirPicker();
   }
 
   useEffect(() => {
@@ -996,6 +1376,18 @@ export default function App() {
   useEffect(() => {
     terminalTabsRef.current = terminalTabs;
   }, [terminalTabs]);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setGitStatus(emptyGitStatus);
+      return;
+    }
+
+    void refreshGit(activeSessionId).catch((error) => {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    });
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (terminalTabs.length) {
@@ -1047,6 +1439,9 @@ export default function App() {
 
       if (event.type === 'runtime.status' || event.type === 'runtime.started') {
         setRuntimeStatus(event.data);
+        if (event.data.scene) {
+          setLaunchScene(event.data.scene);
+        }
         return;
       }
 
@@ -1072,11 +1467,58 @@ export default function App() {
         event.type === 'build.completed'
       ) {
         setBuildStatus(event.data);
+        if (event.data.buildDir) {
+          setBuildDir(event.data.buildDir);
+        }
+        if (event.data.config === 'Debug' || event.data.config === 'Release') {
+          setBuildConfig(event.data.config);
+        }
       }
     });
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!pendingRunAfterBuild) {
+      return;
+    }
+
+    if (buildStatus.state === 'succeeded') {
+      setPendingRunAfterBuild(false);
+      if (runtimeStatus.state === 'running') {
+        void restartRuntime(launchScene)
+          .then((nextStatus) => {
+            setRuntimeStatus(nextStatus);
+            setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested after build\n`));
+            setActiveBottomTab('Logs');
+          })
+          .catch((error) => {
+            setRuntimeLog((current) =>
+              trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+            );
+          });
+        return;
+      }
+
+      void startRuntime(launchScene)
+        .then((nextStatus) => {
+          setRuntimeStatus(nextStatus);
+          setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested after build\n`));
+          setActiveBottomTab('Logs');
+        })
+        .catch((error) => {
+          setRuntimeLog((current) =>
+            trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+          );
+        });
+      return;
+    }
+
+    if (buildStatus.state === 'failed' || buildStatus.state === 'stopped') {
+      setPendingRunAfterBuild(false);
+    }
+  }, [buildStatus.state, launchScene, pendingRunAfterBuild, runtimeStatus.state]);
 
   useEffect(() => {
     for (const tab of terminalTabs) {
@@ -1135,12 +1577,77 @@ export default function App() {
   async function handleCreateSession() {
     try {
       setSessionActionBusy(true);
-      const session = await createSession();
+      const session = await createSession({
+        name: newSessionName.trim() || undefined,
+        rootPath: newSessionRoot.trim() || undefined,
+      });
       setSessiondState('connected');
       setSessiondMessage(`Created session ${session.name}`);
       await refreshSessions();
-      setActiveSessionId(session.id);
-      await refreshExplorer(session.id, '.');
+      await activateSession(session.id);
+      resetSessionForm();
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionActionBusy(false);
+    }
+  }
+
+  async function handleSaveSession() {
+    if (!editingSessionId) {
+      return;
+    }
+
+    try {
+      setSessionActionBusy(true);
+      const session = await updateSession(editingSessionId, {
+        name: newSessionName.trim() || undefined,
+        rootPath: newSessionRoot.trim() || undefined,
+      });
+      setSessiondState('connected');
+      setSessiondMessage(`Updated session ${session.name}`);
+      await refreshSessions();
+      await activateSession(session.id);
+      resetSessionForm();
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionActionBusy(false);
+    }
+  }
+
+  async function handleDeleteSession(sessionId: string) {
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) {
+      return;
+    }
+    if (!window.confirm(`Delete session "${session.name}"?`)) {
+      return;
+    }
+
+    try {
+      setSessionActionBusy(true);
+      await deleteSession(sessionId);
+      const nextSessions = await refreshSessions();
+      const nextActiveSessionId =
+        activeSessionId === sessionId ? nextSessions[0]?.id || '' : activeSessionId;
+      setActiveSessionId(nextActiveSessionId);
+      if (nextActiveSessionId) {
+        await activateSession(nextActiveSessionId);
+      } else {
+        setExplorerEntries([]);
+        setExplorerPath('.');
+        setSelectedExplorerPath('');
+        setSelectedFilePreview('');
+        setGitStatus(emptyGitStatus);
+      }
+      if (editingSessionId === sessionId) {
+        resetSessionForm();
+      }
+      setSessiondState('connected');
+      setSessiondMessage(`Deleted session ${session.name}`);
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -1158,6 +1665,7 @@ export default function App() {
       const explorerSessionId = activeSessionId || nextSessions[0]?.id || '';
       if (explorerSessionId) {
         await refreshExplorer(explorerSessionId, explorerPath);
+        await refreshGit(explorerSessionId);
       }
     } catch (error) {
       setSessiondState('offline');
@@ -1198,6 +1706,25 @@ export default function App() {
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleInitGitRepository() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setGitBusy(true);
+      const nextStatus = await initGitRepository(activeSessionId);
+      setGitStatus(nextStatus);
+      setSessiondState('connected');
+      setSessiondMessage(`Initialized git repository for ${activeSession?.name || 'session'}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGitBusy(false);
     }
   }
 
@@ -1304,7 +1831,7 @@ export default function App() {
 
   async function handleStartRuntime() {
     try {
-      const nextStatus = await startRuntime(runtimeStatus.scene || 'sandbox');
+      const nextStatus = await startRuntime(launchScene);
       setRuntimeStatus(nextStatus);
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested\n`));
       setActiveBottomTab('Logs');
@@ -1330,7 +1857,7 @@ export default function App() {
 
   async function handleRestartRuntime() {
     try {
-      const nextStatus = await restartRuntime(runtimeStatus.scene || 'sandbox');
+      const nextStatus = await restartRuntime(launchScene);
       setRuntimeStatus(nextStatus);
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested\n`));
       setActiveBottomTab('Logs');
@@ -1341,21 +1868,23 @@ export default function App() {
     }
   }
 
-  async function handleStartRuntimeBuild() {
+  async function requestRuntimeBuild(runAfterBuild = false) {
     try {
-      const nextStatus = await startRuntimeBuild();
+      const nextStatus = await startRuntimeBuild(buildConfig, buildDir.trim() || undefined);
+      setPendingRunAfterBuild(runAfterBuild);
       setBuildStatus(nextStatus);
       setBuildLog((current) => trimTerminalOutput(`${current}[build] runtime build requested\n`));
       setActiveBottomTab('Output');
       setActiveRightTab('Build');
     } catch (error) {
+      setPendingRunAfterBuild(false);
       const message = error instanceof Error ? error.message : String(error);
       setBuildStatus({
         ...idleBuildStatus,
         state: 'failed',
         target: 'runtime',
-        config: 'Debug',
-        buildDir: 'build/runtime',
+        config: buildConfig,
+        buildDir,
         finishedAt: new Date().toISOString(),
         error: message,
       });
@@ -1364,6 +1893,14 @@ export default function App() {
       );
       setActiveBottomTab('Output');
     }
+  }
+
+  function handleStartRuntimeBuild() {
+    void requestRuntimeBuild(false);
+  }
+
+  function handleBuildAndPlay() {
+    void requestRuntimeBuild(true);
   }
 
   async function handleStopBuild() {
@@ -1415,7 +1952,8 @@ export default function App() {
         <div className="toolbar-cluster">
           <span className="toolbar-chip toolbar-chip--accent">Project: shader-forge</span>
           <span className="toolbar-chip">Branch: main</span>
-          <span className="toolbar-chip">Target: sandbox</span>
+          <span className="toolbar-chip">Target: {launchScene}</span>
+          <span className="toolbar-chip">Config: {buildConfig}</span>
           <span className="toolbar-chip">Renderer: Vulkan-first</span>
         </div>
           <div className="toolbar-cluster toolbar-cluster--right">
@@ -1436,115 +1974,299 @@ export default function App() {
       <main className="shell-grid">
         <aside className="pane rail-pane">
           <div className="pane-header">
-            <h2>Left Dock</h2>
-            <span className="pane-caption">World, content, sessions</span>
+            <h2>Workspace</h2>
+            <span className="pane-caption">Sessions, files, source control</span>
           </div>
-          <div className="stack">
+          <div className="rail-nav">
             {leftTabs.map((tab) => (
-              <TabButton active={activeLeftTab === tab} key={tab} onClick={() => setActiveLeftTab(tab)}>
-                {tab}
-              </TabButton>
+              <button
+                className={`rail-nav__button${activeLeftTab === tab ? ' is-active' : ''}`}
+                key={tab}
+                onClick={() => setActiveLeftTab(tab)}
+                title={leftTabMeta[tab].label}
+                type="button"
+              >
+                <span className="rail-nav__icon">{leftTabMeta[tab].icon}</span>
+                <span className="rail-nav__label">{leftTabMeta[tab].label}</span>
+              </button>
             ))}
           </div>
-          <section className="card compact-card rail-card">
-            <div className="pane-header pane-header--compact">
-              <h3>Sessiond Bridge</h3>
-              <span className="pane-caption">{sessiondState}</span>
-            </div>
-            <p className="sessiond-copy">
-              Base URL: <code>{getSessiondBaseUrl()}</code>
-            </p>
-            <div className="inline-actions">
-              <button className="ghost-button" disabled={sessionActionBusy} onClick={handleCreateSession} type="button">
-                {sessionActionBusy ? 'Working...' : 'Create session'}
-              </button>
-              <button className="ghost-button" disabled={sessionActionBusy} onClick={handleRefreshSessions} type="button">
-                Refresh
-              </button>
-            </div>
-            <ul className="session-list">
-              {sessions.length ? (
-                sessions.map((session) => (
-                  <li key={session.id}>
-                    <button
-                      className={`session-button${activeSessionId === session.id ? ' is-active' : ''}`}
-                      onClick={() => {
-                        setActiveSessionId(session.id);
-                        void refreshExplorer(session.id, '.').catch((error) => {
-                          setSessiondState('offline');
-                          setSessiondMessage(error instanceof Error ? error.message : String(error));
-                        });
-                      }}
-                      type="button"
-                    >
-                      <strong>{session.name}</strong>
-                      <span>{session.rootPath}</span>
-                      <em>{formatSessionTimestamp(session.createdAt)}</em>
-                    </button>
-                  </li>
-                ))
-              ) : (
-                <li className="session-list-empty">
-                  {sessiondState === 'offline'
-                    ? 'Start engine_sessiond to populate shell sessions.'
-                    : 'No sessions yet. Create one from the shell.'}
-                </li>
-              )}
-            </ul>
-          </section>
-          <section className="card compact-card rail-card">
-            <h3>{activeLeftTab}</h3>
-            <p>
-              {activeLeftTab === 'Sessions'
-                ? 'Project sessions, WSL terminals, and future engine_sessiond ownership live here.'
-                : activeLeftTab === 'Explorer'
-                  ? 'Repo navigation stays text-first so AI and humans are editing the same sources.'
-                    : activeLeftTab === 'Source Control'
-                      ? 'Git status, diffs, and migration reports remain visible inside the shell.'
-                    : activeLeftTab === 'World'
-                      ? 'Outliner and scene hierarchy will graduate here as level authoring lands.'
-                      : 'Search spans repo, assets, logs, and later scene data in one shell surface.'}
-            </p>
-          </section>
-          {activeLeftTab === 'Explorer' ? (
-            <section className="card compact-card rail-card">
-              <div className="pane-header pane-header--compact">
-                <h3>Root Explorer</h3>
-                <span className="pane-caption">{activeSession ? activeSession.name : 'no session'}</span>
-              </div>
-              <div className="inline-actions">
-                <button className="ghost-button" disabled={!activeSessionId || explorerPath === '.'} onClick={handleExplorerUp} type="button">
-                  Up
-                </button>
-                <span className="toolbar-chip toolbar-chip--muted">{explorerPath}</span>
-              </div>
-              <ul className="explorer-list">
-                {explorerEntries.length ? (
-                  explorerEntries.map((entry) => (
-                    <li key={entry.path}>
+          {activeLeftTab === 'Sessions' ? (
+            <>
+              <section className="card compact-card rail-card">
+                <div className="pane-header pane-header--compact">
+                  <h3>{editingSessionId ? 'Edit Session' : 'Create Session'}</h3>
+                  <span className="pane-caption">{sessiondState}</span>
+                </div>
+                <p className="sessiond-copy">
+                  Base URL: <code>{getSessiondBaseUrl()}</code>
+                </p>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Session name</span>
+                    <input
+                      onChange={(event) => setNewSessionName(event.target.value)}
+                      placeholder="my-game"
+                      type="text"
+                      value={newSessionName}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Workspace root</span>
+                    <div className="form-field__row">
+                      <input
+                        onChange={(event) => setNewSessionRoot(event.target.value)}
+                        placeholder="/mnt/s/Development/Games/MyGame"
+                        type="text"
+                        value={newSessionRoot}
+                      />
                       <button
-                        className={`explorer-entry${selectedExplorerPath === entry.path ? ' is-active' : ''}`}
-                        disabled={explorerBusy}
-                        onClick={() => handleExplorerEntryClick(entry)}
+                        className="ghost-button"
+                        onClick={() => openDirPicker(newSessionRoot || activeSession?.rootPath || '/')}
                         type="button"
                       >
-                        <strong>{entry.name}</strong>
-                        <span>{entry.kind === 'directory' ? 'directory' : formatFileSize(entry.size)}</span>
+                        Browse
                       </button>
+                    </div>
+                  </label>
+                </div>
+                {dirPickerOpen ? (
+                  <div className="dir-picker">
+                    <div className="dir-picker__path">{dirPickerPath}</div>
+                    {dirPickerError ? <div className="terminal-error">{dirPickerError}</div> : null}
+                    <div className="dir-picker__list">
+                      {dirPickerPath !== '/' ? (
+                        <button
+                          className="dir-picker__entry"
+                          onClick={() => void navigateDirPicker(getParentHostPath(dirPickerPath))}
+                          type="button"
+                        >
+                          ..
+                        </button>
+                      ) : null}
+                      {dirPickerBusy ? (
+                        <div className="session-list-empty">Loading directories...</div>
+                      ) : dirPickerEntries.filter((entry) => entry.kind === 'directory').length ? (
+                        dirPickerEntries
+                          .filter((entry) => entry.kind === 'directory')
+                          .map((entry) => (
+                            <button
+                              className="dir-picker__entry"
+                              key={entry.path}
+                              onClick={() => void navigateDirPicker(entry.path)}
+                              type="button"
+                            >
+                              {entry.name}
+                            </button>
+                          ))
+                      ) : (
+                        <div className="session-list-empty">No subdirectories.</div>
+                      )}
+                    </div>
+                    <div className="inline-actions">
+                      <button
+                        className="ghost-button"
+                        onClick={() => {
+                          setNewSessionRoot(dirPickerPath);
+                          closeDirPicker();
+                        }}
+                        type="button"
+                      >
+                        Select
+                      </button>
+                      <button className="ghost-button" onClick={closeDirPicker} type="button">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="inline-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={sessionActionBusy}
+                    onClick={editingSessionId ? handleSaveSession : handleCreateSession}
+                    type="button"
+                  >
+                    {sessionActionBusy ? 'Working...' : editingSessionId ? 'Save session' : 'Create session'}
+                  </button>
+                  {editingSessionId ? (
+                    <button className="ghost-button" disabled={sessionActionBusy} onClick={resetSessionForm} type="button">
+                      Cancel
+                    </button>
+                  ) : null}
+                  <button className="ghost-button" disabled={sessionActionBusy} onClick={handleRefreshSessions} type="button">
+                    Refresh
+                  </button>
+                </div>
+              </section>
+              <section className="card compact-card rail-card">
+                <div className="pane-header pane-header--compact">
+                  <h3>Sessions</h3>
+                  <span className="pane-caption">{sessions.length}</span>
+                </div>
+                <ul className="session-list">
+                  {sessions.length ? (
+                    sessions.map((session) => (
+                    <li key={session.id}>
+                        <div className={`session-card${activeSessionId === session.id ? ' is-active' : ''}`}>
+                          <button
+                            className={`session-button${activeSessionId === session.id ? ' is-active' : ''}`}
+                            onClick={() => {
+                              void activateSession(session.id).catch((error) => {
+                                setSessiondState('offline');
+                                setSessiondMessage(error instanceof Error ? error.message : String(error));
+                              });
+                            }}
+                            type="button"
+                          >
+                            <strong>{session.name}</strong>
+                            <span>{session.rootPath}</span>
+                            <em>{formatSessionTimestamp(session.createdAt)}</em>
+                          </button>
+                          <div className="session-card__actions">
+                            <button
+                              className="session-card__action"
+                              onClick={() => loadSessionIntoForm(session)}
+                              title="Edit session"
+                              type="button"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="session-card__action session-card__action--danger"
+                              onClick={() => void handleDeleteSession(session.id)}
+                              title="Delete session"
+                              type="button"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
                     </li>
                   ))
                 ) : (
-                  <li className="session-list-empty">No file data yet. Start sessiond and create a session.</li>
-                )}
-              </ul>
-              {selectedExplorerPath ? (
-                <div className="file-preview">
-                  <div className="file-preview__path">{selectedExplorerPath}</div>
-                  <pre>{selectedFilePreview || '[empty file]'}</pre>
-                </div>
-              ) : null}
+                    <li className="session-list-empty">
+                      {sessiondState === 'offline'
+                        ? 'Start engine_sessiond to populate shell sessions.'
+                        : 'No sessions yet. Create one from the shell.'}
+                    </li>
+                  )}
+                </ul>
+              </section>
+            </>
+          ) : null}
+          {activeLeftTab === 'Explorer' ? (
+            <section className="card compact-card rail-card">
+              <div className="pane-header pane-header--compact">
+                <h3>Explorer</h3>
+                <span className="pane-caption">{activeSession ? activeSession.name : 'no session'}</span>
+              </div>
+              {activeSession ? (
+                <>
+                  <div className="inline-actions">
+                    <button className="ghost-button" disabled={!activeSessionId || explorerPath === '.'} onClick={handleExplorerUp} type="button">
+                      Up
+                    </button>
+                    <button className="ghost-button" disabled={!activeSessionId || explorerBusy} onClick={() => void refreshExplorer(activeSessionId, explorerPath)} type="button">
+                      Refresh
+                    </button>
+                    <span className="toolbar-chip toolbar-chip--muted">{explorerPath}</span>
+                  </div>
+                  <ul className="explorer-list">
+                    {explorerEntries.length ? (
+                      explorerEntries.map((entry) => (
+                        <li key={entry.path}>
+                          <button
+                            className={`explorer-entry${selectedExplorerPath === entry.path ? ' is-active' : ''}`}
+                            disabled={explorerBusy}
+                            onClick={() => handleExplorerEntryClick(entry)}
+                            type="button"
+                          >
+                            <strong>{entry.name}</strong>
+                            <span>{entry.kind === 'directory' ? 'directory' : formatFileSize(entry.size)}</span>
+                          </button>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="session-list-empty">No file data yet for this session.</li>
+                    )}
+                  </ul>
+                  {selectedExplorerPath ? (
+                    <div className="file-preview">
+                      <div className="file-preview__path">{selectedExplorerPath}</div>
+                      <pre>{selectedFilePreview || '[empty file]'}</pre>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="session-list-empty">Create or select a session to browse files.</div>
+              )}
             </section>
           ) : null}
+          {activeLeftTab === 'Source Control' ? (
+            <section className="card compact-card rail-card">
+              <div className="pane-header pane-header--compact">
+                <h3>Source Control</h3>
+                <span className="pane-caption">{activeSession ? activeSession.name : 'no session'}</span>
+              </div>
+              {activeSession ? (
+                <>
+                  <div className="inline-actions">
+                    <button className="ghost-button" disabled={gitBusy} onClick={() => void refreshGit(activeSessionId)} type="button">
+                      Refresh
+                    </button>
+                    <button className="ghost-button" disabled={gitBusy || !gitStatus.notARepo} onClick={handleInitGitRepository} type="button">
+                      Init repo
+                    </button>
+                  </div>
+                  {gitBusy ? (
+                    <div className="session-list-empty">Loading git status...</div>
+                  ) : gitStatus.notARepo ? (
+                    <div className="session-list-empty">This session root is not a git repository yet.</div>
+                  ) : (
+                    <div className="git-panel">
+                      <div className="git-branch">{gitStatus.branch || 'detached / unknown branch'}</div>
+                      {renderGitGroup('Staged Changes', gitStatus.staged)}
+                      {renderGitGroup('Changes', gitStatus.unstaged)}
+                      {renderGitGroup('Untracked Files', gitStatus.untracked)}
+                      {!gitStatus.staged.length && !gitStatus.unstaged.length && !gitStatus.untracked.length ? (
+                        <div className="session-list-empty">Working tree clean.</div>
+                      ) : null}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="session-list-empty">Create or select a session to view source control.</div>
+              )}
+            </section>
+          ) : null}
+          <section className="card compact-card rail-card">
+            <div className="pane-header pane-header--compact">
+              <h3>Utilities</h3>
+              <span className="pane-caption">secondary tools</span>
+            </div>
+            <div className="utility-nav">
+              {utilityTabs.map((tab) => (
+                <button
+                  className="utility-nav__button"
+                  key={tab}
+                  onClick={() => {
+                    if (tab === 'World') {
+                      setActiveCenterTab('Scene');
+                      setActiveRightTab('Details');
+                      return;
+                    }
+                    setActiveCenterTab('Code');
+                    setShowLegacyBridge(true);
+                  }}
+                  type="button"
+                >
+                  <span className="utility-nav__icon">{utilityTabMeta[tab].icon}</span>
+                  <span className="utility-nav__label">{utilityTabMeta[tab].label}</span>
+                </button>
+              ))}
+            </div>
+          </section>
         </aside>
 
         <section className="center-column">
@@ -1570,6 +2292,9 @@ export default function App() {
               <div className="viewport-commandbar__group">
                 <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={handleStartRuntimeBuild} type="button">
                   Build
+                </button>
+                <button className="ghost-button" disabled={buildStatus.state === 'running'} onClick={handleBuildAndPlay} type="button">
+                  Build + Play
                 </button>
                 <button
                   className="ghost-button"
@@ -1600,8 +2325,9 @@ export default function App() {
                 </button>
               </div>
               <div className="viewport-commandbar__group">
-                <span className="toolbar-chip">Scene: CastleEntrance</span>
+                <span className="toolbar-chip">Scene: {launchScene}</span>
                 <span className="toolbar-chip">Mode: Edit</span>
+                <span className="toolbar-chip">Config: {buildConfig}</span>
                 <span className={`toolbar-chip${buildStatus.state === 'running' ? ' toolbar-chip--accent' : ''}`}>
                   Build: {buildStatus.state}
                 </span>
@@ -1619,6 +2345,9 @@ export default function App() {
             () => setShowLegacyBridge((current) => !current),
             runtimeStatus,
             buildStatus,
+            launchScene,
+            buildConfig,
+            handleBuildAndPlay,
             handleStartRuntime,
             handleStopRuntime,
             handleRestartRuntime,
@@ -1660,7 +2389,15 @@ export default function App() {
             activeRightTab,
             runtimeStatus,
             buildStatus,
+            launchScene,
+            buildConfig,
+            buildDir,
+            pendingRunAfterBuild,
+            setLaunchScene,
+            setBuildConfig,
+            setBuildDir,
             handleStartRuntimeBuild,
+            handleBuildAndPlay,
             handleStopBuild,
           )}
         </aside>

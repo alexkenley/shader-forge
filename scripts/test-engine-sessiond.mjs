@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
@@ -117,6 +119,13 @@ try {
   );
   assert.equal(sessionPayload.session.rootPath, repoRoot);
 
+  const updatedSessionPayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${createPayload.session.id}`,
+    'PATCH',
+    { name: 'repo-root-renamed' },
+  );
+  assert.equal(updatedSessionPayload.session.name, 'repo-root-renamed');
+
   const fileListPayload = await requestJsonNoAuth(
     `${service.baseUrl}/api/files/list?sessionId=${encodeURIComponent(createPayload.session.id)}&path=${encodeURIComponent('.')}`,
   );
@@ -130,6 +139,45 @@ try {
   assert.equal(fileReadPayload.path, 'README.md');
   assert.match(fileReadPayload.content, /Shader Forge/);
   assert.ok(fileReadPayload.size > 0);
+
+  const hostFsPayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/hostfs/list?path=${encodeURIComponent(path.dirname(repoRoot))}`,
+  );
+  assert.equal(hostFsPayload.path, path.dirname(repoRoot));
+  assert.equal(Array.isArray(hostFsPayload.entries), true);
+  assert.ok(hostFsPayload.entries.some((entry) => entry.name === path.basename(repoRoot)));
+
+  const gitStatusPayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/git/status?sessionId=${encodeURIComponent(createPayload.session.id)}`,
+  );
+  assert.equal(gitStatusPayload.notARepo, false);
+  assert.equal(gitStatusPayload.rootPath, repoRoot);
+  assert.equal(Array.isArray(gitStatusPayload.staged), true);
+  assert.equal(Array.isArray(gitStatusPayload.unstaged), true);
+  assert.equal(Array.isArray(gitStatusPayload.untracked), true);
+
+  const tempProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-git-'));
+  const tempSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
+    name: 'temp-project',
+    rootPath: tempProjectRoot,
+  });
+
+  const tempGitStatusPayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/git/status?sessionId=${encodeURIComponent(tempSessionPayload.session.id)}`,
+  );
+  assert.equal(tempGitStatusPayload.notARepo, true);
+
+  const tempGitInitPayload = await requestJsonNoAuth(`${service.baseUrl}/api/git/init`, 'POST', {
+    sessionId: tempSessionPayload.session.id,
+  });
+  assert.equal(tempGitInitPayload.notARepo, false);
+  assert.equal(Array.isArray(tempGitInitPayload.untracked), true);
+
+  const tempDeletePayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${tempSessionPayload.session.id}`,
+    'DELETE',
+  );
+  assert.equal(tempDeletePayload.ok, true);
 
   const outputEventPromise = waitForSseEvent(
     `${service.baseUrl}/api/events`,
@@ -214,7 +262,8 @@ try {
   console.log('Engine sessiond smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log(`- Created session for ${path.basename(repoRoot)}`);
-  console.log('- Verified session list/get plus safe file list/read APIs');
+  console.log('- Verified session create/update/delete plus safe file and host-fs listing APIs');
+  console.log('- Verified git status and git-init APIs against real session roots');
   console.log('- Verified PTY terminal open/input/stream/close flow');
   console.log('- Verified runtime start/status/log/stop lifecycle');
   console.log('- Verified runtime build start/log/completion lifecycle');

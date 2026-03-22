@@ -47,10 +47,40 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 - procedural geometry
 - test and harness infrastructure
 
+## Progress Update
+
+Current implementation status:
+
+- Phase 1 is substantially underway.
+- Phase 2 has a working first implementation and is the main active backend surface.
+- Phase 3 has been scaffolded, but the native SDL3/Vulkan window bring-up is still ahead.
+- Phase 4 has started through shell-side runtime build/run controls and log surfaces, but not through a full embedded viewer.
+
+What is already done:
+
+- `shell/engine-shell` exists as a React + TypeScript + Vite shell scaffold.
+- The preserved code workspace remains bridged under `shell/engine-shell/web/`, including the extracted Monaco inline search toolbar and related behavior.
+- The shell layout has moved toward an engine-style workspace with large docked panels rather than a generic web-app layout.
+- A real multi-tab PTY terminal dock is wired through `engine_sessiond` and the shell.
+- Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
+- `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
+- The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, and runtime build/run/log controls.
+- Deterministic harnesses exist for the shell, session backend, and runtime scaffold.
+
+Where the build is currently up to:
+
+- the shell foundation is usable for active iteration
+- session management is now UI-driven rather than terminal-only
+- source control and project-root workflows are in the shell, but still need UX refinement
+- the next major engine step remains native runtime bring-up and tighter shell/runtime integration around real project execution
+
 ## Phase 1: Engine Shell Scaffold
 
 Goal:
 - establish the browser shell as a standalone product surface
+
+Status:
+- core scaffold implemented, UX iteration ongoing
 
 Scope:
 - scaffold `shell/engine-shell` as a React + TypeScript + Vite app
@@ -73,6 +103,9 @@ Exit criteria:
 
 Goal:
 - stand up the backend and command surfaces the shell will rely on
+
+Status:
+- working first implementation in place, now being expanded and refined
 
 Scope:
 - project sessions
@@ -101,6 +134,9 @@ Implemented first slice:
 Goal:
 - get the first native runtime window running
 
+Status:
+- scaffolded, but native window bring-up is still the next major implementation step
+
 Scope:
 - window bootstrap
 - Vulkan device and swapchain
@@ -117,6 +153,9 @@ Exit criteria:
 
 Goal:
 - make the shell a useful engine workspace rather than only a code surface
+
+Status:
+- early bridge work started through build/run/log control surfaces in the shell
 
 Scope:
 - runtime status and control
@@ -291,7 +330,7 @@ Every major subsystem needs:
 
 Current build target:
 
-- Phase 2 backend and CLI slice
-- shell frame plus preserved workspace bridge
-- deterministic shell and sessiond harnesses
-- optional Ollama smoke harness
+- Phase 2 refinement: session UX, project-root workflows, source control, and terminal polish
+- Phase 3 advance: native SDL3/Vulkan runtime bring-up
+- Phase 4 continuation: shell/runtime control surfaces and viewer workflow preparation
+- keep harness coverage current as each major slice lands

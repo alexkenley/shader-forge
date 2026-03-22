@@ -14,11 +14,7 @@ export class SessionStore {
   #sessions = new Map();
 
   async createSession({ name = '', rootPath = process.cwd() } = {}) {
-    const resolvedRoot = path.resolve(rootPath);
-    const stat = await fs.stat(resolvedRoot);
-    if (!stat.isDirectory()) {
-      throw new Error(`Session root is not a directory: ${resolvedRoot}`);
-    }
+    const resolvedRoot = await this.#resolveAndValidateRoot(rootPath);
 
     const timestamp = new Date().toISOString();
     const session = {
@@ -42,6 +38,26 @@ export class SessionStore {
   getSession(sessionId) {
     const session = this.#sessions.get(sessionId);
     return session ? structuredClone(session) : null;
+  }
+
+  async updateSession(sessionId, { name = '', rootPath } = {}) {
+    const session = this.#requireSession(sessionId);
+    const nextRootPath = rootPath ? await this.#resolveAndValidateRoot(rootPath) : session.rootPath;
+    const timestamp = new Date().toISOString();
+    const updated = {
+      ...session,
+      name: name.trim() || path.basename(nextRootPath) || session.name,
+      rootPath: nextRootPath,
+      updatedAt: timestamp,
+    };
+    this.#sessions.set(sessionId, updated);
+    return structuredClone(updated);
+  }
+
+  deleteSession(sessionId) {
+    this.#requireSession(sessionId);
+    this.#sessions.delete(sessionId);
+    return { ok: true };
   }
 
   resolveSessionPath(sessionId, relativePath = '.') {
@@ -112,6 +128,15 @@ export class SessionStore {
       throw new Error(`Unknown session: ${sessionId}`);
     }
     return session;
+  }
+
+  async #resolveAndValidateRoot(rootPath) {
+    const resolvedRoot = path.resolve(rootPath);
+    const stat = await fs.stat(resolvedRoot);
+    if (!stat.isDirectory()) {
+      throw new Error(`Session root is not a directory: ${resolvedRoot}`);
+    }
+    return resolvedRoot;
   }
 
   #resolveWithinSession(session, relativePath = '.') {

@@ -35,6 +35,25 @@ export type SessionFileRead = {
   content: string;
 };
 
+export type HostDirectoryList = {
+  path: string;
+  entries: SessionFileEntry[];
+};
+
+export type GitFileEntry = {
+  status: string;
+  path: string;
+};
+
+export type GitStatus = {
+  rootPath: string;
+  branch: string;
+  staged: GitFileEntry[];
+  unstaged: GitFileEntry[];
+  untracked: GitFileEntry[];
+  notARepo: boolean;
+};
+
 export type SessionTerminalOpen = {
   terminalId: string;
   shell: string;
@@ -159,12 +178,38 @@ export async function listSessions() {
   return payload.sessions;
 }
 
-export async function createSession(name = 'shell-workspace') {
+export async function createSession(options: { name?: string; rootPath?: string } = {}) {
   const payload = await requestJson<{ session: EngineSession }>('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({
+      ...(options.name ? { name: options.name } : {}),
+      ...(options.rootPath ? { rootPath: options.rootPath } : {}),
+    }),
   });
   return payload.session;
+}
+
+export async function updateSession(
+  sessionId: string,
+  options: { name?: string; rootPath?: string } = {},
+) {
+  const payload = await requestJson<{ session: EngineSession }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ...(options.name ? { name: options.name } : {}),
+        ...(options.rootPath ? { rootPath: options.rootPath } : {}),
+      }),
+    },
+  );
+  return payload.session;
+}
+
+export async function deleteSession(sessionId: string) {
+  return requestJson<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function listFiles(sessionId: string, relativePath = '.') {
@@ -179,6 +224,25 @@ export async function readFile(sessionId: string, relativePath: string) {
   query.searchParams.set('sessionId', sessionId);
   query.searchParams.set('path', relativePath);
   return requestJson<SessionFileRead>(`${query.pathname}${query.search}`);
+}
+
+export async function listHostDirectories(targetPath = '/') {
+  const query = new URL('/api/hostfs/list', getSessiondBaseUrl());
+  query.searchParams.set('path', targetPath);
+  return requestJson<HostDirectoryList>(`${query.pathname}${query.search}`);
+}
+
+export async function fetchGitStatus(sessionId: string) {
+  const query = new URL('/api/git/status', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  return requestJson<GitStatus>(`${query.pathname}${query.search}`);
+}
+
+export async function initGitRepository(sessionId: string) {
+  return requestJson<GitStatus>('/api/git/init', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+  });
 }
 
 export async function openTerminal(payload: {
