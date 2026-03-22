@@ -228,7 +228,7 @@ AI subsystem spec: indexed
     <pre className="dock-output">help
 engine run sandbox
 engine bake proc gate_arch
-engine migrate detect <path>
+engine migrate detect {'<path>'}
 engine ai providers
 </pre>
   );

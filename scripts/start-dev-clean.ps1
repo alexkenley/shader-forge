@@ -54,7 +54,9 @@ $cleanTargets = @(
     'tools/out',
     'shell/engine-shell/dist',
     'shell/engine-shell/.vite',
-    'shell/engine-shell/node_modules/.vite'
+    'shell/engine-shell/node_modules/.vite',
+    'shell/engine-shell/vite.config.d.ts',
+    'shell/engine-shell/vite.config.js'
 )
 
 $quotedTargets = ($cleanTargets | ForEach-Object { "'$_'" }) -join ' '
@@ -95,6 +97,8 @@ if [ '__SKIP_TESTS__' != '1' ]; then
   npm test
   printf '[shader-forge] Running sessiond smoke harness...\n'
   npm run test:sessiond
+  printf '[shader-forge] Running shell build validation...\n'
+  npm run shell:build
 fi
 
 sessiond_pid=''

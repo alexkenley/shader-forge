@@ -45,6 +45,8 @@ clean_targets=(
   shell/engine-shell/dist
   shell/engine-shell/.vite
   shell/engine-shell/node_modules/.vite
+  shell/engine-shell/vite.config.d.ts
+  shell/engine-shell/vite.config.js
 )
 
 printf '[shader-forge] Repo root: %s\n' "$repo_root"
@@ -74,6 +76,8 @@ if [[ "$skip_tests" != "1" ]]; then
   npm test
   printf '[shader-forge] Running sessiond smoke harness...\n'
   npm run test:sessiond
+  printf '[shader-forge] Running shell build validation...\n'
+  npm run shell:build
 fi
 
 sessiond_pid=''
