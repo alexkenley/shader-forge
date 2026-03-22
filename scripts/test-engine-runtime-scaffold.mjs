@@ -11,11 +11,16 @@ const cliSource = fs.readFileSync(path.join(repoRoot, 'tools', 'engine-cli', 'sh
 const runtimeHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'runtime_app.hpp'), 'utf8');
 const runtimeMain = path.join(runtimeRoot, 'src', 'main.cpp');
 const runtimeApp = path.join(runtimeRoot, 'src', 'runtime_app.cpp');
+const runtimeSource = fs.readFileSync(runtimeApp, 'utf8');
 
 assert.match(cliSource, /engine build/);
 assert.match(cliSource, /engine run/);
 assert.match(runtimeHeader, /RuntimeConfig/);
 assert.match(runtimeHeader, /class RuntimeApp/);
+assert.match(runtimeSource, /vkAcquireNextImageKHR/);
+assert.match(runtimeSource, /vkQueuePresentKHR/);
+assert.match(runtimeSource, /vkCreateRenderPass/);
+assert.match(runtimeSource, /SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED/);
 
 const isWindows = process.platform === 'win32';
 let syntaxChecked = false;
@@ -54,6 +59,7 @@ if (!isWindows) {
 console.log('Engine runtime scaffold passed.');
 console.log(`- Verified runtime sources under ${runtimeRoot}`);
 console.log('- Verified CLI runtime build/run command surfaces are present');
+console.log('- Verified the runtime source contains swapchain, present, and resize-aware render-loop plumbing');
 console.log(syntaxChecked
   ? '- Verified native runtime C++ sources pass fallback syntax-only compilation'
   : '- Skipped g++ syntax check (not available on Windows — use WSL or CI for native compilation)');

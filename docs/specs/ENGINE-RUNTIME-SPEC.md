@@ -14,6 +14,17 @@
 - logging
 - audio is intentionally deferred until after the first runtime window/render-loop slice; see the audio spec for the later subsystem plan
 
+## Current First Slice
+
+The current runtime slice is the first real native bring-up pass:
+
+- SDL3 window creation
+- Vulkan instance, surface, physical-device, and logical-device selection
+- swapchain-backed clear-color frame loop
+- resize-aware swapchain recreation
+- per-frame synchronization and present path
+- optional validation-layer enablement when the local Vulkan setup exposes `VK_LAYER_KHRONOS_validation`
+
 ## Future AI Runtime Boundary
 
 `engine_runtime` should consume AI outputs through validated asynchronous gameplay interfaces rather than direct arbitrary model control over frame-critical systems.

@@ -1,6 +1,6 @@
 # Shader Forge Implementation Plan
 
-Date: 2026-03-22
+Date: 2026-03-23
 
 ## Goal
 
@@ -39,6 +39,7 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 - `engine_cli`
 - `engine_sessiond`
 - `engine_shell`
+- renderer subsystem
 - asset pipeline
 - migration subsystem
 - AI subsystem
@@ -46,13 +47,43 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 - audio subsystem
 - animation subsystem
 - physics subsystem
+- tooling UI subsystem
+- game UI subsystem
+- data subsystem
+- VFX subsystem
 - save/runtime persistence subsystem
 - packaging/export subsystem
 - profiling/diagnostics subsystem
-- scene/world systems
+- scene system and world systems
 - level editor
 - procedural geometry
 - test and harness infrastructure
+
+## Spec Coverage Map
+
+- [Shader Forge Systems Index](../docs/specs/ENGINE-SYSTEMS-INDEX.md): canonical spec entry point used to keep this plan aligned with the subsystem spec set
+- [Engine Shell Spec](../docs/specs/ENGINE-SHELL-SPEC.md): Phase 1 and Phase 4
+- [Engine Tooling UI Spec](../docs/specs/ENGINE-TOOLING-UI-SPEC.md): Phase 4.4 native tooling UI foundations and Phase 6.3 native profiling/inspection panels
+- [Engine Game UI Spec](../docs/specs/ENGINE-GAME-UI-SPEC.md): Fixed decision for RmlUi and Phase 6 player-facing game loop work
+- [Engine Runtime Spec](../docs/specs/ENGINE-RUNTIME-SPEC.md): Phase 3 and Phase 6
+- [Engine Input Spec](../docs/specs/ENGINE-INPUT-SPEC.md): Phase 4.2 and Phase 6 gameplay integration
+- [Engine Audio Spec](../docs/specs/ENGINE-AUDIO-SPEC.md): Phase 5.7
+- [Engine Animation Spec](../docs/specs/ENGINE-ANIMATION-SPEC.md): Phase 5.72
+- [Engine Physics Spec](../docs/specs/ENGINE-PHYSICS-SPEC.md): Phase 5.74 and Phase 6
+- [Engine Renderer Spec](../docs/specs/ENGINE-RENDERER-SPEC.md): Phase 3 renderer bring-up, Phase 5 shader-toolchain work, and Phase 6 materials/shaders
+- [Engine Sessiond Spec](../docs/specs/ENGINE-SESSIOND-SPEC.md): Phase 2 and Phase 4 coordination surfaces
+- [Engine CLI Spec](../docs/specs/ENGINE-CLI-SPEC.md): Phase 2, Phase 5.6 migration commands, and Phase 6.2 packaging/export commands
+- [Engine Save System Spec](../docs/specs/ENGINE-SAVE-SYSTEM-SPEC.md): Phase 6.1
+- [Engine Packaging Spec](../docs/specs/ENGINE-PACKAGING-SPEC.md): Phase 6.2
+- [Engine Profiling Spec](../docs/specs/ENGINE-PROFILING-SPEC.md): Phase 6.3
+- [Asset Pipeline Spec](../docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md): Phase 5, Phase 5.5, Phase 5.6, and Phase 5.8
+- [Engine Migration Spec](../docs/specs/ENGINE-MIGRATION-SPEC.md): Phase 5.6, Phase 5.8, and Phase 5.85
+- [Engine VFX Spec](../docs/specs/ENGINE-VFX-SPEC.md): Phase 5.5 and Phase 6 content/runtime integration
+- [Engine Data Spec](../docs/specs/ENGINE-DATA-SPEC.md): Phase 5.5
+- [Engine AI Spec](../docs/specs/ENGINE-AI-SPEC.md): Phase 5.9 and Phase 6 runtime integration hooks
+- [Scene System Spec](../docs/specs/ENGINE-SCENE-SPEC.md): Phase 5.75 authoring round-trip and Phase 6 runtime scene composition
+- [Engine Level Editor Spec](../docs/specs/ENGINE-LEVEL-EDITOR-SPEC.md): Phase 5.75
+- [Procedural Geometry Spec](../docs/specs/ENGINE-PROCGEO-SPEC.md): Phase 5
 
 ## Progress Update
 
@@ -60,7 +91,7 @@ Current implementation status:
 
 - Phase 1 is substantially underway.
 - Phase 2 has a working first implementation and is the main active backend surface.
-- Phase 3 has been scaffolded, but the native SDL3/Vulkan window bring-up is still ahead.
+- Phase 3 now has a first real native runtime slice in the repo, with native SDL3/Vulkan verification and follow-on renderer expansion still ahead.
 - Phase 4 has started through shell-side runtime build/run controls and log surfaces, but not through a full embedded viewer.
 
 What is already done:
@@ -72,6 +103,7 @@ What is already done:
 - Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
 - The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, and runtime build/run/log controls.
+- The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
 - Deterministic harnesses exist for the shell, session backend, and runtime scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
@@ -80,7 +112,7 @@ Where the build is currently up to:
 - the shell foundation is usable for active iteration
 - session management is now UI-driven rather than terminal-only
 - source control and project-root workflows are in the shell, but still need UX refinement
-- the next major engine step remains native runtime bring-up and tighter shell/runtime integration around real project execution
+- the runtime has moved past pure scaffolding into a first native render-loop slice, but still needs full local-toolchain verification, richer rendering, and tighter shell/runtime integration around real project execution
 
 ## External Reference Track: Hell2025
 
@@ -203,18 +235,20 @@ Implemented first slice:
 ## Phase 3: Native Runtime Bring-Up
 
 Goal:
-- get the first native runtime window running
+- get the first native runtime window and renderer loop running
 
 Status:
-- scaffolded, but native window bring-up is still the next major implementation step
+- first clear-color swapchain render loop now lands in the repo; runtime stabilization and richer renderer work are the next major steps
 
 Scope:
 - window bootstrap
+- renderer bootstrap and upload path foundations
 - Vulkan device and swapchain
 - frame loop
 - input and timing
 - logging and error surfaces
 - a basic rendered scene
+- debug-draw and render diagnostics foundations
 - use the Hell2025 Vulkan reference snapshot only as a structure guide for manager boundaries and upload paths while keeping Shader Forge SDL3-first and CMake-first
 
 Reference inputs:
@@ -238,6 +272,7 @@ Scope:
 - `Game` and `Preview` tabs
 - play, stop, restart, pause, screenshot
 - logs in shell panels
+- browser-shell workflows that complement later native Dear ImGui tooling surfaces rather than replacing them
 
 Reference inputs:
 - for editor/runtime bridge patterns, consult the [Godot guide](../docs/guides/ENGINE-GODOT-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), [Stride guide](../docs/guides/ENGINE-STRIDE-BORROW-GUIDE.md), [Fyrox guide](../docs/guides/ENGINE-FYROX-BORROW-GUIDE.md), and [Wicked Engine guide](../docs/guides/ENGINE-WICKED-ENGINE-BORROW-GUIDE.md)
@@ -265,6 +300,30 @@ Exit criteria:
 - input bindings are text-backed and inspectable
 - keyboard, mouse, and gamepad routes are unified through engine APIs
 
+## Phase 4.4: Native Tooling UI Foundations
+
+Goal:
+- stand up the native tooling UI substrate that later profiling, level-authoring, and runtime-inspection work will depend on
+
+Status:
+- not started yet; guides now make this an explicit dependency rather than an implied later concern
+
+Scope:
+- Dear ImGui runtime bootstrap with docking
+- basic native debug overlay and panel host
+- tool registry and layout-persistence groundwork
+- runtime inspection hooks for logs, frame timing, and debug state
+- bridge points for later gizmos, debug drawing, and editor-only native panels
+
+Reference inputs:
+- for tool registry, dock layout, and context-binding ideas, consult the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md)
+- for native editor save/reload workflow expectations, consult the [Hell2025 borrow plan](../docs/guides/ENGINE-HELL2025-BORROW-PLAN.md)
+
+Exit criteria:
+- the native runtime can host docked tooling panels without replacing the browser shell as the primary workspace
+- later profiling and level-authoring slices have a defined native panel and overlay substrate to build on
+- layout and tool registration groundwork exists for future persistence and discoverability
+
 ## Phase 5: Assets And Procedural Geometry
 
 Goal:
@@ -274,8 +333,10 @@ Scope:
 - source import
 - cooked assets
 - generated meshes
+- bake-to-asset support for procedural output
 - preview surfaces
 - validation and import status
+- land after the Phase 5.5 data-format decisions so asset metadata, cooked outputs, and generated content target stable engine formats
 - carry forward the Hell2025 shader include and line-mapping reference ideas into the Shader Forge shader toolchain rather than reusing the OpenGL compile path directly
 
 Reference inputs:
@@ -316,6 +377,7 @@ Scope:
 - SQLite tooling/session/asset database path
 - Effekseer runtime integration plan
 - code-defined simple effect descriptor model
+- explicit scene/prefab source-data ownership boundaries shared with the scene system
 - adapt the Hell2025 create-info serialization approach into engine-generic TOML scene/prefab source schemas instead of adopting its JSON and binary map formats directly
 
 Reference inputs:
@@ -475,6 +537,7 @@ Scope:
 - shared provider and tool/skill core for terminal and in-engine assistant clients
 - explicit policy hooks for assistant-triggered compile, hot reload, install, and apply operations
 - optional BYOK desktop mode
+- treat the first useful Phase 5.95 trust and policy slice as a prerequisite for assistant-triggered compile, install, apply, and hot reload workflows
 
 Reference inputs:
 - for plugin/service boundary ideas, consult the [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md), and the [Code access borrow guide](../docs/guides/ENGINE-CODE-ACCESS-BORROW-GUIDE.md)
@@ -516,8 +579,10 @@ Goal:
 
 Scope:
 - scene runtime
+- scene serialization/load path and prefab composition
 - transform hierarchy
 - materials and shaders
+- player-facing game UI foundation via RmlUi
 - collision and physics integration
 - hot reload for assets and shaders
 - mounted project and package filesystem layering
@@ -579,6 +644,7 @@ Scope:
 - CPU and GPU profiling integration
 - memory and allocation diagnostics
 - native runtime profiling panels
+- Dear ImGui-based native tooling UI panels for runtime inspection, debug drawing, and profiling workflows
 - external capture integration for deep graphics debugging
 - capture save/load and sharing workflows
 
@@ -614,27 +680,31 @@ Every major subsystem needs:
 3. native runtime
 4. viewer bridge
 5. input and action mapping
-6. assets and procedural geometry
+6. native tooling UI foundations
 7. data and effects
-8. audio system
-9. animation system
-10. physics and collision
-11. project migration foundation
-12. level authoring
-13. source-engine conversion
-14. offline Unreal fallback
-15. reusable AI subsystem
+8. assets and procedural geometry
+9. audio system
+10. animation system
+11. physics and collision
+12. project migration foundation
+13. level authoring
+14. source-engine conversion
+15. offline Unreal fallback
 16. code access, trust, and hot reload safety
-17. game-ready loop
-18. save and runtime persistence
-19. packaging and export
-20. profiling, diagnostics, and performance
+17. reusable AI subsystem
+18. game-ready loop
+19. save and runtime persistence
+20. packaging and export
+21. profiling, diagnostics, and performance
 
 ## Current Focus
 
 Current build target:
 
 - Phase 2 refinement: session UX, project-root workflows, source control, and terminal polish
-- Phase 3 advance: native SDL3/Vulkan runtime bring-up
-- Phase 4 continuation: shell/runtime control surfaces and viewer workflow preparation
+- Phase 3 advance: native SDL3/Vulkan runtime stabilization, local-toolchain verification, and renderer expansion
+- Phase 4 continuation: shell/runtime control surfaces and viewer workflow preparation, but not ahead of runtime and input stabilization
+- Phase 4.4 planning: native tooling UI substrate before deep authoring and profiling work
+- Phase 5.5 before Phase 5 execution: lock data/cook format choices before broad asset-pipeline expansion
+- Phase 5.95 before Phase 5.9 execution: land trust and policy groundwork before assistant-triggered code and apply workflows expand
 - keep harness coverage current as each major slice lands
