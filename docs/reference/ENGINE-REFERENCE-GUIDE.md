@@ -78,15 +78,15 @@ Assistant entry points:
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import`, `engine package`, and `engine export` are still later phases.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
-- The CLI migration lane is now real for detection and reporting, but it does not convert source-engine content into Shader Forge-native assets yet.
+- The CLI migration lane is now split honestly: `detect` is report-only, while pinned engine lanes emit a first-pass Shader Forge project skeleton rather than claiming full parity.
 
 ### Migration Foundation
 
 - `fixtures/migration/unity-minimal`, `fixtures/migration/unreal-minimal`, and `fixtures/migration/godot-minimal` are the deterministic source-project fixtures for the first migration slice.
 - `engine migrate detect` auto-detects Unity, Unreal, or Godot project structure and writes `migration-manifest.toml`, `report.toml`, and `warnings.toml` under `migration/<run-id>/`.
-- `engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` pin the requested source-engine lane while producing the same normalized outputs.
-- Every migration run currently creates a `script-porting/README.md` placeholder so later gameplay/code translation has a stable destination.
-- The current migration slice captures provenance and target layout intent only. No asset, scene, prefab, or gameplay conversion is performed yet.
+- `engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` now pin the requested source-engine lane while also emitting a self-contained `shader-forge-project/` skeleton under each run root.
+- Pinned engine lanes now generate first-pass migrated `.scene.toml`, `.prefab.toml`, `.data.toml`, and `script-porting/*.port.toml` outputs for the current fixtures.
+- The current migration slice now converts project structure into a usable Shader Forge skeleton, but it still does not provide full asset, hierarchy, or gameplay parity.
 
 ## Runtime And Authoring
 
@@ -180,7 +180,7 @@ Assistant entry points:
 - A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
-- A first CLI migration lane that detects supported source-engine project shapes and emits normalized migration manifests plus reports.
+- A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
 ### What Still Needs Widening

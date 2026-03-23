@@ -97,6 +97,7 @@ Current implementation status:
 - Phase 4.4 has now started through a native tooling substrate slice with a panel registry, text-backed layout loading/saving, and runtime inspection hooks, but not a Dear ImGui frontend yet.
 - Phase 5 has now started through a first asset-pipeline slice with `engine bake`, staged cooked outputs, and a text-backed procedural-geometry lane.
 - Phase 5.6 has now started through a migration-foundation slice with source-engine detection, normalized manifest/report outputs, provenance capture, and fixture-backed CLI migration commands.
+- Phase 5.8 has now started through a first source-engine conversion slice with self-contained Shader Forge project skeleton output for Unity, Unreal, and Godot fixtures.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
@@ -120,6 +121,7 @@ What is already done:
 - The native runtime now loads a data-foundation manifest, validates text-backed content roots under `content/`, resolves the selected runtime scene against `.scene.toml` source assets, and applies bootstrap scene/overlay defaults.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
+- Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
 - Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
 - Phase 5.74 has now started through `physics/layers.toml`, `physics/materials/*.physics-material.toml`, `physics/bodies/*.physics-body.toml`, native physics-system validation/query hooks, and staged cooked physics outputs under `build/cooked/physics/`.
@@ -135,6 +137,7 @@ Where the build is currently up to:
 - engine-owned input has moved past ad-hoc raw-event handling into a first text-backed action/context slice, but rebinding, user overrides, and richer gameplay/tool context switching still remain
 - native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
 - Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture, but no source-project content is converted into Shader Forge-native assets yet
+- Phase 5.8 groundwork now exists through fixture-backed Shader Forge project skeleton conversion, but full asset/material import, richer hierarchy/component mapping, exporter-assisted Unreal actor extraction, and shell-side migration inspection still remain
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
@@ -385,7 +388,7 @@ Goal:
 - create the conversion foundation needed to bring Unity, Unreal, and Godot projects into Shader Forge for continued development
 
 Status:
-- first slice now exists through source-engine detection, normalized migration-manifest/report outputs, provenance capture, script-porting placeholders, fixture projects, and CLI migration report inspection
+- first slice now exists through source-engine detection, normalized migration-manifest/report outputs, provenance capture, script-porting manifests/placeholders, fixture projects, and CLI migration report inspection that now feed the first Phase 5.8 conversion lane
 
 Scope:
 - source-engine detection
@@ -575,6 +578,18 @@ Scope:
 - Godot scene/project conversion
 - best-effort gameplay/script translation manifests
 - side-by-side migration inspection in the shell
+
+Current checkpoint now implemented:
+- `engine migrate detect` remains the honest detect/report lane with normalized manifest, warnings, and manual follow-up scaffolding
+- `engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` now emit a self-contained `shader-forge-project/` skeleton under each migration run root
+- the current Unity, Unreal, and Godot fixtures now convert into first-pass `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifest outputs
+- migration reports now record converted, approximated, skipped, and manual counts instead of only detect-only notes
+
+Still ahead inside this phase:
+- deeper scene hierarchy, transform, and component extraction from source-engine data
+- real asset/material/audio/animation conversion instead of project-structure placeholders
+- exporter-assisted Unreal actor and Blueprint extraction
+- shell-side side-by-side migration inspection and cleanup workflow
 
 Reference inputs:
 - for target project layout and import metadata boundaries, consult the [Godot guide](../docs/guides/ENGINE-GODOT-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), and [Stride guide](../docs/guides/ENGINE-STRIDE-BORROW-GUIDE.md)

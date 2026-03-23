@@ -396,7 +396,16 @@ function buildTargetRoots(engine) {
   };
 }
 
-function buildSupportLevels() {
+function buildSupportLevels(conversionMode) {
+  if (conversionMode === 'project_skeleton_conversion') {
+    return {
+      detection: 'Supported',
+      asset_conversion: 'BestEffort',
+      scene_conversion: 'BestEffort',
+      script_porting: 'BestEffort',
+      project_settings: 'BestEffort',
+    };
+  }
   return {
     detection: 'Supported',
     asset_conversion: 'Manual',
@@ -406,7 +415,15 @@ function buildSupportLevels() {
   };
 }
 
-function buildManualTasks(engine, targetRoots) {
+function buildManualTasks(engine, targetRoots, conversionMode) {
+  if (conversionMode === 'project_skeleton_conversion') {
+    return [
+      `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
+      `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
+      `Populate real imported art and cooked assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; this slice only emits structure placeholders.`,
+      'Review script-porting manifests and implement gameplay behavior manually or with later AI-assisted porting passes.',
+    ];
+  }
   return [
     `Map source scenes or levels into ${targetRoots.content_scenes} once conversion lanes are implemented.`,
     `Map source prefabs or reusable actors into ${targetRoots.content_prefabs} using Shader Forge text-backed assets.`,
@@ -415,7 +432,7 @@ function buildManualTasks(engine, targetRoots) {
   ];
 }
 
-function buildWarnings(detection, requestedEngine) {
+function buildWarnings(detection, requestedEngine, conversionMode) {
   const warnings = [];
   if (!detection.version) {
     warnings.push('Source-engine version could not be read from the detected project markers.');
@@ -426,7 +443,414 @@ function buildWarnings(detection, requestedEngine) {
   if (detection.engine === 'unreal') {
     warnings.push('Unreal conversion remains exporter-manifest first; raw .uasset conversion is not implemented in this slice.');
   }
+  if (conversionMode === 'project_skeleton_conversion') {
+    warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
+    if (detection.engine === 'unity') {
+      warnings.push('Unity conversion currently extracts scene, prefab, and script identifiers from minimal text assets rather than full serialized component graphs.');
+    } else if (detection.engine === 'godot') {
+      warnings.push('Godot conversion currently maps root scene nodes and script placeholders only; full node/component translation is still ahead.');
+    } else if (detection.engine === 'unreal') {
+      warnings.push('Unreal conversion currently maps level and gameplay class names into skeleton scene/prefab outputs; exporter-assisted actor extraction is still ahead.');
+    }
+  }
   return warnings;
+}
+
+function basenameWithoutExtension(filePath) {
+  return path.basename(filePath, path.extname(filePath));
+}
+
+function displayNameFromToken(value) {
+  const tokens = trim(value).split(/[_\s-]+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return 'Untitled';
+  }
+  return tokens.map((token) => token.charAt(0).toUpperCase() + token.slice(1)).join(' ');
+}
+
+function firstRegexGroup(content, regex, fallback = '') {
+  const match = content.match(regex);
+  return trim(match?.[1] || fallback);
+}
+
+function uniqueBy(items, keySelector) {
+  const results = [];
+  const seen = new Set();
+  for (const item of items) {
+    const key = keySelector(item);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    results.push(item);
+  }
+  return results;
+}
+
+function buildSceneToml(scene) {
+  return [
+    'schema = "shader_forge.scene"',
+    'schema_version = 1',
+    `name = ${quoteTomlString(scene.name)}`,
+    'owner_system = "scene_system"',
+    'runtime_format = "flatbuffer"',
+    '',
+    `title = ${quoteTomlString(scene.title)}`,
+    `primary_prefab = ${quoteTomlString(scene.primaryPrefab)}`,
+    '',
+    `[entity.${scene.entityId}]`,
+    `display_name = ${quoteTomlString(scene.entityDisplayName)}`,
+    `source_prefab = ${quoteTomlString(scene.primaryPrefab)}`,
+    'parent = ""',
+    'position = "0, 0, 0"',
+    'rotation = "0, 0, 0"',
+    'scale = "1, 1, 1"',
+    '',
+  ].join('\n');
+}
+
+function buildPrefabToml(prefab) {
+  return [
+    'schema = "shader_forge.prefab"',
+    'schema_version = 1',
+    `name = ${quoteTomlString(prefab.name)}`,
+    'owner_system = "scene_system"',
+    'runtime_format = "flatbuffer"',
+    '',
+    `category = ${quoteTomlString(prefab.category)}`,
+    `spawn_tag = ${quoteTomlString(prefab.spawnTag)}`,
+    '',
+  ].join('\n');
+}
+
+function buildDataToml(defaultScene) {
+  return [
+    'schema = "shader_forge.data"',
+    'schema_version = 1',
+    'name = "runtime_bootstrap"',
+    'owner_system = "data_system"',
+    'runtime_format = "flatbuffer"',
+    '',
+    `default_scene = ${quoteTomlString(defaultScene)}`,
+    'tooling_overlay = "enabled"',
+    '',
+  ].join('\n');
+}
+
+function buildTargetProjectReadme(engine, detection, conversionOutputs) {
+  return [
+    '# Shader Forge Migrated Project Skeleton',
+    '',
+    `Source engine: ${engine}`,
+    `Detected version: ${detection.version || 'unknown'}`,
+    '',
+    'This is a first-pass migrated project skeleton emitted by the Phase 5.8 conversion slice.',
+    'It contains text-backed scene, prefab, and bootstrap outputs plus script-porting manifests.',
+    '',
+    `Scenes: ${conversionOutputs.sceneFiles.length}`,
+    `Prefabs: ${conversionOutputs.prefabFiles.length}`,
+    `Data files: ${conversionOutputs.dataFiles.length}`,
+    '',
+  ].join('\n');
+}
+
+function extractScriptSymbols(filePath, engine) {
+  const source = fs.readFileSync(filePath, 'utf8');
+  let symbols = [];
+  if (engine === 'unity' || path.extname(filePath).toLowerCase() === '.cs') {
+    symbols = [...source.matchAll(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => trim(match[1]));
+  } else if (engine === 'unreal') {
+    symbols = [...source.matchAll(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => trim(match[1]));
+  } else {
+    const className = firstRegexGroup(source, /\bclass_name\s+([A-Za-z_][A-Za-z0-9_]*)/, '');
+    if (className) {
+      symbols = [className];
+    }
+  }
+
+  if (symbols.length === 0) {
+    return [basenameWithoutExtension(filePath)];
+  }
+  return uniqueBy(symbols.filter(Boolean), (symbol) => normalizeToken(symbol));
+}
+
+function ensureFallbackPrefabsForScenes(scenes, prefabs, engine) {
+  if (prefabs.length > 0 || scenes.length === 0) {
+    return prefabs;
+  }
+  return scenes.map((scene) => ({
+    name: normalizeToken(`${scene.name}_root`) || `${engine}_root`,
+    displayName: `${scene.title} Root`,
+    category: `migrated_${engine}`,
+    spawnTag: `${engine}_root`,
+    sourcePath: scene.sourcePath,
+  }));
+}
+
+function ensureFallbackScenesForPrefabs(scenes, prefabs, engine) {
+  if (scenes.length > 0 || prefabs.length === 0) {
+    return scenes;
+  }
+  return [{
+    name: normalizeToken(`${engine}_migration`) || `${engine}_migration`,
+    title: `${displayNameFromToken(engine)} Migration`,
+    primaryPrefab: prefabs[0].name,
+    entityId: normalizeToken(`${prefabs[0].name}_instance`) || 'primary_instance',
+    entityDisplayName: prefabs[0].displayName || displayNameFromToken(prefabs[0].name),
+    sourcePath: prefabs[0].sourcePath,
+  }];
+}
+
+function collectUnityConversionPlan(repoRoot, projectRoot) {
+  const files = walkFiles(projectRoot);
+  const prefabFiles = files.filter((filePath) => filePath.endsWith('.prefab'));
+  const sceneFiles = files.filter((filePath) => filePath.endsWith('.unity'));
+  const scriptFiles = files.filter((filePath) => filePath.endsWith('.cs'));
+
+  let prefabs = uniqueBy(prefabFiles.map((filePath) => {
+    const source = fs.readFileSync(filePath, 'utf8');
+    const displayName = firstRegexGroup(source, /m_Name:\s*(.+)/, basenameWithoutExtension(filePath));
+    return {
+      name: normalizeToken(basenameWithoutExtension(filePath)) || normalizeToken(displayName) || 'unity_prefab',
+      displayName: displayName || displayNameFromToken(basenameWithoutExtension(filePath)),
+      category: 'migrated_unity',
+      spawnTag: 'unity_prefab',
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+    };
+  }), (item) => item.name);
+
+  let scenes = sceneFiles.map((filePath, index) => {
+    const source = fs.readFileSync(filePath, 'utf8');
+    const rootName = firstRegexGroup(source, /m_Name:\s*(.+)/, basenameWithoutExtension(filePath));
+    const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `unity_scene_${index + 1}`;
+    const chosenPrefab = prefabs[Math.min(index, Math.max(prefabs.length - 1, 0))];
+    return {
+      name: sceneName,
+      title: rootName || displayNameFromToken(sceneName),
+      primaryPrefab: chosenPrefab?.name || '',
+      entityId: normalizeToken(`${chosenPrefab?.name || sceneName}_instance`) || 'primary_instance',
+      entityDisplayName: chosenPrefab?.displayName || rootName || displayNameFromToken(sceneName),
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+    };
+  });
+
+  prefabs = ensureFallbackPrefabsForScenes(scenes, prefabs, 'unity');
+  scenes = ensureFallbackScenesForPrefabs(scenes, prefabs, 'unity').map((scene) => ({
+    ...scene,
+    primaryPrefab: scene.primaryPrefab || prefabs[0]?.name || '',
+    entityId: scene.entityId || normalizeToken(`${prefabs[0]?.name || scene.name}_instance`) || 'primary_instance',
+    entityDisplayName: scene.entityDisplayName || prefabs[0]?.displayName || displayNameFromToken(scene.name),
+  }));
+
+  const scriptManifests = uniqueBy(scriptFiles.flatMap((filePath) =>
+    extractScriptSymbols(filePath, 'unity').map((symbol) => ({
+      name: normalizeToken(symbol) || 'unity_script',
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+      sourceSymbol: symbol,
+      sourceEngine: 'unity',
+    }))), (item) => item.name);
+
+  return { scenes, prefabs, scriptManifests };
+}
+
+function collectGodotConversionPlan(repoRoot, projectRoot) {
+  const files = walkFiles(projectRoot);
+  const sceneFiles = files.filter((filePath) => filePath.endsWith('.tscn') || filePath.endsWith('.scn'));
+  const scriptFiles = files.filter((filePath) => filePath.endsWith('.gd') || filePath.endsWith('.cs'));
+
+  const scenes = sceneFiles.map((filePath, index) => {
+    const source = fs.readFileSync(filePath, 'utf8');
+    const rootName = firstRegexGroup(source, /\[node\s+name="([^"]+)"/, basenameWithoutExtension(filePath));
+    const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `godot_scene_${index + 1}`;
+    const prefabName = normalizeToken(`${sceneName}_root`) || `${sceneName}_root`;
+    return {
+      name: sceneName,
+      title: rootName || displayNameFromToken(sceneName),
+      primaryPrefab: prefabName,
+      entityId: normalizeToken(`${prefabName}_instance`) || 'primary_instance',
+      entityDisplayName: rootName || displayNameFromToken(prefabName),
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+      sourceNodeType: firstRegexGroup(source, /type="([^"]+)"/, 'Node'),
+    };
+  });
+
+  const prefabs = uniqueBy(scenes.map((scene) => ({
+    name: scene.primaryPrefab,
+    displayName: `${scene.title} Root`,
+    category: 'migrated_godot',
+    spawnTag: normalizeToken(scene.sourceNodeType || 'godot_node') || 'godot_node',
+    sourcePath: scene.sourcePath,
+  })), (item) => item.name);
+
+  const scriptManifests = uniqueBy(scriptFiles.flatMap((filePath) =>
+    extractScriptSymbols(filePath, 'godot').map((symbol) => ({
+      name: normalizeToken(symbol) || 'godot_script',
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+      sourceSymbol: symbol,
+      sourceEngine: 'godot',
+    }))), (item) => item.name);
+
+  return {
+    scenes: ensureFallbackScenesForPrefabs(scenes, prefabs, 'godot'),
+    prefabs: ensureFallbackPrefabsForScenes(scenes, prefabs, 'godot'),
+    scriptManifests,
+  };
+}
+
+function collectUnrealConversionPlan(repoRoot, projectRoot) {
+  const files = walkFiles(projectRoot);
+  const mapFiles = files.filter((filePath) => filePath.endsWith('.umap'));
+  const sourceFiles = files.filter((filePath) => filePath.endsWith('.h') || filePath.endsWith('.cpp'));
+
+  let prefabs = uniqueBy(sourceFiles.flatMap((filePath) =>
+    extractScriptSymbols(filePath, 'unreal').map((symbol) => ({
+      name: normalizeToken(symbol) || 'unreal_actor',
+      displayName: symbol,
+      category: 'migrated_unreal',
+      spawnTag: 'unreal_actor',
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+    }))), (item) => item.name);
+
+  let scenes = mapFiles.map((filePath, index) => {
+    const source = fs.readFileSync(filePath, 'utf8');
+    const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `unreal_level_${index + 1}`;
+    const chosenPrefab = prefabs[Math.min(index, Math.max(prefabs.length - 1, 0))];
+    const mapTitle = trim(source) || displayNameFromToken(sceneName);
+    return {
+      name: sceneName,
+      title: displayNameFromToken(sceneName),
+      primaryPrefab: chosenPrefab?.name || '',
+      entityId: normalizeToken(`${chosenPrefab?.name || sceneName}_instance`) || 'primary_instance',
+      entityDisplayName: chosenPrefab?.displayName || mapTitle,
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+    };
+  });
+
+  prefabs = ensureFallbackPrefabsForScenes(scenes, prefabs, 'unreal');
+  scenes = ensureFallbackScenesForPrefabs(scenes, prefabs, 'unreal').map((scene) => ({
+    ...scene,
+    primaryPrefab: scene.primaryPrefab || prefabs[0]?.name || '',
+    entityId: scene.entityId || normalizeToken(`${prefabs[0]?.name || scene.name}_instance`) || 'primary_instance',
+    entityDisplayName: scene.entityDisplayName || prefabs[0]?.displayName || displayNameFromToken(scene.name),
+  }));
+
+  const scriptManifests = uniqueBy(sourceFiles.flatMap((filePath) =>
+    extractScriptSymbols(filePath, 'unreal').map((symbol) => ({
+      name: normalizeToken(symbol) || 'unreal_symbol',
+      sourcePath: relativePathFromRepo(repoRoot, filePath),
+      sourceSymbol: symbol,
+      sourceEngine: 'unreal',
+    }))), (item) => item.name);
+
+  return { scenes, prefabs, scriptManifests };
+}
+
+function collectConversionPlan(repoRoot, projectRoot, detection) {
+  if (detection.engine === 'unity') {
+    return collectUnityConversionPlan(repoRoot, projectRoot);
+  }
+  if (detection.engine === 'unreal') {
+    return collectUnrealConversionPlan(repoRoot, projectRoot);
+  }
+  return collectGodotConversionPlan(repoRoot, projectRoot);
+}
+
+function estimateSkippedItems(counts, engine) {
+  if (engine === 'unity') {
+    return Number(counts.material_files || 0);
+  }
+  if (engine === 'unreal') {
+    return Number(counts.asset_package_files || 0);
+  }
+  return Number(counts.resource_files || 0) + Number(counts.import_files || 0);
+}
+
+function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan) {
+  const targetProjectRoot = path.join(reportRoot, 'shader-forge-project');
+  const conversionOutputs = {
+    targetProjectRoot: relativePathFromRepo(repoRoot, targetProjectRoot),
+    sceneFiles: [],
+    prefabFiles: [],
+    dataFiles: [],
+    scriptManifestFiles: [],
+    assetPlaceholderFiles: [],
+  };
+
+  const firstSceneName = plan.scenes[0]?.name || `${detection.engine}_migration`;
+
+  for (const scene of plan.scenes) {
+    const outputPath = path.join(targetProjectRoot, targetRoots.content_scenes, `${scene.name}.scene.toml`);
+    writeTextFile(outputPath, buildSceneToml(scene));
+    conversionOutputs.sceneFiles.push(relativePathFromRepo(repoRoot, outputPath));
+  }
+
+  for (const prefab of plan.prefabs) {
+    const outputPath = path.join(targetProjectRoot, targetRoots.content_prefabs, `${prefab.name}.prefab.toml`);
+    writeTextFile(outputPath, buildPrefabToml(prefab));
+    conversionOutputs.prefabFiles.push(relativePathFromRepo(repoRoot, outputPath));
+  }
+
+  const bootstrapPath = path.join(targetProjectRoot, targetRoots.content_data, 'runtime_bootstrap.data.toml');
+  writeTextFile(bootstrapPath, buildDataToml(firstSceneName));
+  conversionOutputs.dataFiles.push(relativePathFromRepo(repoRoot, bootstrapPath));
+
+  const assetsSrcReadme = path.join(targetProjectRoot, targetRoots.assets_src, 'README.md');
+  const assetsCookedReadme = path.join(targetProjectRoot, targetRoots.assets_cooked, 'README.md');
+  writeTextFile(
+    assetsSrcReadme,
+    [
+      '# Migrated Source Assets Placeholder',
+      '',
+      `Source engine: ${detection.engine}`,
+      'This directory is reserved for later imported source assets.',
+      '',
+    ].join('\n'),
+  );
+  writeTextFile(
+    assetsCookedReadme,
+    [
+      '# Migrated Cooked Assets Placeholder',
+      '',
+      `Source engine: ${detection.engine}`,
+      'This directory is reserved for later cooked migrated assets.',
+      '',
+    ].join('\n'),
+  );
+  conversionOutputs.assetPlaceholderFiles.push(
+    relativePathFromRepo(repoRoot, assetsSrcReadme),
+    relativePathFromRepo(repoRoot, assetsCookedReadme),
+  );
+
+  for (const manifest of plan.scriptManifests) {
+    const outputPath = path.join(reportRoot, 'script-porting', `${manifest.name}.port.toml`);
+    writeTextFile(outputPath, stringifyToml({
+      schema: 'shader_forge.script_port_manifest',
+      schema_version: 1,
+      name: manifest.name,
+      source_engine: manifest.sourceEngine,
+      source_path: manifest.sourcePath,
+      source_symbol: manifest.sourceSymbol,
+      strategy: 'best_effort_manifest_only',
+      status: 'manual_review_required',
+      notes: [
+        'Generated from migration fixture or minimal source inspection.',
+        'Review gameplay behavior manually before claiming parity.',
+      ],
+    }));
+    conversionOutputs.scriptManifestFiles.push(relativePathFromRepo(repoRoot, outputPath));
+  }
+
+  writeTextFile(
+    path.join(targetProjectRoot, 'README.md'),
+    buildTargetProjectReadme(detection.engine, detection, conversionOutputs),
+  );
+
+  return {
+    targetProjectRoot: conversionOutputs.targetProjectRoot,
+    outputs: conversionOutputs,
+    convertedItems: conversionOutputs.sceneFiles.length + conversionOutputs.prefabFiles.length + conversionOutputs.dataFiles.length,
+    approximatedItems: conversionOutputs.scriptManifestFiles.length,
+  };
 }
 
 function defaultRunId(engine, commandName) {
@@ -460,14 +884,31 @@ export async function createMigrationRun(options) {
   const detection = detectSourceProject(projectRoot, requestedEngine);
   const runId = normalizeRunId(options.runId || '') || defaultRunId(detection.engine, commandName);
   const reportRoot = path.join(outputRoot, runId);
+  const conversionMode = commandName === 'detect' ? 'detect_and_manifest_only' : 'project_skeleton_conversion';
   const targetRoots = buildTargetRoots(detection.engine);
-  const support = buildSupportLevels();
+  const support = buildSupportLevels(conversionMode);
   const counts = collectSourceCounts(projectRoot, detection.engine);
-  const warnings = buildWarnings(detection, requestedEngine);
-  const manualTasks = buildManualTasks(detection.engine, targetRoots);
+  const warnings = buildWarnings(detection, requestedEngine, conversionMode);
+  const manualTasks = buildManualTasks(detection.engine, targetRoots, conversionMode);
 
   ensureDirectory(reportRoot);
   ensureDirectory(path.join(reportRoot, 'script-porting'));
+
+  const conversion = conversionMode === 'project_skeleton_conversion'
+    ? writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, collectConversionPlan(repoRoot, projectRoot, detection))
+    : {
+        targetProjectRoot: '',
+        outputs: {
+          targetProjectRoot: '',
+          sceneFiles: [],
+          prefabFiles: [],
+          dataFiles: [],
+          scriptManifestFiles: [],
+          assetPlaceholderFiles: [],
+        },
+        convertedItems: 0,
+        approximatedItems: 0,
+      };
 
   const manifestPath = path.join(reportRoot, 'migration-manifest.toml');
   const reportPath = path.join(reportRoot, 'report.toml');
@@ -477,15 +918,16 @@ export async function createMigrationRun(options) {
   const manifestDocument = {
     schema: 'shader_forge.migration_manifest',
     schema_version: 1,
-    phase: '5_6_foundation',
+    phase: conversionMode === 'project_skeleton_conversion' ? '5_8_conversion' : '5_6_foundation',
     command: commandName,
     requested_engine: requestedEngine,
     detected_engine: detection.engine,
     detected_version: detection.version,
     confidence: detection.confidence,
-    conversion_mode: 'detect_and_manifest_only',
+    conversion_mode: conversionMode,
     source_root: relativePathFromRepo(repoRoot, projectRoot),
     output_root: relativePathFromRepo(repoRoot, reportRoot),
+    target_project_root: conversion.targetProjectRoot,
     created_at: new Date().toISOString(),
     detection: {
       reason_count: detection.reasons.length,
@@ -494,6 +936,22 @@ export async function createMigrationRun(options) {
       source_roots: detection.sourceRoots,
     },
     source_counts: counts,
+    conversion_counts: {
+      converted_items: conversion.convertedItems,
+      approximated_items: conversion.approximatedItems,
+      skipped_items: estimateSkippedItems(counts, detection.engine),
+      scene_files: conversion.outputs.sceneFiles.length,
+      prefab_files: conversion.outputs.prefabFiles.length,
+      data_files: conversion.outputs.dataFiles.length,
+      script_manifests: conversion.outputs.scriptManifestFiles.length,
+    },
+    conversion_outputs: {
+      scene_files: conversion.outputs.sceneFiles,
+      prefab_files: conversion.outputs.prefabFiles,
+      data_files: conversion.outputs.dataFiles,
+      script_manifest_files: conversion.outputs.scriptManifestFiles,
+      asset_placeholder_files: conversion.outputs.assetPlaceholderFiles,
+    },
     target_roots: targetRoots,
     support,
     provenance: {
@@ -510,19 +968,32 @@ export async function createMigrationRun(options) {
     run_id: runId,
     detected_engine: detection.engine,
     detected_version: detection.version,
-    current_slice: 'foundation_detect_only',
+    current_slice: conversionMode === 'project_skeleton_conversion' ? 'project_skeleton_conversion' : 'foundation_detect_only',
     source_root: relativePathFromRepo(repoRoot, projectRoot),
     report_root: relativePathFromRepo(repoRoot, reportRoot),
-    converted_items: 0,
-    approximated_items: 0,
-    skipped_items: 0,
+    target_project_root: conversion.targetProjectRoot,
+    converted_items: conversion.convertedItems,
+    approximated_items: conversion.approximatedItems,
+    skipped_items: estimateSkippedItems(counts, detection.engine),
     manual_items: manualTasks.length,
     warning_count: warnings.length,
-    notes: [
-      'No content conversion is performed in this slice.',
-      'This run only normalizes source-project detection, target layout intent, provenance, and manual follow-up.',
-    ],
+    notes: conversionMode === 'project_skeleton_conversion'
+      ? [
+          'A first-pass Shader Forge project skeleton was generated for this migration run.',
+          'Scenes and prefabs were converted into text-backed Shader Forge outputs using minimal fixture-aware extraction.',
+          'Art, materials, runtime parity, and full gameplay translation still require follow-up.',
+        ]
+      : [
+          'No content conversion is performed in this slice.',
+          'This run only normalizes source-project detection, target layout intent, provenance, and manual follow-up.',
+        ],
     support,
+    conversion_outputs: {
+      scene_files: conversion.outputs.sceneFiles,
+      prefab_files: conversion.outputs.prefabFiles,
+      data_files: conversion.outputs.dataFiles,
+      script_manifest_files: conversion.outputs.scriptManifestFiles,
+    },
     manual_tasks: {
       items: manualTasks,
     },
@@ -540,24 +1011,38 @@ export async function createMigrationRun(options) {
   writeTextFile(warningsPath, stringifyToml(warningsDocument));
   writeTextFile(
     scriptPortingReadmePath,
-    [
-      '# Script Porting Placeholder',
-      '',
-      'This directory is reserved for future gameplay/code translation manifests.',
-      'The current Phase 5.6 slice only establishes migration detection, normalized manifest/report output, and manual follow-up scaffolding.',
-      '',
-    ].join('\n'),
+    conversionMode === 'project_skeleton_conversion'
+      ? [
+          '# Script Porting Manifests',
+          '',
+          'This directory now contains first-pass script porting manifests generated during migration.',
+          'They are review inputs, not parity guarantees.',
+          '',
+        ].join('\n')
+      : [
+          '# Script Porting Placeholder',
+          '',
+          'This directory is reserved for future gameplay/code translation manifests.',
+          'The current Phase 5.6 slice only establishes migration detection, normalized manifest/report output, and manual follow-up scaffolding.',
+          '',
+        ].join('\n'),
   );
 
   return {
     runId,
     commandName,
+    conversionMode,
     requestedEngine,
     detection,
     support,
     counts,
     warnings,
     manualTasks,
+    targetProjectRoot: conversion.targetProjectRoot,
+    convertedItems: conversion.convertedItems,
+    approximatedItems: conversion.approximatedItems,
+    skippedItems: estimateSkippedItems(counts, detection.engine),
+    conversionOutputs: conversion.outputs,
     reportRoot: relativePathFromRepo(repoRoot, reportRoot),
     manifestPath: relativePathFromRepo(repoRoot, manifestPath),
     reportPath: relativePathFromRepo(repoRoot, reportPath),
@@ -591,10 +1076,13 @@ export function summarizeMigrationReport(reportInputPath) {
       `- Run id: ${trim(report.run_id) || 'unknown'}`,
       `- Engine: ${trim(report.detected_engine) || 'unknown'}`,
       `- Slice: ${trim(report.current_slice) || 'unknown'}`,
+      `- Target project root: ${trim(report.target_project_root) || 'none'}`,
       `- Detection support: ${trim(support.detection) || 'unknown'}`,
       `- Asset conversion support: ${trim(support.asset_conversion) || 'unknown'}`,
       `- Scene conversion support: ${trim(support.scene_conversion) || 'unknown'}`,
       `- Script porting support: ${trim(support.script_porting) || 'unknown'}`,
+      `- Converted items: ${Number(report.converted_items || 0)}`,
+      `- Approximated items: ${Number(report.approximated_items || 0)}`,
       `- Manual tasks: ${Number(report.manual_items || 0)}`,
       `- Warnings: ${Number(report.warning_count || 0)}`,
     ],

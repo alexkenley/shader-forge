@@ -242,17 +242,27 @@ async function runMigration(commandName, positionals, flags) {
     runId: flags['run-id'] ? String(flags['run-id']) : '',
   });
 
-  console.log('Migration foundation run complete.');
+  console.log(result.conversionMode === 'project_skeleton_conversion'
+    ? 'Migration conversion run complete.'
+    : 'Migration foundation run complete.');
   console.log(`- Source engine: ${result.detection.engine}`);
   console.log(`- Requested lane: ${result.requestedEngine || 'auto-detect'}`);
   console.log(`- Source root: ${path.isAbsolute(projectPath) ? projectPath : String(projectPath)}`);
   console.log(`- Report root: ${result.reportRoot}`);
+  if (result.targetProjectRoot) {
+    console.log(`- Target project root: ${result.targetProjectRoot}`);
+    console.log(`- Converted items: ${result.convertedItems}`);
+    console.log(`- Approximated items: ${result.approximatedItems}`);
+    console.log(`- Script manifests: ${result.conversionOutputs.scriptManifestFiles.length}`);
+  }
   console.log(`- Manifest: ${result.manifestPath}`);
   console.log(`- Report: ${result.reportPath}`);
   console.log(`- Warnings file: ${result.warningsPath}`);
   console.log(`- Script porting placeholder: ${result.scriptPortingReadmePath}`);
   console.log(`- Manual tasks: ${result.manualTasks.length}`);
-  console.log('- No content conversion was performed in this slice.');
+  console.log(result.conversionMode === 'project_skeleton_conversion'
+    ? '- A first-pass Shader Forge project skeleton was generated in this slice.'
+    : '- No content conversion was performed in this slice.');
 }
 
 async function run() {

@@ -24,9 +24,9 @@ Rules:
 - converted projects must land in Shader Forge-native assets, scenes, prefabs, and code layouts
 - every migration run must produce a report of converted, approximated, skipped, and manual items
 
-## Current First Slice
+## Current Implemented Slice
 
-The current implementation is a migration-foundation slice rather than a fake converter.
+The current implementation now spans the Phase 5.6 foundation plus a first real Phase 5.8 conversion slice.
 
 Implemented now:
 
@@ -36,15 +36,19 @@ Implemented now:
 - `engine migrate godot <path>`
 - `engine migrate report <path>`
 - normalized `migration-manifest.toml`, `report.toml`, and `warnings.toml` outputs under `migration/<run-id>/`
-- a `script-porting/README.md` placeholder per migration run
+- `engine migrate detect` remains detect/report only and still writes a `script-porting/README.md` placeholder
+- `engine migrate unity|unreal|godot` now emit a self-contained `shader-forge-project/` skeleton under each run root
+- the current fixture lanes now generate first-pass `content/scenes/migrated/<engine>/*.scene.toml`, `content/prefabs/migrated/<engine>/*.prefab.toml`, and `content/data/migrated/<engine>/runtime_bootstrap.data.toml`
+- pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
 - deterministic Unity, Unreal, and Godot fixture projects under `fixtures/migration/`
 
 Current boundaries:
 
 - source-engine detection is real for the first supported lanes
 - target layout intent and provenance are captured in the emitted manifest/report files
-- asset, scene, prefab, and gameplay conversion are not implemented yet in this slice
-- the run must state that no content conversion was performed rather than implying parity
+- engine-specific lanes now perform a real first conversion pass, but only to project skeleton depth rather than full parity
+- generated scenes, prefabs, and script manifests are first-pass approximations based on minimal fixture/source inspection rather than full source-engine graph extraction
+- art assets, materials, animation, audio, detailed hierarchy/component graphs, and exporter-assisted Unreal actor data are still ahead
 
 ## Primary Targets
 

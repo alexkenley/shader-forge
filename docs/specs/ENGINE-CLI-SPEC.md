@@ -41,16 +41,16 @@ The initial build/run/bake command family now targets the native runtime and coo
 - `engine run` now forwards `--input-root`, `--content-root`, `--audio-root`, `--animation-root`, `--physics-root`, `--data-foundation`, `--tooling-layout`, and `--tooling-layout-save` so native bring-up can inspect text-backed engine assets and configuration directly
 - `engine bake` now scans the text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report plus generated-mesh preview payloads for procedural geometry assets
 - `engine migrate detect <path>` now detects Unity, Unreal, or Godot project structure and emits a normalized migration manifest, report, warnings file, and script-porting placeholder under `migration/<run-id>/`
-- `engine migrate unity|unreal|godot <path>` now pins the requested source-engine lane while emitting the same migration-foundation artifacts for deterministic fixture coverage
+- `engine migrate unity|unreal|godot <path>` now pins the requested source-engine lane and emits a first-pass `shader-forge-project/` migration skeleton plus updated manifest/report outputs for deterministic fixture coverage
 - `engine migrate report <path>` now summarizes a generated migration report without requiring manual file inspection
 - `engine_sessiond` also exposes a runtime build lifecycle surface so the shell can trigger native builds and stream logs without scraping a PTY
 
 `engine test`, `engine import`, `engine package`, and `engine export` remain reserved command space.
 
-The current migration lane is a foundation slice only:
+The current migration lane is split honestly:
 
-- it detects supported source engines and captures provenance plus target layout intent
-- it does not yet convert assets, scenes, or gameplay code into Shader Forge-native outputs
+- `engine migrate detect` remains the foundation slice for supported source-engine detection plus provenance capture
+- pinned engine lanes now generate first-pass Shader Forge scene/prefab/data skeleton outputs and script-porting manifests, but they do not yet provide full asset or gameplay parity
 
 ## Future Packaging And Diagnostics Commands
 

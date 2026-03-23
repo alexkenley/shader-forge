@@ -181,7 +181,7 @@
                 "`engine import`, `engine package`, and `engine export` are still later phases.",
                 "The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.",
                 "The CLI audio lane is now real for authored metadata and staged cook outputs, but it does not drive real playback yet.",
-                "The CLI migration lane is now real for detection and report generation, but it does not convert source-engine content into Shader Forge-native assets yet."
+                "The CLI migration lane is now split honestly: `detect` is report-only, while pinned engine lanes emit a first-pass Shader Forge project skeleton instead of claiming full parity."
               ]
             }
           ]
@@ -189,7 +189,7 @@
         {
           "id": "migration-foundation",
           "title": "Migration Foundation",
-          "summary": "The first migration slice is a normalized detect/report lane with fixture-backed Unity, Unreal, and Godot coverage rather than a fake one-click converter.",
+          "summary": "The current migration slice is a detect/report foundation plus a first fixture-backed Shader Forge project-skeleton converter for Unity, Unreal, and Godot.",
           "keywords": ["migration", "detect", "report", "manifest", "provenance", "fixtures"],
           "references": [
             "tools/engine-cli/lib/migration-foundation.mjs",
@@ -205,17 +205,17 @@
               "keywords": ["unity", "unreal", "godot", "report root"],
               "items": [
                 "`engine migrate detect` auto-detects Unity, Unreal, or Godot project structure and writes `migration-manifest.toml`, `report.toml`, and `warnings.toml` under `migration/<run-id>/`.",
-                "`engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` pin the requested source-engine lane while producing the same normalized outputs.",
-                "Every migration run now creates a `script-porting/README.md` placeholder so later gameplay/code translation has a stable destination."
+                "`engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` now pin the requested source-engine lane while also emitting a self-contained `shader-forge-project/` skeleton under each run root.",
+                "Pinned engine lanes now emit first-pass scene, prefab, bootstrap-data, and script-porting outputs for the current fixtures."
               ]
             },
             {
               "title": "Current Boundaries",
               "keywords": ["foundation only", "manual follow-up", "conversion"],
               "items": [
-                "The current migration slice captures provenance and target layout intent only.",
-                "No asset, scene, prefab, or gameplay conversion is performed yet.",
-                "The run output must say that no content conversion was performed in this slice instead of implying parity."
+                "The current migration slice now converts project structure into a usable Shader Forge skeleton, but not full runtime parity.",
+                "Art assets, materials, detailed hierarchy/component graphs, and gameplay translation still require later migration passes.",
+                "The run output must keep calling out approximations and manual follow-up instead of implying parity."
               ]
             }
           ]
@@ -484,7 +484,7 @@
                 "A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.",
                 "Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.",
                 "A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, plus physics metadata.",
-                "A first CLI migration lane that detects supported source-engine project shapes and emits normalized migration manifests plus reports.",
+                "A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.",
                 "A searchable in-app guide and repo-native assistant guide."
               ]
             },
