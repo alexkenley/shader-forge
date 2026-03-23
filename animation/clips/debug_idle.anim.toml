@@ -1,0 +1,13 @@
+schema = "shader_forge.animation_clip"
+schema_version = 1
+name = "debug_idle"
+owner_system = "animation_system"
+skeleton = "debug_humanoid"
+duration_seconds = 1.2
+loop = true
+root_motion_meters = 0.0
+
+[event.idle_breath]
+time_seconds = 0.6
+type = "marker"
+target = "idle_breath"

@@ -72,6 +72,23 @@ The first useful engine animation slice should include:
 - one procedural correction layer such as look-at or simple IK
 - runtime logging and failure reporting for missing or invalid animation assets
 
+## Current First Slice
+
+The current Phase 5.72 slice now exists as a first engine-owned animation foundation:
+
+- `animation/skeletons/*.skeleton.toml` is the first authored skeleton lane
+- `animation/clips/*.anim.toml` is the first authored clip lane
+- `animation/graphs/*.animgraph.toml` is the first authored graph lane
+- the native runtime now loads those authored assets through `AnimationSystem` before startup continues
+- skeleton, clip, graph, and graph-state relationships are validated at runtime rather than left as implied future structure
+- clip events are now validated as named `marker`, `audio_event`, or `vfx_event` hooks
+- runtime startup now resolves a default animation graph, logs the graph/state/event catalog, and routes entry-clip `audio_event` hooks through the engine-owned audio-event API
+- `engine run` now forwards `--animation-root`
+- `engine bake` now scans the animation root and stages cooked skeleton, clip, and graph metadata under `build/cooked/animation/`
+- deterministic harness coverage now exists for the authored animation assets, runtime integration hooks, and staged animation cook lane
+
+This is still a widening slice, not the final animation runtime. There is not yet a real sampling/blending backend, graph-parameter mutation from gameplay, root-motion application, retargeting, or native preview tooling.
+
 ## Later Scope
 
 Later animation work should add:

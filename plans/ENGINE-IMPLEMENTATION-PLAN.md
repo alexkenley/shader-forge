@@ -98,6 +98,7 @@ Current implementation status:
 - Phase 5 has now started through a first asset-pipeline slice with `engine bake`, staged cooked outputs, and a text-backed procedural-geometry lane.
 - Phase 5.6 has now started through a migration-foundation slice with source-engine detection, normalized manifest/report outputs, provenance capture, and fixture-backed CLI migration commands.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
+- Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -117,7 +118,8 @@ What is already done:
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, input scaffold, and tooling UI scaffold.
+- Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -130,6 +132,7 @@ Where the build is currently up to:
 - native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
 - Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture, but no source-project content is converted into Shader Forge-native assets yet
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
+- Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -450,6 +453,9 @@ Exit criteria:
 Goal:
 - establish an engine-owned animation subsystem so animation logic, state, and procedural control can be authored natively inside Shader Forge and through assistant-editable text/code workflows rather than requiring Blender
 
+Status:
+- first slice now exists through authored skeleton/clip/graph assets, native animation-system validation plus default-graph resolution, runtime animation-event logging plus audio-event hooks, staged cooked animation metadata, and deterministic harness coverage
+
 Scope:
 - `engine_animation` runtime subsystem
 - text-backed skeleton, clip, graph, and mask assets
@@ -468,6 +474,15 @@ Exit criteria:
 - animation events can drive gameplay, audio, or VFX hooks
 - root motion extraction works for supported clips
 - tools can preview and inspect animation assets without requiring Blender as the primary editing path
+
+Implemented first slice:
+
+- `animation/skeletons/debug_humanoid.skeleton.toml`, `animation/clips/debug_idle.anim.toml`, `animation/clips/debug_walk.anim.toml`, and `animation/graphs/debug_actor.animgraph.toml`
+- native `AnimationSystem` loading, validation, and resolved-graph summaries in `engine/runtime/src/animation_system.cpp`
+- runtime initialization and startup/default-graph logging plus animation-event to audio-event handoff in `engine/runtime/src/runtime_app.cpp`
+- `engine run` forwarding of `--animation-root`
+- `engine bake` scanning plus staged cooked animation output under `build/cooked/animation/`
+- deterministic `scripts/test-engine-animation-scaffold.mjs` coverage plus widened runtime and asset-pipeline harnesses
 
 ## Phase 5.74: Physics And Collision
 
@@ -743,5 +758,6 @@ Current build target:
 - Phase 5 start: widen the new bake lane, generated content path, and preview/report surfaces while audio expands on the same authored/cooked path
 - Phase 5.6 start: extend migration detection into actual content mapping and provenance-backed conversion fixtures without claiming parity early
 - Phase 5.7 start: widen the authored-audio lane into real playback, bus control, and preview tooling without skipping the engine-owned event API
+- Phase 5.72 start: widen the authored-animation lane into real sampling, graph-parameter control, root motion, and preview tooling without discarding the text-backed graph/event contracts
 - Phase 5.95 before Phase 5.9 execution: land trust and policy groundwork before assistant-triggered code and apply workflows expand
 - keep harness coverage current as each major slice lands

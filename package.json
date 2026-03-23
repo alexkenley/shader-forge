@@ -30,6 +30,7 @@
     "test:asset-pipeline": "node scripts/test-engine-asset-pipeline.mjs",
     "test:migration-fixtures": "node scripts/test-engine-migration-fixtures.mjs",
     "test:audio-scaffold": "node scripts/test-engine-audio-scaffold.mjs",
+    "test:animation-scaffold": "node scripts/test-engine-animation-scaffold.mjs",
     "test:input-scaffold": "node scripts/test-engine-input-scaffold.mjs",
     "test:tooling-ui-scaffold": "node scripts/test-engine-tooling-ui-scaffold.mjs",
     "test:viewer-bridge": "node scripts/test-engine-viewer-bridge.mjs",

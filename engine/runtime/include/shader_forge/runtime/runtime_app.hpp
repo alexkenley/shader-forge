@@ -11,6 +11,7 @@ struct RuntimeConfig {
   std::filesystem::path inputRoot = "input";
   std::filesystem::path contentRoot = "content";
   std::filesystem::path audioRoot = "audio";
+  std::filesystem::path animationRoot = "animation";
   std::filesystem::path dataFoundationPath = "data/foundation/engine-data-layout.toml";
   std::filesystem::path toolingLayoutPath = "tooling/layouts/default.tooling-layout.toml";
   std::filesystem::path toolingSessionLayoutPath = "tooling/layouts/runtime-session.tooling-layout.toml";

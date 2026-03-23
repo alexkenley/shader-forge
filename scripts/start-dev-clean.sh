@@ -124,6 +124,8 @@ if [[ "$skip_tests" != "1" ]]; then
   npm run test:migration-fixtures
   printf '[shader-forge] Running audio scaffold harness...\n'
   npm run test:audio-scaffold
+  printf '[shader-forge] Running animation scaffold harness...\n'
+  npm run test:animation-scaffold
   printf '[shader-forge] Running input scaffold harness...\n'
   npm run test:input-scaffold
   printf '[shader-forge] Running tooling UI scaffold harness...\n'

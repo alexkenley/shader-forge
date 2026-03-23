@@ -1,0 +1,18 @@
+schema = "shader_forge.animation_clip"
+schema_version = 1
+name = "debug_walk"
+owner_system = "animation_system"
+skeleton = "debug_humanoid"
+duration_seconds = 0.8
+loop = true
+root_motion_meters = 1.4
+
+[event.footstep_left]
+time_seconds = 0.2
+type = "audio_event"
+target = "player_footstep"
+
+[event.footstep_right]
+time_seconds = 0.6
+type = "audio_event"
+target = "player_footstep"

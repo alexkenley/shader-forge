@@ -72,8 +72,8 @@ Assistant entry points:
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
 - `engine build runtime` configures and builds the native runtime with CMake.
-- `engine run <scene>` builds and launches the native runtime and now forwards content, audio, data, and tooling roots.
-- `engine bake` scans text-backed content and audio roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
+- `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, data, and tooling roots.
+- `engine bake` scans text-backed content, audio, and animation roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
 - `engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import`, `engine package`, and `engine export` are still later phases.
@@ -108,6 +108,7 @@ Assistant entry points:
 - `content/effects/*.effect.toml` is the initial authored effect-descriptor lane.
 - `content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.
 - `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.
+- `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes.
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
 - The runtime validates the content roots through `DataFoundation` before startup continues.
 - Scene-to-prefab relationships are validated across the catalog.
@@ -115,7 +116,9 @@ Assistant entry points:
 - The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.
 - The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
-- `engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, and stages cooked audio metadata under `build/cooked/audio/`.
+- The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.
+- Runtime startup resolves a default animation graph, logs graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio event API.
+- `engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, stages cooked audio metadata under `build/cooked/audio/`, and stages cooked animation metadata under `build/cooked/animation/`.
 - There is not yet a final FlatBuffers writer, SQLite asset index, or Effekseer runtime integration.
 
 ### Audio Foundation
@@ -124,6 +127,13 @@ Assistant entry points:
 - `audio/sounds/*.sound.toml` defines named sounds with bus routing, playback mode, spatialization, streaming, and default volume metadata.
 - `audio/events/*.audio-event.toml` defines named audio events that currently resolve to sound-play requests through engine-owned APIs.
 - The current audio slice validates and resolves requests, but it does not decode or mix sound yet. Playback backend integration is still ahead.
+
+### Animation Foundation
+
+- `animation/skeletons/*.skeleton.toml` defines named authored skeletons with root-bone and bone-list metadata.
+- `animation/clips/*.anim.toml` defines named clips with skeleton ownership, looping/root-motion metadata, and text-backed clip events.
+- `animation/graphs/*.animgraph.toml` defines named animation graphs with float parameters, named states, and explicit entry-state selection.
+- The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet.
 
 ## Input, Tooling, And Testing
 
@@ -143,7 +153,7 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
-- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
+- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
 - Both scripts remove generated outputs, rerun the current deterministic baseline, start `engine_sessiond`, and then launch the active shell workflow.
@@ -165,5 +175,6 @@ Assistant entry points:
 - The runtime still needs richer rendering, real scene loading, and broader native verification.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
+- Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

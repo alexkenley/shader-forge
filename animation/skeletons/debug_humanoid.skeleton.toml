@@ -1,0 +1,7 @@
+schema = "shader_forge.skeleton"
+schema_version = 1
+name = "debug_humanoid"
+owner_system = "animation_system"
+root_bone = "hips"
+bone_count = 3
+bones = "hips, spine, head"

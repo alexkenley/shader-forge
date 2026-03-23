@@ -1,0 +1,20 @@
+schema = "shader_forge.animation_graph"
+schema_version = 1
+name = "debug_actor"
+owner_system = "animation_system"
+skeleton = "debug_humanoid"
+entry_state = "idle"
+
+[parameter.move_speed]
+type = "float"
+default_value = 0.0
+
+[state.idle]
+clip = "debug_idle"
+speed = 1.0
+loop = true
+
+[state.walk]
+clip = "debug_walk"
+speed = 1.0
+loop = true

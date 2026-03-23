@@ -1,3 +1,4 @@
+#include "shader_forge/runtime/animation_system.hpp"
 #include "shader_forge/runtime/audio_system.hpp"
 #include "shader_forge/runtime/data_foundation.hpp"
 #include "shader_forge/runtime/input_system.hpp"
@@ -351,8 +352,10 @@ private:
 
     initializeInputSystem();
     initializeAudioSystem();
+    initializeAnimationSystem();
     initializeDataFoundation();
     resolveDataDrivenRuntimeState();
+    resolveAnimationRuntimeState();
     initializeToolingUi();
     applyBootstrapPreferences();
 
@@ -405,6 +408,13 @@ private:
     }
   }
 
+  void initializeAnimationSystem() {
+    std::string error;
+    if (!animationSystem_.loadFromDisk(AnimationConfig{.rootPath = config_.animationRoot}, &error)) {
+      throw std::runtime_error("Animation system initialization failed: " + error);
+    }
+  }
+
   void initializeDataFoundation() {
     std::string error;
     if (!dataFoundation_.loadFromDisk(DataFoundationConfig{
@@ -438,6 +448,27 @@ private:
       hasBootstrapOverlayPreference_ = true;
       bootstrapOverlayEnabled_ = bootstrap->toolingOverlayEnabled;
     }
+  }
+
+  void resolveAnimationRuntimeState() {
+    activeAnimationGraphName_.clear();
+    activeAnimationEntryState_.clear();
+    activeAnimationEntryClip_.clear();
+
+    const auto defaultGraph = animationSystem_.defaultGraphName();
+    if (!defaultGraph.has_value()) {
+      return;
+    }
+
+    activeAnimationGraphName_ = *defaultGraph;
+    const auto resolved = animationSystem_.resolveGraph(activeAnimationGraphName_);
+    if (!resolved.has_value()) {
+      activeAnimationGraphName_.clear();
+      return;
+    }
+
+    activeAnimationEntryState_ = resolved->entryState;
+    activeAnimationEntryClip_ = resolved->entryClipName;
   }
 
   void applyBootstrapPreferences() {
@@ -761,6 +792,7 @@ private:
             << ", input-root=" << std::filesystem::absolute(config_.inputRoot).string()
             << ", content-root=" << std::filesystem::absolute(config_.contentRoot).string()
             << ", audio-root=" << std::filesystem::absolute(config_.audioRoot).string()
+            << ", animation-root=" << std::filesystem::absolute(config_.animationRoot).string()
             << ", data-foundation=" << std::filesystem::absolute(config_.dataFoundationPath).string()
             << ", tooling-layout=" << std::filesystem::absolute(config_.toolingLayoutPath).string();
     logRuntimeLine(startup.str());
@@ -772,16 +804,19 @@ private:
         + (toolingUi_.overlayVisible() ? "enabled." : "disabled."));
     }
     logRuntimeLine(audioSystem_.foundationSummary());
+    logRuntimeLine(animationSystem_.foundationSummary());
     logRuntimeLine(dataFoundation_.foundationSummary());
     logRuntimeLine(dataFoundation_.assetCatalogSummary());
     logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
     logRuntimeMultiline(audioSystem_.busRoutingSummary());
     logRuntimeMultiline(audioSystem_.eventCatalogSummary());
+    logRuntimeMultiline(animationSystem_.graphCatalogSummary());
     logRuntimeMultiline(dataFoundation_.relationshipSummary());
     logRuntimeMultiline(dataFoundation_.cookPlanSummary());
     logRuntimeMultiline(inputSystem_.bindingSummary());
     logRuntimeMultiline(toolingUi_.panelRegistrySummary());
     triggerAudioEvent("runtime_boot", "startup");
+    triggerAnimationGraph(activeAnimationGraphName_, "startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
       "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, and F2-F6 for tooling panels.");
@@ -804,6 +839,40 @@ private:
             << ", media=" << resolved->sourceMediaPath.generic_string()
             << ", fade_ms=" << resolved->fadeMs;
     logRuntimeLine(message.str());
+  }
+
+  void triggerAnimationGraph(std::string_view graphName, std::string_view reason) {
+    if (graphName.empty()) {
+      return;
+    }
+
+    const auto resolved = animationSystem_.resolveGraph(graphName);
+    if (!resolved.has_value()) {
+      logRuntimeLine("Animation graph request could not be resolved: " + std::string(graphName));
+      return;
+    }
+
+    std::ostringstream message;
+    message << "Animation graph " << resolved->graphName
+            << " requested via " << reason
+            << ": skeleton=" << resolved->skeletonName
+            << ", entry_state=" << resolved->entryState
+            << ", entry_clip=" << resolved->entryClipName
+            << ", states=" << resolved->stateNames.size();
+    logRuntimeLine(message.str());
+
+    for (const auto& eventSnapshot : resolved->entryClipEvents) {
+      std::ostringstream eventMessage;
+      eventMessage << "Animation event " << resolved->entryClipName << '.' << eventSnapshot.name
+                   << " -> type=" << eventSnapshot.type
+                   << ", target=" << eventSnapshot.target
+                   << ", time=" << eventSnapshot.timeSeconds;
+      logRuntimeLine(eventMessage.str());
+
+      if (eventSnapshot.type == "audio_event") {
+        triggerAudioEvent(eventSnapshot.target, std::string(reason) + ":animation_event");
+      }
+    }
   }
 
   void logSwapchain(const char* prefix) {
@@ -868,6 +937,12 @@ private:
       }
       if (!activePrimaryPrefab_.empty()) {
         title << " prefab=" << activePrimaryPrefab_;
+      }
+    }
+    if (!activeAnimationGraphName_.empty()) {
+      title << " anim=" << activeAnimationGraphName_;
+      if (!activeAnimationEntryState_.empty()) {
+        title << ':' << activeAnimationEntryState_;
       }
     }
 
@@ -966,6 +1041,7 @@ private:
       lastUiAction_ = "ui_back";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
       logRuntimeLine("ui_back action triggered.");
+      triggerAnimationGraph(activeAnimationGraphName_, "ui_back");
     }
 
     moveX_ = inputSystem_.actionValue("move_x");
@@ -1193,6 +1269,7 @@ private:
   }
 
   RuntimeConfig config_;
+  AnimationSystem animationSystem_;
   AudioSystem audioSystem_;
   DataFoundation dataFoundation_;
   InputSystem inputSystem_;
@@ -1233,6 +1310,9 @@ private:
   std::string activeSceneName_;
   std::string activeSceneTitle_;
   std::string activePrimaryPrefab_;
+  std::string activeAnimationGraphName_;
+  std::string activeAnimationEntryState_;
+  std::string activeAnimationEntryClip_;
   std::string lastUiAction_;
   bool sceneSelectedFromBootstrap_ = false;
   bool hasBootstrapOverlayPreference_ = false;

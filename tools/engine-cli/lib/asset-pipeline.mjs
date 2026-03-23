@@ -124,6 +124,48 @@ function parseTomlDocument(filePath) {
   return fields;
 }
 
+function parseTomlStructuredDocument(filePath) {
+  const content = fs.readFileSync(filePath, 'utf8');
+  const fields = {};
+  const sections = [];
+  const lines = content.split(/\r?\n/);
+  let currentSection = null;
+
+  for (const line of lines) {
+    const cleaned = stripComment(line);
+    if (!cleaned) {
+      continue;
+    }
+    if (cleaned.startsWith('[') && cleaned.endsWith(']')) {
+      currentSection = {
+        name: trim(cleaned.slice(1, -1)),
+        fields: {},
+      };
+      sections.push(currentSection);
+      continue;
+    }
+
+    const pair = parseKeyValue(cleaned);
+    if (!pair) {
+      continue;
+    }
+    if (currentSection) {
+      currentSection.fields[pair.key] = pair.value;
+    } else {
+      fields[pair.key] = pair.value;
+    }
+  }
+
+  return { fields, sections };
+}
+
+function parseListValue(rawValue) {
+  return parseStringValue(rawValue)
+    .split(',')
+    .map((item) => normalizeToken(item))
+    .filter(Boolean);
+}
+
 function defaultFoundationManifest() {
   return {
     foundation_name: 'Shader Forge Data Foundation',
@@ -743,6 +785,362 @@ function scanAudioAssets(repoRoot, audioRoot, outputRoot) {
   };
 }
 
+function scanAnimationAssets(repoRoot, animationRoot, outputRoot, audioScan) {
+  const skeletonsRoot = path.join(animationRoot, 'skeletons');
+  const clipsRoot = path.join(animationRoot, 'clips');
+  const graphsRoot = path.join(animationRoot, 'graphs');
+  const warnings = [];
+  const relationships = [];
+
+  if (!fs.existsSync(skeletonsRoot)) {
+    throw new Error(`Expected animation skeletons directory is missing: ${relativePathFromRepo(repoRoot, skeletonsRoot)}`);
+  }
+  if (!fs.existsSync(clipsRoot)) {
+    throw new Error(`Expected animation clips directory is missing: ${relativePathFromRepo(repoRoot, clipsRoot)}`);
+  }
+  if (!fs.existsSync(graphsRoot)) {
+    throw new Error(`Expected animation graphs directory is missing: ${relativePathFromRepo(repoRoot, graphsRoot)}`);
+  }
+
+  const skeletons = [];
+  for (const entry of fs.readdirSync(skeletonsRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const sourcePath = path.join(skeletonsRoot, entry.name);
+    const fields = parseTomlDocument(sourcePath);
+    const name = normalizeToken(parseStringValue(fields.name || ''));
+    const schema = parseStringValue(fields.schema || '').toLowerCase();
+    const ownerSystem = normalizeToken(parseStringValue(fields.owner_system || ''));
+    const rootBone = normalizeToken(parseStringValue(fields.root_bone || ''));
+    const boneCount = parseIntegerValue(fields.bone_count || '') ?? 0;
+    const bones = parseListValue(fields.bones || '');
+    const schemaVersion = parseIntegerValue(fields.schema_version || '') ?? 0;
+    const cookedPath = path.join(outputRoot, 'animation', 'skeletons', `${name}.bin`);
+    const problems = [];
+
+    if (schema !== 'shader_forge.skeleton') {
+      problems.push('schema must be "shader_forge.skeleton"');
+    }
+    if (schemaVersion <= 0) {
+      problems.push('schema_version must be a positive integer');
+    }
+    if (ownerSystem !== 'animation_system') {
+      problems.push('owner_system must be "animation_system"');
+    }
+    if (!name) {
+      problems.push('missing name');
+    }
+    if (!rootBone) {
+      problems.push('root_bone must be set');
+    }
+    if (boneCount <= 0) {
+      problems.push('bone_count must be > 0');
+    }
+    if (bones.length !== boneCount) {
+      problems.push('bone_count must match the listed bones');
+    }
+    if (rootBone && !bones.includes(rootBone)) {
+      problems.push('root_bone must be present in bones');
+    }
+
+    const skeleton = {
+      name,
+      schema,
+      schemaVersion,
+      ownerSystem,
+      rootBone,
+      boneCount,
+      bones,
+      sourcePath: relativePathFromRepo(repoRoot, sourcePath),
+      cookedPath: relativePathFromRepo(repoRoot, cookedPath),
+      valid: problems.length === 0,
+      problems,
+    };
+    skeletons.push(skeleton);
+
+    if (skeleton.valid) {
+      writeStageBinary(cookedPath, {
+        format: 'shader_forge.cooked_animation.stage',
+        stagedEncoding: 'json_utf8_placeholder',
+        kind: 'skeleton',
+        name: skeleton.name,
+        rootBone: skeleton.rootBone,
+        boneCount: skeleton.boneCount,
+        bones: skeleton.bones,
+      });
+    } else {
+      warnings.push(`${skeleton.sourcePath}: ${skeleton.problems.join('; ')}`);
+    }
+  }
+
+  const skeletonNames = new Set(skeletons.filter((asset) => asset.valid).map((asset) => asset.name));
+  const validAudioEventNames = new Set(audioScan.events.filter((asset) => asset.valid).map((asset) => asset.name));
+  const clips = [];
+  for (const entry of fs.readdirSync(clipsRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const sourcePath = path.join(clipsRoot, entry.name);
+    const document = parseTomlStructuredDocument(sourcePath);
+    const fields = document.fields;
+    const name = normalizeToken(parseStringValue(fields.name || ''));
+    const schema = parseStringValue(fields.schema || '').toLowerCase();
+    const ownerSystem = normalizeToken(parseStringValue(fields.owner_system || ''));
+    const skeleton = normalizeToken(parseStringValue(fields.skeleton || ''));
+    const durationSeconds = parseNumberValue(fields.duration_seconds || '') ?? 0;
+    const loop = parseBooleanValue(fields.loop || '') ?? false;
+    const rootMotionMeters = parseNumberValue(fields.root_motion_meters || '') ?? 0;
+    const schemaVersion = parseIntegerValue(fields.schema_version || '') ?? 0;
+    const cookedPath = path.join(outputRoot, 'animation', 'clips', `${name}.bin`);
+    const problems = [];
+    const events = [];
+
+    if (schema !== 'shader_forge.animation_clip') {
+      problems.push('schema must be "shader_forge.animation_clip"');
+    }
+    if (schemaVersion <= 0) {
+      problems.push('schema_version must be a positive integer');
+    }
+    if (ownerSystem !== 'animation_system') {
+      problems.push('owner_system must be "animation_system"');
+    }
+    if (!name) {
+      problems.push('missing name');
+    }
+    if (!skeletonNames.has(skeleton)) {
+      problems.push(`skeleton must reference a declared animation skeleton, received "${skeleton}"`);
+    }
+    if (durationSeconds <= 0) {
+      problems.push('duration_seconds must be > 0');
+    }
+
+    for (const section of document.sections) {
+      if (!section.name.startsWith('event.')) {
+        problems.push(`unsupported clip section "${section.name}"`);
+        continue;
+      }
+      const eventName = normalizeToken(section.name.slice('event.'.length));
+      const eventType = normalizeToken(parseStringValue(section.fields.type || ''));
+      const target = normalizeToken(parseStringValue(section.fields.target || ''));
+      const timeSeconds = parseNumberValue(section.fields.time_seconds || '') ?? -1;
+      const eventProblems = [];
+
+      if (!eventName) {
+        eventProblems.push('event section must have a name');
+      }
+      if (!['marker', 'audio_event', 'vfx_event'].includes(eventType)) {
+        eventProblems.push('event type must be "marker", "audio_event", or "vfx_event"');
+      }
+      if (timeSeconds < 0 || timeSeconds > durationSeconds) {
+        eventProblems.push('event time_seconds must be within the clip duration');
+      }
+      if (!target) {
+        eventProblems.push('event target must be set');
+      }
+      if (eventType === 'audio_event' && !validAudioEventNames.has(target)) {
+        eventProblems.push(`audio_event target must reference a declared audio event, received "${target}"`);
+      }
+
+      events.push({
+        name: eventName,
+        type: eventType,
+        target,
+        timeSeconds,
+        valid: eventProblems.length === 0,
+        problems: eventProblems,
+      });
+
+      for (const problem of eventProblems) {
+        problems.push(`event ${eventName}: ${problem}`);
+      }
+    }
+
+    const clip = {
+      name,
+      schema,
+      schemaVersion,
+      ownerSystem,
+      skeleton,
+      durationSeconds,
+      loop,
+      rootMotionMeters,
+      events,
+      sourcePath: relativePathFromRepo(repoRoot, sourcePath),
+      cookedPath: relativePathFromRepo(repoRoot, cookedPath),
+      valid: problems.length === 0,
+      problems,
+    };
+    clips.push(clip);
+
+    if (clip.valid) {
+      writeStageBinary(cookedPath, {
+        format: 'shader_forge.cooked_animation.stage',
+        stagedEncoding: 'json_utf8_placeholder',
+        kind: 'clip',
+        name: clip.name,
+        skeleton: clip.skeleton,
+        durationSeconds: clip.durationSeconds,
+        loop: clip.loop,
+        rootMotionMeters: clip.rootMotionMeters,
+        events: clip.events.map((event) => ({
+          name: event.name,
+          type: event.type,
+          target: event.target,
+          timeSeconds: event.timeSeconds,
+        })),
+      });
+      relationships.push(`animation-clip ${clip.name} -> skeleton ${clip.skeleton}`);
+      for (const event of clip.events) {
+        if (event.type === 'audio_event') {
+          relationships.push(`animation-event ${clip.name}.${event.name} -> audio-event ${event.target}`);
+        }
+      }
+    } else {
+      warnings.push(`${clip.sourcePath}: ${clip.problems.join('; ')}`);
+    }
+  }
+
+  const clipMap = new Map(clips.filter((asset) => asset.valid).map((asset) => [asset.name, asset]));
+  const graphs = [];
+  for (const entry of fs.readdirSync(graphsRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const sourcePath = path.join(graphsRoot, entry.name);
+    const document = parseTomlStructuredDocument(sourcePath);
+    const fields = document.fields;
+    const name = normalizeToken(parseStringValue(fields.name || ''));
+    const schema = parseStringValue(fields.schema || '').toLowerCase();
+    const ownerSystem = normalizeToken(parseStringValue(fields.owner_system || ''));
+    const skeleton = normalizeToken(parseStringValue(fields.skeleton || ''));
+    const entryState = normalizeToken(parseStringValue(fields.entry_state || ''));
+    const schemaVersion = parseIntegerValue(fields.schema_version || '') ?? 0;
+    const cookedPath = path.join(outputRoot, 'animation', 'graphs', `${name}.bin`);
+    const problems = [];
+    const parameters = [];
+    const states = [];
+
+    if (schema !== 'shader_forge.animation_graph') {
+      problems.push('schema must be "shader_forge.animation_graph"');
+    }
+    if (schemaVersion <= 0) {
+      problems.push('schema_version must be a positive integer');
+    }
+    if (ownerSystem !== 'animation_system') {
+      problems.push('owner_system must be "animation_system"');
+    }
+    if (!name) {
+      problems.push('missing name');
+    }
+    if (!skeletonNames.has(skeleton)) {
+      problems.push(`skeleton must reference a declared animation skeleton, received "${skeleton}"`);
+    }
+
+    for (const section of document.sections) {
+      if (section.name.startsWith('parameter.')) {
+        const parameterName = normalizeToken(section.name.slice('parameter.'.length));
+        const type = normalizeToken(parseStringValue(section.fields.type || ''));
+        const defaultValue = parseNumberValue(section.fields.default_value || '') ?? 0;
+        if (type !== 'float') {
+          problems.push(`parameter ${parameterName} must use type "float" in this slice`);
+        }
+        parameters.push({
+          name: parameterName,
+          type,
+          defaultValue,
+        });
+        continue;
+      }
+
+      if (section.name.startsWith('state.')) {
+        const stateName = normalizeToken(section.name.slice('state.'.length));
+        const clip = normalizeToken(parseStringValue(section.fields.clip || ''));
+        const speed = parseNumberValue(section.fields.speed || '') ?? 0;
+        const loopState = parseBooleanValue(section.fields.loop || '') ?? false;
+        const clipAsset = clipMap.get(clip);
+        if (!clipAsset) {
+          problems.push(`state ${stateName} must reference a declared animation clip, received "${clip}"`);
+        } else if (clipAsset.skeleton !== skeleton) {
+          problems.push(`state ${stateName} clip "${clip}" must use skeleton "${skeleton}"`);
+        }
+        if (speed <= 0) {
+          problems.push(`state ${stateName} speed must be > 0`);
+        }
+        states.push({
+          name: stateName,
+          clip,
+          speed,
+          loop: loopState,
+        });
+        continue;
+      }
+
+      problems.push(`unsupported graph section "${section.name}"`);
+    }
+
+    if (!states.length) {
+      problems.push('graph must define at least one state');
+    }
+    if (entryState && !states.some((state) => state.name === entryState)) {
+      problems.push(`entry_state must reference a declared graph state, received "${entryState}"`);
+    }
+    if (!entryState) {
+      problems.push('entry_state must be set');
+    }
+
+    const graph = {
+      name,
+      schema,
+      schemaVersion,
+      ownerSystem,
+      skeleton,
+      entryState,
+      parameters,
+      states,
+      sourcePath: relativePathFromRepo(repoRoot, sourcePath),
+      cookedPath: relativePathFromRepo(repoRoot, cookedPath),
+      valid: problems.length === 0,
+      problems,
+    };
+    graphs.push(graph);
+
+    if (graph.valid) {
+      writeStageBinary(cookedPath, {
+        format: 'shader_forge.cooked_animation.stage',
+        stagedEncoding: 'json_utf8_placeholder',
+        kind: 'graph',
+        name: graph.name,
+        skeleton: graph.skeleton,
+        entryState: graph.entryState,
+        parameters: graph.parameters,
+        states: graph.states,
+      });
+      relationships.push(`animation-graph ${graph.name} -> skeleton ${graph.skeleton}`);
+      relationships.push(`animation-graph ${graph.name} -> entry_state ${graph.entryState}`);
+      for (const state of graph.states) {
+        relationships.push(`animation-state ${graph.name}.${state.name} -> clip ${state.clip}`);
+      }
+    } else {
+      warnings.push(`${graph.sourcePath}: ${graph.problems.join('; ')}`);
+    }
+  }
+
+  return {
+    animationRoot: relativePathFromRepo(repoRoot, animationRoot),
+    counts: {
+      skeletons: skeletons.length,
+      clips: clips.length,
+      graphs: graphs.length,
+    },
+    skeletons,
+    clips,
+    graphs,
+    relationships,
+    warnings,
+  };
+}
+
 function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
   const assets = [];
   const warnings = [];
@@ -873,6 +1271,9 @@ export async function bakeAssetPipeline(options) {
   const audioRoot = path.isAbsolute(options.audioRoot || '')
     ? options.audioRoot
     : path.join(repoRoot, options.audioRoot || 'audio');
+  const animationRoot = path.isAbsolute(options.animationRoot || '')
+    ? options.animationRoot
+    : path.join(repoRoot, options.animationRoot || 'animation');
   const foundationPath = path.isAbsolute(options.foundationPath)
     ? options.foundationPath
     : path.join(repoRoot, options.foundationPath);
@@ -894,8 +1295,9 @@ export async function bakeAssetPipeline(options) {
     throw new Error(`Data foundation tooling_db_backend must be sqlite, received "${manifest.tooling_db_backend}".`);
   }
 
-  const scanResult = scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest);
   const audioScan = scanAudioAssets(repoRoot, audioRoot, outputRoot);
+  const animationScan = scanAnimationAssets(repoRoot, animationRoot, outputRoot, audioScan);
+  const scanResult = scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest);
   const counts = {
     scene: 0,
     prefab: 0,
@@ -905,6 +1307,9 @@ export async function bakeAssetPipeline(options) {
     audioBuses: audioScan.counts.buses,
     audioSounds: audioScan.counts.sounds,
     audioEvents: audioScan.counts.events,
+    animationSkeletons: animationScan.counts.skeletons,
+    animationClips: animationScan.counts.clips,
+    animationGraphs: animationScan.counts.graphs,
   };
 
   for (const asset of scanResult.assets) {
@@ -938,6 +1343,32 @@ export async function bakeAssetPipeline(options) {
         problems: asset.problems,
       })),
   ];
+  const invalidAnimationAssets = [
+    ...animationScan.skeletons
+      .filter((asset) => !asset.valid)
+      .map((asset) => ({
+        kind: 'animation_skeleton',
+        name: asset.name,
+        sourcePath: asset.sourcePath,
+        problems: asset.problems,
+      })),
+    ...animationScan.clips
+      .filter((asset) => !asset.valid)
+      .map((asset) => ({
+        kind: 'animation_clip',
+        name: asset.name,
+        sourcePath: asset.sourcePath,
+        problems: asset.problems,
+      })),
+    ...animationScan.graphs
+      .filter((asset) => !asset.valid)
+      .map((asset) => ({
+        kind: 'animation_graph',
+        name: asset.name,
+        sourcePath: asset.sourcePath,
+        problems: asset.problems,
+      })),
+  ];
 
   const bakedAssets = scanResult.assets
     .filter((asset) => asset.valid)
@@ -960,11 +1391,13 @@ export async function bakeAssetPipeline(options) {
     },
     contentRoot: relativePathFromRepo(repoRoot, contentRoot),
     audioRoot: relativePathFromRepo(repoRoot, audioRoot),
+    animationRoot: relativePathFromRepo(repoRoot, animationRoot),
     outputRoot: relativePathFromRepo(repoRoot, outputRoot),
     counts,
     bakedAssets,
     invalidAssets,
     invalidAudioAssets,
+    invalidAnimationAssets,
     generatedMeshes: scanResult.generatedMeshes,
     audio: {
       busesPath: audioScan.busesPath,
@@ -985,22 +1418,46 @@ export async function bakeAssetPipeline(options) {
       relationships: audioScan.relationships,
       warnings: audioScan.warnings,
     },
-    relationships: scanResult.relationships,
-    warnings: [...scanResult.warnings, ...audioScan.warnings],
+    animation: {
+      counts: animationScan.counts,
+      bakedSkeletons: animationScan.skeletons.filter((asset) => asset.valid).map((asset) => ({
+        name: asset.name,
+        cookedPath: asset.cookedPath,
+        sourcePath: asset.sourcePath,
+      })),
+      bakedClips: animationScan.clips.filter((asset) => asset.valid).map((asset) => ({
+        name: asset.name,
+        skeleton: asset.skeleton,
+        cookedPath: asset.cookedPath,
+        sourcePath: asset.sourcePath,
+      })),
+      bakedGraphs: animationScan.graphs.filter((asset) => asset.valid).map((asset) => ({
+        name: asset.name,
+        skeleton: asset.skeleton,
+        entryState: asset.entryState,
+        cookedPath: asset.cookedPath,
+        sourcePath: asset.sourcePath,
+      })),
+      relationships: animationScan.relationships,
+      warnings: animationScan.warnings,
+    },
+    relationships: [...scanResult.relationships, ...animationScan.relationships],
+    warnings: [...scanResult.warnings, ...audioScan.warnings, ...animationScan.warnings],
     notes: [
       'Cooked outputs are staged placeholder payloads in the stable build/cooked layout until the FlatBuffers writer lands.',
       'Procedural geometry currently bakes deterministic generated-mesh preview payloads plus staged cooked metadata.',
       'Audio currently bakes staged bus, sound, and event metadata registries until the playback backend lands.',
+      'Animation currently bakes staged skeleton, clip, and graph metadata registries plus validated audio-event links until the runtime sampling backend lands.',
     ],
   };
 
   writeJsonFile(reportPath, report);
 
-  if (invalidAssets.length > 0 || invalidAudioAssets.length > 0) {
+  if (invalidAssets.length > 0 || invalidAudioAssets.length > 0 || invalidAnimationAssets.length > 0) {
     throw new Error([
-      `Asset pipeline bake found ${invalidAssets.length + invalidAudioAssets.length} invalid asset(s).`,
+      `Asset pipeline bake found ${invalidAssets.length + invalidAudioAssets.length + invalidAnimationAssets.length} invalid asset(s).`,
       `Report: ${relativePathFromRepo(repoRoot, reportPath)}`,
-      ...[...scanResult.warnings, ...audioScan.warnings].map((warning) => `- ${warning}`),
+      ...[...scanResult.warnings, ...audioScan.warnings, ...animationScan.warnings].map((warning) => `- ${warning}`),
     ].join('\n'));
   }
 

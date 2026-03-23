@@ -139,6 +139,10 @@ try {
         & npm run test:audio-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Audio scaffold test failed" }
 
+        Write-Host "[shader-forge] Running animation scaffold harness..."
+        & npm run test:animation-scaffold
+        if ($LASTEXITCODE -ne 0) { throw "Animation scaffold test failed" }
+
         Write-Host "[shader-forge] Running input scaffold harness..."
         & npm run test:input-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Input scaffold test failed" }

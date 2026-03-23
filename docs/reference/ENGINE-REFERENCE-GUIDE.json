@@ -146,8 +146,8 @@
         {
           "id": "engine-cli-surfaces",
           "title": "Engine CLI Surfaces",
-          "summary": "The current CLI now covers backend bring-up, runtime bring-up, a first asset bake lane, a first migration detect/report lane, and explicit audio-root wiring rather than only shell support commands.",
-          "keywords": ["engine", "commands", "build runtime", "run", "bake", "cook", "procgeo", "audio", "migrate", "migration", "unity", "unreal", "godot"],
+          "summary": "The current CLI now covers backend bring-up, runtime bring-up, a first asset bake lane, a first migration detect/report lane, and explicit audio-root plus animation-root wiring rather than only shell support commands.",
+          "keywords": ["engine", "commands", "build runtime", "run", "bake", "cook", "procgeo", "audio", "animation", "migrate", "migration", "unity", "unreal", "godot"],
           "references": [
             "tools/engine-cli/shaderforge.mjs",
             "tools/engine-cli/lib/asset-pipeline.mjs",
@@ -166,8 +166,8 @@
                 "`engine session create` and `engine session list` expose session bring-up from the terminal.",
                 "`engine file list` and `engine file read` expose safe file inspection.",
                 "`engine build runtime` configures and builds the native runtime with CMake.",
-                "`engine run <scene>` builds and launches the native runtime and now forwards content, audio, data, and tooling roots.",
-                "`engine bake` scans text-backed content and audio roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.",
+                "`engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, data, and tooling roots.",
+                "`engine bake` scans text-backed content, audio, and animation roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.",
                 "`engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests plus report/warning outputs for supported source-engine project shapes.",
                 "`engine migrate report <path>` summarizes a generated migration report from the terminal."
               ]
@@ -263,11 +263,13 @@
         {
           "id": "scene-and-content-foundation",
           "title": "Scene, Prefab, And Data Foundation",
-          "summary": "Text-backed content roots now exist and runtime startup resolves scene/bootstrap metadata from them instead of treating scene names as free text only, while the first bake lane targets the same authored roots.",
-          "keywords": ["content", "scene", "prefab", "data foundation", "effects", "procgeo", "audio", "bake"],
+          "summary": "Text-backed content roots now exist and runtime startup resolves scene/bootstrap metadata from them instead of treating scene names as free text only, while the first bake lane targets the same authored roots plus dedicated audio and animation lanes.",
+          "keywords": ["content", "scene", "prefab", "data foundation", "effects", "procgeo", "audio", "animation", "bake"],
           "references": [
             "engine/runtime/include/shader_forge/runtime/data_foundation.hpp",
+            "engine/runtime/include/shader_forge/runtime/animation_system.hpp",
             "engine/runtime/include/shader_forge/runtime/audio_system.hpp",
+            "engine/runtime/src/animation_system.cpp",
             "engine/runtime/src/audio_system.cpp",
             "engine/runtime/src/data_foundation.cpp",
             "content/scenes/sandbox.scene.toml",
@@ -277,6 +279,9 @@
             "audio/buses.toml",
             "audio/sounds/ui_confirm.sound.toml",
             "audio/events/runtime_boot.audio-event.toml",
+            "animation/skeletons/debug_humanoid.skeleton.toml",
+            "animation/clips/debug_walk.anim.toml",
+            "animation/graphs/debug_actor.animgraph.toml",
             "data/foundation/engine-data-layout.toml",
             "tools/engine-cli/lib/asset-pipeline.mjs",
             "docs/specs/ENGINE-DATA-SPEC.md",
@@ -284,6 +289,7 @@
             "docs/specs/ENGINE-VFX-SPEC.md",
             "docs/specs/ENGINE-PROCGEO-SPEC.md",
             "docs/specs/ENGINE-AUDIO-SPEC.md",
+            "docs/specs/ENGINE-ANIMATION-SPEC.md",
             "docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md"
           ],
           "sections": [
@@ -296,12 +302,13 @@
                 "`content/data/*.data.toml` is the initial authored engine/bootstrap data lane.",
                 "`content/effects/*.effect.toml` is the initial authored effect-descriptor lane.",
                 "`content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.",
-                "`audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes."
+                "`audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.",
+                "`animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes."
               ]
             },
             {
               "title": "Runtime Data Foundation And Bake Lane",
-              "keywords": ["flatbuffers", "sqlite", "catalog", "bootstrap", "engine bake", "generated meshes", "audio events"],
+              "keywords": ["flatbuffers", "sqlite", "catalog", "bootstrap", "engine bake", "generated meshes", "audio events", "animation graphs"],
               "items": [
                 "`data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.",
                 "The runtime validates the content roots through `DataFoundation` before startup continues.",
@@ -310,7 +317,9 @@
                 "The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.",
                 "The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.",
                 "Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.",
-                "`engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, and stages cooked audio metadata under `build/cooked/audio/`."
+                "The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.",
+                "Runtime startup resolves a default animation graph, logs graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio event API.",
+                "`engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, stages cooked audio metadata under `build/cooked/audio/`, and stages cooked animation metadata under `build/cooked/animation/`."
               ],
               "note": "This is still a widening slice. The bake path is real, but it still uses staged placeholder cooked payloads until the FlatBuffers writer and runtime scene loading land."
             },
@@ -322,6 +331,16 @@
                 "`audio/sounds/*.sound.toml` defines named sounds with bus routing, playback mode, spatialization, streaming, and default volume metadata.",
                 "`audio/events/*.audio-event.toml` defines named audio events that currently resolve to sound-play requests through engine-owned APIs.",
                 "The current audio slice validates and resolves requests, but it does not decode or mix sound yet. Playback backend integration is still ahead."
+              ]
+            },
+            {
+              "title": "Animation Foundation",
+              "keywords": ["skeletons", "clips", "graphs", "root motion", "events"],
+              "items": [
+                "`animation/skeletons/*.skeleton.toml` defines named authored skeletons with root-bone and bone-list metadata.",
+                "`animation/clips/*.anim.toml` defines named clips with skeleton ownership, looping/root-motion metadata, and text-backed clip events.",
+                "`animation/graphs/*.animgraph.toml` defines named animation graphs with float parameters, named states, and explicit entry-state selection.",
+                "The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet."
               ]
             }
           ]
@@ -387,6 +406,7 @@
             "scripts/test-engine-asset-pipeline.mjs",
             "scripts/test-engine-migration-fixtures.mjs",
             "scripts/test-engine-audio-scaffold.mjs",
+            "scripts/test-engine-animation-scaffold.mjs",
             "scripts/test-engine-input-scaffold.mjs",
             "scripts/test-engine-tooling-ui-scaffold.mjs",
             "scripts/test-engine-data-foundation-scaffold.mjs",
@@ -396,12 +416,12 @@
           "sections": [
             {
               "title": "Current Harnesses",
-              "keywords": ["npm test", "sessiond", "viewer bridge", "runtime scaffold"],
+              "keywords": ["npm test", "sessiond", "viewer bridge", "runtime scaffold", "animation scaffold"],
               "items": [
                 "`npm test` runs the preserved shell smoke harness.",
                 "`npm run test:sessiond` validates the local backend session and file flows.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
-                "`npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
+                "`npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
               ]
             },
             {
@@ -431,9 +451,9 @@
               "keywords": ["current state", "implemented"],
               "items": [
                 "A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.",
-                "A real native SDL3/Vulkan runtime slice with input, tooling, and data-foundation hooks.",
-                "Text-backed scene, prefab, data, effect, procedural-geometry, and audio roots represented in the repo.",
-                "A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio metadata.",
+                "A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, and animation hooks.",
+                "Text-backed scene, prefab, data, effect, procedural-geometry, audio, and animation roots represented in the repo.",
+                "A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio plus animation metadata.",
                 "A first CLI migration lane that detects supported source-engine project shapes and emits normalized migration manifests plus reports.",
                 "A searchable in-app guide and repo-native assistant guide."
               ]
@@ -446,6 +466,7 @@
                 "The runtime still needs richer rendering, real scene loading, and broader native verification.",
                 "The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.",
                 "Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.",
+                "Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.",
                 "Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.",
                 "Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels."
               ]
