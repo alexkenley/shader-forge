@@ -20,7 +20,7 @@ Usage:
   engine file list <path> --session <id> [--base-url <url>]
   engine file read <path> --session <id> [--base-url <url>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
-  engine run [scene] [--config Debug] [--build-dir build/runtime]
+  engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input]
 
 Reserved commands:
   engine test
@@ -152,6 +152,9 @@ async function runRuntime(sceneName, flags) {
   }
 
   const args = ['--scene', sceneName || 'sandbox'];
+  if (flags['input-root']) {
+    args.push('--input-root', String(flags['input-root']));
+  }
   await runCommand(buildResult.binaryPath, args, { cwd: repoRoot });
 }
 

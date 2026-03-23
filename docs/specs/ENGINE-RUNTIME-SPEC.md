@@ -24,6 +24,8 @@ The current runtime slice is the first real native bring-up pass:
 - resize-aware swapchain recreation
 - per-frame synchronization and present path
 - optional validation-layer enablement when the local Vulkan setup exposes `VK_LAYER_KHRONOS_validation`
+- engine-owned input loading from `input/actions.toml` and `input/contexts/*.input.toml`
+- named input actions and axes consumed inside the runtime instead of direct raw SDL checks
 
 ## Future AI Runtime Boundary
 

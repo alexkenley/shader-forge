@@ -123,6 +123,10 @@ try {
         & npm run test:viewer-bridge
         if ($LASTEXITCODE -ne 0) { throw "Viewer bridge test failed" }
 
+        Write-Host "[shader-forge] Running input scaffold harness..."
+        & npm run test:input-scaffold
+        if ($LASTEXITCODE -ne 0) { throw "Input scaffold test failed" }
+
         Write-Host "[shader-forge] Running runtime scaffold harness..."
         & npm run test:runtime-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Runtime scaffold test failed" }

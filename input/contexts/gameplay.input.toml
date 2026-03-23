@@ -1,0 +1,72 @@
+name = "gameplay"
+active = true
+
+[[binding]]
+action = "runtime_exit"
+source = "keyboard"
+code = "escape"
+
+[[binding]]
+action = "toggle_input_debug"
+source = "keyboard"
+code = "f1"
+
+[[binding]]
+action = "move_x"
+source = "keyboard"
+code = "a"
+scale = -1.0
+
+[[binding]]
+action = "move_x"
+source = "keyboard"
+code = "d"
+scale = 1.0
+
+[[binding]]
+action = "move_x"
+source = "gamepad_axis"
+code = "left_x"
+scale = 1.0
+
+[[binding]]
+action = "move_y"
+source = "keyboard"
+code = "s"
+scale = -1.0
+
+[[binding]]
+action = "move_y"
+source = "keyboard"
+code = "w"
+scale = 1.0
+
+[[binding]]
+action = "move_y"
+source = "gamepad_axis"
+code = "left_y"
+scale = -1.0
+
+[[binding]]
+action = "look_x"
+source = "mouse_motion"
+code = "x"
+scale = 0.0125
+
+[[binding]]
+action = "look_x"
+source = "gamepad_axis"
+code = "right_x"
+scale = 1.0
+
+[[binding]]
+action = "look_y"
+source = "mouse_motion"
+code = "y"
+scale = -0.0125
+
+[[binding]]
+action = "look_y"
+source = "gamepad_axis"
+code = "right_y"
+scale = -1.0

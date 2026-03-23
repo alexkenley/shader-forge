@@ -1,0 +1,35 @@
+[[action]]
+name = "runtime_exit"
+kind = "button"
+
+[[action]]
+name = "toggle_input_debug"
+kind = "button"
+
+[[action]]
+name = "move_x"
+kind = "axis"
+deadzone = 0.12
+
+[[action]]
+name = "move_y"
+kind = "axis"
+deadzone = 0.12
+
+[[action]]
+name = "look_x"
+kind = "axis"
+deadzone = 0.08
+
+[[action]]
+name = "look_y"
+kind = "axis"
+deadzone = 0.08
+
+[[action]]
+name = "ui_accept"
+kind = "button"
+
+[[action]]
+name = "ui_back"
+kind = "button"

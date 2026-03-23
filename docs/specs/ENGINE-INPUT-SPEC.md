@@ -48,6 +48,16 @@ Authoring rules:
 - runtime rebinding for desktop workflows
 - shell and future native-tool inspection surfaces
 
+## Current First Slice
+
+The current first slice in the repo now includes:
+
+- text-backed `input/actions.toml` and `input/contexts/*.input.toml` assets
+- a native `engine_input` loader and named action query layer inside `engine_runtime`
+- SDL3 keyboard, mouse, and gamepad translation into engine-owned button and axis actions
+- gameplay and UI contexts loaded at runtime rather than hardcoded raw-event checks in the render loop
+- runtime-side consumption of named actions such as `runtime_exit`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`
+
 ## Non-Goals
 
 - shipping every input mode on day one

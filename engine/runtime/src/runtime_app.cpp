@@ -1,3 +1,4 @@
+#include "shader_forge/runtime/input_system.hpp"
 #include "shader_forge/runtime/runtime_app.hpp"
 
 #include <algorithm>
@@ -6,12 +7,14 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -30,6 +33,16 @@ namespace {
 
 void logLine(const std::string& message) {
   std::cout << "[shader-forge-runtime] " << message << '\n';
+}
+
+void logMultiline(const std::string& message) {
+  std::istringstream lines(message);
+  std::string line;
+  while (std::getline(lines, line)) {
+    if (!line.empty()) {
+      logLine(line);
+    }
+  }
 }
 
 #if SHADER_FORGE_NATIVE_RUNTIME
@@ -333,6 +346,8 @@ private:
     }
     sdlInitialized_ = true;
 
+    initializeInputSystem();
+
     window_ = SDL_CreateWindow(config_.title.c_str(), config_.width, config_.height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
       throw std::runtime_error("SDL_CreateWindow failed: " + sdlErrorString());
@@ -348,6 +363,13 @@ private:
     createSwapchainResources();
 
     startTicks_ = SDL_GetTicksNS();
+  }
+
+  void initializeInputSystem() {
+    std::string error;
+    if (!inputSystem_.loadFromDisk(InputConfig{.rootPath = config_.inputRoot}, &error)) {
+      throw std::runtime_error("Input system initialization failed: " + error);
+    }
   }
 
   void createInstance() {
@@ -642,10 +664,12 @@ private:
     startup << "scene=" << config_.scene
             << ", device=" << physicalDeviceName_
             << ", queue-family=" << graphicsQueueFamily_
-            << ", validation=" << (validationEnabled_ ? "enabled" : "disabled");
+            << ", validation=" << (validationEnabled_ ? "enabled" : "disabled")
+            << ", input-root=" << std::filesystem::absolute(config_.inputRoot).string();
     logLine(startup.str());
+    logMultiline(inputSystem_.bindingSummary());
     logSwapchain("Swapchain ready");
-    logLine("Native runtime window is live. Close the window to exit.");
+    logLine("Native runtime window is live. Press Escape to exit and F1 to toggle input diagnostics.");
   }
 
   void logSwapchain(const char* prefix) const {
@@ -656,10 +680,106 @@ private:
     logLine(message.str());
   }
 
+  void openGamepad(SDL_JoystickID instanceId) {
+    if (gamepads_.contains(instanceId)) {
+      return;
+    }
+
+    SDL_Gamepad* gamepad = SDL_OpenGamepad(instanceId);
+    if (gamepad == nullptr) {
+      logLine("SDL_OpenGamepad failed: " + sdlErrorString());
+      return;
+    }
+
+    gamepads_[instanceId] = gamepad;
+    const char* name = SDL_GetGamepadName(gamepad);
+    logLine("Gamepad connected: " + std::string(name && *name ? name : "unknown gamepad"));
+  }
+
+  void closeGamepad(SDL_JoystickID instanceId) {
+    const auto it = gamepads_.find(instanceId);
+    if (it == gamepads_.end()) {
+      return;
+    }
+
+    if (it->second != nullptr) {
+      SDL_CloseGamepad(it->second);
+    }
+    gamepads_.erase(it);
+    logLine("Gamepad disconnected.");
+  }
+
+  void updateInputDrivenState() {
+    if (inputSystem_.actionPressed("runtime_exit")) {
+      runtimeExitRequested_ = true;
+    }
+
+    if (inputSystem_.actionPressed("toggle_input_debug")) {
+      inputDebugEnabled_ = !inputDebugEnabled_;
+      logLine(std::string("Input diagnostics ") + (inputDebugEnabled_ ? "enabled." : "disabled."));
+      if (inputDebugEnabled_) {
+        logMultiline(inputSystem_.bindingSummary());
+      }
+    }
+
+    if (inputSystem_.actionPressed("ui_accept")) {
+      lastUiAction_ = "ui_accept";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      logLine("ui_accept action triggered.");
+    }
+
+    if (inputSystem_.actionPressed("ui_back")) {
+      lastUiAction_ = "ui_back";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      logLine("ui_back action triggered.");
+    }
+
+    moveX_ = inputSystem_.actionValue("move_x");
+    moveY_ = inputSystem_.actionValue("move_y");
+    lookX_ = inputSystem_.actionValue("look_x");
+    lookY_ = inputSystem_.actionValue("look_y");
+
+    if (window_ != nullptr) {
+      const std::uint64_t now = SDL_GetTicksNS();
+      if (!lastUiAction_.empty() && now > uiFlashUntilTicks_ + 1'500'000'000ULL) {
+        lastUiAction_.clear();
+      }
+
+      if (!inputDebugEnabled_ && lastUiAction_.empty()) {
+        SDL_SetWindowTitle(window_, config_.title.c_str());
+        return;
+      }
+
+      std::ostringstream title;
+      title << config_.title
+            << " | move=(" << moveX_ << ',' << moveY_ << ')'
+            << " look=(" << lookX_ << ',' << lookY_ << ')';
+
+      if (!lastUiAction_.empty()) {
+        title << " ui=" << lastUiAction_;
+      }
+
+      const auto activeContexts = inputSystem_.activeContexts();
+      if (!activeContexts.empty()) {
+        title << " ctx=";
+        for (std::size_t index = 0; index < activeContexts.size(); index += 1) {
+          if (index > 0) {
+            title << '+';
+          }
+          title << activeContexts[index];
+        }
+      }
+
+      SDL_SetWindowTitle(window_, title.str().c_str());
+    }
+  }
+
   bool pumpEvents() {
     bool keepRunning = true;
     SDL_Event event{};
     while (SDL_PollEvent(&event)) {
+      inputSystem_.handleSdlEvent(event);
+
       switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -669,16 +789,29 @@ private:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
           framebufferDirty_ = true;
           break;
+        case SDL_EVENT_GAMEPAD_ADDED:
+          openGamepad(event.gdevice.which);
+          break;
+        case SDL_EVENT_GAMEPAD_REMOVED:
+          closeGamepad(event.gdevice.which);
+          break;
         default:
           break;
       }
     }
+
+    updateInputDrivenState();
+    if (runtimeExitRequested_) {
+      keepRunning = false;
+    }
+
     return keepRunning;
   }
 
   void mainLoop() {
     bool running = true;
     while (running) {
+      inputSystem_.beginFrame();
       running = pumpEvents();
       if (!running) {
         break;
@@ -760,12 +893,13 @@ private:
 
     const float pulse = 0.5f + 0.5f * static_cast<float>(std::sin(elapsedSeconds));
     const float accent = 0.5f + 0.5f * static_cast<float>(std::sin(elapsedSeconds * 0.5 + 1.0));
+    const float uiFlash = SDL_GetTicksNS() <= uiFlashUntilTicks_ ? 0.08F : 0.0F;
 
     VkClearValue clearValue{};
     clearValue.color = {{
-      0.06f + pulse * 0.16f,
-      0.08f + accent * 0.24f,
-      0.14f + (1.0f - pulse) * 0.12f,
+      std::clamp(0.06F + pulse * 0.16F + moveX_ * 0.09F + lookX_ * 0.04F + uiFlash, 0.0F, 1.0F),
+      std::clamp(0.08F + accent * 0.24F + moveY_ * 0.09F + uiFlash * 0.5F, 0.0F, 1.0F),
+      std::clamp(0.14F + (1.0F - pulse) * 0.12F + lookY_ * 0.08F, 0.0F, 1.0F),
       1.0f,
     }};
 
@@ -831,6 +965,14 @@ private:
       window_ = nullptr;
     }
 
+    for (auto& [instanceId, gamepad] : gamepads_) {
+      (void)instanceId;
+      if (gamepad != nullptr) {
+        SDL_CloseGamepad(gamepad);
+      }
+    }
+    gamepads_.clear();
+
     if (sdlInitialized_) {
       SDL_Quit();
       sdlInitialized_ = false;
@@ -838,8 +980,10 @@ private:
   }
 
   RuntimeConfig config_;
+  InputSystem inputSystem_;
   SDL_Window* window_ = nullptr;
   bool sdlInitialized_ = false;
+  std::unordered_map<SDL_JoystickID, SDL_Gamepad*> gamepads_;
 
   VkInstance instance_ = VK_NULL_HANDLE;
   VkSurfaceKHR surface_ = VK_NULL_HANDLE;
@@ -864,6 +1008,14 @@ private:
   std::uint32_t currentFrame_ = 0;
 
   bool framebufferDirty_ = false;
+  bool runtimeExitRequested_ = false;
+  bool inputDebugEnabled_ = false;
+  float moveX_ = 0.0F;
+  float moveY_ = 0.0F;
+  float lookX_ = 0.0F;
+  float lookY_ = 0.0F;
+  std::string lastUiAction_;
+  std::uint64_t uiFlashUntilTicks_ = 0;
   std::uint64_t startTicks_ = 0;
 };
 

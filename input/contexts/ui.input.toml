@@ -1,0 +1,37 @@
+name = "ui"
+active = true
+
+[[binding]]
+action = "ui_accept"
+source = "keyboard"
+code = "enter"
+
+[[binding]]
+action = "ui_accept"
+source = "mouse_button"
+code = "left"
+
+[[binding]]
+action = "ui_accept"
+source = "gamepad_button"
+code = "south"
+
+[[binding]]
+action = "ui_back"
+source = "keyboard"
+code = "backspace"
+
+[[binding]]
+action = "ui_back"
+source = "mouse_button"
+code = "right"
+
+[[binding]]
+action = "ui_back"
+source = "gamepad_button"
+code = "east"
+
+[[binding]]
+action = "toggle_input_debug"
+source = "gamepad_button"
+code = "back"
