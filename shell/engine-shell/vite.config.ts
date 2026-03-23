@@ -5,8 +5,14 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const shellRoot = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(shellRoot, '../..');
 
 export default defineConfig({
+  server: {
+    fs: {
+      allow: [repoRoot],
+    },
+  },
   plugins: [
     react(),
     {

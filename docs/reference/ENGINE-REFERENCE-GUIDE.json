@@ -1,0 +1,382 @@
+{
+  "title": "Shader Forge Reference Guide",
+  "intro": "Searchable operator and assistant wiki for the current Shader Forge shell, session backend, native runtime, tooling, content data, and deterministic verification workflow.",
+  "searchableSources": [
+    "docs/reference/ENGINE-REFERENCE-GUIDE.md",
+    "docs/reference/ENGINE-REFERENCE-GUIDE.json",
+    "plans/ENGINE-IMPLEMENTATION-PLAN.md",
+    "docs/specs/ENGINE-SYSTEMS-INDEX.md",
+    "AGENTS.md"
+  ],
+  "assistantEntryPoints": [
+    "docs/reference/ENGINE-REFERENCE-GUIDE.md",
+    "docs/reference/ENGINE-REFERENCE-GUIDE.json",
+    "AGENTS.md",
+    "plans/ENGINE-IMPLEMENTATION-PLAN.md",
+    "docs/specs/ENGINE-SYSTEMS-INDEX.md"
+  ],
+  "categories": [
+    {
+      "id": "getting-started",
+      "title": "Getting Started",
+      "description": "Find the main surfaces quickly, understand where the live reference lives, and know which current docs should anchor day-to-day work.",
+      "keywords": ["guide", "wiki", "assistant", "operator", "search", "reference"],
+      "pages": [
+        {
+          "id": "reference-sources",
+          "title": "Reference Sources",
+          "summary": "Use the repo-native guide files first so terminal assistants, shell users, and later native assistants all resolve the same current guidance.",
+          "keywords": ["docs", "json", "markdown", "searchable", "assistant-facing"],
+          "references": [
+            "docs/reference/ENGINE-REFERENCE-GUIDE.md",
+            "docs/reference/ENGINE-REFERENCE-GUIDE.json",
+            "plans/ENGINE-IMPLEMENTATION-PLAN.md",
+            "docs/specs/ENGINE-SYSTEMS-INDEX.md",
+            "AGENTS.md"
+          ],
+          "sections": [
+            {
+              "title": "Primary Sources",
+              "keywords": ["entry points", "lookup", "index"],
+              "items": [
+                "Use `docs/reference/ENGINE-REFERENCE-GUIDE.md` as the plain-text guide for terminal assistants and repo search.",
+                "Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and future native assistants.",
+                "Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.",
+                "Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.",
+                "Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline."
+              ]
+            },
+            {
+              "title": "Assistant Lookup Workflow",
+              "keywords": ["workflow", "assistant", "terminal", "native"],
+              "items": [
+                "Start with the markdown guide when you need a quick terminal-readable overview of current behavior.",
+                "Use the JSON guide when an assistant needs structured categories, page ids, references, or search terms.",
+                "Use the implementation plan and subsystem specs to widen from current behavior into target architecture."
+              ]
+            },
+            {
+              "title": "Update Discipline",
+              "keywords": ["sync", "maintenance", "documentation"],
+              "items": [
+                "When user-facing behavior, shell workflow, runtime control, or assistant-facing engine behavior changes, update the guide in the same pass.",
+                "Treat the guide as operator and assistant working documentation, not marketing copy or a post-hoc changelog.",
+                "Keep the guide concrete enough that a coding assistant in a terminal can search it and act on it without needing the whole codebase first."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "shell-workspace",
+          "title": "Shell Workspace Overview",
+          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, and the preserved code bridge.",
+          "keywords": ["shell", "workspace", "tabs", "rails", "layout"],
+          "references": [
+            "shell/engine-shell/src/App.tsx",
+            "shell/engine-shell/src/ReferenceGuideView.tsx",
+            "shell/engine-shell/src/styles.css",
+            "docs/specs/ENGINE-SHELL-SPEC.md"
+          ],
+          "sections": [
+            {
+              "title": "Primary Shell Surfaces",
+              "keywords": ["left rail", "center dock", "right panel", "bottom dock"],
+              "items": [
+                "The left rail currently exposes `Sessions`, `Explorer`, and `Source Control`.",
+                "The center dock currently exposes `Code`, `Game`, `Scene`, `Preview`, and `Guide`.",
+                "The right panel currently exposes `Details`, `Build`, and `Run`.",
+                "The bottom dock currently exposes `Terminal`, `Logs`, and `Output`."
+              ]
+            },
+            {
+              "title": "Current Workflow Shape",
+              "keywords": ["monaco", "preview", "scene", "guide"],
+              "items": [
+                "Use `Code` when you need the preserved Monaco bridge and repo workspace context.",
+                "Use `Game` and `Preview` when you are driving the external native runtime window from the shell.",
+                "Use `Scene` to track the text-backed authoring direction for `.scene.toml` and `.prefab.toml` assets.",
+                "Use `Guide` for the in-app wiki and repo source references."
+              ],
+              "note": "The shell is still the primary workspace even though the native SDL3/Vulkan runtime renders in an external window."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "session-backend-and-cli",
+      "title": "Session Backend And CLI",
+      "description": "The shell is backed by `engine_sessiond` and the `engine` CLI, so sessions, files, git, build, and runtime operations all share the same local control plane.",
+      "keywords": ["sessiond", "cli", "backend", "git", "pty", "files"],
+      "pages": [
+        {
+          "id": "sessiond-and-files",
+          "title": "Sessions, Files, And Source Control",
+          "summary": "Session creation, safe file reads, host-root picking, and git status are already implemented and consumed by the shell.",
+          "keywords": ["sessions", "explorer", "source control", "workspace root"],
+          "references": [
+            "tools/engine-sessiond/server.mjs",
+            "tools/engine-sessiond/lib/runtime-store.mjs",
+            "shell/engine-shell/src/lib/sessiond.ts",
+            "docs/specs/ENGINE-SESSIOND-SPEC.md"
+          ],
+          "sections": [
+            {
+              "title": "Implemented Backend Surfaces",
+              "keywords": ["http", "api", "pty", "terminal"],
+              "items": [
+                "`engine_sessiond` currently provides session create/list/get/update/delete.",
+                "Safe file list and file read APIs are already used by the `Explorer` rail.",
+                "Host filesystem directory listing is already used by the workspace-root picker.",
+                "Git status and repository initialization are already used by the `Source Control` rail.",
+                "PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces."
+              ]
+            },
+            {
+              "title": "Shell Usage",
+              "keywords": ["sessions rail", "explorer rail", "source control rail"],
+              "items": [
+                "Create or edit sessions from the `Sessions` rail.",
+                "Browse files and preview text content from the `Explorer` rail.",
+                "Inspect branch state and working tree changes from `Source Control`."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "engine-cli-surfaces",
+          "title": "Engine CLI Surfaces",
+          "summary": "The current CLI is focused on backend and runtime bring-up rather than broad content tooling.",
+          "keywords": ["engine", "commands", "build runtime", "run"],
+          "references": [
+            "tools/engine-cli/shaderforge.mjs",
+            "docs/specs/ENGINE-CLI-SPEC.md"
+          ],
+          "sections": [
+            {
+              "title": "Implemented Commands",
+              "keywords": ["sessiond start", "session create", "build", "run"],
+              "items": [
+                "`engine sessiond start` starts the local backend service.",
+                "`engine session create` and `engine session list` expose session bring-up from the terminal.",
+                "`engine file list` and `engine file read` expose safe file inspection.",
+                "`engine build runtime` configures and builds the native runtime with CMake.",
+                "`engine run <scene>` builds and launches the native runtime and now forwards content, data, and tooling roots."
+              ]
+            },
+            {
+              "title": "Current Non-Goals",
+              "keywords": ["import", "bake", "package", "export"],
+              "items": [
+                "`engine import`, `engine bake`, `engine package`, and `engine export` are still later phases.",
+                "The CLI is not yet the main content pipeline surface because the cook/import lane is still being built."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "runtime-and-authoring",
+      "title": "Runtime And Authoring",
+      "description": "The native runtime is past pure scaffolding, and the content data lanes now affect runtime startup behavior for real.",
+      "keywords": ["runtime", "vulkan", "scene", "prefab", "data", "bootstrap"],
+      "pages": [
+        {
+          "id": "runtime-and-viewer",
+          "title": "Runtime Bring-Up And Viewer Bridge",
+          "summary": "The runtime opens a real SDL3/Vulkan window when local dependencies exist, while the shell owns build/run orchestration and diagnostics.",
+          "keywords": ["viewer", "preview", "external window", "swapchain"],
+          "references": [
+            "engine/runtime/src/runtime_app.cpp",
+            "shell/engine-shell/src/App.tsx",
+            "tools/engine-sessiond/server.mjs",
+            "docs/specs/ENGINE-RUNTIME-SPEC.md",
+            "docs/specs/ENGINE-RENDERER-SPEC.md"
+          ],
+          "sections": [
+            {
+              "title": "Native Runtime",
+              "keywords": ["sdl3", "vulkan", "render pass", "present"],
+              "items": [
+                "The native runtime has Vulkan instance, surface, device, swapchain, render pass, framebuffer, submit, and present bring-up.",
+                "Resize-aware swapchain recreation is already implemented.",
+                "Runtime build, play, stop, restart, pause, and resume are already controlled from the shell.",
+                "The shell tracks runtime state, build state, bridge activity, and recent log tails in `Game` and `Preview`."
+              ]
+            },
+            {
+              "title": "Current Viewer Boundary",
+              "keywords": ["embedded viewer", "screenshots", "browser shell"],
+              "items": [
+                "The native runtime still renders in an external window.",
+                "The browser shell remains the primary workspace.",
+                "Embedded viewer transport and screenshot capture are still deferred until the native/runtime side is worth the added complexity."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "scene-and-content-foundation",
+          "title": "Scene, Prefab, And Data Foundation",
+          "summary": "Text-backed content roots now exist and runtime startup resolves scene/bootstrap metadata from them instead of treating scene names as free text only.",
+          "keywords": ["content", "scene", "prefab", "data foundation", "effects"],
+          "references": [
+            "engine/runtime/include/shader_forge/runtime/data_foundation.hpp",
+            "engine/runtime/src/data_foundation.cpp",
+            "content/scenes/sandbox.scene.toml",
+            "content/prefabs/debug_camera.prefab.toml",
+            "content/data/runtime_bootstrap.data.toml",
+            "data/foundation/engine-data-layout.toml",
+            "docs/specs/ENGINE-DATA-SPEC.md",
+            "docs/specs/ENGINE-SCENE-SPEC.md",
+            "docs/specs/ENGINE-VFX-SPEC.md"
+          ],
+          "sections": [
+            {
+              "title": "Current Content Roots",
+              "keywords": ["assets", "toml", "authored content"],
+              "items": [
+                "`content/scenes/*.scene.toml` is the initial authored scene lane.",
+                "`content/prefabs/*.prefab.toml` is the initial authored prefab lane.",
+                "`content/data/*.data.toml` is the initial authored engine/bootstrap data lane.",
+                "`content/effects/*.effect.toml` is the initial authored effect-descriptor lane."
+              ]
+            },
+            {
+              "title": "Runtime Data Foundation",
+              "keywords": ["flatbuffers", "sqlite", "catalog", "bootstrap"],
+              "items": [
+                "`data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.",
+                "The runtime validates the content roots through `DataFoundation` before startup continues.",
+                "Scene-to-prefab relationships are validated across the catalog.",
+                "`runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.",
+                "The runtime window title and startup logs now include active scene and primary prefab context from the authored assets."
+              ],
+              "note": "This is still a foundation slice. There is not yet a real FlatBuffers cook step, SQLite asset index, or Effekseer runtime integration."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "input-tooling-and-testing",
+      "title": "Input, Tooling, And Testing",
+      "description": "The engine has real named input plumbing, tooling-layout groundwork, and deterministic harness coverage that now needs to stay current as features widen.",
+      "keywords": ["input", "tooling", "harness", "testing", "clean start"],
+      "pages": [
+        {
+          "id": "input-and-tooling",
+          "title": "Input And Native Tooling Foundations",
+          "summary": "Gameplay, UI, and tooling controls are routed through named engine actions, while the native tooling layer has a panel registry and layout persistence groundwork.",
+          "keywords": ["actions", "contexts", "tooling overlay", "layout"],
+          "references": [
+            "engine/runtime/include/shader_forge/runtime/input_system.hpp",
+            "engine/runtime/src/input_system.cpp",
+            "engine/runtime/include/shader_forge/runtime/tooling_ui.hpp",
+            "engine/runtime/src/tooling_ui.cpp",
+            "input/actions.toml",
+            "input/contexts/gameplay.input.toml",
+            "input/contexts/ui.input.toml",
+            "tooling/layouts/default.tooling-layout.toml",
+            "docs/specs/ENGINE-INPUT-SPEC.md",
+            "docs/specs/ENGINE-TOOLING-UI-SPEC.md"
+          ],
+          "sections": [
+            {
+              "title": "Input System",
+              "keywords": ["gamepad", "keyboard", "mouse", "named actions"],
+              "items": [
+                "`input/actions.toml` plus `input/contexts/*.input.toml` define the current action/context maps.",
+                "Keyboard, mouse, and gamepad input are routed through engine-owned named actions and axes.",
+                "The runtime currently consumes actions such as `runtime_exit`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`."
+              ]
+            },
+            {
+              "title": "Tooling UI",
+              "keywords": ["panels", "registry", "layout persistence", "imgui"],
+              "items": [
+                "The native tooling substrate currently has a named panel registry.",
+                "Tooling layouts are loaded from text and session layouts can be saved back to disk.",
+                "The current panel set covers runtime stats, input debug, log view, and debug state.",
+                "Tooling overlay and panel toggles are already bound through the engine-owned input actions."
+              ],
+              "note": "Dear ImGui docking and real in-process native panel rendering are still ahead. The current slice is substrate, not the final tooling frontend."
+            }
+          ]
+        },
+        {
+          "id": "testing-and-clean-start",
+          "title": "Deterministic Harnesses And Clean Start",
+          "summary": "The repo uses deterministic harnesses as the default regression lane, and the clean-start scripts run the current baseline before starting the active workspace.",
+          "keywords": ["tests", "smoke", "build", "verification", "scripts"],
+          "references": [
+            "docs/guides/ENGINE-HARNESS-TESTING.md",
+            "scripts/test-engine-shell-smoke.mjs",
+            "scripts/test-engine-viewer-bridge.mjs",
+            "scripts/test-engine-runtime-scaffold.mjs",
+            "scripts/test-engine-input-scaffold.mjs",
+            "scripts/test-engine-tooling-ui-scaffold.mjs",
+            "scripts/test-engine-data-foundation-scaffold.mjs",
+            "scripts/start-dev-clean.sh",
+            "scripts/start-dev-clean.ps1"
+          ],
+          "sections": [
+            {
+              "title": "Current Harnesses",
+              "keywords": ["npm test", "sessiond", "viewer bridge", "runtime scaffold"],
+              "items": [
+                "`npm test` runs the preserved shell smoke harness.",
+                "`npm run test:sessiond` validates the local backend session and file flows.",
+                "`npm run test:viewer-bridge` validates build/runtime bridge events.",
+                "`npm run test:runtime-scaffold`, `test:input-scaffold`, `test:tooling-ui-scaffold`, and `test:data-foundation-scaffold` validate the native bring-up slices."
+              ]
+            },
+            {
+              "title": "Clean Start",
+              "keywords": ["wsl", "powershell", "baseline"],
+              "items": [
+                "`./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.",
+                "`powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\start-dev-clean.ps1` is the Windows clean-start path.",
+                "Both scripts remove generated outputs, rerun the current deterministic baseline, start `engine_sessiond`, and then launch the active shell workflow."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "current-boundaries",
+          "title": "Current Boundaries And Next Widening Passes",
+          "summary": "The project is moving through dependency-first slices; this guide should say clearly what exists today and what still needs widening.",
+          "keywords": ["boundaries", "limitations", "next steps", "widening"],
+          "references": [
+            "plans/ENGINE-IMPLEMENTATION-PLAN.md",
+            "docs/reference/ENGINE-REFERENCE-GUIDE.md",
+            "docs/reference/ENGINE-REFERENCE-GUIDE.json"
+          ],
+          "sections": [
+            {
+              "title": "What Exists Now",
+              "keywords": ["current state", "implemented"],
+              "items": [
+                "A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.",
+                "A real native SDL3/Vulkan runtime slice with input, tooling, and data-foundation hooks.",
+                "Text-backed scene, prefab, data, and effect roots represented in the repo.",
+                "A searchable in-app guide and repo-native assistant guide."
+              ]
+            },
+            {
+              "title": "What Still Needs Widening",
+              "keywords": ["future work", "phase expansion"],
+              "items": [
+                "The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.",
+                "The runtime still needs richer rendering, real scene loading, and broader native verification.",
+                "The content pipeline still needs real cook/import/export lanes, not only foundation decisions.",
+                "Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels."
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

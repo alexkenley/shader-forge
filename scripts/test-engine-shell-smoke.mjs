@@ -7,6 +7,9 @@ const repoRoot = repoRootFromScript(import.meta.url);
 const shellRoot = path.join(repoRoot, 'shell', 'engine-shell', 'web');
 const shellPackageJson = fs.readFileSync(path.join(repoRoot, 'shell', 'engine-shell', 'package.json'), 'utf8');
 const shellApp = fs.readFileSync(path.join(repoRoot, 'shell', 'engine-shell', 'src', 'App.tsx'), 'utf8');
+const referenceGuideSource = fs.readFileSync(path.join(repoRoot, 'shell', 'engine-shell', 'src', 'reference-guide.ts'), 'utf8');
+const referenceGuideJson = fs.readFileSync(path.join(repoRoot, 'docs', 'reference', 'ENGINE-REFERENCE-GUIDE.json'), 'utf8');
+const referenceGuideMarkdown = fs.readFileSync(path.join(repoRoot, 'docs', 'reference', 'ENGINE-REFERENCE-GUIDE.md'), 'utf8');
 
 const server = await startStaticFileServer({
   rootDir: shellRoot,
@@ -35,10 +38,12 @@ try {
   assert.match(shellApp, /Game/);
   assert.match(shellApp, /Scene/);
   assert.match(shellApp, /Preview/);
+  assert.match(shellApp, /Guide/);
   assert.match(shellApp, /web\/index\.html#\/code/);
   assert.match(shellApp, /Code Focus/);
   assert.match(shellApp, /Code \+ Game/);
   assert.match(shellApp, /Triptych/);
+  assert.match(shellApp, /ReferenceGuideView/);
   assert.match(shellApp, /engine_sessiond/);
   assert.match(shellApp, /Edit Session/);
   assert.match(shellApp, /Explorer/);
@@ -56,12 +61,21 @@ try {
   assert.match(shellApp, /listFiles/);
   assert.match(shellApp, /startRuntimeBuild/);
   assert.match(shellApp, /fetchBuildStatus/);
+  assert.match(referenceGuideSource, /ENGINE-REFERENCE-GUIDE\.json/);
+  assert.match(referenceGuideJson, /"Shader Forge Reference Guide"/);
+  assert.match(referenceGuideJson, /"assistantEntryPoints"/);
+  assert.match(referenceGuideJson, /"Scene, Prefab, And Data Foundation"/);
+  assert.match(referenceGuideMarkdown, /# Shader Forge Reference Guide/);
+  assert.match(referenceGuideMarkdown, /docs\/reference\/ENGINE-REFERENCE-GUIDE\.json/);
+  assert.match(referenceGuideMarkdown, /## Runtime And Authoring/);
+  assert.match(referenceGuideMarkdown, /## Input, Tooling, And Testing/);
 
   console.log('Engine shell smoke passed.');
   console.log(`- Served shell from ${server.rootDir}`);
   console.log('- Verified index, style sheet, and preserved code workspace module');
   console.log('- Verified inline editor search UI and Monaco match-finding hooks are present');
   console.log('- Verified the React/Vite shell frame bridges to the preserved editor assets');
+  console.log('- Verified the React shell exposes an in-app guide backed by repo-native markdown and structured reference sources');
   console.log('- Verified the React shell references the session backend bridge contract');
   console.log('- Verified the Explorer tab references backend file list/read flows');
   console.log('- Verified the shell references runtime build and runtime lifecycle controls');

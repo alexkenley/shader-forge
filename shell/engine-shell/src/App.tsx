@@ -1,6 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ReferenceGuideView } from './ReferenceGuideView';
 import {
   closeTerminal,
   createSession,
@@ -38,9 +39,10 @@ import {
   type RuntimeStatus,
   writeTerminalInput,
 } from './lib/sessiond';
+import { engineReferenceGuide } from './reference-guide';
 
 const leftTabs = ['Sessions', 'Explorer', 'Source Control'] as const;
-const centerTabs = ['Code', 'Game', 'Scene', 'Preview'] as const;
+const centerTabs = ['Code', 'Game', 'Scene', 'Preview', 'Guide'] as const;
 const rightTabs = ['Details', 'Build', 'Run'] as const;
 const bottomTabs = ['Terminal', 'Logs', 'Output'] as const;
 const layoutModes = ['Code Focus', 'Code + Game', 'Triptych'] as const;
@@ -1199,6 +1201,10 @@ function renderCenterContent(
     );
   }
 
+  if (activeTab === 'Guide') {
+    return <ReferenceGuideView guide={engineReferenceGuide} />;
+  }
+
   const runtimeLogTail = takeLastLogLines(runtimeLog, 8);
   const buildLogTail = takeLastLogLines(buildLog, 8);
 
@@ -2316,7 +2322,16 @@ export default function App() {
       <header className="chrome-bar chrome-bar--menu">
         <div className="menu-strip">
           {menuItems.map((item) => (
-            <button className="menu-button" key={item} type="button">
+            <button
+              className="menu-button"
+              key={item}
+              onClick={() => {
+                if (item === 'Help') {
+                  setActiveCenterTab('Guide');
+                }
+              }}
+              type="button"
+            >
               {item}
             </button>
           ))}
@@ -2623,13 +2638,17 @@ export default function App() {
               ))}
             </div>
             <div className="toolbar-rack__spacer" />
-            <div className="tab-row tab-row--tight">
-              {layoutModes.map((mode) => (
-                <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
-                  {mode}
-                </TabButton>
-              ))}
-            </div>
+            {activeCenterTab === 'Guide' ? (
+              <div className="guide-toolbar-meta">Searchable in-app wiki backed by repo-native markdown and structured assistant guide files.</div>
+            ) : (
+              <div className="tab-row tab-row--tight">
+                {layoutModes.map((mode) => (
+                  <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
+                    {mode}
+                  </TabButton>
+                ))}
+              </div>
+            )}
           </div>
 
           {renderCenterContent(
