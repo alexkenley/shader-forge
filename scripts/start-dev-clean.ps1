@@ -127,6 +127,10 @@ try {
         & npm run test:data-foundation-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Data foundation scaffold test failed" }
 
+        Write-Host "[shader-forge] Running asset pipeline harness..."
+        & npm run test:asset-pipeline
+        if ($LASTEXITCODE -ne 0) { throw "Asset pipeline test failed" }
+
         Write-Host "[shader-forge] Running input scaffold harness..."
         & npm run test:input-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Input scaffold test failed" }

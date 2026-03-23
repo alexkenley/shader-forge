@@ -113,6 +113,8 @@ std::string dataAssetKindName(DataAssetKind kind) {
       return "data";
     case DataAssetKind::effect:
       return "effect";
+    case DataAssetKind::procgeo:
+      return "procgeo";
     default:
       return "data";
   }
@@ -128,6 +130,8 @@ std::string dataAssetOutputFolder(DataAssetKind kind) {
       return "data";
     case DataAssetKind::effect:
       return "effects";
+    case DataAssetKind::procgeo:
+      return "procgeo";
     default:
       return "data";
   }
@@ -143,6 +147,8 @@ std::string defaultSchemaForKind(DataAssetKind kind) {
       return "shader_forge.data";
     case DataAssetKind::effect:
       return "shader_forge.effect";
+    case DataAssetKind::procgeo:
+      return "shader_forge.procgeo";
     default:
       return "shader_forge.data";
   }
@@ -175,6 +181,9 @@ struct ParsedAssetFields {
   std::string runtimeModel;
   std::string trigger;
   std::string category;
+  std::string generator;
+  std::string bakeOutput;
+  std::string materialHint;
 };
 
 struct FoundationManifest {
@@ -189,11 +198,13 @@ struct FoundationManifest {
   std::string prefabSubdir = "prefabs";
   std::string dataSubdir = "data";
   std::string effectSubdir = "effects";
+  std::string procgeoSubdir = "procgeo";
   std::string cookedRoot = "build/cooked";
   std::string sceneOwner = "scene_system";
   std::string prefabOwner = "scene_system";
   std::string dataOwner = "data_system";
   std::string effectOwner = "vfx_system";
+  std::string procgeoOwner = "procgeo_system";
 };
 
 bool loadFoundationManifest(const std::filesystem::path& path, FoundationManifest* manifest, std::string* errorMessage) {
@@ -246,6 +257,8 @@ bool loadFoundationManifest(const std::filesystem::path& path, FoundationManifes
       manifest->dataSubdir = parsedValue;
     } else if (key == "effect_subdir") {
       manifest->effectSubdir = parsedValue;
+    } else if (key == "procgeo_subdir") {
+      manifest->procgeoSubdir = parsedValue;
     } else if (key == "cooked_root") {
       manifest->cookedRoot = parsedValue;
     } else if (key == "scene_owner") {
@@ -256,6 +269,8 @@ bool loadFoundationManifest(const std::filesystem::path& path, FoundationManifes
       manifest->dataOwner = normalizeToken(parsedValue);
     } else if (key == "effect_owner") {
       manifest->effectOwner = normalizeToken(parsedValue);
+    } else if (key == "procgeo_owner") {
+      manifest->procgeoOwner = normalizeToken(parsedValue);
     }
   }
 
@@ -323,6 +338,12 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
       asset->trigger = normalizeToken(parsedValue);
     } else if (key == "category") {
       asset->category = normalizeToken(parsedValue);
+    } else if (key == "generator") {
+      asset->generator = normalizeToken(parsedValue);
+    } else if (key == "bake_output") {
+      asset->bakeOutput = normalizeToken(parsedValue);
+    } else if (key == "material_hint") {
+      asset->materialHint = normalizeToken(parsedValue);
     }
   }
 
@@ -367,6 +388,9 @@ std::optional<std::string> validateAsset(
     case DataAssetKind::effect:
       expectedOwner = manifest.effectOwner;
       break;
+    case DataAssetKind::procgeo:
+      expectedOwner = manifest.procgeoOwner;
+      break;
     default:
       break;
   }
@@ -395,6 +419,15 @@ std::optional<std::string> validateAsset(
     }
   }
 
+  if (kind == DataAssetKind::procgeo) {
+    if (asset.generator != "box" && asset.generator != "plane_grid") {
+      return "generator must be 'box' or 'plane_grid'";
+    }
+    if (asset.bakeOutput != "generated_mesh") {
+      return "bake_output must be 'generated_mesh'";
+    }
+  }
+
   return std::nullopt;
 }
 
@@ -405,6 +438,7 @@ struct DataFoundation::Impl {
   FoundationManifest manifest;
   std::vector<DataAssetSnapshot> assets;
   std::vector<EffectDescriptorSnapshot> effects;
+  std::vector<ProcgeoSourceSnapshot> procgeoSources;
   std::vector<SceneSourceSnapshot> scenes;
   std::vector<PrefabSourceSnapshot> prefabs;
   std::optional<RuntimeBootstrapSnapshot> bootstrap;
@@ -414,6 +448,7 @@ struct DataFoundation::Impl {
     config = nextConfig;
     assets.clear();
     effects.clear();
+    procgeoSources.clear();
     scenes.clear();
     prefabs.clear();
     bootstrap.reset();
@@ -453,6 +488,9 @@ struct DataFoundation::Impl {
       return false;
     }
     if (!scanKind(DataAssetKind::effect, manifest.effectSubdir, errorMessage)) {
+      return false;
+    }
+    if (!scanKind(DataAssetKind::procgeo, manifest.procgeoSubdir, errorMessage)) {
       return false;
     }
 
@@ -544,6 +582,18 @@ struct DataFoundation::Impl {
         .trigger = parsed.trigger,
         .category = parsed.category,
         .sourcePath = path,
+      });
+    }
+
+    if (kind == DataAssetKind::procgeo) {
+      procgeoSources.push_back(ProcgeoSourceSnapshot{
+        .name = parsed.name,
+        .generator = parsed.generator,
+        .bakeOutput = parsed.bakeOutput,
+        .materialHint = parsed.materialHint,
+        .sourcePath = path,
+        .cookedPath = asset.cookedPath,
+        .valid = asset.valid,
       });
     }
 
@@ -650,6 +700,10 @@ std::vector<EffectDescriptorSnapshot> DataFoundation::snapshotEffects() const {
   return impl_->effects;
 }
 
+std::vector<ProcgeoSourceSnapshot> DataFoundation::snapshotProcgeoSources() const {
+  return impl_->procgeoSources;
+}
+
 std::optional<SceneSourceSnapshot> DataFoundation::sceneSource(std::string_view sceneName) const {
   const std::string normalized = normalizeToken(std::string(sceneName));
   for (const auto& scene : impl_->scenes) {
@@ -689,6 +743,7 @@ std::string DataFoundation::assetCatalogSummary() const {
   std::size_t prefabCount = 0;
   std::size_t dataCount = 0;
   std::size_t effectCount = 0;
+  std::size_t procgeoCount = 0;
 
   for (const auto& asset : impl_->assets) {
     switch (asset.kind) {
@@ -704,6 +759,9 @@ std::string DataFoundation::assetCatalogSummary() const {
       case DataAssetKind::effect:
         effectCount += 1;
         break;
+      case DataAssetKind::procgeo:
+        procgeoCount += 1;
+        break;
       default:
         break;
     }
@@ -714,6 +772,7 @@ std::string DataFoundation::assetCatalogSummary() const {
           << ", prefabs=" << prefabCount
           << ", data=" << dataCount
           << ", effects=" << effectCount
+          << ", procgeo=" << procgeoCount
           << ", invalid=" << invalidAssetCount();
   return summary.str();
 }
@@ -764,6 +823,19 @@ std::string DataFoundation::relationshipSummary() const {
     summary << "\n- runtime_bootstrap -> default_scene=" << impl_->bootstrap->defaultScene;
     if (impl_->bootstrap->hasToolingOverlayPreference) {
       summary << ", tooling_overlay=" << (impl_->bootstrap->toolingOverlayEnabled ? "enabled" : "disabled");
+    }
+  }
+
+  for (const auto& procgeo : impl_->procgeoSources) {
+    if (!procgeo.valid) {
+      continue;
+    }
+
+    summary << "\n- procgeo " << procgeo.name
+            << " -> bake_output=" << procgeo.bakeOutput
+            << ", generator=" << procgeo.generator;
+    if (!procgeo.materialHint.empty()) {
+      summary << ", material_hint=" << procgeo.materialHint;
     }
   }
 

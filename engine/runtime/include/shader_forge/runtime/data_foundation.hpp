@@ -15,6 +15,7 @@ enum class DataAssetKind {
   prefab,
   data,
   effect,
+  procgeo,
 };
 
 struct DataFoundationConfig {
@@ -69,6 +70,16 @@ struct RuntimeBootstrapSnapshot {
   bool valid = false;
 };
 
+struct ProcgeoSourceSnapshot {
+  std::string name;
+  std::string generator;
+  std::string bakeOutput;
+  std::string materialHint;
+  std::filesystem::path sourcePath;
+  std::filesystem::path cookedPath;
+  bool valid = false;
+};
+
 class DataFoundation {
 public:
   DataFoundation();
@@ -88,6 +99,7 @@ public:
 
   std::vector<DataAssetSnapshot> snapshotAssets() const;
   std::vector<EffectDescriptorSnapshot> snapshotEffects() const;
+  std::vector<ProcgeoSourceSnapshot> snapshotProcgeoSources() const;
   std::optional<SceneSourceSnapshot> sceneSource(std::string_view sceneName) const;
   std::optional<PrefabSourceSnapshot> prefabSource(std::string_view prefabName) const;
   std::optional<RuntimeBootstrapSnapshot> runtimeBootstrap() const;

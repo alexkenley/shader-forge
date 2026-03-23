@@ -1,0 +1,12 @@
+schema = "shader_forge.procgeo"
+schema_version = 1
+name = "debug_crate"
+owner_system = "procgeo_system"
+runtime_format = "flatbuffer"
+
+generator = "box"
+bake_output = "generated_mesh"
+material_hint = "debug_crate"
+width = 1.5
+height = 1.5
+depth = 1.5

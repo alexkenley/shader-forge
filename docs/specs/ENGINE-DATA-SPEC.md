@@ -18,6 +18,7 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 
 - `data/foundation/engine-data-layout.toml` defines the source, cooked, tooling-db, and content-root conventions
 - `content/scenes/*.scene.toml`, `content/prefabs/*.prefab.toml`, `content/data/*.data.toml`, and `content/effects/*.effect.toml` are now the first real source-data roots
+- `content/procgeo/*.procgeo.toml` is now the first procedural-geometry source-data root
 - the native runtime loads that foundation manifest through `DataFoundation`, validates source assets, and logs the resulting cook plan
 - scene lookup is now tied to real text assets instead of a purely free-form runtime scene name
 - scene-to-prefab relationships and `runtime_bootstrap` defaults are validated across the catalog rather than treated as isolated files
@@ -30,6 +31,7 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - prefab source assets belong to the scene system
 - gameplay/bootstrap data assets belong to the data system
 - effect descriptor assets belong to the VFX system
+- procedural geometry source assets belong to the procedural geometry system
 - SQLite is for tooling/session/index state, not the authored source of truth
 
 ## Responsibilities

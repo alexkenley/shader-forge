@@ -146,30 +146,33 @@
         {
           "id": "engine-cli-surfaces",
           "title": "Engine CLI Surfaces",
-          "summary": "The current CLI is focused on backend and runtime bring-up rather than broad content tooling.",
-          "keywords": ["engine", "commands", "build runtime", "run"],
+          "summary": "The current CLI now covers backend bring-up, runtime bring-up, and a first asset bake lane rather than only shell support commands.",
+          "keywords": ["engine", "commands", "build runtime", "run", "bake", "cook", "procgeo"],
           "references": [
             "tools/engine-cli/shaderforge.mjs",
-            "docs/specs/ENGINE-CLI-SPEC.md"
+            "tools/engine-cli/lib/asset-pipeline.mjs",
+            "docs/specs/ENGINE-CLI-SPEC.md",
+            "docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md"
           ],
           "sections": [
             {
               "title": "Implemented Commands",
-              "keywords": ["sessiond start", "session create", "build", "run"],
+              "keywords": ["sessiond start", "session create", "build", "run", "bake"],
               "items": [
                 "`engine sessiond start` starts the local backend service.",
                 "`engine session create` and `engine session list` expose session bring-up from the terminal.",
                 "`engine file list` and `engine file read` expose safe file inspection.",
                 "`engine build runtime` configures and builds the native runtime with CMake.",
-                "`engine run <scene>` builds and launches the native runtime and now forwards content, data, and tooling roots."
+                "`engine run <scene>` builds and launches the native runtime and now forwards content, data, and tooling roots.",
+                "`engine bake` scans text-backed content roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report."
               ]
             },
             {
               "title": "Current Non-Goals",
               "keywords": ["import", "bake", "package", "export"],
               "items": [
-                "`engine import`, `engine bake`, `engine package`, and `engine export` are still later phases.",
-                "The CLI is not yet the main content pipeline surface because the cook/import lane is still being built."
+                "`engine import`, `engine package`, and `engine export` are still later phases.",
+                "The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer."
               ]
             }
           ]
@@ -219,18 +222,22 @@
         {
           "id": "scene-and-content-foundation",
           "title": "Scene, Prefab, And Data Foundation",
-          "summary": "Text-backed content roots now exist and runtime startup resolves scene/bootstrap metadata from them instead of treating scene names as free text only.",
-          "keywords": ["content", "scene", "prefab", "data foundation", "effects"],
+          "summary": "Text-backed content roots now exist and runtime startup resolves scene/bootstrap metadata from them instead of treating scene names as free text only, while the first bake lane targets the same authored roots.",
+          "keywords": ["content", "scene", "prefab", "data foundation", "effects", "procgeo", "bake"],
           "references": [
             "engine/runtime/include/shader_forge/runtime/data_foundation.hpp",
             "engine/runtime/src/data_foundation.cpp",
             "content/scenes/sandbox.scene.toml",
             "content/prefabs/debug_camera.prefab.toml",
             "content/data/runtime_bootstrap.data.toml",
+            "content/procgeo/sandbox_floor.procgeo.toml",
             "data/foundation/engine-data-layout.toml",
+            "tools/engine-cli/lib/asset-pipeline.mjs",
             "docs/specs/ENGINE-DATA-SPEC.md",
             "docs/specs/ENGINE-SCENE-SPEC.md",
-            "docs/specs/ENGINE-VFX-SPEC.md"
+            "docs/specs/ENGINE-VFX-SPEC.md",
+            "docs/specs/ENGINE-PROCGEO-SPEC.md",
+            "docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md"
           ],
           "sections": [
             {
@@ -240,20 +247,22 @@
                 "`content/scenes/*.scene.toml` is the initial authored scene lane.",
                 "`content/prefabs/*.prefab.toml` is the initial authored prefab lane.",
                 "`content/data/*.data.toml` is the initial authored engine/bootstrap data lane.",
-                "`content/effects/*.effect.toml` is the initial authored effect-descriptor lane."
+                "`content/effects/*.effect.toml` is the initial authored effect-descriptor lane.",
+                "`content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane."
               ]
             },
             {
-              "title": "Runtime Data Foundation",
-              "keywords": ["flatbuffers", "sqlite", "catalog", "bootstrap"],
+              "title": "Runtime Data Foundation And Bake Lane",
+              "keywords": ["flatbuffers", "sqlite", "catalog", "bootstrap", "engine bake", "generated meshes"],
               "items": [
                 "`data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.",
                 "The runtime validates the content roots through `DataFoundation` before startup continues.",
                 "Scene-to-prefab relationships are validated across the catalog.",
                 "`runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.",
-                "The runtime window title and startup logs now include active scene and primary prefab context from the authored assets."
+                "The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.",
+                "`engine bake` now emits staged cooked outputs into `build/cooked/` and writes generated-mesh preview payloads for `procgeo` assets."
               ],
-              "note": "This is still a foundation slice. There is not yet a real FlatBuffers cook step, SQLite asset index, or Effekseer runtime integration."
+              "note": "This is still a widening slice. The bake path is real, but it still uses staged placeholder cooked payloads until the FlatBuffers writer and runtime scene loading land."
             }
           ]
         }
@@ -315,6 +324,7 @@
             "scripts/test-engine-shell-smoke.mjs",
             "scripts/test-engine-viewer-bridge.mjs",
             "scripts/test-engine-runtime-scaffold.mjs",
+            "scripts/test-engine-asset-pipeline.mjs",
             "scripts/test-engine-input-scaffold.mjs",
             "scripts/test-engine-tooling-ui-scaffold.mjs",
             "scripts/test-engine-data-foundation-scaffold.mjs",
@@ -329,7 +339,7 @@
                 "`npm test` runs the preserved shell smoke harness.",
                 "`npm run test:sessiond` validates the local backend session and file flows.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
-                "`npm run test:runtime-scaffold`, `test:input-scaffold`, `test:tooling-ui-scaffold`, and `test:data-foundation-scaffold` validate the native bring-up slices."
+                "`npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
               ]
             },
             {
@@ -360,7 +370,8 @@
               "items": [
                 "A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.",
                 "A real native SDL3/Vulkan runtime slice with input, tooling, and data-foundation hooks.",
-                "Text-backed scene, prefab, data, and effect roots represented in the repo.",
+                "Text-backed scene, prefab, data, effect, and procedural-geometry roots represented in the repo.",
+                "A first CLI bake lane that emits staged cooked outputs and generated-mesh preview artifacts.",
                 "A searchable in-app guide and repo-native assistant guide."
               ]
             },
@@ -370,7 +381,7 @@
               "items": [
                 "The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.",
                 "The runtime still needs richer rendering, real scene loading, and broader native verification.",
-                "The content pipeline still needs real cook/import/export lanes, not only foundation decisions.",
+                "The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.",
                 "Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels."
               ]
             }

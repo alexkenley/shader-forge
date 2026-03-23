@@ -1,0 +1,14 @@
+schema = "shader_forge.procgeo"
+schema_version = 1
+name = "sandbox_floor"
+owner_system = "procgeo_system"
+runtime_format = "flatbuffer"
+
+generator = "plane_grid"
+bake_output = "generated_mesh"
+material_hint = "debug_grid"
+width = 24
+height = 1
+depth = 24
+rows = 12
+columns = 12

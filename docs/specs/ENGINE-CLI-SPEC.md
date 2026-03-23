@@ -17,6 +17,7 @@ Current implemented commands:
 - `engine file read`
 - `engine build`
 - `engine run`
+- `engine bake`
 
 ## Initial Commands
 
@@ -28,14 +29,15 @@ Current implemented commands:
 - `engine package`
 - `engine export`
 
-The initial build/run command family now targets the native runtime scaffold:
+The initial build/run/bake command family now targets the native runtime and cooked-content scaffolds:
 
 - `engine build` configures and builds `shader_forge_runtime` through `cmake`
 - `engine run sandbox` builds and launches the native runtime target
 - `engine run` now forwards `--input-root`, `--content-root`, `--data-foundation`, `--tooling-layout`, and `--tooling-layout-save` so native bring-up can inspect text-backed engine assets and configuration directly
+- `engine bake` now scans the text-backed content roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report plus generated-mesh preview payloads for procedural geometry assets
 - `engine_sessiond` also exposes a runtime build lifecycle surface so the shell can trigger native builds and stream logs without scraping a PTY
 
-`engine test`, `engine import`, `engine bake`, `engine package`, and `engine export` remain reserved command space.
+`engine test`, `engine import`, `engine package`, and `engine export` remain reserved command space.
 
 ## Future Packaging And Diagnostics Commands
 

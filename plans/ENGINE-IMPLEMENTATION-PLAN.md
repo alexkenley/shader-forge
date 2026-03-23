@@ -95,6 +95,7 @@ Current implementation status:
 - Phase 4 now has shell-side runtime build/run/pause controls, bridge diagnostics, and dedicated viewer-workflow surfaces, but not a full embedded viewer yet.
 - Phase 4.2 has now started through a first engine-owned input slice with text-backed actions/contexts and runtime-side named action queries.
 - Phase 4.4 has now started through a native tooling substrate slice with a panel registry, text-backed layout loading/saving, and runtime inspection hooks, but not a Dear ImGui frontend yet.
+- Phase 5 has now started through a first asset-pipeline slice with `engine bake`, staged cooked outputs, and a text-backed procedural-geometry lane.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -111,7 +112,8 @@ What is already done:
 - The native runtime now loads `input/actions.toml` plus `input/contexts/*.input.toml` and routes SDL keyboard, mouse, and gamepad input through named engine actions.
 - The native runtime now loads a text-backed tooling layout, exposes a named tool registry, and saves a session tooling layout snapshot for later native panel persistence.
 - The native runtime now loads a data-foundation manifest, validates text-backed content roots under `content/`, resolves the selected runtime scene against `.scene.toml` source assets, and applies bootstrap scene/overlay defaults.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, input scaffold, and tooling UI scaffold.
+- Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -342,6 +344,9 @@ Exit criteria:
 Goal:
 - make the engine able to ingest and generate real content
 
+Status:
+- first slice now exists through `engine bake`, staged cooked outputs under `build/cooked/`, and text-backed procedural geometry assets with generated-mesh preview payloads
+
 Scope:
 - source import
 - cooked assets
@@ -354,6 +359,7 @@ Scope:
 
 Reference inputs:
 - for renderer-adjacent asset tooling, consult the [Filament guide](../docs/guides/ENGINE-FILAMENT-BORROW-GUIDE.md), [Distill guide](../docs/guides/ENGINE-DISTILL-BORROW-GUIDE.md), [bgfx guide](../docs/guides/ENGINE-BGFX-BORROW-GUIDE.md), and [Hell2025 borrow plan](../docs/guides/ENGINE-HELL2025-BORROW-PLAN.md)
+- for bounded editor workflow and inspector ergonomics only, use the local `DX11-Engine` checkout as reference input for hierarchy/inspector/panel flow, not for renderer, serialization, or build architecture
 
 Exit criteria:
 - imported and generated assets flow through a single engine pipeline
@@ -722,5 +728,6 @@ Current build target:
 - Phase 4 continuation: shell/runtime control surfaces and viewer workflow preparation, but not ahead of runtime and input stabilization
 - Phase 4.4 planning: native tooling UI substrate before deep authoring and profiling work
 - Phase 5.5 advance: keep locking data/cook format choices and source-asset ownership boundaries before broad asset-pipeline expansion
+- Phase 5 start: widen the new bake lane, generated content path, and preview/report surfaces before jumping to audio or level authoring
 - Phase 5.95 before Phase 5.9 execution: land trust and policy groundwork before assistant-triggered code and apply workflows expand
 - keep harness coverage current as each major slice lands

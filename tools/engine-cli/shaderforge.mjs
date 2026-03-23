@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { bakeAssetPipeline } from './lib/asset-pipeline.mjs';
 import { startEngineSessiond } from '../engine-sessiond/server.mjs';
 
 const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http://127.0.0.1:41741';
@@ -21,11 +22,11 @@ Usage:
   engine file read <path> --session <id> [--base-url <url>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
+  engine bake [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
 
 Reserved commands:
   engine test
   engine import
-  engine bake
 `);
 }
 
@@ -73,7 +74,7 @@ function resolvedBaseUrl(flags) {
 
 async function runReservedPlaceholder(commandName) {
   console.log(`engine ${commandName} is not implemented yet in this slice.`);
-  console.log('Current implemented surfaces: sessiond, files, runtime build, and runtime run.');
+  console.log('Current implemented surfaces: sessiond, files, runtime build, runtime run, and asset bake.');
 }
 
 function commandExists(command) {
@@ -170,6 +171,23 @@ async function runRuntime(sceneName, flags) {
   await runCommand(buildResult.binaryPath, args, { cwd: repoRoot });
 }
 
+async function bakeAssets(flags) {
+  const report = await bakeAssetPipeline({
+    repoRoot,
+    contentRoot: String(flags['content-root'] || 'content'),
+    foundationPath: String(flags['data-foundation'] || 'data/foundation/engine-data-layout.toml'),
+    outputRoot: String(flags['output-root'] || 'build/cooked'),
+    reportPath: String(flags.report || path.join(String(flags['output-root'] || 'build/cooked'), 'asset-pipeline-report.json')),
+  });
+
+  console.log('Asset pipeline bake complete.');
+  console.log(`- Content root: ${report.contentRoot}`);
+  console.log(`- Output root: ${report.outputRoot}`);
+  console.log(`- Baked assets: ${report.bakedAssets.length}`);
+  console.log(`- Generated meshes: ${report.generatedMeshes.length}`);
+  console.log(`- Report: ${path.isAbsolute(String(flags.report || '')) ? String(flags.report) : String(flags.report || path.join(report.outputRoot, 'asset-pipeline-report.json'))}`);
+}
+
 async function run() {
   const argv = process.argv.slice(2);
   if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
@@ -179,8 +197,14 @@ async function run() {
 
   const command = argv[0];
 
-  if (['test', 'import', 'bake'].includes(command)) {
+  if (['test', 'import'].includes(command)) {
     await runReservedPlaceholder(command);
+    return;
+  }
+
+  if (command === 'bake') {
+    const { flags } = parseFlags(argv.slice(1));
+    await bakeAssets(flags);
     return;
   }
 
