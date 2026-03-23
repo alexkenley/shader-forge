@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -43,10 +44,21 @@ struct EffectDescriptorSnapshot {
   std::filesystem::path sourcePath;
 };
 
+struct SceneEntitySnapshot {
+  std::string id;
+  std::string displayName;
+  std::string sourcePrefab;
+  std::string parent;
+  std::array<float, 3> position{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> rotation{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> scale{1.0F, 1.0F, 1.0F};
+};
+
 struct SceneSourceSnapshot {
   std::string name;
   std::string title;
   std::string primaryPrefab;
+  std::vector<SceneEntitySnapshot> entities;
   std::filesystem::path sourcePath;
   std::filesystem::path cookedPath;
   bool valid = false;
@@ -107,6 +119,7 @@ public:
   std::string foundationSummary() const;
   std::string assetCatalogSummary() const;
   std::string sceneLookupSummary(std::string_view sceneName) const;
+  std::string sceneEntitySummary(std::string_view sceneName) const;
   std::string relationshipSummary() const;
   std::string cookPlanSummary(std::size_t maxAssets = 6) const;
 

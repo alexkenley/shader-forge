@@ -819,6 +819,7 @@ private:
     logRuntimeLine(dataFoundation_.foundationSummary());
     logRuntimeLine(dataFoundation_.assetCatalogSummary());
     logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
+    logRuntimeMultiline(dataFoundation_.sceneEntitySummary(activeSceneName_));
     logRuntimeMultiline(audioSystem_.busRoutingSummary());
     logRuntimeMultiline(audioSystem_.eventCatalogSummary());
     logRuntimeMultiline(animationSystem_.graphCatalogSummary());

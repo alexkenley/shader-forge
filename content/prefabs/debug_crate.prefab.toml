@@ -1,0 +1,8 @@
+schema = "shader_forge.prefab"
+schema_version = 1
+name = "debug_crate"
+owner_system = "scene_system"
+runtime_format = "flatbuffer"
+
+category = "environment"
+spawn_tag = "debug_prop"

@@ -304,9 +304,56 @@ function loadSceneAsset(repoRoot, outputRoot, filePath, fields, config, manifest
     ...asset,
     title,
     primaryPrefab,
+    entities: [],
     valid: problems.length === 0,
     problems,
   };
+}
+
+function loadSceneEntitySections(sections, problems) {
+  const entities = [];
+
+  for (const section of sections) {
+    if (!section.name.startsWith('entity.')) {
+      continue;
+    }
+
+    const id = normalizeToken(section.name.slice('entity.'.length));
+    const sourcePrefab = normalizeToken(parseStringValue(section.fields.source_prefab || ''));
+    const parent = normalizeToken(parseStringValue(section.fields.parent || ''));
+    const position = parseVector3Value(section.fields.position || '');
+    const rotation = parseVector3Value(section.fields.rotation || '');
+    const scale = parseVector3Value(section.fields.scale || '');
+
+    if (!id) {
+      problems.push('scene entity section is missing an id');
+      continue;
+    }
+    if (!sourcePrefab) {
+      problems.push(`entity "${id}" must declare source_prefab`);
+    }
+    if (!position) {
+      problems.push(`entity "${id}" position must be a quoted "x, y, z" vector`);
+    }
+    if (!rotation) {
+      problems.push(`entity "${id}" rotation must be a quoted "x, y, z" vector`);
+    }
+    if (!scale) {
+      problems.push(`entity "${id}" scale must be a quoted "x, y, z" vector`);
+    }
+
+    entities.push({
+      id,
+      displayName: parseStringValue(section.fields.display_name || '') || id,
+      sourcePrefab,
+      parent,
+      position: position || [0, 0, 0],
+      rotation: rotation || [0, 0, 0],
+      scale: scale || [1, 1, 1],
+    });
+  }
+
+  return entities;
 }
 
 function loadPrefabAsset(repoRoot, outputRoot, filePath, fields, config, manifest) {
@@ -1477,10 +1524,13 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
         continue;
       }
       const filePath = path.join(directory, entry.name);
-      const fields = parseTomlDocument(filePath);
+      const structuredDocument = parseTomlStructuredDocument(filePath);
+      const fields = structuredDocument.fields;
       let asset;
       if (config.kind === 'scene') {
         asset = loadSceneAsset(repoRoot, outputRoot, filePath, fields, config, manifest);
+        asset.entities = loadSceneEntitySections(structuredDocument.sections, asset.problems);
+        asset.valid = asset.problems.length === 0;
         scenes.set(asset.name, asset);
       } else if (config.kind === 'prefab') {
         asset = loadPrefabAsset(repoRoot, outputRoot, filePath, fields, config, manifest);
@@ -1505,6 +1555,26 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
         relationships.push(`scene ${asset.name} -> prefab ${asset.primaryPrefab}`);
       }
     }
+    if (asset.kind === 'scene' && Array.isArray(asset.entities)) {
+      const entityIds = new Set(asset.entities.map((entity) => entity.id));
+      for (const entity of asset.entities) {
+        if (!prefabs.has(entity.sourcePrefab)) {
+          asset.valid = false;
+          asset.problems.push(`entity "${entity.id}" source_prefab references missing prefab "${entity.sourcePrefab}"`);
+        } else {
+          relationships.push(`scene ${asset.name} entity ${entity.id} -> prefab ${entity.sourcePrefab}`);
+        }
+        if (entity.parent) {
+          if (entity.parent === entity.id) {
+            asset.valid = false;
+            asset.problems.push(`entity "${entity.id}" cannot parent itself`);
+          } else if (!entityIds.has(entity.parent)) {
+            asset.valid = false;
+            asset.problems.push(`entity "${entity.id}" parent references missing entity "${entity.parent}"`);
+          }
+        }
+      }
+    }
     if (asset.kind === 'data' && asset.name === 'runtime_bootstrap' && asset.defaultScene) {
       if (!scenes.has(asset.defaultScene)) {
         asset.valid = false;
@@ -1521,7 +1591,12 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
     }
 
     const cookedPayload = encodeStagedCookPayload(asset, asset.kind === 'scene'
-      ? { title: asset.title, primaryPrefab: asset.primaryPrefab }
+      ? {
+          title: asset.title,
+          primaryPrefab: asset.primaryPrefab,
+          entityCount: asset.entities.length,
+          entities: asset.entities,
+        }
       : asset.kind === 'prefab'
         ? { category: asset.category, spawnTag: asset.spawnTag }
         : asset.kind === 'data'
@@ -1719,6 +1794,11 @@ export async function bakeAssetPipeline(options) {
       name: asset.name,
       cookedPath: asset.cookedPath,
       sourcePath: asset.sourcePath,
+      ...(asset.kind === 'scene'
+        ? {
+            entityCount: asset.entities.length,
+          }
+        : {}),
     }));
 
   const report = {

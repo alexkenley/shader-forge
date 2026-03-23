@@ -57,6 +57,8 @@ assert.match(assetPipelineSource, /generated-meshes/);
 assert.match(assetPipelineSource, /plane_grid/);
 assert.match(assetPipelineSource, /shader_forge\.cooked_asset\.stage/);
 assert.match(assetPipelineSource, /shader_forge\.cooked_audio\.stage/);
+assert.match(assetPipelineSource, /source_prefab/);
+assert.match(assetPipelineSource, /entity \"/);
 assert.match(foundationManifest, /procgeo_subdir = "procgeo"/);
 assert.match(foundationManifest, /procgeo_owner = "procgeo_system"/);
 assert.match(audioBuses, /schema = "shader_forge\.audio_buses"/);
@@ -125,7 +127,7 @@ assert.ok(fs.existsSync(reportPath), 'Expected asset pipeline report to be writt
 const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
 assert.equal(report.foundation.runtimeFormat, 'flatbuffer');
 assert.equal(report.counts.scene, 1);
-assert.equal(report.counts.prefab, 1);
+assert.equal(report.counts.prefab, 2);
 assert.equal(report.counts.data, 1);
 assert.equal(report.counts.effect, 1);
 assert.equal(report.counts.procgeo, 2);
@@ -154,6 +156,7 @@ assert.match(report.notes.join('\n'), /FlatBuffers writer lands/);
 assert.match(report.notes.join('\n'), /Audio currently bakes staged bus, sound, and event metadata registries/);
 assert.match(report.notes.join('\n'), /Animation currently bakes staged skeleton, clip, and graph metadata registries/);
 assert.match(report.notes.join('\n'), /Physics currently bakes staged layer, material, and body metadata registries/);
+assert.match(JSON.stringify(report.assets || report, null, 2), /entityCount/);
 
 const cookedScenePath = path.join(tempRoot, 'scenes', 'sandbox.bin');
 const cookedProcgeoPath = path.join(tempRoot, 'procgeo', 'sandbox_floor.bin');

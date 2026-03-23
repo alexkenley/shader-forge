@@ -6,3 +6,19 @@ runtime_format = "flatbuffer"
 
 title = "Sandbox"
 primary_prefab = "debug_camera"
+
+[entity.camera_spawn]
+display_name = "Camera Spawn"
+source_prefab = "debug_camera"
+parent = ""
+position = "0, 1.6, -4"
+rotation = "0, 0, 0"
+scale = "1, 1, 1"
+
+[entity.crate_focus]
+display_name = "Crate Focus"
+source_prefab = "debug_crate"
+parent = ""
+position = "0, 0.5, 0"
+rotation = "0, 35, 0"
+scale = "1, 1, 1"

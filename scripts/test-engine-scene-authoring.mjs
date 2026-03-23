@@ -31,8 +31,18 @@ try {
   assert.match(sceneEditorView, /Duplicate Scene/);
   assert.match(sceneEditorView, /World outliner/);
   assert.match(sceneEditorView, /Use As Primary/);
+  assert.match(sceneEditorView, /Add Entity/);
+  assert.match(sceneEditorView, /Duplicate Entity/);
+  assert.match(sceneEditorView, /Delete Entity/);
+  assert.match(sceneEditorView, /Add To Scene/);
+  assert.match(sceneEditorView, /Position/);
+  assert.match(sceneEditorView, /Rotation/);
+  assert.match(sceneEditorView, /Scale/);
   assert.match(sceneAuthoringSource, /formatSceneAssetDocument/);
   assert.match(sceneAuthoringSource, /formatPrefabAssetDocument/);
+  assert.match(sceneAuthoringSource, /\[entity\./);
+  assert.match(sceneAuthoringSource, /createSceneEntityDocument/);
+  assert.match(sceneAuthoringSource, /sourcePrefab/);
   assert.match(sceneAuthoringSource, /content\/scenes/);
   assert.match(sessiondClient, /writeFile/);
   assert.match(sessiondServer, /\/api\/files\/write/);
@@ -66,6 +76,14 @@ try {
     'title = "Authoring Test"',
     'primary_prefab = "debug_camera"',
     '',
+    '[entity.camera_spawn]',
+    'display_name = "Camera Spawn"',
+    'source_prefab = "debug_camera"',
+    'parent = ""',
+    'position = "0, 1.6, -4"',
+    'rotation = "0, 0, 0"',
+    'scale = "1, 1, 1"',
+    '',
   ].join('\n');
 
   const prefabWritePayload = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
@@ -82,6 +100,8 @@ try {
   });
   assert.equal(sceneWritePayload.path, 'content/scenes/authoring_test.scene.toml');
   assert.match(sceneWritePayload.content, /primary_prefab = "debug_camera"/);
+  assert.match(sceneWritePayload.content, /\[entity\.camera_spawn\]/);
+  assert.match(sceneWritePayload.content, /source_prefab = "debug_camera"/);
 
   const sceneListPayload = await requestJsonNoAuth(
     `${service.baseUrl}/api/files/list?sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent('content/scenes')}`,

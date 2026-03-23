@@ -42,14 +42,15 @@ Current implemented behavior:
 - the shell loads `content/scenes/*.scene.toml` and `content/prefabs/*.prefab.toml` from the active session root
 - `Edit Mode` is the persistent authoring lane
 - `Play Mode` is currently a discard-only stance that drops unsaved drafts before returning to a non-persistent preview state
-- a world outliner now exposes the authored scene plus its current primary prefab relationship
-- a details surface can edit current scene metadata and prefab metadata
-- an asset browser can inspect prefabs and assign the scene primary prefab
-- save, reload-from-disk, revert-draft, duplicate-scene, and local undo/redo flows now exist for this metadata round-trip slice
+- authored scenes can now round-trip deterministic `[entity.<id>]` sections with `source_prefab`, `parent`, `position`, `rotation`, and `scale`
+- a world outliner now exposes the authored scene plus its placed-entity hierarchy
+- a details surface can edit current scene metadata, placed-entity transform/source-prefab/parent data, and prefab metadata
+- an asset browser can inspect prefabs, assign the scene primary prefab, and instantiate prefab-backed entities into the active scene
+- save, reload-from-disk, revert-draft, duplicate-scene, create-entity, duplicate-entity, delete-entity, and local undo/redo flows now exist for this first authoring slice
 
 Current boundary:
 
-- viewport gizmos, placed-entity editing, transform authoring, and deeper component payload editing are still ahead
+- viewport gizmos, in-viewport manipulation, deeper component payload editing, and procedural bake-back are still ahead
 - this slice is intentionally honest about being shell-side authoring over current text assets, not a fake full visual editor
 
 ## Core Surfaces
@@ -66,8 +67,8 @@ Current boundary:
 
 Primary authored assets:
 
-- `levels/<name>.scene.toml`
-- `prefabs/<name>.prefab.toml`
+- `content/scenes/<name>.scene.toml`
+- `content/prefabs/<name>.prefab.toml`
 
 Expected properties:
 

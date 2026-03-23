@@ -70,6 +70,13 @@ try {
   assert.match(sceneEditorView, /Duplicate Scene/);
   assert.match(sceneEditorView, /World outliner/);
   assert.match(sceneEditorView, /Use As Primary/);
+  assert.match(sceneEditorView, /Add Entity/);
+  assert.match(sceneEditorView, /Duplicate Entity/);
+  assert.match(sceneEditorView, /Delete Entity/);
+  assert.match(sceneEditorView, /Add To Scene/);
+  assert.match(sceneEditorView, /Position/);
+  assert.match(sceneEditorView, /Rotation/);
+  assert.match(sceneEditorView, /Scale/);
   assert.match(referenceGuideSource, /ENGINE-REFERENCE-GUIDE\.json/);
   assert.match(referenceGuideJson, /"Shader Forge Reference Guide"/);
   assert.match(referenceGuideJson, /"assistantEntryPoints"/);

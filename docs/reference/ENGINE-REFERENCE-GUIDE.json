@@ -96,7 +96,7 @@
               "items": [
                 "Use `Code` when you need the preserved Monaco bridge and repo workspace context.",
                 "Use `Game` and `Preview` when you are driving the external native runtime window from the shell.",
-                "Use `Scene` for repo-backed scene and prefab authoring with edit/play separation, save/reload/duplicate commands, a world outliner, details editing, and prefab assignment over the real text assets.",
+                "Use `Scene` for repo-backed scene and prefab authoring with edit/play separation, save/reload/duplicate commands, placed-entity hierarchy plus transform editing, a world outliner, details editing, and prefab assignment over the real text assets.",
                 "Use `Guide` for the in-app wiki and repo source references."
               ],
               "note": "The shell is still the primary workspace even though the native SDL3/Vulkan runtime renders in an external window."
@@ -480,7 +480,7 @@
               "keywords": ["current state", "implemented"],
               "items": [
                 "A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.",
-                "A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows.",
+                "A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy and transform editing.",
                 "A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.",
                 "Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.",
                 "A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, plus physics metadata.",
@@ -493,7 +493,7 @@
               "keywords": ["future work", "phase expansion"],
               "items": [
                 "The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.",
-                "Scene authoring still needs placed-entity editing, transform gizmos, component payload authoring, and bake-back flows beyond the current metadata round-trip slice.",
+                "Scene authoring still needs transform gizmos, deeper component payload authoring, and bake-back flows beyond the current text-backed entity-authoring slice.",
                 "The runtime still needs richer rendering, real scene loading, and broader native verification.",
                 "The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.",
                 "Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.",

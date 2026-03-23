@@ -92,6 +92,33 @@ bool parseIntValue(const std::string& rawValue, int* result) {
   }
 }
 
+bool parseVector3Value(const std::string& rawValue, std::array<float, 3>* result) {
+  std::istringstream parts(parseStringValue(rawValue));
+  std::string token;
+  std::array<float, 3> parsed{0.0F, 0.0F, 0.0F};
+  std::size_t index = 0;
+
+  while (std::getline(parts, token, ',')) {
+    if (index >= parsed.size()) {
+      return false;
+    }
+
+    try {
+      parsed[index] = std::stof(trim(token));
+    } catch (...) {
+      return false;
+    }
+    index += 1;
+  }
+
+  if (index != parsed.size()) {
+    return false;
+  }
+
+  *result = parsed;
+  return true;
+}
+
 std::string lowerString(std::string value) {
   std::transform(
     value.begin(),
@@ -166,7 +193,23 @@ std::string relativePathString(const std::filesystem::path& path) {
   return path.generic_string();
 }
 
+std::string vector3String(const std::array<float, 3>& value) {
+  std::ostringstream stream;
+  stream << value[0] << ", " << value[1] << ", " << value[2];
+  return stream.str();
+}
+
 struct ParsedAssetFields {
+  struct SceneEntityFields {
+    std::string id;
+    std::string displayName;
+    std::string sourcePrefab;
+    std::string parent;
+    std::array<float, 3> position{0.0F, 0.0F, 0.0F};
+    std::array<float, 3> rotation{0.0F, 0.0F, 0.0F};
+    std::array<float, 3> scale{1.0F, 1.0F, 1.0F};
+  };
+
   std::string name;
   std::string schema;
   int schemaVersion = 0;
@@ -184,6 +227,7 @@ struct ParsedAssetFields {
   std::string generator;
   std::string bakeOutput;
   std::string materialHint;
+  std::vector<SceneEntityFields> sceneEntities;
 };
 
 struct FoundationManifest {
@@ -288,10 +332,24 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
 
   std::string line;
   std::size_t lineNumber = 0;
+  ParsedAssetFields::SceneEntityFields* currentSceneEntity = nullptr;
   while (std::getline(stream, line)) {
     lineNumber += 1;
     const std::string cleaned = stripComment(line);
-    if (cleaned.empty() || cleaned.front() == '[') {
+    if (cleaned.empty()) {
+      continue;
+    }
+
+    if (cleaned.front() == '[' && cleaned.back() == ']') {
+      currentSceneEntity = nullptr;
+      const std::string sectionName = trim(cleaned.substr(1, cleaned.size() - 2));
+      constexpr std::string_view kSceneEntityPrefix = "entity.";
+      if (sectionName.rfind(kSceneEntityPrefix.data(), 0) == 0) {
+        ParsedAssetFields::SceneEntityFields entity;
+        entity.id = normalizeToken(sectionName.substr(kSceneEntityPrefix.size()));
+        asset->sceneEntities.push_back(entity);
+        currentSceneEntity = &asset->sceneEntities.back();
+      }
       continue;
     }
 
@@ -305,6 +363,38 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
     }
 
     const std::string parsedValue = parseStringValue(value);
+    if (currentSceneEntity != nullptr) {
+      if (key == "display_name") {
+        currentSceneEntity->displayName = parsedValue;
+      } else if (key == "source_prefab") {
+        currentSceneEntity->sourcePrefab = normalizeToken(parsedValue);
+      } else if (key == "parent") {
+        currentSceneEntity->parent = normalizeToken(parsedValue);
+      } else if (key == "position") {
+        if (!parseVector3Value(value, &currentSceneEntity->position)) {
+          if (errorMessage) {
+            *errorMessage = "Invalid position in " + path.string();
+          }
+          return false;
+        }
+      } else if (key == "rotation") {
+        if (!parseVector3Value(value, &currentSceneEntity->rotation)) {
+          if (errorMessage) {
+            *errorMessage = "Invalid rotation in " + path.string();
+          }
+          return false;
+        }
+      } else if (key == "scale") {
+        if (!parseVector3Value(value, &currentSceneEntity->scale)) {
+          if (errorMessage) {
+            *errorMessage = "Invalid scale in " + path.string();
+          }
+          return false;
+        }
+      }
+      continue;
+    }
+
     if (key == "name") {
       asset->name = normalizeToken(parsedValue);
     } else if (key == "schema") {
@@ -542,10 +632,24 @@ struct DataFoundation::Impl {
     assets.push_back(asset);
 
     if (kind == DataAssetKind::scene) {
+      std::vector<SceneEntitySnapshot> entities;
+      entities.reserve(parsed.sceneEntities.size());
+      for (const auto& entity : parsed.sceneEntities) {
+        entities.push_back(SceneEntitySnapshot{
+          .id = entity.id,
+          .displayName = entity.displayName,
+          .sourcePrefab = entity.sourcePrefab,
+          .parent = entity.parent,
+          .position = entity.position,
+          .rotation = entity.rotation,
+          .scale = entity.scale,
+        });
+      }
       scenes.push_back(SceneSourceSnapshot{
         .name = parsed.name,
         .title = parsed.title,
         .primaryPrefab = parsed.primaryPrefab,
+        .entities = std::move(entities),
         .sourcePath = path,
         .cookedPath = asset.cookedPath,
         .valid = asset.valid,
@@ -602,17 +706,68 @@ struct DataFoundation::Impl {
 
   void validateRelationships() {
     for (auto& scene : scenes) {
-      if (!scene.valid || scene.primaryPrefab.empty()) {
+      if (!scene.valid) {
         continue;
       }
 
-      if (!hasValidPrefab(scene.primaryPrefab)) {
+      if (!scene.primaryPrefab.empty() && !hasValidPrefab(scene.primaryPrefab)) {
         scene.valid = false;
         markAssetInvalid(
           DataAssetKind::scene,
           scene.name,
           scene.sourcePath,
           "primary_prefab references missing prefab '" + scene.primaryPrefab + "'");
+        continue;
+      }
+
+      std::vector<std::string> entityIds;
+      entityIds.reserve(scene.entities.size());
+      for (const auto& entity : scene.entities) {
+        entityIds.push_back(entity.id);
+      }
+
+      for (const auto& entity : scene.entities) {
+        if (entity.id.empty()) {
+          scene.valid = false;
+          markAssetInvalid(
+            DataAssetKind::scene,
+            scene.name,
+            scene.sourcePath,
+            "scene entity is missing an id");
+          break;
+        }
+
+        if (entity.sourcePrefab.empty() || !hasValidPrefab(entity.sourcePrefab)) {
+          scene.valid = false;
+          markAssetInvalid(
+            DataAssetKind::scene,
+            scene.name,
+            scene.sourcePath,
+            "entity '" + entity.id + "' source_prefab references missing prefab '" + entity.sourcePrefab + "'");
+          break;
+        }
+
+        if (!entity.parent.empty()) {
+          if (entity.parent == entity.id) {
+            scene.valid = false;
+            markAssetInvalid(
+              DataAssetKind::scene,
+              scene.name,
+              scene.sourcePath,
+              "entity '" + entity.id + "' cannot parent itself");
+            break;
+          }
+
+          if (std::find(entityIds.begin(), entityIds.end(), entity.parent) == entityIds.end()) {
+            scene.valid = false;
+            markAssetInvalid(
+              DataAssetKind::scene,
+              scene.name,
+              scene.sourcePath,
+              "entity '" + entity.id + "' parent references missing entity '" + entity.parent + "'");
+            break;
+          }
+        }
       }
     }
 
@@ -795,10 +950,36 @@ std::string DataFoundation::sceneLookupSummary(std::string_view sceneName) const
     if (!scene->title.empty()) {
       summary << ", title=\"" << scene->title << '"';
     }
+    summary << ", entities=" << scene->entities.size();
     return summary.str();
   }
 
   return "Scene source missing: " + normalized + " under " + relativePathString(impl_->config.contentRoot / impl_->manifest.sceneSubdir);
+}
+
+std::string DataFoundation::sceneEntitySummary(std::string_view sceneName) const {
+  const std::string normalized = normalizeToken(std::string(sceneName));
+  const auto scene = sceneSource(normalized);
+  if (!scene.has_value()) {
+    return "Scene entity layout missing: " + normalized;
+  }
+  if (!scene->valid) {
+    return "Scene entity layout invalid: " + normalized;
+  }
+
+  std::ostringstream summary;
+  summary << "Scene entity layout: " << scene->name << " (" << scene->entities.size() << " entities)";
+  for (const auto& entity : scene->entities) {
+    summary << "\n- entity " << entity.id
+            << " -> prefab " << entity.sourcePrefab;
+    if (!entity.parent.empty()) {
+      summary << ", parent=" << entity.parent;
+    }
+    summary << ", position=(" << vector3String(entity.position) << ')'
+            << ", rotation=(" << vector3String(entity.rotation) << ')'
+            << ", scale=(" << vector3String(entity.scale) << ')';
+  }
+  return summary.str();
 }
 
 std::string DataFoundation::relationshipSummary() const {
@@ -816,6 +997,14 @@ std::string DataFoundation::relationshipSummary() const {
     }
     if (!scene.title.empty()) {
       summary << " (title=\"" << scene.title << "\")";
+    }
+    summary << " [entities=" << scene.entities.size() << ']';
+
+    for (const auto& entity : scene.entities) {
+      summary << "\n  - entity " << entity.id << " -> prefab " << entity.sourcePrefab;
+      if (!entity.parent.empty()) {
+        summary << ", parent=" << entity.parent;
+      }
     }
   }
 

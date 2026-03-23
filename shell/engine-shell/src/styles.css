@@ -1530,6 +1530,13 @@ pre {
   overflow: auto;
 }
 
+.scene-outliner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .scene-list__item,
 .scene-tree__node,
 .scene-asset__main {
@@ -1585,11 +1592,45 @@ pre {
   gap: 8px;
 }
 
+.scene-vector-field {
+  display: grid;
+  gap: 6px;
+}
+
+.scene-vector-field > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scene-vector-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.scene-vector-grid__axis {
+  display: grid;
+  gap: 4px;
+}
+
+.scene-vector-grid__axis span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .scene-asset {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   align-items: stretch;
+}
+
+.scene-asset__actions {
+  display: grid;
+  gap: 6px;
+  align-content: start;
 }
 
 .scene-empty-state,
@@ -2259,5 +2300,13 @@ pre {
 
   .scene-toolbar {
     align-items: stretch;
+  }
+
+  .scene-vector-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scene-asset {
+    grid-template-columns: 1fr;
   }
 }

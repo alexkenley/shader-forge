@@ -100,7 +100,7 @@ Current implementation status:
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
-- Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
+- Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -113,7 +113,7 @@ What is already done:
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read/write, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
 - The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, runtime build/run/pause/log controls, external-window viewer workflow diagnostics, and text-backed scene/prefab authoring saves.
 - The shell now has a first in-app reference guide foundation backed by repo-native markdown plus structured guide content so operators, terminal assistants, and future native assistants can search the same current workflow/reference surface.
-- The shell `Scene` workspace now loads current scene and prefab assets from the active session, supports deterministic save/reload/duplicate flows, and exposes the first real outliner/details/assets authoring lane with discard-by-default play mode separation.
+- The shell `Scene` workspace now loads current scene and prefab assets from the active session, supports deterministic save/reload/duplicate flows, and exposes the first real outliner/details/assets authoring lane with placed-entity create/duplicate/delete plus transform editing and discard-by-default play mode separation.
 - The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
 - The native runtime now loads `input/actions.toml` plus `input/contexts/*.input.toml` and routes SDL keyboard, mouse, and gamepad input through named engine actions.
 - The native runtime now loads a text-backed tooling layout, exposes a named tool registry, and saves a session tooling layout snapshot for later native panel persistence.
@@ -138,7 +138,7 @@ Where the build is currently up to:
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
-- Phase 5.75 groundwork now exists through shell-side scene/prefab metadata round-trip, local undo/redo, asset reassignment, and discard-by-default play mode separation, but placed-entity editing, transform gizmos, component payload authoring, and procedural bake-back flows still remain
+- Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader component payload authoring, and procedural bake-back flows still remain
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -543,12 +543,15 @@ Scope:
 Current checkpoint now implemented:
 - the shell `Scene` workspace loads `content/scenes/*.scene.toml` and `content/prefabs/*.prefab.toml` from the active session root
 - scene and prefab metadata can now round-trip back to disk through `engine_sessiond` file-write APIs
-- the shell now has a first world outliner, details inspector, asset browser, save/reload/revert/duplicate commands, and local undo/redo for this metadata slice
+- authored scenes can now declare `[entity.<id>]` sections with source-prefab, parent, position, rotation, and scale data
+- the shell now has a first world outliner, details inspector, and asset browser for scene metadata, prefab metadata, placed-entity hierarchy, and entity transform editing
+- entity create, duplicate, delete, parent reassignment, source-prefab reassignment, save/reload/revert/duplicate commands, and local undo/redo now exist for this level-authoring slice
 - edit mode and play mode separation is now honest in the shell: entering play mode discards unsaved drafts and disables persistent writes
+- the shared data foundation and `engine bake` now validate and surface scene-entity relationships instead of treating scenes as metadata-only files
+- runtime startup logs now expose the authored scene-entity layout for the active scene
 
 Still ahead inside this phase:
-- placed-entity hierarchy, transform editing, and broader component payload authoring
-- viewport gizmos and in-viewport manipulation
+- transform gizmos, in-viewport manipulation, and broader component payload authoring
 - procedural bake-back into editable scene subtrees or reusable prefabs
 
 Reference inputs:

@@ -8,23 +8,32 @@ import {
 } from './lib/sessiond';
 import {
   buildSceneAssetPath,
+  cloneSceneEntityForDuplicate,
   cloneSceneForDuplicate,
   createSceneAssetDocument,
+  createSceneEntityDocument,
   formatPrefabAssetDocument,
   formatSceneAssetDocument,
   parsePrefabAssetDocument,
   parseSceneAssetDocument,
   sanitizeAssetName,
+  sanitizeSceneEntityId,
   type PrefabAssetDocument,
   type SceneAssetDocument,
+  type SceneEntityDocument,
+  type Vector3Value,
 } from './scene-authoring';
 
 type BackendState = 'connected' | 'offline';
 type EditorMode = 'edit' | 'play';
-type SelectionNode = 'scene' | 'prefab';
+type SelectionNode = 'scene' | 'prefab' | 'entity';
 type EditorSnapshot = {
   scene: SceneAssetDocument | null;
   prefab: PrefabAssetDocument | null;
+};
+type SceneTreeRow = {
+  entity: SceneEntityDocument;
+  depth: number;
 };
 
 type SceneEditorViewProps = {
@@ -40,8 +49,22 @@ const emptySnapshot: EditorSnapshot = {
   prefab: null,
 };
 
+function cloneSceneEntity(entity: SceneEntityDocument): SceneEntityDocument {
+  return {
+    ...entity,
+    position: [...entity.position] as Vector3Value,
+    rotation: [...entity.rotation] as Vector3Value,
+    scale: [...entity.scale] as Vector3Value,
+  };
+}
+
 function cloneSceneDocument(document: SceneAssetDocument | null) {
-  return document ? { ...document } : null;
+  return document
+    ? {
+        ...document,
+        entities: document.entities.map(cloneSceneEntity),
+      }
+    : null;
 }
 
 function clonePrefabDocument(document: PrefabAssetDocument | null) {
@@ -76,6 +99,70 @@ function toSceneStatusLabel(mode: EditorMode) {
   return mode === 'edit' ? 'Edit Mode' : 'Play Mode';
 }
 
+function formatDisplayNameFromToken(value: string) {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(' ');
+}
+
+function ensureUniqueEntityId(entities: SceneEntityDocument[], preferredId: string) {
+  const normalized = sanitizeSceneEntityId(preferredId) || 'entity';
+  const existing = new Set(entities.map((entity) => entity.id));
+  if (!existing.has(normalized)) {
+    return normalized;
+  }
+  let suffix = 2;
+  while (existing.has(`${normalized}_${suffix}`)) {
+    suffix += 1;
+  }
+  return `${normalized}_${suffix}`;
+}
+
+function buildSceneTreeRows(scene: SceneAssetDocument): SceneTreeRow[] {
+  const rows: SceneTreeRow[] = [];
+  const visited = new Set<string>();
+  const childrenByParent = new Map<string, SceneEntityDocument[]>();
+
+  for (const entity of scene.entities) {
+    const parentKey = entity.parent || '';
+    const current = childrenByParent.get(parentKey) || [];
+    current.push(entity);
+    childrenByParent.set(parentKey, current);
+  }
+
+  for (const list of childrenByParent.values()) {
+    list.sort((left, right) =>
+      `${left.displayName}\0${left.id}`.localeCompare(`${right.displayName}\0${right.id}`),
+    );
+  }
+
+  function visit(parentId: string, depth: number) {
+    for (const entity of childrenByParent.get(parentId) || []) {
+      if (visited.has(entity.id)) {
+        continue;
+      }
+      visited.add(entity.id);
+      rows.push({ entity, depth });
+      visit(entity.id, depth + 1);
+    }
+  }
+
+  visit('', 0);
+
+  for (const entity of scene.entities) {
+    if (visited.has(entity.id)) {
+      continue;
+    }
+    visited.add(entity.id);
+    rows.push({ entity, depth: 0 });
+    visit(entity.id, 1);
+  }
+
+  return rows;
+}
+
 async function loadSceneDocuments(sessionId: string) {
   try {
     const listing = await listFiles(sessionId, 'content/scenes');
@@ -108,6 +195,47 @@ async function loadPrefabDocuments(sessionId: string) {
   }
 }
 
+function Vector3Editor({
+  disabled,
+  label,
+  value,
+  onChange,
+}: {
+  disabled: boolean;
+  label: string;
+  value: Vector3Value;
+  onChange: (value: Vector3Value) => void;
+}) {
+  function updateIndex(index: number, rawValue: string) {
+    const parsed = Number.parseFloat(rawValue);
+    onChange([
+      index === 0 ? (Number.isFinite(parsed) ? parsed : 0) : value[0],
+      index === 1 ? (Number.isFinite(parsed) ? parsed : 0) : value[1],
+      index === 2 ? (Number.isFinite(parsed) ? parsed : 0) : value[2],
+    ]);
+  }
+
+  return (
+    <div className="scene-vector-field">
+      <span>{label}</span>
+      <div className="scene-vector-grid">
+        {(['X', 'Y', 'Z'] as const).map((axis, index) => (
+          <label className="scene-vector-grid__axis" key={axis}>
+            <span>{axis}</span>
+            <input
+              disabled={disabled}
+              onChange={(event) => updateIndex(index, event.target.value)}
+              step="0.1"
+              type="number"
+              value={value[index]}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SceneEditorView({
   activeSession,
   launchScene,
@@ -122,6 +250,7 @@ export function SceneEditorView({
   const [prefabDocuments, setPrefabDocuments] = useState<PrefabAssetDocument[]>([]);
   const [selectedScenePath, setSelectedScenePath] = useState('');
   const [selectedNode, setSelectedNode] = useState<SelectionNode>('scene');
+  const [selectedEntityId, setSelectedEntityId] = useState('');
   const [sceneSaved, setSceneSaved] = useState<SceneAssetDocument | null>(null);
   const [prefabSaved, setPrefabSaved] = useState<PrefabAssetDocument | null>(null);
   const [history, setHistory] = useState<EditorSnapshot[]>([cloneSnapshot(emptySnapshot)]);
@@ -132,23 +261,36 @@ export function SceneEditorView({
   const currentSnapshot = history[historyIndex] || emptySnapshot;
   const sceneDraft = currentSnapshot.scene;
   const prefabDraft = currentSnapshot.prefab;
+  const selectedEntity =
+    sceneDraft?.entities.find((entity) => entity.id === selectedEntityId) || null;
+  const sceneTreeRows = useMemo(
+    () => (sceneDraft ? buildSceneTreeRows(sceneDraft) : []),
+    [sceneDraft],
+  );
+  const rootEntityCount = useMemo(
+    () => (sceneDraft ? sceneDraft.entities.filter((entity) => !entity.parent).length : 0),
+    [sceneDraft],
+  );
+  const scenePrimaryPrefab =
+    prefabDocuments.find((document) => document.name === sceneDraft?.primaryPrefab) || null;
+
   const sceneDirty = useMemo(() => {
     if (!sceneSaved || !sceneDraft) {
       return false;
     }
     return formatSceneAssetDocument(sceneSaved) !== formatSceneAssetDocument(sceneDraft);
   }, [sceneSaved, sceneDraft]);
+
   const prefabDirty = useMemo(() => {
     if (!prefabSaved || !prefabDraft || prefabSaved.path !== prefabDraft.path) {
       return false;
     }
     return formatPrefabAssetDocument(prefabSaved) !== formatPrefabAssetDocument(prefabDraft);
   }, [prefabSaved, prefabDraft]);
+
   const canEdit = mode === 'edit';
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex + 1 < history.length;
-  const scenePrimaryPrefab =
-    prefabDocuments.find((document) => document.name === sceneDraft?.primaryPrefab) || null;
 
   function resetDrafts(nextScene: SceneAssetDocument | null, nextPrefab: PrefabAssetDocument | null) {
     setHistory([
@@ -180,6 +322,16 @@ export function SceneEditorView({
     return documents.find((document) => document.name === name) || null;
   }
 
+  function setSceneSelection() {
+    setSelectedNode('scene');
+    setSelectedEntityId('');
+  }
+
+  function setEntitySelection(entityId: string) {
+    setSelectedNode('entity');
+    setSelectedEntityId(entityId);
+  }
+
   function openSceneDocument(
     nextScene: SceneAssetDocument,
     nextPrefabs = prefabDocuments,
@@ -189,9 +341,9 @@ export function SceneEditorView({
     setSelectedScenePath(nextScene.path);
     setSceneSaved(nextScene);
     setPrefabSaved(matchedPrefab);
-    setSelectedNode('scene');
     setMode(nextMode);
     resetDrafts(nextScene, matchedPrefab);
+    setSceneSelection();
     setDuplicateSceneName(nextScene.name ? `${nextScene.name}_copy` : '');
     setStatusMessage(`Opened scene ${nextScene.name}.`);
     onLaunchSceneChange(nextScene.name);
@@ -208,7 +360,7 @@ export function SceneEditorView({
         setSelectedScenePath('');
         setSceneSaved(null);
         setPrefabSaved(null);
-        setSelectedNode('scene');
+        setSceneSelection();
         setMode('edit');
         resetDrafts(null, null);
         setStatusMessage('Select a session to load scene authoring assets.');
@@ -233,10 +385,13 @@ export function SceneEditorView({
           setSelectedScenePath('');
           setSceneSaved(null);
           setPrefabSaved(null);
-          setSelectedNode('scene');
+          setSceneSelection();
           resetDrafts(null, null);
           setStatusMessage('No `.scene.toml` files found under `content/scenes` for this session.');
-          onBackendStatus('connected', `Loaded authoring session ${activeSession.name}, but no scene assets were found.`);
+          onBackendStatus(
+            'connected',
+            `Loaded authoring session ${activeSession.name}, but no scene assets were found.`,
+          );
           return;
         }
 
@@ -283,6 +438,7 @@ export function SceneEditorView({
         setSelectedScenePath('');
         setSceneSaved(null);
         setPrefabSaved(null);
+        setSceneSelection();
         resetDrafts(null, null);
         setStatusMessage('Reloaded from disk. No scene assets remain in `content/scenes`.');
         onBackendStatus('connected', 'Reloaded scene authoring data from disk.');
@@ -293,17 +449,15 @@ export function SceneEditorView({
         nextScenes.find((document) => document.path === selectedScenePath) ||
         nextScenes.find((document) => document.name === launchScene) ||
         nextScenes[0];
-      const nextMode = mode;
       const matchedPrefab = findPrefabByName(preferredScene.primaryPrefab, nextPrefabs);
       setSelectedScenePath(preferredScene.path);
       setSceneSaved(preferredScene);
       setPrefabSaved(matchedPrefab);
       resetDrafts(preferredScene, matchedPrefab);
-      setSelectedNode('scene');
+      setSceneSelection();
       setStatusMessage(`Reloaded scene ${preferredScene.name} from disk.`);
       onLaunchSceneChange(preferredScene.name);
       onBackendStatus('connected', `Reloaded scene ${preferredScene.name} from disk.`);
-      setMode(nextMode);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
@@ -323,7 +477,7 @@ export function SceneEditorView({
         resetDrafts(sceneSaved, prefabSaved);
       }
       setMode('play');
-      setSelectedNode('scene');
+      setSceneSelection();
       const message =
         sceneDirty || prefabDirty
           ? 'Entered Play Mode. Unsaved authoring edits were discarded.'
@@ -344,10 +498,7 @@ export function SceneEditorView({
   function updateSceneDraft(nextScene: SceneAssetDocument) {
     commitDraft({
       scene: cloneSceneDocument(nextScene),
-      prefab:
-        selectedNode === 'scene'
-          ? clonePrefabDocument(findPrefabByName(nextScene.primaryPrefab) || prefabDraft)
-          : clonePrefabDocument(prefabDraft),
+      prefab: clonePrefabDocument(prefabDraft),
     });
   }
 
@@ -368,6 +519,19 @@ export function SceneEditorView({
     setStatusMessage(`Inspecting prefab ${document.name}.`);
   }
 
+  function updateSelectedEntity(updater: (entity: SceneEntityDocument) => SceneEntityDocument) {
+    if (!sceneDraft || !selectedEntity || !canEdit) {
+      return;
+    }
+    const nextEntities = sceneDraft.entities.map((entity) =>
+      entity.id === selectedEntity.id ? updater(entity) : entity,
+    );
+    updateSceneDraft({
+      ...sceneDraft,
+      entities: nextEntities,
+    });
+  }
+
   function selectPrimaryPrefab(document: PrefabAssetDocument) {
     if (!sceneDraft || !canEdit) {
       return;
@@ -376,8 +540,65 @@ export function SceneEditorView({
       ...sceneDraft,
       primaryPrefab: document.name,
     });
-    setSelectedNode('scene');
+    setSceneSelection();
     setStatusMessage(`Primary prefab for ${sceneDraft.name} set to ${document.name}.`);
+  }
+
+  function instantiatePrefab(document: PrefabAssetDocument, preferredName = '') {
+    if (!sceneDraft || !canEdit) {
+      return;
+    }
+
+    const baseName = preferredName.trim() || `${formatDisplayNameFromToken(document.name)} Instance`;
+    const nextId = ensureUniqueEntityId(sceneDraft.entities, preferredName || `${document.name}_instance`);
+    const nextEntity = createSceneEntityDocument(baseName, document.name, nextId);
+    const nextScene = {
+      ...sceneDraft,
+      entities: [...sceneDraft.entities, nextEntity],
+    };
+    updateSceneDraft(nextScene);
+    setEntitySelection(nextEntity.id);
+    setStatusMessage(`Added entity ${nextEntity.id} from prefab ${document.name}.`);
+  }
+
+  function duplicateSelectedEntity() {
+    if (!sceneDraft || !selectedEntity || !canEdit) {
+      return;
+    }
+
+    const duplicate = cloneSceneEntityForDuplicate(selectedEntity, `${selectedEntity.id}_copy`);
+    duplicate.id = ensureUniqueEntityId(sceneDraft.entities, duplicate.id);
+    duplicate.displayName = `${selectedEntity.displayName} Copy`;
+    const nextScene = {
+      ...sceneDraft,
+      entities: [...sceneDraft.entities, duplicate],
+    };
+    updateSceneDraft(nextScene);
+    setEntitySelection(duplicate.id);
+    setStatusMessage(`Duplicated entity ${selectedEntity.id} into ${duplicate.id}.`);
+  }
+
+  function deleteSelectedEntity() {
+    if (!sceneDraft || !selectedEntity || !canEdit) {
+      return;
+    }
+
+    const nextEntities = sceneDraft.entities
+      .filter((entity) => entity.id !== selectedEntity.id)
+      .map((entity) =>
+        entity.parent === selectedEntity.id
+          ? {
+              ...entity,
+              parent: selectedEntity.parent,
+            }
+          : entity,
+      );
+    updateSceneDraft({
+      ...sceneDraft,
+      entities: nextEntities,
+    });
+    setSceneSelection();
+    setStatusMessage(`Deleted entity ${selectedEntity.id}.`);
   }
 
   async function handleSaveScene() {
@@ -402,6 +623,9 @@ export function SceneEditorView({
         scene: cloneSceneDocument(nextScene),
         prefab: clonePrefabDocument(prefabDraft),
       });
+      if (selectedEntityId && !nextScene.entities.some((entity) => entity.id === selectedEntityId)) {
+        setSceneSelection();
+      }
       setStatusMessage(`Saved scene ${nextScene.name} to ${nextScene.path}.`);
       onLaunchSceneChange(nextScene.name);
       onBackendStatus('connected', `Saved scene ${nextScene.name}.`);
@@ -529,7 +753,7 @@ export function SceneEditorView({
 
   function handleRevertDrafts() {
     resetDrafts(sceneSaved, prefabSaved);
-    setSelectedNode('scene');
+    setSceneSelection();
     const message = sceneSaved
       ? `Reverted unsaved edits for ${sceneSaved.name}.`
       : 'Reverted unsaved edits.';
@@ -570,7 +794,8 @@ export function SceneEditorView({
         </section>
         <section className="surface">
           <div className="scene-empty-state">
-            World outliner, details, and asset panels appear once a workspace session is active.
+            World outliner, details, asset placement, and transform panels appear once a workspace
+            session is active.
           </div>
         </section>
       </div>
@@ -586,7 +811,7 @@ export function SceneEditorView({
             <h2>Scene Editor</h2>
             <p>
               Repo-backed `content/scenes/*.scene.toml` and `content/prefabs/*.prefab.toml`
-              authoring with deterministic save, duplicate, and reload flows.
+              authoring with placed entities, transform fields, and deterministic save/reload flows.
             </p>
           </div>
           <div className="inline-actions">
@@ -693,14 +918,18 @@ export function SceneEditorView({
                   <strong>{runtimeStatus.state}</strong>
                 </div>
                 <div>
+                  <span>Entities</span>
+                  <strong>{sceneDraft?.entities.length || 0}</strong>
+                </div>
+                <div>
                   <span>Primary prefab</span>
                   <strong>{sceneDraft?.primaryPrefab || 'unassigned'}</strong>
                 </div>
               </div>
             </div>
             <div className="scene-note">
-              Transform gizmos and in-viewport manipulation are still ahead. This slice makes the
-              `Scene` workspace a real text-asset authoring lane now.
+              Transform gizmos and live viewport manipulation are still ahead. This slice makes the
+              `Scene` workspace author real placed-entity and transform data now.
             </div>
           </article>
 
@@ -789,14 +1018,14 @@ export function SceneEditorView({
             <p>{sceneDirty ? 'Scene draft differs from disk.' : prefabDirty ? 'Prefab draft differs from disk.' : 'Draft matches the last disk load or save.'}</p>
           </article>
           <article className="mini-card">
-            <span>Scene files</span>
-            <strong>{sceneDocuments.length}</strong>
-            <p>`content/scenes/*.scene.toml` is the current authoring root.</p>
+            <span>Entities</span>
+            <strong>{sceneDraft?.entities.length || 0}</strong>
+            <p>{rootEntityCount} root entities are currently authored in the active scene.</p>
           </article>
           <article className="mini-card">
             <span>Prefab files</span>
             <strong>{prefabDocuments.length}</strong>
-            <p>`content/prefabs/*.prefab.toml` is the current prefab authoring root.</p>
+            <p>`content/prefabs/*.prefab.toml` is the current placement catalog.</p>
           </article>
         </div>
       </section>
@@ -806,7 +1035,7 @@ export function SceneEditorView({
           <div>
             <div className="surface-eyebrow">Level Tools</div>
             <h2>Outliner, Details, And Assets</h2>
-            <p>Shell-side level authoring now round-trips to the same text assets used by the runtime and future native tools.</p>
+            <p>Shell-side level authoring now round-trips scene metadata, placed entities, hierarchy, and transforms through the same text assets the runtime and bake lane read.</p>
           </div>
         </div>
 
@@ -817,35 +1046,60 @@ export function SceneEditorView({
                 <span>World outliner</span>
                 <strong>{sceneDraft?.name || 'No scene selected'}</strong>
               </div>
-              <span>{selectedNode === 'scene' ? 'scene' : 'prefab'}</span>
+              <span>{selectedNode}</span>
+            </div>
+            <div className="scene-outliner-actions">
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={!sceneDraft || !canEdit || busy || !prefabDocuments.length}
+                onClick={() => instantiatePrefab(scenePrimaryPrefab || prefabDocuments[0])}
+                type="button"
+              >
+                Add Entity
+              </button>
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={!selectedEntity || !canEdit || busy}
+                onClick={duplicateSelectedEntity}
+                type="button"
+              >
+                Duplicate Entity
+              </button>
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={!selectedEntity || !canEdit || busy}
+                onClick={deleteSelectedEntity}
+                type="button"
+              >
+                Delete Entity
+              </button>
             </div>
             {sceneDraft ? (
               <div className="scene-tree">
                 <button
                   className={`scene-tree__node${selectedNode === 'scene' ? ' is-active' : ''}`}
-                  onClick={() => setSelectedNode('scene')}
+                  onClick={setSceneSelection}
                   type="button"
                 >
                   <strong>{sceneDraft.title}</strong>
                   <span>{sceneDraft.path}</span>
                 </button>
-                <button
-                  className={`scene-tree__node${selectedNode === 'prefab' ? ' is-active' : ''}`}
-                  disabled={!scenePrimaryPrefab}
-                  onClick={() => {
-                    if (scenePrimaryPrefab) {
-                      inspectPrefab(scenePrimaryPrefab);
-                    }
-                  }}
-                  type="button"
-                >
-                  <strong>{sceneDraft.primaryPrefab || 'No primary prefab'}</strong>
-                  <span>{scenePrimaryPrefab?.path || 'Assign a prefab from Assets.'}</span>
-                </button>
+                {sceneTreeRows.map((row) => (
+                  <button
+                    className={`scene-tree__node${selectedNode === 'entity' && selectedEntityId === row.entity.id ? ' is-active' : ''}`}
+                    key={row.entity.id}
+                    onClick={() => setEntitySelection(row.entity.id)}
+                    style={{ paddingLeft: `${10 + row.depth * 18}px` }}
+                    type="button"
+                  >
+                    <strong>{row.entity.displayName}</strong>
+                    <span>{row.entity.id} · prefab {row.entity.sourcePrefab}</span>
+                  </button>
+                ))}
               </div>
             ) : (
               <div className="scene-empty-state scene-empty-state--compact">
-                Open a scene to inspect its authoring nodes.
+                Open a scene to inspect its authored entity hierarchy.
               </div>
             )}
           </article>
@@ -854,9 +1108,21 @@ export function SceneEditorView({
             <div className="scene-card__header">
               <div>
                 <span>Details</span>
-                <strong>{selectedNode === 'scene' ? 'Scene asset' : 'Prefab asset'}</strong>
+                <strong>
+                  {selectedNode === 'scene'
+                    ? 'Scene asset'
+                    : selectedNode === 'entity'
+                      ? 'Placed entity'
+                      : 'Prefab asset'}
+                </strong>
               </div>
-              <span>{selectedNode === 'scene' ? sceneDraft?.path || 'none' : prefabDraft?.path || 'none'}</span>
+              <span>
+                {selectedNode === 'scene'
+                  ? sceneDraft?.path || 'none'
+                  : selectedNode === 'entity'
+                    ? selectedEntity?.id || 'none'
+                    : prefabDraft?.path || 'none'}
+              </span>
             </div>
 
             {selectedNode === 'scene' && sceneDraft ? (
@@ -884,10 +1150,9 @@ export function SceneEditorView({
                   <select
                     disabled={!canEdit || busy || !prefabDocuments.length}
                     onChange={(event) => {
-                      const nextPrefabName = event.target.value;
                       updateSceneDraft({
                         ...sceneDraft,
-                        primaryPrefab: nextPrefabName,
+                        primaryPrefab: event.target.value,
                       });
                     }}
                     value={sceneDraft.primaryPrefab}
@@ -902,6 +1167,10 @@ export function SceneEditorView({
                 </label>
                 <dl className="fact-list">
                   <div>
+                    <dt>Entities</dt>
+                    <dd>{sceneDraft.entities.length}</dd>
+                  </div>
+                  <div>
                     <dt>Schema</dt>
                     <dd>{sceneDraft.schema}</dd>
                   </div>
@@ -914,6 +1183,103 @@ export function SceneEditorView({
                     <dd>{sceneSaved?.modifiedAt || 'not saved yet'}</dd>
                   </div>
                 </dl>
+              </div>
+            ) : null}
+
+            {selectedNode === 'entity' && selectedEntity && sceneDraft ? (
+              <div className="scene-details">
+                <label className="form-field">
+                  <span>Entity id</span>
+                  <input disabled type="text" value={selectedEntity.id} />
+                </label>
+                <label className="form-field">
+                  <span>Display name</span>
+                  <input
+                    disabled={!canEdit || busy}
+                    onChange={(event) =>
+                      updateSelectedEntity((entity) => ({
+                        ...entity,
+                        displayName: event.target.value,
+                      }))
+                    }
+                    type="text"
+                    value={selectedEntity.displayName}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Source prefab</span>
+                  <select
+                    disabled={!canEdit || busy || !prefabDocuments.length}
+                    onChange={(event) =>
+                      updateSelectedEntity((entity) => ({
+                        ...entity,
+                        sourcePrefab: event.target.value,
+                      }))
+                    }
+                    value={selectedEntity.sourcePrefab}
+                  >
+                    {prefabDocuments.map((document) => (
+                      <option key={document.path} value={document.name}>
+                        {document.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Parent</span>
+                  <select
+                    disabled={!canEdit || busy}
+                    onChange={(event) =>
+                      updateSelectedEntity((entity) => ({
+                        ...entity,
+                        parent: event.target.value,
+                      }))
+                    }
+                    value={selectedEntity.parent}
+                  >
+                    <option value="">Scene Root</option>
+                    {sceneDraft.entities
+                      .filter((entity) => entity.id !== selectedEntity.id)
+                      .map((entity) => (
+                        <option key={entity.id} value={entity.id}>
+                          {entity.displayName}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <Vector3Editor
+                  disabled={!canEdit || busy}
+                  label="Position"
+                  onChange={(value) =>
+                    updateSelectedEntity((entity) => ({
+                      ...entity,
+                      position: value,
+                    }))
+                  }
+                  value={selectedEntity.position}
+                />
+                <Vector3Editor
+                  disabled={!canEdit || busy}
+                  label="Rotation"
+                  onChange={(value) =>
+                    updateSelectedEntity((entity) => ({
+                      ...entity,
+                      rotation: value,
+                    }))
+                  }
+                  value={selectedEntity.rotation}
+                />
+                <Vector3Editor
+                  disabled={!canEdit || busy}
+                  label="Scale"
+                  onChange={(value) =>
+                    updateSelectedEntity((entity) => ({
+                      ...entity,
+                      scale: value,
+                    }))
+                  }
+                  value={selectedEntity.scale}
+                />
               </div>
             ) : null}
 
@@ -968,9 +1334,9 @@ export function SceneEditorView({
               </div>
             ) : null}
 
-            {selectedNode === 'prefab' && !prefabDraft ? (
+            {(selectedNode === 'entity' && !selectedEntity) || (selectedNode === 'prefab' && !prefabDraft) ? (
               <div className="scene-empty-state scene-empty-state--compact">
-                Select a prefab from the outliner or asset browser to inspect it.
+                Select an entity or prefab to inspect it.
               </div>
             ) : null}
           </article>
@@ -995,14 +1361,24 @@ export function SceneEditorView({
                       <strong>{document.name}</strong>
                       <span>{document.category}</span>
                     </button>
-                    <button
-                      className="ghost-button ghost-button--sm"
-                      disabled={!sceneDraft || !canEdit || busy}
-                      onClick={() => selectPrimaryPrefab(document)}
-                      type="button"
-                    >
-                      {sceneDraft?.primaryPrefab === document.name ? 'Primary' : 'Use As Primary'}
-                    </button>
+                    <div className="scene-asset__actions">
+                      <button
+                        className="ghost-button ghost-button--sm"
+                        disabled={!sceneDraft || !canEdit || busy}
+                        onClick={() => selectPrimaryPrefab(document)}
+                        type="button"
+                      >
+                        {sceneDraft?.primaryPrefab === document.name ? 'Primary' : 'Use As Primary'}
+                      </button>
+                      <button
+                        className="ghost-button ghost-button--sm"
+                        disabled={!sceneDraft || !canEdit || busy}
+                        onClick={() => instantiatePrefab(document)}
+                        type="button"
+                      >
+                        Add To Scene
+                      </button>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -1026,7 +1402,8 @@ export function SceneEditorView({
               <p>
                 Current authoring roots: `content/scenes`, `content/prefabs`. Play Mode is
                 intentionally discard-only in this slice so runtime actions cannot overwrite source
-                assets silently.
+                assets silently, while placed entities and transforms still round-trip through the
+                same text assets.
               </p>
             </div>
           </article>
