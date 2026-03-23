@@ -14,6 +14,9 @@ const audioEventPath = path.join(repoRoot, 'audio', 'events', 'ui_accept.audio-e
 const animationSkeletonPath = path.join(repoRoot, 'animation', 'skeletons', 'debug_humanoid.skeleton.toml');
 const animationClipPath = path.join(repoRoot, 'animation', 'clips', 'debug_walk.anim.toml');
 const animationGraphPath = path.join(repoRoot, 'animation', 'graphs', 'debug_actor.animgraph.toml');
+const physicsLayersPath = path.join(repoRoot, 'physics', 'layers.toml');
+const physicsMaterialPath = path.join(repoRoot, 'physics', 'materials', 'default_surface.physics-material.toml');
+const physicsBodyPath = path.join(repoRoot, 'physics', 'bodies', 'debug_crate.physics-body.toml');
 const procgeoFloorPath = path.join(repoRoot, 'content', 'procgeo', 'sandbox_floor.procgeo.toml');
 const procgeoCratePath = path.join(repoRoot, 'content', 'procgeo', 'debug_crate.procgeo.toml');
 const tempRoot = path.join(repoRoot, 'tmp', 'asset-pipeline-harness');
@@ -28,12 +31,16 @@ const audioEvent = fs.readFileSync(audioEventPath, 'utf8');
 const animationSkeleton = fs.readFileSync(animationSkeletonPath, 'utf8');
 const animationClip = fs.readFileSync(animationClipPath, 'utf8');
 const animationGraph = fs.readFileSync(animationGraphPath, 'utf8');
+const physicsLayers = fs.readFileSync(physicsLayersPath, 'utf8');
+const physicsMaterial = fs.readFileSync(physicsMaterialPath, 'utf8');
+const physicsBody = fs.readFileSync(physicsBodyPath, 'utf8');
 const procgeoFloor = fs.readFileSync(procgeoFloorPath, 'utf8');
 const procgeoCrate = fs.readFileSync(procgeoCratePath, 'utf8');
 
 assert.match(cliSource, /engine bake/);
 assert.match(cliSource, /--audio-root/);
 assert.match(cliSource, /--animation-root/);
+assert.match(cliSource, /--physics-root/);
 assert.match(cliSource, /asset bake/i);
 assert.match(assetPipelineSource, /shader_forge\.procgeo/);
 assert.match(assetPipelineSource, /shader_forge\.audio_buses/);
@@ -42,6 +49,9 @@ assert.match(assetPipelineSource, /shader_forge\.audio_event/);
 assert.match(assetPipelineSource, /shader_forge\.skeleton/);
 assert.match(assetPipelineSource, /shader_forge\.animation_clip/);
 assert.match(assetPipelineSource, /shader_forge\.animation_graph/);
+assert.match(assetPipelineSource, /shader_forge\.physics_layers/);
+assert.match(assetPipelineSource, /shader_forge\.physics_material/);
+assert.match(assetPipelineSource, /shader_forge\.physics_body/);
 assert.match(assetPipelineSource, /generated_mesh/);
 assert.match(assetPipelineSource, /generated-meshes/);
 assert.match(assetPipelineSource, /plane_grid/);
@@ -61,6 +71,11 @@ assert.match(animationClip, /schema = "shader_forge\.animation_clip"/);
 assert.match(animationClip, /target = "player_footstep"/);
 assert.match(animationGraph, /schema = "shader_forge\.animation_graph"/);
 assert.match(animationGraph, /\[state\.walk\]/);
+assert.match(physicsLayers, /schema = "shader_forge\.physics_layers"/);
+assert.match(physicsLayers, /\[layer\.World_Dynamic\]/);
+assert.match(physicsMaterial, /schema = "shader_forge\.physics_material"/);
+assert.match(physicsBody, /schema = "shader_forge\.physics_body"/);
+assert.match(physicsBody, /layer = "World_Dynamic"/);
 assert.match(procgeoFloor, /schema = "shader_forge\.procgeo"/);
 assert.match(procgeoFloor, /generator = "plane_grid"/);
 assert.match(procgeoFloor, /bake_output = "generated_mesh"/);
@@ -80,6 +95,8 @@ const bakeRun = spawnSync(
     'audio',
     '--animation-root',
     'animation',
+    '--physics-root',
+    'physics',
     '--data-foundation',
     'data/foundation/engine-data-layout.toml',
     '--output-root',
@@ -118,18 +135,25 @@ assert.equal(report.counts.audioEvents, 3);
 assert.equal(report.counts.animationSkeletons, 1);
 assert.equal(report.counts.animationClips, 2);
 assert.equal(report.counts.animationGraphs, 1);
+assert.equal(report.counts.physicsLayers, 3);
+assert.equal(report.counts.physicsMaterials, 2);
+assert.equal(report.counts.physicsBodies, 3);
 assert.equal(report.invalidAssets.length, 0);
 assert.equal(report.invalidAudioAssets.length, 0);
 assert.equal(report.invalidAnimationAssets.length, 0);
+assert.equal(report.invalidPhysicsAssets.length, 0);
 assert.equal(report.generatedMeshes.length, 2);
 assert.equal(report.audio.bakedSounds.length, 3);
 assert.equal(report.audio.bakedEvents.length, 3);
 assert.equal(report.animation.bakedSkeletons.length, 1);
 assert.equal(report.animation.bakedClips.length, 2);
 assert.equal(report.animation.bakedGraphs.length, 1);
+assert.equal(report.physics.bakedMaterials.length, 2);
+assert.equal(report.physics.bakedBodies.length, 3);
 assert.match(report.notes.join('\n'), /FlatBuffers writer lands/);
 assert.match(report.notes.join('\n'), /Audio currently bakes staged bus, sound, and event metadata registries/);
 assert.match(report.notes.join('\n'), /Animation currently bakes staged skeleton, clip, and graph metadata registries/);
+assert.match(report.notes.join('\n'), /Physics currently bakes staged layer, material, and body metadata registries/);
 
 const cookedScenePath = path.join(tempRoot, 'scenes', 'sandbox.bin');
 const cookedProcgeoPath = path.join(tempRoot, 'procgeo', 'sandbox_floor.bin');
@@ -139,6 +163,9 @@ const cookedAudioEventPath = path.join(tempRoot, 'audio', 'events', 'ui_accept.b
 const cookedAnimationSkeletonPath = path.join(tempRoot, 'animation', 'skeletons', 'debug_humanoid.bin');
 const cookedAnimationClipPath = path.join(tempRoot, 'animation', 'clips', 'debug_walk.bin');
 const cookedAnimationGraphPath = path.join(tempRoot, 'animation', 'graphs', 'debug_actor.bin');
+const cookedPhysicsLayersPath = path.join(tempRoot, 'physics', 'layers.bin');
+const cookedPhysicsMaterialPath = path.join(tempRoot, 'physics', 'materials', 'default_surface.bin');
+const cookedPhysicsBodyPath = path.join(tempRoot, 'physics', 'bodies', 'debug_crate.bin');
 const floorPreviewPath = path.join(tempRoot, 'generated-meshes', 'sandbox_floor.mesh.json');
 const cratePreviewPath = path.join(tempRoot, 'generated-meshes', 'debug_crate.mesh.json');
 
@@ -150,6 +177,9 @@ assert.ok(fs.existsSync(cookedAudioEventPath), 'Expected staged cooked audio eve
 assert.ok(fs.existsSync(cookedAnimationSkeletonPath), 'Expected staged cooked animation skeleton payload.');
 assert.ok(fs.existsSync(cookedAnimationClipPath), 'Expected staged cooked animation clip payload.');
 assert.ok(fs.existsSync(cookedAnimationGraphPath), 'Expected staged cooked animation graph payload.');
+assert.ok(fs.existsSync(cookedPhysicsLayersPath), 'Expected staged cooked physics layers payload.');
+assert.ok(fs.existsSync(cookedPhysicsMaterialPath), 'Expected staged cooked physics material payload.');
+assert.ok(fs.existsSync(cookedPhysicsBodyPath), 'Expected staged cooked physics body payload.');
 assert.ok(fs.existsSync(floorPreviewPath), 'Expected generated plane-grid preview output.');
 assert.ok(fs.existsSync(cratePreviewPath), 'Expected generated box preview output.');
 
@@ -169,4 +199,5 @@ console.log(`- Verified CLI bake lane through ${cliPath}`);
 console.log(`- Verified procgeo source assets under ${path.join(repoRoot, 'content', 'procgeo')}`);
 console.log(`- Verified authored audio assets under ${path.join(repoRoot, 'audio')}`);
 console.log(`- Verified authored animation assets under ${path.join(repoRoot, 'animation')}`);
-console.log('- Verified staged cooked outputs, staged cooked audio/animation metadata, and generated mesh previews are emitted under the configured cook root');
+console.log(`- Verified authored physics assets under ${path.join(repoRoot, 'physics')}`);
+console.log('- Verified staged cooked outputs, staged cooked audio/animation/physics metadata, and generated mesh previews are emitted under the configured cook root');

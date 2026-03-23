@@ -143,6 +143,10 @@ try {
         & npm run test:animation-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Animation scaffold test failed" }
 
+        Write-Host "[shader-forge] Running physics scaffold harness..."
+        & npm run test:physics-scaffold
+        if ($LASTEXITCODE -ne 0) { throw "Physics scaffold test failed" }
+
         Write-Host "[shader-forge] Running input scaffold harness..."
         & npm run test:input-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Input scaffold test failed" }

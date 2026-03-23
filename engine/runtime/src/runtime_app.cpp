@@ -2,6 +2,7 @@
 #include "shader_forge/runtime/audio_system.hpp"
 #include "shader_forge/runtime/data_foundation.hpp"
 #include "shader_forge/runtime/input_system.hpp"
+#include "shader_forge/runtime/physics_system.hpp"
 #include "shader_forge/runtime/runtime_app.hpp"
 #include "shader_forge/runtime/tooling_ui.hpp"
 
@@ -355,6 +356,7 @@ private:
     initializeAnimationSystem();
     initializeDataFoundation();
     resolveDataDrivenRuntimeState();
+    initializePhysicsSystem();
     resolveAnimationRuntimeState();
     initializeToolingUi();
     applyBootstrapPreferences();
@@ -422,6 +424,13 @@ private:
       .foundationPath = config_.dataFoundationPath,
     }, &error)) {
       throw std::runtime_error("Data foundation initialization failed: " + error);
+    }
+  }
+
+  void initializePhysicsSystem() {
+    std::string error;
+    if (!physicsSystem_.loadFromDisk(PhysicsConfig{.rootPath = config_.physicsRoot}, &error)) {
+      throw std::runtime_error("Physics system initialization failed: " + error);
     }
   }
 
@@ -793,6 +802,7 @@ private:
             << ", content-root=" << std::filesystem::absolute(config_.contentRoot).string()
             << ", audio-root=" << std::filesystem::absolute(config_.audioRoot).string()
             << ", animation-root=" << std::filesystem::absolute(config_.animationRoot).string()
+            << ", physics-root=" << std::filesystem::absolute(config_.physicsRoot).string()
             << ", data-foundation=" << std::filesystem::absolute(config_.dataFoundationPath).string()
             << ", tooling-layout=" << std::filesystem::absolute(config_.toolingLayoutPath).string();
     logRuntimeLine(startup.str());
@@ -805,18 +815,22 @@ private:
     }
     logRuntimeLine(audioSystem_.foundationSummary());
     logRuntimeLine(animationSystem_.foundationSummary());
+    logRuntimeLine(physicsSystem_.foundationSummary());
     logRuntimeLine(dataFoundation_.foundationSummary());
     logRuntimeLine(dataFoundation_.assetCatalogSummary());
     logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
     logRuntimeMultiline(audioSystem_.busRoutingSummary());
     logRuntimeMultiline(audioSystem_.eventCatalogSummary());
     logRuntimeMultiline(animationSystem_.graphCatalogSummary());
+    logRuntimeMultiline(physicsSystem_.layerMatrixSummary());
+    logRuntimeMultiline(physicsSystem_.sceneBodySummary(activeSceneName_));
     logRuntimeMultiline(dataFoundation_.relationshipSummary());
     logRuntimeMultiline(dataFoundation_.cookPlanSummary());
     logRuntimeMultiline(inputSystem_.bindingSummary());
     logRuntimeMultiline(toolingUi_.panelRegistrySummary());
     triggerAudioEvent("runtime_boot", "startup");
     triggerAnimationGraph(activeAnimationGraphName_, "startup");
+    logPhysicsQueries("startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
       "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, and F2-F6 for tooling panels.");
@@ -873,6 +887,37 @@ private:
         triggerAudioEvent(eventSnapshot.target, std::string(reason) + ":animation_event");
       }
     }
+  }
+
+  void logPhysicsQueries(std::string_view reason) {
+    const auto raycastHit = physicsSystem_.raycastScene(
+      activeSceneName_.empty() ? config_.scene : activeSceneName_,
+      std::array<double, 3>{0.0, 3.0, 0.0},
+      std::array<double, 3>{0.0, -1.0, 0.0},
+      10.0);
+    if (raycastHit.has_value()) {
+      std::ostringstream rayMessage;
+      rayMessage << "Physics raycast via " << reason
+                 << ": hit=" << raycastHit->bodyName
+                 << ", layer=" << raycastHit->layerName
+                 << ", material=" << raycastHit->materialName
+                 << ", shape=" << raycastHit->shapeType
+                 << ", distance=" << raycastHit->distance;
+      logRuntimeLine(rayMessage.str());
+    } else {
+      logRuntimeLine("Physics raycast via " + std::string(reason) + ": no hit.");
+    }
+
+    const auto overlaps = physicsSystem_.overlapSphereScene(
+      activeSceneName_.empty() ? config_.scene : activeSceneName_,
+      std::array<double, 3>{0.0, 0.5, 0.0},
+      0.75);
+    std::ostringstream overlapMessage;
+    overlapMessage << "Physics overlap via " << reason << ": count=" << overlaps.size();
+    for (const auto& overlap : overlaps) {
+      overlapMessage << " [" << overlap.bodyName << ':' << overlap.layerName << ']';
+    }
+    logRuntimeLine(overlapMessage.str());
   }
 
   void logSwapchain(const char* prefix) {
@@ -1042,6 +1087,7 @@ private:
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
       logRuntimeLine("ui_back action triggered.");
       triggerAnimationGraph(activeAnimationGraphName_, "ui_back");
+      logPhysicsQueries("ui_back");
     }
 
     moveX_ = inputSystem_.actionValue("move_x");
@@ -1273,6 +1319,7 @@ private:
   AudioSystem audioSystem_;
   DataFoundation dataFoundation_;
   InputSystem inputSystem_;
+  PhysicsSystem physicsSystem_;
   ToolingUiSystem toolingUi_;
   SDL_Window* window_ = nullptr;
   bool sdlInitialized_ = false;

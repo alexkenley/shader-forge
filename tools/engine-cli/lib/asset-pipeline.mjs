@@ -166,6 +166,18 @@ function parseListValue(rawValue) {
     .filter(Boolean);
 }
 
+function parseVector3Value(rawValue) {
+  const parts = parseStringValue(rawValue)
+    .split(',')
+    .map((item) => trim(item))
+    .filter((item) => item.length > 0);
+  if (parts.length !== 3) {
+    return null;
+  }
+  const values = parts.map((part) => Number.parseFloat(part));
+  return values.every((value) => Number.isFinite(value)) ? values : null;
+}
+
 function defaultFoundationManifest() {
   return {
     foundation_name: 'Shader Forge Data Foundation',
@@ -1141,6 +1153,311 @@ function scanAnimationAssets(repoRoot, animationRoot, outputRoot, audioScan) {
   };
 }
 
+function parsePhysicsLayersDocument(filePath) {
+  const content = fs.readFileSync(filePath, 'utf8');
+  const lines = content.split(/\r?\n/);
+  const document = {
+    schema: '',
+    schema_version: 0,
+    layers: [],
+  };
+  let currentLayer = null;
+
+  for (const rawLine of lines) {
+    const cleaned = stripComment(rawLine);
+    if (!cleaned) {
+      continue;
+    }
+
+    if (cleaned.startsWith('[') && cleaned.endsWith(']')) {
+      const section = trim(cleaned.slice(1, -1));
+      if (!section.startsWith('layer.')) {
+        throw new Error(`Invalid physics layer section "${section}" in ${filePath}`);
+      }
+      const rawName = trim(section.slice(6));
+      currentLayer = {
+        name: normalizeToken(rawName),
+        displayName: rawName,
+        collidesWith: [],
+        queryable: false,
+        staticOnly: false,
+      };
+      document.layers.push(currentLayer);
+      continue;
+    }
+
+    const pair = parseKeyValue(cleaned);
+    if (!pair) {
+      continue;
+    }
+
+    if (!currentLayer) {
+      if (pair.key === 'schema') {
+        document.schema = parseStringValue(pair.value).toLowerCase();
+      } else if (pair.key === 'schema_version') {
+        document.schema_version = parseIntegerValue(pair.value) ?? 0;
+      }
+      continue;
+    }
+
+    if (pair.key === 'display_name') {
+      currentLayer.displayName = parseStringValue(pair.value);
+    } else if (pair.key === 'collides_with') {
+      currentLayer.collidesWith = parseListValue(pair.value);
+    } else if (pair.key === 'queryable') {
+      currentLayer.queryable = parseBooleanValue(pair.value) ?? false;
+    } else if (pair.key === 'static_only') {
+      currentLayer.staticOnly = parseBooleanValue(pair.value) ?? false;
+    }
+  }
+
+  return document;
+}
+
+function scanPhysicsAssets(repoRoot, physicsRoot, outputRoot) {
+  const layersPath = path.join(physicsRoot, 'layers.toml');
+  const materialsRoot = path.join(physicsRoot, 'materials');
+  const bodiesRoot = path.join(physicsRoot, 'bodies');
+  const warnings = [];
+  const relationships = [];
+
+  if (!fs.existsSync(layersPath)) {
+    throw new Error(`Expected physics layers file is missing: ${relativePathFromRepo(repoRoot, layersPath)}`);
+  }
+  if (!fs.existsSync(materialsRoot)) {
+    throw new Error(`Expected physics materials directory is missing: ${relativePathFromRepo(repoRoot, materialsRoot)}`);
+  }
+  if (!fs.existsSync(bodiesRoot)) {
+    throw new Error(`Expected physics bodies directory is missing: ${relativePathFromRepo(repoRoot, bodiesRoot)}`);
+  }
+
+  const layerDocument = parsePhysicsLayersDocument(layersPath);
+  if (layerDocument.schema !== 'shader_forge.physics_layers') {
+    throw new Error(`Physics layers file schema must be "shader_forge.physics_layers": ${relativePathFromRepo(repoRoot, layersPath)}`);
+  }
+  if (layerDocument.schema_version <= 0) {
+    throw new Error(`Physics layers file schema_version must be a positive integer: ${relativePathFromRepo(repoRoot, layersPath)}`);
+  }
+
+  const requiredLayers = ['world_static', 'world_dynamic', 'query_only'];
+  const layerNames = new Set(layerDocument.layers.map((layer) => layer.name));
+  for (const requiredLayer of requiredLayers) {
+    if (!layerNames.has(requiredLayer)) {
+      throw new Error(`Physics layers file is missing required layer "${requiredLayer}": ${relativePathFromRepo(repoRoot, layersPath)}`);
+    }
+  }
+  for (const layer of layerDocument.layers) {
+    for (const collisionLayer of layer.collidesWith) {
+      if (!layerNames.has(collisionLayer)) {
+        throw new Error(`Physics layer "${layer.name}" references missing collides_with layer "${collisionLayer}".`);
+      }
+    }
+  }
+
+  const bakedLayersPath = path.join(outputRoot, 'physics', 'layers.bin');
+  writeStageBinary(bakedLayersPath, {
+    format: 'shader_forge.cooked_physics.stage',
+    stagedEncoding: 'json_utf8_placeholder',
+    kind: 'layers',
+    sourcePath: relativePathFromRepo(repoRoot, layersPath),
+    layers: layerDocument.layers,
+  });
+
+  const materials = [];
+  for (const entry of fs.readdirSync(materialsRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const sourcePath = path.join(materialsRoot, entry.name);
+    const fields = parseTomlDocument(sourcePath);
+    const name = normalizeToken(parseStringValue(fields.name || ''));
+    const schema = parseStringValue(fields.schema || '').toLowerCase();
+    const ownerSystem = normalizeToken(parseStringValue(fields.owner_system || ''));
+    const friction = parseNumberValue(fields.friction || '') ?? -1;
+    const restitution = parseNumberValue(fields.restitution || '') ?? -1;
+    const density = parseNumberValue(fields.density || '') ?? -1;
+    const schemaVersion = parseIntegerValue(fields.schema_version || '') ?? 0;
+    const cookedPath = path.join(outputRoot, 'physics', 'materials', `${name}.bin`);
+    const problems = [];
+
+    if (schema !== 'shader_forge.physics_material') {
+      problems.push('schema must be "shader_forge.physics_material"');
+    }
+    if (schemaVersion <= 0) {
+      problems.push('schema_version must be a positive integer');
+    }
+    if (ownerSystem !== 'physics_system') {
+      problems.push('owner_system must be "physics_system"');
+    }
+    if (!name) {
+      problems.push('missing name');
+    }
+    if (friction < 0 || friction > 1) {
+      problems.push('friction must be between 0 and 1');
+    }
+    if (restitution < 0 || restitution > 1) {
+      problems.push('restitution must be between 0 and 1');
+    }
+    if (density <= 0) {
+      problems.push('density must be > 0');
+    }
+
+    const material = {
+      name,
+      schema,
+      schemaVersion,
+      ownerSystem,
+      friction,
+      restitution,
+      density,
+      sourcePath: relativePathFromRepo(repoRoot, sourcePath),
+      cookedPath: relativePathFromRepo(repoRoot, cookedPath),
+      valid: problems.length === 0,
+      problems,
+    };
+    materials.push(material);
+
+    if (material.valid) {
+      writeStageBinary(cookedPath, {
+        format: 'shader_forge.cooked_physics.stage',
+        stagedEncoding: 'json_utf8_placeholder',
+        kind: 'material',
+        name: material.name,
+        friction: material.friction,
+        restitution: material.restitution,
+        density: material.density,
+      });
+    } else {
+      warnings.push(`${material.sourcePath}: ${material.problems.join('; ')}`);
+    }
+  }
+
+  const materialNames = new Set(materials.filter((asset) => asset.valid).map((asset) => asset.name));
+  const bodies = [];
+  for (const entry of fs.readdirSync(bodiesRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const sourcePath = path.join(bodiesRoot, entry.name);
+    const fields = parseTomlDocument(sourcePath);
+    const name = normalizeToken(parseStringValue(fields.name || ''));
+    const schema = parseStringValue(fields.schema || '').toLowerCase();
+    const ownerSystem = normalizeToken(parseStringValue(fields.owner_system || ''));
+    const scene = normalizeToken(parseStringValue(fields.scene || ''));
+    const sourcePrefab = normalizeToken(parseStringValue(fields.source_prefab || ''));
+    const layer = normalizeToken(parseStringValue(fields.layer || ''));
+    const material = normalizeToken(parseStringValue(fields.material || ''));
+    const motionType = normalizeToken(parseStringValue(fields.motion_type || ''));
+    const shapeType = normalizeToken(parseStringValue(fields.shape_type || ''));
+    const position = parseVector3Value(fields.position || '');
+    const halfExtents = parseVector3Value(fields.half_extents || '');
+    const radius = parseNumberValue(fields.radius || '') ?? 0;
+    const schemaVersion = parseIntegerValue(fields.schema_version || '') ?? 0;
+    const cookedPath = path.join(outputRoot, 'physics', 'bodies', `${name}.bin`);
+    const problems = [];
+
+    if (schema !== 'shader_forge.physics_body') {
+      problems.push('schema must be "shader_forge.physics_body"');
+    }
+    if (schemaVersion <= 0) {
+      problems.push('schema_version must be a positive integer');
+    }
+    if (ownerSystem !== 'physics_system') {
+      problems.push('owner_system must be "physics_system"');
+    }
+    if (!name) {
+      problems.push('missing name');
+    }
+    if (!scene) {
+      problems.push('scene must be set');
+    }
+    if (!layerNames.has(layer)) {
+      problems.push(`layer must reference a declared physics layer, received "${layer}"`);
+    }
+    if (!materialNames.has(material)) {
+      problems.push(`material must reference a declared physics material, received "${material}"`);
+    }
+    if (!['static', 'kinematic', 'dynamic'].includes(motionType)) {
+      problems.push('motion_type must be "static", "kinematic", or "dynamic"');
+    }
+    if (!['box', 'sphere'].includes(shapeType)) {
+      problems.push('shape_type must be "box" or "sphere"');
+    }
+    if (!position) {
+      problems.push('position must be a three-component vector');
+    }
+    if (shapeType === 'box') {
+      if (!halfExtents) {
+        problems.push('box bodies must declare half_extents');
+      } else if (halfExtents.some((value) => value <= 0)) {
+        problems.push('box half_extents must all be > 0');
+      }
+    }
+    if (shapeType === 'sphere' && radius <= 0) {
+      problems.push('sphere radius must be > 0');
+    }
+
+    const body = {
+      name,
+      schema,
+      schemaVersion,
+      ownerSystem,
+      scene,
+      sourcePrefab,
+      layer,
+      material,
+      motionType,
+      shapeType,
+      position,
+      halfExtents,
+      radius,
+      sourcePath: relativePathFromRepo(repoRoot, sourcePath),
+      cookedPath: relativePathFromRepo(repoRoot, cookedPath),
+      valid: problems.length === 0,
+      problems,
+    };
+    bodies.push(body);
+
+    if (body.valid) {
+      writeStageBinary(cookedPath, {
+        format: 'shader_forge.cooked_physics.stage',
+        stagedEncoding: 'json_utf8_placeholder',
+        kind: 'body',
+        name: body.name,
+        scene: body.scene,
+        sourcePrefab: body.sourcePrefab,
+        layer: body.layer,
+        material: body.material,
+        motionType: body.motionType,
+        shapeType: body.shapeType,
+        position: body.position,
+        halfExtents: body.halfExtents,
+        radius: body.radius,
+      });
+      relationships.push(`physics-body ${body.name} -> layer ${body.layer}`);
+      relationships.push(`physics-body ${body.name} -> material ${body.material}`);
+    } else {
+      warnings.push(`${body.sourcePath}: ${body.problems.join('; ')}`);
+    }
+  }
+
+  return {
+    physicsRoot: relativePathFromRepo(repoRoot, physicsRoot),
+    layersPath: relativePathFromRepo(repoRoot, layersPath),
+    bakedLayersPath: relativePathFromRepo(repoRoot, bakedLayersPath),
+    counts: {
+      layers: layerDocument.layers.length,
+      materials: materials.length,
+      bodies: bodies.length,
+    },
+    layers: layerDocument.layers,
+    materials,
+    bodies,
+    relationships,
+    warnings,
+  };
+}
+
 function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
   const assets = [];
   const warnings = [];
@@ -1274,6 +1591,9 @@ export async function bakeAssetPipeline(options) {
   const animationRoot = path.isAbsolute(options.animationRoot || '')
     ? options.animationRoot
     : path.join(repoRoot, options.animationRoot || 'animation');
+  const physicsRoot = path.isAbsolute(options.physicsRoot || '')
+    ? options.physicsRoot
+    : path.join(repoRoot, options.physicsRoot || 'physics');
   const foundationPath = path.isAbsolute(options.foundationPath)
     ? options.foundationPath
     : path.join(repoRoot, options.foundationPath);
@@ -1297,6 +1617,7 @@ export async function bakeAssetPipeline(options) {
 
   const audioScan = scanAudioAssets(repoRoot, audioRoot, outputRoot);
   const animationScan = scanAnimationAssets(repoRoot, animationRoot, outputRoot, audioScan);
+  const physicsScan = scanPhysicsAssets(repoRoot, physicsRoot, outputRoot);
   const scanResult = scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest);
   const counts = {
     scene: 0,
@@ -1310,6 +1631,9 @@ export async function bakeAssetPipeline(options) {
     animationSkeletons: animationScan.counts.skeletons,
     animationClips: animationScan.counts.clips,
     animationGraphs: animationScan.counts.graphs,
+    physicsLayers: physicsScan.counts.layers,
+    physicsMaterials: physicsScan.counts.materials,
+    physicsBodies: physicsScan.counts.bodies,
   };
 
   for (const asset of scanResult.assets) {
@@ -1369,6 +1693,24 @@ export async function bakeAssetPipeline(options) {
         problems: asset.problems,
       })),
   ];
+  const invalidPhysicsAssets = [
+    ...physicsScan.materials
+      .filter((asset) => !asset.valid)
+      .map((asset) => ({
+        kind: 'physics_material',
+        name: asset.name,
+        sourcePath: asset.sourcePath,
+        problems: asset.problems,
+      })),
+    ...physicsScan.bodies
+      .filter((asset) => !asset.valid)
+      .map((asset) => ({
+        kind: 'physics_body',
+        name: asset.name,
+        sourcePath: asset.sourcePath,
+        problems: asset.problems,
+      })),
+  ];
 
   const bakedAssets = scanResult.assets
     .filter((asset) => asset.valid)
@@ -1392,12 +1734,14 @@ export async function bakeAssetPipeline(options) {
     contentRoot: relativePathFromRepo(repoRoot, contentRoot),
     audioRoot: relativePathFromRepo(repoRoot, audioRoot),
     animationRoot: relativePathFromRepo(repoRoot, animationRoot),
+    physicsRoot: relativePathFromRepo(repoRoot, physicsRoot),
     outputRoot: relativePathFromRepo(repoRoot, outputRoot),
     counts,
     bakedAssets,
     invalidAssets,
     invalidAudioAssets,
     invalidAnimationAssets,
+    invalidPhysicsAssets,
     generatedMeshes: scanResult.generatedMeshes,
     audio: {
       busesPath: audioScan.busesPath,
@@ -1441,23 +1785,44 @@ export async function bakeAssetPipeline(options) {
       relationships: animationScan.relationships,
       warnings: animationScan.warnings,
     },
-    relationships: [...scanResult.relationships, ...animationScan.relationships],
-    warnings: [...scanResult.warnings, ...audioScan.warnings, ...animationScan.warnings],
+    physics: {
+      layersPath: physicsScan.layersPath,
+      bakedLayersPath: physicsScan.bakedLayersPath,
+      counts: physicsScan.counts,
+      bakedMaterials: physicsScan.materials.filter((asset) => asset.valid).map((asset) => ({
+        name: asset.name,
+        cookedPath: asset.cookedPath,
+        sourcePath: asset.sourcePath,
+      })),
+      bakedBodies: physicsScan.bodies.filter((asset) => asset.valid).map((asset) => ({
+        name: asset.name,
+        scene: asset.scene,
+        layer: asset.layer,
+        material: asset.material,
+        cookedPath: asset.cookedPath,
+        sourcePath: asset.sourcePath,
+      })),
+      relationships: physicsScan.relationships,
+      warnings: physicsScan.warnings,
+    },
+    relationships: [...scanResult.relationships, ...animationScan.relationships, ...physicsScan.relationships],
+    warnings: [...scanResult.warnings, ...audioScan.warnings, ...animationScan.warnings, ...physicsScan.warnings],
     notes: [
       'Cooked outputs are staged placeholder payloads in the stable build/cooked layout until the FlatBuffers writer lands.',
       'Procedural geometry currently bakes deterministic generated-mesh preview payloads plus staged cooked metadata.',
       'Audio currently bakes staged bus, sound, and event metadata registries until the playback backend lands.',
       'Animation currently bakes staged skeleton, clip, and graph metadata registries plus validated audio-event links until the runtime sampling backend lands.',
+      'Physics currently bakes staged layer, material, and body metadata registries plus deterministic query-friendly primitive definitions until the runtime backend lands.',
     ],
   };
 
   writeJsonFile(reportPath, report);
 
-  if (invalidAssets.length > 0 || invalidAudioAssets.length > 0 || invalidAnimationAssets.length > 0) {
+  if (invalidAssets.length > 0 || invalidAudioAssets.length > 0 || invalidAnimationAssets.length > 0 || invalidPhysicsAssets.length > 0) {
     throw new Error([
-      `Asset pipeline bake found ${invalidAssets.length + invalidAudioAssets.length + invalidAnimationAssets.length} invalid asset(s).`,
+      `Asset pipeline bake found ${invalidAssets.length + invalidAudioAssets.length + invalidAnimationAssets.length + invalidPhysicsAssets.length} invalid asset(s).`,
       `Report: ${relativePathFromRepo(repoRoot, reportPath)}`,
-      ...[...scanResult.warnings, ...audioScan.warnings, ...animationScan.warnings].map((warning) => `- ${warning}`),
+      ...[...scanResult.warnings, ...audioScan.warnings, ...animationScan.warnings, ...physicsScan.warnings].map((warning) => `- ${warning}`),
     ].join('\n'));
   }
 

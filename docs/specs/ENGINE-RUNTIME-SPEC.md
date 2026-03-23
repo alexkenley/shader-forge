@@ -30,12 +30,15 @@ The current runtime slice is the first real native bring-up pass:
 - runtime startup now resolves a `runtime_boot` audio event and logs engine-owned audio event requests such as `ui_accept`
 - engine-owned animation loading from `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml`
 - runtime startup now resolves a default animation graph, logs animation graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio-event API
+- engine-owned physics loading from `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml`
+- runtime startup now logs physics layer/body summaries and runs deterministic raycast plus overlap queries for the active scene through engine-owned physics APIs
 - native tooling registry/layout loading and session-layout save groundwork for later Dear ImGui-backed panels
 - engine-owned data foundation loading from `data/foundation/engine-data-layout.toml` plus scene/prefab/data/effect/procgeo source catalog validation under `content/`
 - runtime startup logs now expose the current data/cook decisions and scene-source lookup path for the selected runtime scene
 - runtime startup can now resolve the active scene and initial tooling-overlay preference from `runtime_bootstrap.data.toml`
 - scene metadata such as title and primary prefab now feeds runtime title/log state instead of staying disconnected from execution
 - animation graph and entry-state context now feeds runtime title/log state instead of staying disconnected from execution
+- physics scene-query state is now logged against the authored scene context instead of staying disconnected from execution
 
 ## Future AI Runtime Boundary
 

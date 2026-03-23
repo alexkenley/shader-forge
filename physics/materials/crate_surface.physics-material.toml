@@ -1,0 +1,7 @@
+schema = "shader_forge.physics_material"
+schema_version = 1
+name = "crate_surface"
+owner_system = "physics_system"
+friction = 0.65
+restitution = 0.18
+density = 0.9

@@ -69,6 +69,7 @@ try {
   assert.match(referenceGuideJson, /engine migrate detect/);
   assert.match(referenceGuideJson, /audio\/buses\.toml/);
   assert.match(referenceGuideJson, /animation\/skeletons\/\*\.skeleton\.toml/);
+  assert.match(referenceGuideJson, /physics\/layers\.toml/);
   assert.match(referenceGuideJson, /content\/procgeo\/\*\.procgeo\.toml/);
   assert.match(referenceGuideMarkdown, /# Shader Forge Reference Guide/);
   assert.match(referenceGuideMarkdown, /docs\/reference\/ENGINE-REFERENCE-GUIDE\.json/);
@@ -76,6 +77,7 @@ try {
   assert.match(referenceGuideMarkdown, /engine migrate detect/);
   assert.match(referenceGuideMarkdown, /audio\/buses\.toml/);
   assert.match(referenceGuideMarkdown, /animation\/skeletons\/\*\.skeleton\.toml/);
+  assert.match(referenceGuideMarkdown, /physics\/layers\.toml/);
   assert.match(referenceGuideMarkdown, /content\/procgeo\/\*\.procgeo\.toml/);
   assert.match(referenceGuideMarkdown, /## Runtime And Authoring/);
   assert.match(referenceGuideMarkdown, /## Input, Tooling, And Testing/);

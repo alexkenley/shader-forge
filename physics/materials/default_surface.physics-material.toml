@@ -1,0 +1,7 @@
+schema = "shader_forge.physics_material"
+schema_version = 1
+name = "default_surface"
+owner_system = "physics_system"
+friction = 0.8
+restitution = 0.1
+density = 1.0

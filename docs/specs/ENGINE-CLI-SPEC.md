@@ -38,8 +38,8 @@ The initial build/run/bake command family now targets the native runtime and coo
 
 - `engine build` configures and builds `shader_forge_runtime` through `cmake`
 - `engine run sandbox` builds and launches the native runtime target
-- `engine run` now forwards `--input-root`, `--content-root`, `--audio-root`, `--animation-root`, `--data-foundation`, `--tooling-layout`, and `--tooling-layout-save` so native bring-up can inspect text-backed engine assets and configuration directly
-- `engine bake` now scans the text-backed content, audio, and animation roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report plus generated-mesh preview payloads for procedural geometry assets
+- `engine run` now forwards `--input-root`, `--content-root`, `--audio-root`, `--animation-root`, `--physics-root`, `--data-foundation`, `--tooling-layout`, and `--tooling-layout-save` so native bring-up can inspect text-backed engine assets and configuration directly
+- `engine bake` now scans the text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report plus generated-mesh preview payloads for procedural geometry assets
 - `engine migrate detect <path>` now detects Unity, Unreal, or Godot project structure and emits a normalized migration manifest, report, warnings file, and script-porting placeholder under `migration/<run-id>/`
 - `engine migrate unity|unreal|godot <path>` now pins the requested source-engine lane while emitting the same migration-foundation artifacts for deterministic fixture coverage
 - `engine migrate report <path>` now summarizes a generated migration report without requiring manual file inspection

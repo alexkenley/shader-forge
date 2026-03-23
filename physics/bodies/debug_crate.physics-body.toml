@@ -1,0 +1,12 @@
+schema = "shader_forge.physics_body"
+schema_version = 1
+name = "debug_crate"
+owner_system = "physics_system"
+scene = "sandbox"
+source_prefab = "debug_crate"
+layer = "World_Dynamic"
+material = "crate_surface"
+motion_type = "dynamic"
+shape_type = "box"
+position = "0.0, 0.5, 0.0"
+half_extents = "0.5, 0.5, 0.5"

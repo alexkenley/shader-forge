@@ -8,6 +8,7 @@ add_executable(
   src/audio_system.cpp
   src/data_foundation.cpp
   src/input_system.cpp
+  src/physics_system.cpp
   src/tooling_ui.cpp
   src/runtime_app.cpp
 )

@@ -21,12 +21,14 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - `content/procgeo/*.procgeo.toml` is now the first procedural-geometry source-data root
 - `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are now the first dedicated authored audio-metadata roots beside `content/`
 - `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are now the first dedicated authored animation-data roots beside `content/`
+- `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml` are now the first dedicated authored physics-data roots beside `content/`
 - the native runtime loads that foundation manifest through `DataFoundation`, validates source assets, and logs the resulting cook plan
 - scene lookup is now tied to real text assets instead of a purely free-form runtime scene name
 - scene-to-prefab relationships and `runtime_bootstrap` defaults are validated across the catalog rather than treated as isolated files
 - runtime startup now resolves the active scene and overlay preference from the text-backed source assets when possible
 - cooked outputs are still planning targets only in this slice, but they now target a stable `FlatBuffers` runtime-data lane under `build/cooked/`
 - the current staged cook lane now also validates animation graph relationships and animation-to-audio event links under the same deterministic authored-data workflow
+- the current staged cook lane now also validates physics layer/material/body relationships under the same deterministic authored-data workflow
 
 ## Source Ownership Rules
 

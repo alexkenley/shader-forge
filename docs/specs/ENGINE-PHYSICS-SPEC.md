@@ -50,6 +50,23 @@ Recommended first artifacts:
 - physics materials
 - debug draw and deterministic test coverage
 
+## Current First Slice
+
+The current Phase 5.74 slice now exists as a first engine-owned physics foundation:
+
+- `physics/layers.toml` is the first authored collision-layer and mask lane
+- `physics/materials/*.physics-material.toml` is the first authored physics-material lane
+- `physics/bodies/*.physics-body.toml` is the first authored primitive-body lane while scene/prefab component payloads are still widening
+- the native runtime now loads those authored assets through `PhysicsSystem` before startup continues
+- collision-layer relationships, material references, motion types, and primitive-body shape settings are validated at runtime rather than left as implied future structure
+- deterministic raycast and sphere-overlap queries now exist through engine-owned physics APIs over authored primitive bodies
+- runtime startup now logs layer/body summaries plus deterministic query results for the active scene
+- `engine run` now forwards `--physics-root`
+- `engine bake` now scans the physics root and stages cooked layer, material, and body metadata under `build/cooked/physics/`
+- deterministic harness coverage now exists for the authored physics assets, runtime integration hooks, and staged physics cook lane
+
+This is still a widening slice, not the final physics runtime. There is not yet a Jolt-backed simulation step, sweeps, joints, character movement, ragdoll/animation handoff, or native physics debug draw.
+
 ## Non-Goals
 
 - full cloth, destruction, or soft body support in the first slice

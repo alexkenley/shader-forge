@@ -99,6 +99,7 @@ Current implementation status:
 - Phase 5.6 has now started through a migration-foundation slice with source-engine detection, normalized manifest/report outputs, provenance capture, and fixture-backed CLI migration commands.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
+- Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -119,7 +120,8 @@ What is already done:
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
 - Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, input scaffold, and tooling UI scaffold.
+- Phase 5.74 has now started through `physics/layers.toml`, `physics/materials/*.physics-material.toml`, `physics/bodies/*.physics-body.toml`, native physics-system validation/query hooks, and staged cooked physics outputs under `build/cooked/physics/`.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, physics scaffold, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -133,6 +135,7 @@ Where the build is currently up to:
 - Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture, but no source-project content is converted into Shader Forge-native assets yet
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
+- Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -489,6 +492,9 @@ Implemented first slice:
 Goal:
 - establish an engine-owned physics subsystem so collision, rigid body simulation, and gameplay scene queries are first-class engine capabilities
 
+Status:
+- first slice now exists through authored layer/material/body assets, native physics-system validation plus deterministic query APIs, runtime query logging, staged cooked physics metadata, and deterministic harness coverage
+
 Scope:
 - `engine_physics` runtime subsystem
 - collision layers and materials
@@ -505,6 +511,15 @@ Exit criteria:
 - raycast, sweep, and overlap queries are available through engine APIs
 - collision layers and materials are text-backed and tool-visible
 - debug draw and harness coverage exist for the first physics slice
+
+Implemented first slice:
+
+- `physics/layers.toml`, `physics/materials/default_surface.physics-material.toml`, `physics/materials/crate_surface.physics-material.toml`, `physics/bodies/sandbox_floor.physics-body.toml`, `physics/bodies/debug_crate.physics-body.toml`, and `physics/bodies/debug_trigger.physics-body.toml`
+- native `PhysicsSystem` loading, validation, deterministic raycast/overlap queries, and summary surfaces in `engine/runtime/src/physics_system.cpp`
+- runtime initialization plus startup and `ui_back` physics query logging in `engine/runtime/src/runtime_app.cpp`
+- `engine run` forwarding of `--physics-root`
+- `engine bake` scanning plus staged cooked physics output under `build/cooked/physics/`
+- deterministic `scripts/test-engine-physics-scaffold.mjs` coverage plus widened runtime and asset-pipeline harnesses
 
 ## Phase 5.75: Level Authoring
 
@@ -759,5 +774,6 @@ Current build target:
 - Phase 5.6 start: extend migration detection into actual content mapping and provenance-backed conversion fixtures without claiming parity early
 - Phase 5.7 start: widen the authored-audio lane into real playback, bus control, and preview tooling without skipping the engine-owned event API
 - Phase 5.72 start: widen the authored-animation lane into real sampling, graph-parameter control, root motion, and preview tooling without discarding the text-backed graph/event contracts
+- Phase 5.74 start: widen the authored-physics lane into a real backend, sweeps, debug draw, and gameplay-facing body control without discarding the text-backed layer/material/body contracts
 - Phase 5.95 before Phase 5.9 execution: land trust and policy groundwork before assistant-triggered code and apply workflows expand
 - keep harness coverage current as each major slice lands

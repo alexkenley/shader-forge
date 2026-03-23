@@ -22,7 +22,7 @@ int parseIntOrDefault(const char* value, int fallback) {
 void printHelp() {
   std::cout << "Shader Forge Runtime\n\n"
             << "Usage:\n"
-            << "  shader_forge_runtime [--scene <name>] [--title <name>] [--input-root <path>] [--content-root <path>] [--audio-root <path>] [--animation-root <path>] [--data-foundation <path>] [--tooling-layout <path>] [--tooling-layout-save <path>] [--width <px>] [--height <px>] [--no-validation]\n";
+            << "  shader_forge_runtime [--scene <name>] [--title <name>] [--input-root <path>] [--content-root <path>] [--audio-root <path>] [--animation-root <path>] [--physics-root <path>] [--data-foundation <path>] [--tooling-layout <path>] [--tooling-layout-save <path>] [--width <px>] [--height <px>] [--no-validation]\n";
 }
 
 }  // namespace
@@ -54,6 +54,10 @@ int main(int argc, char** argv) {
     }
     if (argument == "--animation-root" && index + 1 < argc) {
       config.animationRoot = argv[++index];
+      continue;
+    }
+    if (argument == "--physics-root" && index + 1 < argc) {
+      config.physicsRoot = argv[++index];
       continue;
     }
     if (argument == "--data-foundation" && index + 1 < argc) {

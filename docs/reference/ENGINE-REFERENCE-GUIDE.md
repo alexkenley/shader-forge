@@ -72,8 +72,8 @@ Assistant entry points:
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
 - `engine build runtime` configures and builds the native runtime with CMake.
-- `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, data, and tooling roots.
-- `engine bake` scans text-backed content, audio, and animation roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
+- `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, and tooling roots.
+- `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
 - `engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import`, `engine package`, and `engine export` are still later phases.
@@ -109,6 +109,7 @@ Assistant entry points:
 - `content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.
 - `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.
 - `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes.
+- `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml` are the initial authored physics lanes.
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
 - The runtime validates the content roots through `DataFoundation` before startup continues.
 - Scene-to-prefab relationships are validated across the catalog.
@@ -118,7 +119,9 @@ Assistant entry points:
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
 - The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.
 - Runtime startup resolves a default animation graph, logs graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio event API.
-- `engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, stages cooked audio metadata under `build/cooked/audio/`, and stages cooked animation metadata under `build/cooked/animation/`.
+- The runtime now loads authored physics layers, materials, and primitive bodies through `PhysicsSystem`.
+- Runtime startup logs physics layer/body summaries and runs deterministic raycast plus overlap queries against the active scene.
+- `engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, stages cooked audio metadata under `build/cooked/audio/`, stages cooked animation metadata under `build/cooked/animation/`, and stages cooked physics metadata under `build/cooked/physics/`.
 - There is not yet a final FlatBuffers writer, SQLite asset index, or Effekseer runtime integration.
 
 ### Audio Foundation
@@ -134,6 +137,13 @@ Assistant entry points:
 - `animation/clips/*.anim.toml` defines named clips with skeleton ownership, looping/root-motion metadata, and text-backed clip events.
 - `animation/graphs/*.animgraph.toml` defines named animation graphs with float parameters, named states, and explicit entry-state selection.
 - The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet.
+
+### Physics Foundation
+
+- `physics/layers.toml` defines the initial collision layers and text-backed collision masks.
+- `physics/materials/*.physics-material.toml` defines named physics materials with friction, restitution, and density metadata.
+- `physics/bodies/*.physics-body.toml` defines primitive scene bodies with scene ownership, layer/material references, motion type, and box or sphere shape data.
+- The current runtime slice validates and resolves deterministic raycast and overlap queries over those primitive bodies, but it does not run a full simulation backend yet.
 
 ## Input, Tooling, And Testing
 
@@ -153,7 +163,7 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
-- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
+- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
 - Both scripts remove generated outputs, rerun the current deterministic baseline, start `engine_sessiond`, and then launch the active shell workflow.
@@ -163,9 +173,9 @@ Assistant entry points:
 ### What Exists Now
 
 - A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
-- A real native SDL3/Vulkan runtime slice with input, tooling, and data-foundation hooks.
-- Text-backed scene, prefab, data, effect, procedural-geometry, and audio roots represented in the repo.
-- A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio metadata.
+- A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.
+- Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
+- A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
 - A first CLI migration lane that detects supported source-engine project shapes and emits normalized migration manifests plus reports.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
@@ -176,5 +186,6 @@ Assistant entry points:
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
+- Physics still needs the real backend integration, sweeps, joints, character support, and debug draw on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

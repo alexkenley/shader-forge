@@ -1,0 +1,20 @@
+schema = "shader_forge.physics_layers"
+schema_version = 1
+
+[layer.World_Static]
+display_name = "World Static"
+collides_with = "World_Dynamic, Query_Only"
+queryable = true
+static_only = true
+
+[layer.World_Dynamic]
+display_name = "World Dynamic"
+collides_with = "World_Static, World_Dynamic, Query_Only"
+queryable = true
+static_only = false
+
+[layer.Query_Only]
+display_name = "Query Only"
+collides_with = "World_Static, World_Dynamic"
+queryable = true
+static_only = false
