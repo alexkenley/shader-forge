@@ -43,6 +43,8 @@ export type SessionFileRead = {
   content: string;
 };
 
+export type SessionFileWrite = SessionFileRead;
+
 export type HostDirectoryList = {
   path: string;
   entries: SessionFileEntry[];
@@ -238,6 +240,17 @@ export async function readFile(sessionId: string, relativePath: string) {
   query.searchParams.set('sessionId', sessionId);
   query.searchParams.set('path', relativePath);
   return requestJson<SessionFileRead>(`${query.pathname}${query.search}`);
+}
+
+export async function writeFile(sessionId: string, relativePath: string, content: string) {
+  return requestJson<SessionFileWrite>('/api/files/write', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId,
+      path: relativePath,
+      content,
+    }),
+  });
 }
 
 export async function listHostDirectories(targetPath = '/') {

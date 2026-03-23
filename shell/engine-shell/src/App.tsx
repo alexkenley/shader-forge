@@ -2,6 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ReferenceGuideView } from './ReferenceGuideView';
+import { SceneEditorView } from './SceneEditorView';
 import {
   closeTerminal,
   createSession,
@@ -1058,15 +1059,18 @@ function renderCenterContent(
   layoutMode: LayoutMode,
   showLegacyBridge: boolean,
   onToggleLegacyBridge: () => void,
+  activeSession: EngineSession | null,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
   launchScene: string,
+  onLaunchSceneChange: (value: string) => void,
   buildConfig: BuildConfig,
   buildDir: string,
   runtimeLog: string,
   buildLog: string,
   viewerBridgeEvents: ViewerBridgeEvent[],
   pendingRunAfterBuild: boolean,
+  onBackendStatus: (state: 'connected' | 'offline', message: string) => void,
   onBuildAndPlay: () => void,
   onStartRuntime: () => void,
   onStopRuntime: () => void,
@@ -1166,38 +1170,13 @@ function renderCenterContent(
 
   if (activeTab === 'Scene') {
     return (
-      <div className="workspace-layout workspace-layout--scene">
-        <section className="surface">
-          <div className="surface-header">
-            <div>
-              <div className="surface-eyebrow">Authoring</div>
-              <h2>Scene Editor</h2>
-              <p>Levels stay text-backed. Viewport edits save deterministic `.scene.toml` and `.prefab.toml` assets.</p>
-            </div>
-          </div>
-          <ViewportShell
-            footer="Edit mode persists to text-backed scene assets. Play mode remains discard-by-default."
-            subtitle="Authoring viewport"
-            title="Scene viewport"
-          />
-        </section>
-        <section className="surface">
-          <div className="stack">
-            <article className="mini-card">
-              <span>World outliner</span>
-              <strong>planned</strong>
-            </article>
-            <article className="mini-card">
-              <span>Undo / redo</span>
-              <strong>required</strong>
-            </article>
-            <article className="mini-card">
-              <span>Play separation</span>
-              <strong>discard by default</strong>
-            </article>
-          </div>
-        </section>
-      </div>
+      <SceneEditorView
+        activeSession={activeSession}
+        launchScene={launchScene}
+        onBackendStatus={onBackendStatus}
+        onLaunchSceneChange={onLaunchSceneChange}
+        runtimeStatus={runtimeStatus}
+      />
     );
   }
 
@@ -1995,6 +1974,11 @@ export default function App() {
 
   const activeSession = sessions.find((session) => session.id === activeSessionId) || null;
 
+  function reportBackendStatus(state: 'connected' | 'offline', message: string) {
+    setSessiondState(state);
+    setSessiondMessage(message);
+  }
+
   function handleAddTerminal() {
     setTerminalTabs((current) => {
       const nextTab = createTerminalTab(current.length + 1, defaultShell);
@@ -2656,15 +2640,18 @@ export default function App() {
             layoutMode,
             showLegacyBridge,
             () => setShowLegacyBridge((current) => !current),
+            activeSession,
             runtimeStatus,
             buildStatus,
             launchScene,
+            setLaunchScene,
             buildConfig,
             buildDir,
             runtimeLog,
             buildLog,
             viewerBridgeEvents,
             pendingRunAfterBuild,
+            reportBackendStatus,
             handleBuildAndPlay,
             handleStartRuntime,
             handleStopRuntime,

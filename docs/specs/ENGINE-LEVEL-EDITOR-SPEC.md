@@ -33,6 +33,25 @@ All three paths must converge on the same saved scene/prefab formats.
 - `Play Mode`: runtime simulation mode; changes are discarded unless explicitly applied
 - `Simulate In Editor`: future mode for testing without leaving the editing context
 
+## Current Implemented Slice
+
+The first real level-authoring slice now lives in the shell `Scene` workspace.
+
+Current implemented behavior:
+
+- the shell loads `content/scenes/*.scene.toml` and `content/prefabs/*.prefab.toml` from the active session root
+- `Edit Mode` is the persistent authoring lane
+- `Play Mode` is currently a discard-only stance that drops unsaved drafts before returning to a non-persistent preview state
+- a world outliner now exposes the authored scene plus its current primary prefab relationship
+- a details surface can edit current scene metadata and prefab metadata
+- an asset browser can inspect prefabs and assign the scene primary prefab
+- save, reload-from-disk, revert-draft, duplicate-scene, and local undo/redo flows now exist for this metadata round-trip slice
+
+Current boundary:
+
+- viewport gizmos, placed-entity editing, transform authoring, and deeper component payload editing are still ahead
+- this slice is intentionally honest about being shell-side authoring over current text assets, not a fake full visual editor
+
 ## Core Surfaces
 
 - scene viewport with translate/rotate/scale gizmos

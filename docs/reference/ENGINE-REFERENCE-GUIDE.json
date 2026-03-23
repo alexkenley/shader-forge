@@ -69,10 +69,12 @@
         {
           "id": "shell-workspace",
           "title": "Shell Workspace Overview",
-          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, and the preserved code bridge.",
+          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, scene authoring, and the preserved code bridge.",
           "keywords": ["shell", "workspace", "tabs", "rails", "layout"],
           "references": [
             "shell/engine-shell/src/App.tsx",
+            "shell/engine-shell/src/SceneEditorView.tsx",
+            "shell/engine-shell/src/scene-authoring.ts",
             "shell/engine-shell/src/ReferenceGuideView.tsx",
             "shell/engine-shell/src/styles.css",
             "docs/specs/ENGINE-SHELL-SPEC.md"
@@ -94,7 +96,7 @@
               "items": [
                 "Use `Code` when you need the preserved Monaco bridge and repo workspace context.",
                 "Use `Game` and `Preview` when you are driving the external native runtime window from the shell.",
-                "Use `Scene` to track the text-backed authoring direction for `.scene.toml` and `.prefab.toml` assets.",
+                "Use `Scene` for repo-backed scene and prefab authoring with edit/play separation, save/reload/duplicate commands, a world outliner, details editing, and prefab assignment over the real text assets.",
                 "Use `Guide` for the in-app wiki and repo source references."
               ],
               "note": "The shell is still the primary workspace even though the native SDL3/Vulkan runtime renders in an external window."
@@ -112,7 +114,7 @@
         {
           "id": "sessiond-and-files",
           "title": "Sessions, Files, And Source Control",
-          "summary": "Session creation, safe file reads, host-root picking, and git status are already implemented and consumed by the shell.",
+          "summary": "Session creation, safe file reads/writes, host-root picking, and git status are already implemented and consumed by the shell.",
           "keywords": ["sessions", "explorer", "source control", "workspace root"],
           "references": [
             "tools/engine-sessiond/server.mjs",
@@ -126,7 +128,7 @@
               "keywords": ["http", "api", "pty", "terminal"],
               "items": [
                 "`engine_sessiond` currently provides session create/list/get/update/delete.",
-                "Safe file list and file read APIs are already used by the `Explorer` rail.",
+                "Safe file list, file read, and file write APIs are now available inside the active session root.",
                 "Host filesystem directory listing is already used by the workspace-root picker.",
                 "Git status and repository initialization are already used by the `Source Control` rail.",
                 "PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces."
@@ -263,7 +265,7 @@
         {
           "id": "scene-and-content-foundation",
           "title": "Scene, Prefab, And Data Foundation",
-          "summary": "Text-backed content roots now exist and runtime startup resolves scene/bootstrap metadata from them instead of treating scene names as free text only, while the first bake lane targets the same authored roots plus dedicated audio, animation, and physics lanes.",
+          "summary": "Text-backed content roots now exist and runtime startup resolves scene/bootstrap metadata from them instead of treating scene names as free text only, while the shell now author-reads and author-writes the same scene/prefab roots and the first bake lane targets those roots plus dedicated audio, animation, and physics lanes.",
           "keywords": ["content", "scene", "prefab", "data foundation", "effects", "procgeo", "audio", "animation", "physics", "bake"],
           "references": [
             "engine/runtime/include/shader_forge/runtime/data_foundation.hpp",
@@ -276,6 +278,9 @@
             "engine/runtime/src/physics_system.cpp",
             "content/scenes/sandbox.scene.toml",
             "content/prefabs/debug_camera.prefab.toml",
+            "shell/engine-shell/src/SceneEditorView.tsx",
+            "shell/engine-shell/src/scene-authoring.ts",
+            "tools/engine-sessiond/lib/session-store.mjs",
             "content/data/runtime_bootstrap.data.toml",
             "content/procgeo/sandbox_floor.procgeo.toml",
             "audio/buses.toml",
@@ -322,6 +327,8 @@
                 "Scene-to-prefab relationships are validated across the catalog.",
                 "`runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.",
                 "The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.",
+                "The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.",
+                "`Play Mode` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Edit Mode` is restored.",
                 "The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.",
                 "Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.",
                 "The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.",
@@ -421,6 +428,7 @@
             "docs/guides/ENGINE-HARNESS-TESTING.md",
             "scripts/test-engine-shell-smoke.mjs",
             "scripts/test-engine-viewer-bridge.mjs",
+            "scripts/test-engine-scene-authoring.mjs",
             "scripts/test-engine-runtime-scaffold.mjs",
             "scripts/test-engine-asset-pipeline.mjs",
             "scripts/test-engine-migration-fixtures.mjs",
@@ -441,6 +449,7 @@
                 "`npm test` runs the preserved shell smoke harness.",
                 "`npm run test:sessiond` validates the local backend session and file flows.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
+                "`npm run test:scene-authoring` validates the shell scene-authoring surface plus deterministic scene/prefab file writes inside a session root.",
                 "`npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
               ]
             },
@@ -471,6 +480,7 @@
               "keywords": ["current state", "implemented"],
               "items": [
                 "A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.",
+                "A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows.",
                 "A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.",
                 "Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.",
                 "A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, plus physics metadata.",
@@ -483,6 +493,7 @@
               "keywords": ["future work", "phase expansion"],
               "items": [
                 "The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.",
+                "Scene authoring still needs placed-entity editing, transform gizmos, component payload authoring, and bake-back flows beyond the current metadata round-trip slice.",
                 "The runtime still needs richer rendering, real scene loading, and broader native verification.",
                 "The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.",
                 "Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.",

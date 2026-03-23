@@ -34,6 +34,7 @@
     "test:physics-scaffold": "node scripts/test-engine-physics-scaffold.mjs",
     "test:input-scaffold": "node scripts/test-engine-input-scaffold.mjs",
     "test:tooling-ui-scaffold": "node scripts/test-engine-tooling-ui-scaffold.mjs",
+    "test:scene-authoring": "node scripts/test-engine-scene-authoring.mjs",
     "test:viewer-bridge": "node scripts/test-engine-viewer-bridge.mjs",
     "test:ollama-smoke": "node scripts/test-ollama-smoke.mjs"
   },

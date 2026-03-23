@@ -124,6 +124,26 @@ export class SessionStore {
     };
   }
 
+  async writeFile(sessionId, relativePath, content = '') {
+    if (!relativePath) {
+      throw new Error('File path is required.');
+    }
+
+    const session = this.#requireSession(sessionId);
+    const targetPath = this.#resolveWithinSession(session, relativePath);
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, String(content), 'utf8');
+    const stat = await fs.stat(targetPath);
+
+    return {
+      session,
+      path: normalizeDisplayPath(session.rootPath, targetPath),
+      size: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+      content: String(content),
+    };
+  }
+
   #requireSession(sessionId) {
     if (!sessionId) {
       throw new Error('sessionId is required.');

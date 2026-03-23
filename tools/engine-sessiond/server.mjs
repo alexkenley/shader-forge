@@ -124,6 +124,7 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
           'sessions:delete',
           'files:list',
           'files:read',
+          'files:write',
           'hostfs:list',
           'git:status',
           'git:init',
@@ -210,6 +211,16 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
         const sessionId = searchParams.get('sessionId') || '';
         const relativePath = searchParams.get('path') || '';
         const result = await sessionStore.readFile(sessionId, relativePath);
+        writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/files/write') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+        const relativePath = typeof body.path === 'string' ? body.path : '';
+        const content = typeof body.content === 'string' ? body.content : '';
+        const result = await sessionStore.writeFile(sessionId, relativePath, content);
         writeJson(response, 200, result);
         return;
       }

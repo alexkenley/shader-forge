@@ -146,6 +146,20 @@ try {
   assert.match(fileReadPayload.content, /Shader Forge/);
   assert.ok(fileReadPayload.size > 0);
 
+  const fileWritePayload = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
+    sessionId: createPayload.session.id,
+    path: 'tmp/sessiond-write-check.txt',
+    content: 'sessiond write ok\n',
+  });
+  assert.equal(fileWritePayload.path, 'tmp/sessiond-write-check.txt');
+  assert.equal(fileWritePayload.content, 'sessiond write ok\n');
+  assert.ok(fileWritePayload.size > 0);
+
+  const writtenFileReadPayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/files/read?sessionId=${encodeURIComponent(createPayload.session.id)}&path=${encodeURIComponent('tmp/sessiond-write-check.txt')}`,
+  );
+  assert.equal(writtenFileReadPayload.content, 'sessiond write ok\n');
+
   const hostFsPayload = await requestJsonNoAuth(
     `${service.baseUrl}/api/hostfs/list?path=${encodeURIComponent(path.dirname(repoRoot))}`,
   );

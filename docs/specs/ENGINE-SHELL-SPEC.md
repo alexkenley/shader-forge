@@ -79,9 +79,11 @@ Current implemented bridge surfaces:
 - `engine_sessiond` health status in the shell header
 - session create/list state in the `Sessions` rail
 - file list/read preview in the `Explorer` rail
+- session-root file write support for repo-backed authoring workflows
 - runtime build, play, stop, restart, and pause/resume controls in the shell chrome and runtime-facing panels
 - runtime and build logs routed into shell bottom-dock surfaces
 - `Game` and `Preview` tabs that track external-runtime bridge state, recent runtime/build activity, and shell-side viewer workflow diagnostics
+- a real `Scene` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side edit/play separation, outliner/details/assets surfaces, and writes deterministic save/reload/duplicate flows back through `engine_sessiond`
 - an in-app `Guide` tab backed by repo-native markdown and structured guide content so shell users, terminal assistants, and future native assistants can resolve the same operator wiki from the workspace
 
 The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.

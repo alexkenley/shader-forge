@@ -1319,6 +1319,308 @@ pre {
   overflow: auto;
 }
 
+/* ─── Scene Authoring ─── */
+.scene-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.scene-toolbar__group,
+.scene-status-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.scene-authoring-grid,
+.scene-metric-grid,
+.scene-side-grid {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.scene-authoring-grid {
+  grid-template-columns: 1.25fr 0.95fr;
+}
+
+.scene-metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.scene-side-grid {
+  grid-template-columns: 1fr;
+}
+
+.scene-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-panel);
+}
+
+.scene-card--viewport {
+  min-height: 360px;
+}
+
+.scene-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scene-card__header strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.scene-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scene-status-pill--edit {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: rgba(45, 212, 191, 0.11);
+  color: #7fe7d7;
+}
+
+.scene-status-pill--play {
+  border-color: rgba(251, 191, 36, 0.24);
+  background: rgba(251, 191, 36, 0.11);
+  color: #f7d37b;
+}
+
+.scene-viewport {
+  position: relative;
+  min-height: 250px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(34, 197, 94, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
+    #181d20;
+}
+
+.scene-viewport::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 46px 46px;
+  opacity: 0.5;
+}
+
+.scene-viewport__label {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1;
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.52);
+}
+
+.scene-viewport__label strong {
+  font-size: 14px;
+}
+
+.scene-viewport__label span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.scene-viewport__axes {
+  position: absolute;
+  background: rgba(96, 165, 250, 0.2);
+}
+
+.scene-viewport__axes--horizontal {
+  top: 50%;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+}
+
+.scene-viewport__axes--vertical {
+  top: 14%;
+  bottom: 12%;
+  left: 50%;
+  width: 1px;
+}
+
+.scene-viewport__summary {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1;
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  padding: 10px;
+  border-radius: 4px;
+  background: rgba(4, 8, 12, 0.72);
+}
+
+.scene-viewport__summary div {
+  display: grid;
+  gap: 2px;
+}
+
+.scene-viewport__summary span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scene-viewport__summary strong {
+  font-size: 12px;
+}
+
+.scene-note,
+.scene-status-block p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scene-list,
+.scene-asset-list,
+.scene-tree {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+}
+
+.scene-list {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.scene-list__item,
+.scene-tree__node,
+.scene-asset__main {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scene-list__item:hover,
+.scene-tree__node:hover,
+.scene-asset__main:hover {
+  border-color: rgba(14, 165, 233, 0.2);
+  background: rgba(14, 165, 233, 0.06);
+}
+
+.scene-list__item.is-active,
+.scene-tree__node.is-active,
+.scene-asset__main.is-active {
+  border-color: rgba(14, 165, 233, 0.35);
+  background: rgba(14, 165, 233, 0.1);
+}
+
+.scene-list__item strong,
+.scene-tree__node strong,
+.scene-asset__main strong {
+  font-size: 12px;
+}
+
+.scene-list__item span,
+.scene-tree__node span,
+.scene-asset__main span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scene-list__item em {
+  color: #7aa8c3;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.scene-form-block,
+.scene-details {
+  display: grid;
+  gap: 8px;
+}
+
+.scene-asset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.scene-empty-state,
+.scene-status-block {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.scene-empty-state--compact {
+  min-height: 0;
+  padding: 12px;
+}
+
+.scene-status-block {
+  place-items: start;
+  text-align: left;
+}
+
+.scene-status-block strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
 /* ─── Reference Guide ─── */
 .guide-page {
   display: flex;
@@ -1899,8 +2201,13 @@ pre {
   }
 
   .bridge-panel-grid,
-  .bridge-log-grid {
+  .bridge-log-grid,
+  .scene-authoring-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scene-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .guide-hero,
@@ -1944,5 +2251,13 @@ pre {
 
   .guide-hero-stats {
     grid-template-columns: 1fr;
+  }
+
+  .scene-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scene-toolbar {
+    align-items: stretch;
   }
 }

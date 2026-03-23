@@ -16,6 +16,7 @@ Current implemented surfaces:
 - `GET /api/sessions/:id`
 - `GET /api/files/list`
 - `GET /api/files/read`
+- `POST /api/files/write`
 - `GET /api/runtime/status`
 - `POST /api/runtime/start`
 - `POST /api/runtime/stop`
@@ -42,6 +43,7 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - in-memory project sessions
 - safe path resolution inside each session root
 - UTF-8 file reads
+- UTF-8 file writes inside the active session root, with parent-directory creation for authored asset workflows
 - directory listing with stable relative paths and timestamps
 - JSON HTTP API suitable for local shell integration and harness use
 - runtime status now includes `running`, `paused`, and `stopped` states

@@ -41,6 +41,13 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - scenes can declare a primary prefab relationship into `content/prefabs/`
 - the shared data foundation validates those scene-to-prefab references
 - the runtime can now resolve its selected scene against those authored scene assets and surface that choice in logs and window state
+- the shell `Scene` workspace can now open authored scene assets from the active session, inspect linked prefab assets, and round-trip deterministic save, reload, duplicate, and primary-prefab edits back to those same files
+- `engine_sessiond` now provides safe session-root file writes so shell workflows and future assistants can mutate the same scene/prefab assets without relying on hidden editor-only state
+
+Current boundary:
+
+- this slice currently round-trips scene and prefab metadata, not full entity/component hierarchy editing
+- transform gizmos, broader component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
 
 ## Non-Goals
 

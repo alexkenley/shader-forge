@@ -53,7 +53,7 @@ Assistant entry points:
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
 - Use `Game` and `Preview` to drive the external native runtime window from the shell.
-- Use `Scene` to track the text-backed authoring direction for `.scene.toml` and `.prefab.toml` assets.
+- Use `Scene` for repo-backed scene/prefab authoring with edit/play separation, save/reload/duplicate commands, a world outliner, details editing, and prefab assignment over the real text assets.
 - Use `Guide` for the in-app wiki and repo source references.
 
 ## Session Backend And CLI
@@ -61,7 +61,7 @@ Assistant entry points:
 ### Sessions, Files, And Source Control
 
 - `engine_sessiond` currently provides session create/list/get/update/delete.
-- Safe file list and file read APIs are already used by the `Explorer` rail.
+- Safe file list, file read, and file write APIs are now available inside the active session root.
 - Host filesystem directory listing is already used by the workspace-root picker.
 - Git status and repository initialization are already used by the `Source Control` rail.
 - PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces.
@@ -115,6 +115,8 @@ Assistant entry points:
 - Scene-to-prefab relationships are validated across the catalog.
 - `runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.
 - The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.
+- The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.
+- `Play Mode` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Edit Mode` is restored.
 - The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
 - The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.
@@ -163,6 +165,7 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
+- `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab file writes.
 - `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
@@ -173,6 +176,7 @@ Assistant entry points:
 ### What Exists Now
 
 - A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
+- A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows.
 - A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
@@ -182,6 +186,7 @@ Assistant entry points:
 ### What Still Needs Widening
 
 - The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.
+- Scene authoring still needs placed-entity editing, transform gizmos, component payload authoring, and bake-back flows beyond the current metadata round-trip slice.
 - The runtime still needs richer rendering, real scene loading, and broader native verification.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
