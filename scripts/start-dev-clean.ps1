@@ -135,6 +135,10 @@ try {
         & npm run test:migration-fixtures
         if ($LASTEXITCODE -ne 0) { throw "Migration fixtures test failed" }
 
+        Write-Host "[shader-forge] Running audio scaffold harness..."
+        & npm run test:audio-scaffold
+        if ($LASTEXITCODE -ne 0) { throw "Audio scaffold test failed" }
+
         Write-Host "[shader-forge] Running input scaffold harness..."
         & npm run test:input-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Input scaffold test failed" }

@@ -1,0 +1,11 @@
+schema = "shader_forge.sound"
+schema_version = 1
+name = "footstep_stone"
+owner_system = "audio_system"
+source_media = "media/footstep_stone.wav"
+bus = "SFX"
+playback_mode = "oneshot"
+spatialization = "3d"
+stream = false
+loop = false
+default_volume_db = -4.5

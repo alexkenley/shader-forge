@@ -1,0 +1,11 @@
+schema = "shader_forge.sound"
+schema_version = 1
+name = "ambient_wind"
+owner_system = "audio_system"
+source_media = "media/ambient_wind.ogg"
+bus = "Ambience"
+playback_mode = "looped"
+spatialization = "2d"
+stream = true
+loop = true
+default_volume_db = -5.0

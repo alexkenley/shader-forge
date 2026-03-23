@@ -12,7 +12,7 @@
 - frame loop
 - timing and input
 - logging
-- audio is intentionally deferred until after the first runtime window/render-loop slice; see the audio spec for the later subsystem plan
+- audio playback backend integration is deferred until after the first runtime window/render-loop slice; see the audio spec for the authored-audio and later playback plan
 
 ## Current First Slice
 
@@ -26,6 +26,8 @@ The current runtime slice is the first real native bring-up pass:
 - optional validation-layer enablement when the local Vulkan setup exposes `VK_LAYER_KHRONOS_validation`
 - engine-owned input loading from `input/actions.toml` and `input/contexts/*.input.toml`
 - named input actions and axes consumed inside the runtime instead of direct raw SDL checks
+- engine-owned audio loading from `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml`
+- runtime startup now resolves a `runtime_boot` audio event and logs engine-owned audio event requests such as `ui_accept`
 - native tooling registry/layout loading and session-layout save groundwork for later Dear ImGui-backed panels
 - engine-owned data foundation loading from `data/foundation/engine-data-layout.toml` plus scene/prefab/data/effect/procgeo source catalog validation under `content/`
 - runtime startup logs now expose the current data/cook decisions and scene-source lookup path for the selected runtime scene

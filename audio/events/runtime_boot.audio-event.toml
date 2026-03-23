@@ -1,0 +1,7 @@
+schema = "shader_forge.audio_event"
+schema_version = 1
+name = "runtime_boot"
+owner_system = "audio_system"
+action = "play_sound"
+sound = "ambient_wind"
+fade_ms = 250

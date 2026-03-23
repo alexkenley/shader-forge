@@ -67,11 +67,13 @@ try {
   assert.match(referenceGuideJson, /"Scene, Prefab, And Data Foundation"/);
   assert.match(referenceGuideJson, /"engine bake"/);
   assert.match(referenceGuideJson, /engine migrate detect/);
+  assert.match(referenceGuideJson, /audio\/buses\.toml/);
   assert.match(referenceGuideJson, /content\/procgeo\/\*\.procgeo\.toml/);
   assert.match(referenceGuideMarkdown, /# Shader Forge Reference Guide/);
   assert.match(referenceGuideMarkdown, /docs\/reference\/ENGINE-REFERENCE-GUIDE\.json/);
   assert.match(referenceGuideMarkdown, /engine bake/);
   assert.match(referenceGuideMarkdown, /engine migrate detect/);
+  assert.match(referenceGuideMarkdown, /audio\/buses\.toml/);
   assert.match(referenceGuideMarkdown, /content\/procgeo\/\*\.procgeo\.toml/);
   assert.match(referenceGuideMarkdown, /## Runtime And Authoring/);
   assert.match(referenceGuideMarkdown, /## Input, Tooling, And Testing/);

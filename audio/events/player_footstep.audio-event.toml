@@ -1,0 +1,7 @@
+schema = "shader_forge.audio_event"
+schema_version = 1
+name = "player_footstep"
+owner_system = "audio_system"
+action = "play_sound"
+sound = "footstep_stone"
+fade_ms = 0

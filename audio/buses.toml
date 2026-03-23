@@ -1,0 +1,32 @@
+schema = "shader_forge.audio_buses"
+schema_version = 1
+
+[bus.Master]
+display_name = "Master"
+parent = ""
+default_volume_db = 0.0
+default_muted = false
+
+[bus.Music]
+display_name = "Music"
+parent = "Master"
+default_volume_db = -2.0
+default_muted = false
+
+[bus.SFX]
+display_name = "SFX"
+parent = "Master"
+default_volume_db = -1.0
+default_muted = false
+
+[bus.Voice]
+display_name = "Voice"
+parent = "Master"
+default_volume_db = -1.5
+default_muted = false
+
+[bus.Ambience]
+display_name = "Ambience"
+parent = "Master"
+default_volume_db = -4.0
+default_muted = false

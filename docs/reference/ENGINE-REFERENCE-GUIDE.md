@@ -72,8 +72,8 @@ Assistant entry points:
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
 - `engine build runtime` configures and builds the native runtime with CMake.
-- `engine run <scene>` builds and launches the native runtime and now forwards content, data, and tooling roots.
-- `engine bake` scans text-backed content roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
+- `engine run <scene>` builds and launches the native runtime and now forwards content, audio, data, and tooling roots.
+- `engine bake` scans text-backed content and audio roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
 - `engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import`, `engine package`, and `engine export` are still later phases.
@@ -107,13 +107,23 @@ Assistant entry points:
 - `content/data/*.data.toml` is the initial authored engine/bootstrap data lane.
 - `content/effects/*.effect.toml` is the initial authored effect-descriptor lane.
 - `content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.
+- `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
 - The runtime validates the content roots through `DataFoundation` before startup continues.
 - Scene-to-prefab relationships are validated across the catalog.
 - `runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.
 - The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.
-- `engine bake` now emits staged cooked outputs into `build/cooked/` and writes generated-mesh preview payloads for `procgeo` assets.
+- The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
+- Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
+- `engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, and stages cooked audio metadata under `build/cooked/audio/`.
 - There is not yet a final FlatBuffers writer, SQLite asset index, or Effekseer runtime integration.
+
+### Audio Foundation
+
+- `audio/buses.toml` defines the initial required buses: `Master`, `Music`, `SFX`, `Voice`, and `Ambience`.
+- `audio/sounds/*.sound.toml` defines named sounds with bus routing, playback mode, spatialization, streaming, and default volume metadata.
+- `audio/events/*.audio-event.toml` defines named audio events that currently resolve to sound-play requests through engine-owned APIs.
+- The current audio slice validates and resolves requests, but it does not decode or mix sound yet. Playback backend integration is still ahead.
 
 ## Input, Tooling, And Testing
 
@@ -133,7 +143,7 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
-- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
+- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
 - Both scripts remove generated outputs, rerun the current deterministic baseline, start `engine_sessiond`, and then launch the active shell workflow.
@@ -144,8 +154,8 @@ Assistant entry points:
 
 - A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
 - A real native SDL3/Vulkan runtime slice with input, tooling, and data-foundation hooks.
-- Text-backed scene, prefab, data, effect, and procedural-geometry roots represented in the repo.
-- A first CLI bake lane that emits staged cooked outputs and generated-mesh preview artifacts.
+- Text-backed scene, prefab, data, effect, procedural-geometry, and audio roots represented in the repo.
+- A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio metadata.
 - A first CLI migration lane that detects supported source-engine project shapes and emits normalized migration manifests plus reports.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
@@ -154,5 +164,6 @@ Assistant entry points:
 - The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.
 - The runtime still needs richer rendering, real scene loading, and broader native verification.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
+- Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

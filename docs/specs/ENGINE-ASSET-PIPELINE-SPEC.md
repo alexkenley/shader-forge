@@ -20,7 +20,9 @@ The current first slice in the repo now includes:
 - staged cooked outputs emitted into the stable `build/cooked/` layout
 - a structured bake report at `build/cooked/asset-pipeline-report.json`
 - text-backed procedural geometry assets under `content/procgeo/*.procgeo.toml`
+- text-backed audio buses, sounds, and events under `audio/`
 - deterministic generated-mesh preview payloads under `build/cooked/generated-meshes/`
+- staged cooked audio bus, sound, and event metadata under `build/cooked/audio/`
 
 This is a real first cook lane, but it is still a staging slice rather than the final FlatBuffers writer. The current bake command emits deterministic placeholder cooked payloads in the stable cooked layout so later runtime and tool work can target real paths before the binary writer lands.
 

@@ -23,6 +23,7 @@ Rules:
 | `scripts/test-engine-data-foundation-scaffold.mjs` | Validates the data foundation manifest, text-backed content roots, runtime integration, and fallback syntax-only compilation of the native data foundation slice | deterministic |
 | `scripts/test-engine-asset-pipeline.mjs` | Runs `engine bake`, validates staged cooked outputs plus generated-mesh preview payloads, and checks the first procedural-geometry lane | deterministic |
 | `scripts/test-engine-migration-fixtures.mjs` | Runs the migration foundation CLI against Unity, Unreal, and Godot fixtures and validates normalized manifest/report outputs | deterministic |
+| `scripts/test-engine-audio-scaffold.mjs` | Validates authored audio buses/sounds/events, runtime audio integration hooks, and fallback syntax-only compilation of the native audio slice | deterministic |
 | `scripts/test-engine-input-scaffold.mjs` | Validates the native input subsystem sources plus text-backed action/context assets and runs a fallback syntax-only compile | deterministic |
 | `scripts/test-engine-tooling-ui-scaffold.mjs` | Validates the native tooling registry/layout substrate, runtime integration hooks, and runs a fallback syntax-only compile | deterministic |
 | `scripts/test-ollama-smoke.mjs` | Resolves a reachable Ollama endpoint, optionally autostarts local WSL Ollama, and performs a minimal OpenAI-compatible chat completion smoke test | real local-model |
@@ -40,6 +41,8 @@ npm run test:asset-pipeline
 node scripts/test-engine-asset-pipeline.mjs
 npm run test:migration-fixtures
 node scripts/test-engine-migration-fixtures.mjs
+npm run test:audio-scaffold
+node scripts/test-engine-audio-scaffold.mjs
 node scripts/test-engine-input-scaffold.mjs
 node scripts/test-engine-tooling-ui-scaffold.mjs
 HARNESS_OLLAMA_MODEL=<your-model> node scripts/test-ollama-smoke.mjs
@@ -59,7 +62,7 @@ Unix/WSL clean-start path:
 ./scripts/start-dev-clean.sh
 ```
 
-These scripts are the preferred dev entrypoints while the stack is still shell-first. They remove generated outputs, rerun the deterministic shell, sessiond, viewer-bridge, runtime-scaffold, data-foundation-scaffold, asset-pipeline, migration-fixtures, input-scaffold, and tooling-ui-scaffold harnesses, start `engine_sessiond`, and then start the shell dev server.
+These scripts are the preferred dev entrypoints while the stack is still shell-first. They remove generated outputs, rerun the deterministic shell, sessiond, viewer-bridge, runtime-scaffold, data-foundation-scaffold, asset-pipeline, migration-fixtures, audio-scaffold, input-scaffold, and tooling-ui-scaffold harnesses, start `engine_sessiond`, and then start the shell dev server.
 
 ## WSL And Windows-Hosted Ollama
 

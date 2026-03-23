@@ -22,8 +22,8 @@ Usage:
   engine file list <path> --session <id> [--base-url <url>]
   engine file read <path> --session <id> [--base-url <url>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
-  engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
-  engine bake [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
+  engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--data-foundation data/foundation/engine-data-layout.toml] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
+  engine bake [--content-root content] [--audio-root audio] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
   engine migrate detect <path> [--output-root migration] [--run-id detect-unity]
   engine migrate unity <path> [--output-root migration] [--run-id unity-project]
   engine migrate unreal <path> [--output-root migration] [--run-id unreal-project]
@@ -165,6 +165,9 @@ async function runRuntime(sceneName, flags) {
   if (flags['content-root']) {
     args.push('--content-root', String(flags['content-root']));
   }
+  if (flags['audio-root']) {
+    args.push('--audio-root', String(flags['audio-root']));
+  }
   if (flags['data-foundation']) {
     args.push('--data-foundation', String(flags['data-foundation']));
   }
@@ -181,6 +184,7 @@ async function bakeAssets(flags) {
   const report = await bakeAssetPipeline({
     repoRoot,
     contentRoot: String(flags['content-root'] || 'content'),
+    audioRoot: String(flags['audio-root'] || 'audio'),
     foundationPath: String(flags['data-foundation'] || 'data/foundation/engine-data-layout.toml'),
     outputRoot: String(flags['output-root'] || 'build/cooked'),
     reportPath: String(flags.report || path.join(String(flags['output-root'] || 'build/cooked'), 'asset-pipeline-report.json')),
@@ -188,8 +192,11 @@ async function bakeAssets(flags) {
 
   console.log('Asset pipeline bake complete.');
   console.log(`- Content root: ${report.contentRoot}`);
+  console.log(`- Audio root: ${report.audioRoot}`);
   console.log(`- Output root: ${report.outputRoot}`);
   console.log(`- Baked assets: ${report.bakedAssets.length}`);
+  console.log(`- Baked audio sounds: ${report.audio.bakedSounds.length}`);
+  console.log(`- Baked audio events: ${report.audio.bakedEvents.length}`);
   console.log(`- Generated meshes: ${report.generatedMeshes.length}`);
   console.log(`- Report: ${path.isAbsolute(String(flags.report || '')) ? String(flags.report) : String(flags.report || path.join(report.outputRoot, 'asset-pipeline-report.json'))}`);
 }

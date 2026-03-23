@@ -25,6 +25,27 @@ Initial implementation direction:
 
 This is a direction, not a requirement to mirror any external engine API exactly.
 
+## Current First Slice
+
+The current Phase 5.7 slice is an authored-audio foundation rather than a playback-complete subsystem.
+
+Implemented now:
+
+- `audio/buses.toml` with the first required bus set: `Master`, `Music`, `SFX`, `Voice`, and `Ambience`
+- `audio/sounds/*.sound.toml` for text-backed sound definitions
+- `audio/events/*.audio-event.toml` for named event-to-sound mappings
+- placeholder source-media paths under `audio/media/` so authored metadata and staged cook outputs target stable locations
+- native `AudioSystem` loading, validation, and event resolution in the runtime
+- `engine run` and `engine bake` support for `--audio-root`
+- staged cooked audio bus, sound, and event metadata outputs under `build/cooked/audio/`
+
+Current boundaries:
+
+- authored buses, sounds, and named events are real and validated in code now
+- runtime startup and selected UI actions resolve named audio events through engine-owned APIs
+- the playback backend is not integrated yet, so this slice resolves and logs audio requests instead of decoding and mixing them
+- the cooked outputs are staged metadata registries until the miniaudio-backed playback lane lands
+
 ## Authoring Model
 
 Primary authored artifacts should be text-backed.

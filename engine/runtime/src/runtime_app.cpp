@@ -1,3 +1,4 @@
+#include "shader_forge/runtime/audio_system.hpp"
 #include "shader_forge/runtime/data_foundation.hpp"
 #include "shader_forge/runtime/input_system.hpp"
 #include "shader_forge/runtime/runtime_app.hpp"
@@ -349,6 +350,7 @@ private:
     sdlInitialized_ = true;
 
     initializeInputSystem();
+    initializeAudioSystem();
     initializeDataFoundation();
     resolveDataDrivenRuntimeState();
     initializeToolingUi();
@@ -393,6 +395,13 @@ private:
       .sessionLayoutPath = config_.toolingSessionLayoutPath,
     }, &error)) {
       throw std::runtime_error("Tooling UI initialization failed: " + error);
+    }
+  }
+
+  void initializeAudioSystem() {
+    std::string error;
+    if (!audioSystem_.loadFromDisk(AudioConfig{.rootPath = config_.audioRoot}, &error)) {
+      throw std::runtime_error("Audio system initialization failed: " + error);
     }
   }
 
@@ -751,6 +760,7 @@ private:
             << ", validation=" << (validationEnabled_ ? "enabled" : "disabled")
             << ", input-root=" << std::filesystem::absolute(config_.inputRoot).string()
             << ", content-root=" << std::filesystem::absolute(config_.contentRoot).string()
+            << ", audio-root=" << std::filesystem::absolute(config_.audioRoot).string()
             << ", data-foundation=" << std::filesystem::absolute(config_.dataFoundationPath).string()
             << ", tooling-layout=" << std::filesystem::absolute(config_.toolingLayoutPath).string();
     logRuntimeLine(startup.str());
@@ -761,16 +771,39 @@ private:
       logRuntimeLine(std::string("Bootstrap overlay preference applied: ")
         + (toolingUi_.overlayVisible() ? "enabled." : "disabled."));
     }
+    logRuntimeLine(audioSystem_.foundationSummary());
     logRuntimeLine(dataFoundation_.foundationSummary());
     logRuntimeLine(dataFoundation_.assetCatalogSummary());
     logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
+    logRuntimeMultiline(audioSystem_.busRoutingSummary());
+    logRuntimeMultiline(audioSystem_.eventCatalogSummary());
     logRuntimeMultiline(dataFoundation_.relationshipSummary());
     logRuntimeMultiline(dataFoundation_.cookPlanSummary());
     logRuntimeMultiline(inputSystem_.bindingSummary());
     logRuntimeMultiline(toolingUi_.panelRegistrySummary());
+    triggerAudioEvent("runtime_boot", "startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
       "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, and F2-F6 for tooling panels.");
+  }
+
+  void triggerAudioEvent(std::string_view eventName, std::string_view reason) {
+    const auto resolved = audioSystem_.resolveEvent(eventName);
+    if (!resolved.has_value()) {
+      logRuntimeLine("Audio event request could not be resolved: " + std::string(eventName));
+      return;
+    }
+
+    std::ostringstream message;
+    message << "Audio event " << resolved->eventName
+            << " requested via " << reason
+            << ": sound=" << resolved->soundName
+            << ", bus=" << resolved->busName
+            << ", playback=" << resolved->playbackMode
+            << ", spatialization=" << resolved->spatialization
+            << ", media=" << resolved->sourceMediaPath.generic_string()
+            << ", fade_ms=" << resolved->fadeMs;
+    logRuntimeLine(message.str());
   }
 
   void logSwapchain(const char* prefix) {
@@ -926,6 +959,7 @@ private:
       lastUiAction_ = "ui_accept";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
       logRuntimeLine("ui_accept action triggered.");
+      triggerAudioEvent("ui_accept", "ui_accept");
     }
 
     if (inputSystem_.actionPressed("ui_back")) {
@@ -1159,6 +1193,7 @@ private:
   }
 
   RuntimeConfig config_;
+  AudioSystem audioSystem_;
   DataFoundation dataFoundation_;
   InputSystem inputSystem_;
   ToolingUiSystem toolingUi_;

@@ -75,6 +75,17 @@ function parseIntegerValue(rawValue) {
   return Number.isInteger(value) ? value : null;
 }
 
+function parseBooleanValue(rawValue) {
+  const normalized = normalizeToken(parseStringValue(rawValue));
+  if (normalized === 'true') {
+    return true;
+  }
+  if (normalized === 'false') {
+    return false;
+  }
+  return null;
+}
+
 function relativePathFromRepo(repoRoot, targetPath) {
   const relative = path.relative(repoRoot, targetPath);
   return relative && !relative.startsWith('..') ? relative.split(path.sep).join('/') : targetPath.split(path.sep).join('/');
@@ -88,6 +99,11 @@ function writeJsonFile(filePath, payload) {
 function writeStageBinary(filePath, payload) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+}
+
+function hasSupportedAudioExtension(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  return extension === '.wav' || extension === '.ogg' || extension === '.flac' || extension === '.mp3';
 }
 
 function parseTomlDocument(filePath) {
@@ -437,6 +453,296 @@ function encodeStagedCookPayload(asset, extra = {}) {
   };
 }
 
+function parseAudioBusDocument(filePath) {
+  const content = fs.readFileSync(filePath, 'utf8');
+  const lines = content.split(/\r?\n/);
+  const document = {
+    schema: '',
+    schema_version: 0,
+    buses: [],
+  };
+  let currentBus = null;
+
+  for (const rawLine of lines) {
+    const cleaned = stripComment(rawLine);
+    if (!cleaned) {
+      continue;
+    }
+
+    if (cleaned.startsWith('[') && cleaned.endsWith(']')) {
+      const section = trim(cleaned.slice(1, -1));
+      if (!section.startsWith('bus.')) {
+        throw new Error(`Invalid audio bus section "${section}" in ${filePath}`);
+      }
+      const rawName = trim(section.slice(4));
+      currentBus = {
+        name: normalizeToken(rawName),
+        displayName: rawName,
+        parent: '',
+        defaultVolumeDb: 0,
+        defaultMuted: false,
+      };
+      document.buses.push(currentBus);
+      continue;
+    }
+
+    const pair = parseKeyValue(cleaned);
+    if (!pair) {
+      continue;
+    }
+
+    if (!currentBus) {
+      if (pair.key === 'schema') {
+        document.schema = parseStringValue(pair.value).toLowerCase();
+      } else if (pair.key === 'schema_version') {
+        document.schema_version = parseIntegerValue(pair.value) ?? 0;
+      }
+      continue;
+    }
+
+    if (pair.key === 'display_name') {
+      currentBus.displayName = parseStringValue(pair.value);
+    } else if (pair.key === 'parent') {
+      currentBus.parent = normalizeToken(parseStringValue(pair.value));
+    } else if (pair.key === 'default_volume_db') {
+      currentBus.defaultVolumeDb = parseNumberValue(pair.value) ?? 0;
+    } else if (pair.key === 'default_muted') {
+      currentBus.defaultMuted = parseBooleanValue(pair.value) ?? false;
+    }
+  }
+
+  return document;
+}
+
+function scanAudioAssets(repoRoot, audioRoot, outputRoot) {
+  const busesPath = path.join(audioRoot, 'buses.toml');
+  const soundsRoot = path.join(audioRoot, 'sounds');
+  const eventsRoot = path.join(audioRoot, 'events');
+  const warnings = [];
+  const relationships = [];
+
+  if (!fs.existsSync(busesPath)) {
+    throw new Error(`Expected audio bus file is missing: ${relativePathFromRepo(repoRoot, busesPath)}`);
+  }
+  if (!fs.existsSync(soundsRoot)) {
+    throw new Error(`Expected audio sounds directory is missing: ${relativePathFromRepo(repoRoot, soundsRoot)}`);
+  }
+  if (!fs.existsSync(eventsRoot)) {
+    throw new Error(`Expected audio events directory is missing: ${relativePathFromRepo(repoRoot, eventsRoot)}`);
+  }
+
+  const busDocument = parseAudioBusDocument(busesPath);
+  if (busDocument.schema !== 'shader_forge.audio_buses') {
+    throw new Error(`Audio bus file schema must be "shader_forge.audio_buses": ${relativePathFromRepo(repoRoot, busesPath)}`);
+  }
+  if (busDocument.schema_version <= 0) {
+    throw new Error(`Audio bus file schema_version must be a positive integer: ${relativePathFromRepo(repoRoot, busesPath)}`);
+  }
+
+  const requiredBuses = ['master', 'music', 'sfx', 'voice', 'ambience'];
+  const busNames = new Set(busDocument.buses.map((bus) => bus.name));
+  for (const requiredBus of requiredBuses) {
+    if (!busNames.has(requiredBus)) {
+      throw new Error(`Audio bus file is missing required bus "${requiredBus}": ${relativePathFromRepo(repoRoot, busesPath)}`);
+    }
+  }
+  for (const bus of busDocument.buses) {
+    if (bus.parent && !busNames.has(bus.parent)) {
+      throw new Error(`Audio bus "${bus.name}" references missing parent "${bus.parent}".`);
+    }
+  }
+
+  const bakedBusesPath = path.join(outputRoot, 'audio', 'audio-buses.bin');
+  writeStageBinary(bakedBusesPath, {
+    format: 'shader_forge.cooked_audio_buses.stage',
+    stagedEncoding: 'json_utf8_placeholder',
+    sourcePath: relativePathFromRepo(repoRoot, busesPath),
+    buses: busDocument.buses,
+  });
+
+  const sounds = [];
+  for (const entry of fs.readdirSync(soundsRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const sourcePath = path.join(soundsRoot, entry.name);
+    const fields = parseTomlDocument(sourcePath);
+    const name = normalizeToken(parseStringValue(fields.name || ''));
+    const schema = parseStringValue(fields.schema || '').toLowerCase();
+    const ownerSystem = normalizeToken(parseStringValue(fields.owner_system || ''));
+    const bus = normalizeToken(parseStringValue(fields.bus || ''));
+    const sourceMedia = parseStringValue(fields.source_media || '');
+    const sourceMediaPath = path.join(audioRoot, sourceMedia);
+    const playbackMode = normalizeToken(parseStringValue(fields.playback_mode || ''));
+    const spatialization = normalizeToken(parseStringValue(fields.spatialization || ''));
+    const stream = parseBooleanValue(fields.stream || '') ?? false;
+    const loop = parseBooleanValue(fields.loop || '') ?? false;
+    const defaultVolumeDb = parseNumberValue(fields.default_volume_db || '') ?? 0;
+    const schemaVersion = parseIntegerValue(fields.schema_version || '') ?? 0;
+    const cookedPath = path.join(outputRoot, 'audio', 'sounds', `${name}.bin`);
+    const problems = [];
+
+    if (schema !== 'shader_forge.sound') {
+      problems.push('schema must be "shader_forge.sound"');
+    }
+    if (schemaVersion <= 0) {
+      problems.push('schema_version must be a positive integer');
+    }
+    if (ownerSystem !== 'audio_system') {
+      problems.push('owner_system must be "audio_system"');
+    }
+    if (!name) {
+      problems.push('missing name');
+    }
+    if (!busNames.has(bus)) {
+      problems.push(`bus must reference a declared audio bus, received "${bus}"`);
+    }
+    if (!sourceMedia || !hasSupportedAudioExtension(sourceMediaPath)) {
+      problems.push('source_media must reference .wav, .ogg, .flac, or .mp3');
+    } else if (!fs.existsSync(sourceMediaPath)) {
+      problems.push(`source_media is missing: ${relativePathFromRepo(repoRoot, sourceMediaPath)}`);
+    }
+    if (!['oneshot', 'looped'].includes(playbackMode)) {
+      problems.push('playback_mode must be "oneshot" or "looped"');
+    }
+    if (!['2d', '3d'].includes(spatialization)) {
+      problems.push('spatialization must be "2d" or "3d"');
+    }
+
+    const sound = {
+      name,
+      schema,
+      schemaVersion,
+      ownerSystem,
+      bus,
+      sourcePath: relativePathFromRepo(repoRoot, sourcePath),
+      sourceMedia,
+      sourceMediaPath: relativePathFromRepo(repoRoot, sourceMediaPath),
+      playbackMode,
+      spatialization,
+      stream,
+      loop,
+      defaultVolumeDb,
+      cookedPath: relativePathFromRepo(repoRoot, cookedPath),
+      valid: problems.length === 0,
+      problems,
+    };
+    sounds.push(sound);
+
+    if (sound.valid) {
+      writeStageBinary(cookedPath, {
+        format: 'shader_forge.cooked_audio.stage',
+        stagedEncoding: 'json_utf8_placeholder',
+        kind: 'sound',
+        name: sound.name,
+        bus: sound.bus,
+        sourceMedia: sound.sourceMediaPath,
+        playbackMode: sound.playbackMode,
+        spatialization: sound.spatialization,
+        stream: sound.stream,
+        loop: sound.loop,
+        defaultVolumeDb: sound.defaultVolumeDb,
+      });
+      relationships.push(`audio-sound ${sound.name} -> bus ${sound.bus}`);
+    } else {
+      warnings.push(`${sound.sourcePath}: ${sound.problems.join('; ')}`);
+    }
+  }
+
+  const soundNames = new Set(sounds.filter((sound) => sound.valid).map((sound) => sound.name));
+  const events = [];
+  for (const entry of fs.readdirSync(eventsRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const sourcePath = path.join(eventsRoot, entry.name);
+    const fields = parseTomlDocument(sourcePath);
+    const name = normalizeToken(parseStringValue(fields.name || ''));
+    const schema = parseStringValue(fields.schema || '').toLowerCase();
+    const ownerSystem = normalizeToken(parseStringValue(fields.owner_system || ''));
+    const action = normalizeToken(parseStringValue(fields.action || ''));
+    const sound = normalizeToken(parseStringValue(fields.sound || ''));
+    const busOverride = normalizeToken(parseStringValue(fields.bus_override || ''));
+    const fadeMs = parseIntegerValue(fields.fade_ms || '') ?? 0;
+    const schemaVersion = parseIntegerValue(fields.schema_version || '') ?? 0;
+    const cookedPath = path.join(outputRoot, 'audio', 'events', `${name}.bin`);
+    const problems = [];
+
+    if (schema !== 'shader_forge.audio_event') {
+      problems.push('schema must be "shader_forge.audio_event"');
+    }
+    if (schemaVersion <= 0) {
+      problems.push('schema_version must be a positive integer');
+    }
+    if (ownerSystem !== 'audio_system') {
+      problems.push('owner_system must be "audio_system"');
+    }
+    if (!name) {
+      problems.push('missing name');
+    }
+    if (action !== 'play_sound') {
+      problems.push('action must be "play_sound"');
+    }
+    if (!soundNames.has(sound)) {
+      problems.push(`sound must reference a declared audio sound, received "${sound}"`);
+    }
+    if (busOverride && !busNames.has(busOverride)) {
+      problems.push(`bus_override must reference a declared audio bus, received "${busOverride}"`);
+    }
+    if (fadeMs < 0) {
+      problems.push('fade_ms must be >= 0');
+    }
+
+    const event = {
+      name,
+      schema,
+      schemaVersion,
+      ownerSystem,
+      action,
+      sound,
+      busOverride,
+      fadeMs,
+      sourcePath: relativePathFromRepo(repoRoot, sourcePath),
+      cookedPath: relativePathFromRepo(repoRoot, cookedPath),
+      valid: problems.length === 0,
+      problems,
+    };
+    events.push(event);
+
+    if (event.valid) {
+      writeStageBinary(cookedPath, {
+        format: 'shader_forge.cooked_audio.stage',
+        stagedEncoding: 'json_utf8_placeholder',
+        kind: 'event',
+        name: event.name,
+        action: event.action,
+        sound: event.sound,
+        busOverride: event.busOverride,
+        fadeMs: event.fadeMs,
+      });
+      relationships.push(`audio-event ${event.name} -> sound ${event.sound}`);
+    } else {
+      warnings.push(`${event.sourcePath}: ${event.problems.join('; ')}`);
+    }
+  }
+
+  return {
+    audioRoot: relativePathFromRepo(repoRoot, audioRoot),
+    busesPath: relativePathFromRepo(repoRoot, busesPath),
+    bakedBusesPath: relativePathFromRepo(repoRoot, bakedBusesPath),
+    counts: {
+      buses: busDocument.buses.length,
+      sounds: sounds.length,
+      events: events.length,
+    },
+    buses: busDocument.buses,
+    sounds,
+    events,
+    relationships,
+    warnings,
+  };
+}
+
 function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
   const assets = [];
   const warnings = [];
@@ -564,6 +870,9 @@ export async function bakeAssetPipeline(options) {
   const contentRoot = path.isAbsolute(options.contentRoot)
     ? options.contentRoot
     : path.join(repoRoot, options.contentRoot);
+  const audioRoot = path.isAbsolute(options.audioRoot || '')
+    ? options.audioRoot
+    : path.join(repoRoot, options.audioRoot || 'audio');
   const foundationPath = path.isAbsolute(options.foundationPath)
     ? options.foundationPath
     : path.join(repoRoot, options.foundationPath);
@@ -586,12 +895,16 @@ export async function bakeAssetPipeline(options) {
   }
 
   const scanResult = scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest);
+  const audioScan = scanAudioAssets(repoRoot, audioRoot, outputRoot);
   const counts = {
     scene: 0,
     prefab: 0,
     data: 0,
     effect: 0,
     procgeo: 0,
+    audioBuses: audioScan.counts.buses,
+    audioSounds: audioScan.counts.sounds,
+    audioEvents: audioScan.counts.events,
   };
 
   for (const asset of scanResult.assets) {
@@ -606,6 +919,25 @@ export async function bakeAssetPipeline(options) {
       sourcePath: asset.sourcePath,
       problems: asset.problems,
     }));
+
+  const invalidAudioAssets = [
+    ...audioScan.sounds
+      .filter((asset) => !asset.valid)
+      .map((asset) => ({
+        kind: 'audio_sound',
+        name: asset.name,
+        sourcePath: asset.sourcePath,
+        problems: asset.problems,
+      })),
+    ...audioScan.events
+      .filter((asset) => !asset.valid)
+      .map((asset) => ({
+        kind: 'audio_event',
+        name: asset.name,
+        sourcePath: asset.sourcePath,
+        problems: asset.problems,
+      })),
+  ];
 
   const bakedAssets = scanResult.assets
     .filter((asset) => asset.valid)
@@ -627,26 +959,48 @@ export async function bakeAssetPipeline(options) {
       toolingDbPath: manifest.tooling_db_path,
     },
     contentRoot: relativePathFromRepo(repoRoot, contentRoot),
+    audioRoot: relativePathFromRepo(repoRoot, audioRoot),
     outputRoot: relativePathFromRepo(repoRoot, outputRoot),
     counts,
     bakedAssets,
     invalidAssets,
+    invalidAudioAssets,
     generatedMeshes: scanResult.generatedMeshes,
+    audio: {
+      busesPath: audioScan.busesPath,
+      bakedBusesPath: audioScan.bakedBusesPath,
+      counts: audioScan.counts,
+      bakedSounds: audioScan.sounds.filter((asset) => asset.valid).map((asset) => ({
+        name: asset.name,
+        bus: asset.bus,
+        cookedPath: asset.cookedPath,
+        sourcePath: asset.sourcePath,
+      })),
+      bakedEvents: audioScan.events.filter((asset) => asset.valid).map((asset) => ({
+        name: asset.name,
+        sound: asset.sound,
+        cookedPath: asset.cookedPath,
+        sourcePath: asset.sourcePath,
+      })),
+      relationships: audioScan.relationships,
+      warnings: audioScan.warnings,
+    },
     relationships: scanResult.relationships,
-    warnings: scanResult.warnings,
+    warnings: [...scanResult.warnings, ...audioScan.warnings],
     notes: [
       'Cooked outputs are staged placeholder payloads in the stable build/cooked layout until the FlatBuffers writer lands.',
       'Procedural geometry currently bakes deterministic generated-mesh preview payloads plus staged cooked metadata.',
+      'Audio currently bakes staged bus, sound, and event metadata registries until the playback backend lands.',
     ],
   };
 
   writeJsonFile(reportPath, report);
 
-  if (invalidAssets.length > 0) {
+  if (invalidAssets.length > 0 || invalidAudioAssets.length > 0) {
     throw new Error([
-      `Asset pipeline bake found ${invalidAssets.length} invalid asset(s).`,
+      `Asset pipeline bake found ${invalidAssets.length + invalidAudioAssets.length} invalid asset(s).`,
       `Report: ${relativePathFromRepo(repoRoot, reportPath)}`,
-      ...scanResult.warnings.map((warning) => `- ${warning}`),
+      ...[...scanResult.warnings, ...audioScan.warnings].map((warning) => `- ${warning}`),
     ].join('\n'));
   }
 

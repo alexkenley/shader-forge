@@ -97,6 +97,7 @@ Current implementation status:
 - Phase 4.4 has now started through a native tooling substrate slice with a panel registry, text-backed layout loading/saving, and runtime inspection hooks, but not a Dear ImGui frontend yet.
 - Phase 5 has now started through a first asset-pipeline slice with `engine bake`, staged cooked outputs, and a text-backed procedural-geometry lane.
 - Phase 5.6 has now started through a migration-foundation slice with source-engine detection, normalized manifest/report outputs, provenance capture, and fixture-backed CLI migration commands.
+- Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -115,7 +116,8 @@ What is already done:
 - The native runtime now loads a data-foundation manifest, validates text-backed content roots under `content/`, resolves the selected runtime scene against `.scene.toml` source assets, and applies bootstrap scene/overlay defaults.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, input scaffold, and tooling UI scaffold.
+- Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -127,6 +129,7 @@ Where the build is currently up to:
 - engine-owned input has moved past ad-hoc raw-event handling into a first text-backed action/context slice, but rebinding, user overrides, and richer gameplay/tool context switching still remain
 - native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
 - Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture, but no source-project content is converted into Shader Forge-native assets yet
+- Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -418,6 +421,9 @@ Exit criteria:
 
 Goal:
 - establish an engine-owned audio subsystem so playback, routing, and event-driven sound behavior can be authored inside Shader Forge rather than deferred to external tooling only
+
+Status:
+- first slice now exists through authored bus/sound/event assets, native audio-system validation plus event resolution, staged cooked audio metadata, and deterministic harness coverage
 
 Scope:
 - `engine_audio` runtime subsystem
@@ -734,7 +740,8 @@ Current build target:
 - Phase 4 continuation: shell/runtime control surfaces and viewer workflow preparation, but not ahead of runtime and input stabilization
 - Phase 4.4 planning: native tooling UI substrate before deep authoring and profiling work
 - Phase 5.5 advance: keep locking data/cook format choices and source-asset ownership boundaries before broad asset-pipeline expansion
-- Phase 5 start: widen the new bake lane, generated content path, and preview/report surfaces before jumping to audio or level authoring
+- Phase 5 start: widen the new bake lane, generated content path, and preview/report surfaces while audio expands on the same authored/cooked path
 - Phase 5.6 start: extend migration detection into actual content mapping and provenance-backed conversion fixtures without claiming parity early
+- Phase 5.7 start: widen the authored-audio lane into real playback, bus control, and preview tooling without skipping the engine-owned event API
 - Phase 5.95 before Phase 5.9 execution: land trust and policy groundwork before assistant-triggered code and apply workflows expand
 - keep harness coverage current as each major slice lands
