@@ -20,6 +20,7 @@ Rules:
 | `scripts/test-engine-sessiond.mjs` | Starts the local backend in-process, creates a project session, and validates safe file list/read behavior over HTTP | deterministic |
 | `scripts/test-engine-viewer-bridge.mjs` | Starts the local backend in-process, validates viewer-bridge SSE/runtime/build flows, and checks the shell bridge surfaces remain present | deterministic |
 | `scripts/test-engine-scene-authoring.mjs` | Starts the local backend in-process, validates the shell scene-authoring surface stays present, and checks deterministic scene, prefab, placed-entity, transform, and prefab-component file writes inside a session root | deterministic |
+| `scripts/test-engine-scene-runtime-scaffold.mjs` | Validates the first Phase 6 scene-runtime composition slice, controlled-entity runtime hooks, and fallback syntax-only compilation of the widened native runtime sources | deterministic |
 | `scripts/test-engine-runtime-scaffold.mjs` | Validates the native runtime scaffold, runtime CLI hooks, and fallback syntax-only compilation of the current native sources | deterministic |
 | `scripts/test-engine-data-foundation-scaffold.mjs` | Validates the data foundation manifest, text-backed content roots, runtime integration, and fallback syntax-only compilation of the native data foundation slice | deterministic |
 | `scripts/test-engine-asset-pipeline.mjs` | Runs `engine bake`, validates staged cooked outputs plus generated-mesh preview payloads, and checks the first procedural-geometry, scene-entity, and prefab-component staging lane | deterministic |
@@ -40,6 +41,8 @@ node scripts/test-engine-sessiond.mjs
 node scripts/test-engine-viewer-bridge.mjs
 npm run test:scene-authoring
 node scripts/test-engine-scene-authoring.mjs
+npm run test:scene-runtime-scaffold
+node scripts/test-engine-scene-runtime-scaffold.mjs
 node scripts/test-engine-runtime-scaffold.mjs
 node scripts/test-engine-data-foundation-scaffold.mjs
 npm run test:asset-pipeline
@@ -71,7 +74,7 @@ Unix/WSL clean-start path:
 ./scripts/start-dev-clean.sh
 ```
 
-These scripts are the preferred dev entrypoints while the stack is still shell-first. They remove generated outputs, rerun the deterministic shell, sessiond, viewer-bridge, scene-authoring, runtime-scaffold, data-foundation-scaffold, asset-pipeline, migration-fixtures, audio-scaffold, animation-scaffold, physics-scaffold, input-scaffold, and tooling-ui-scaffold harnesses, start `engine_sessiond`, and then start the shell dev server.
+These scripts are the preferred dev entrypoints while the stack is still shell-first. They remove generated outputs, rerun the deterministic shell, sessiond, viewer-bridge, scene-authoring, scene-runtime-scaffold, runtime-scaffold, data-foundation-scaffold, asset-pipeline, migration-fixtures, audio-scaffold, animation-scaffold, physics-scaffold, input-scaffold, and tooling-ui-scaffold harnesses, start `engine_sessiond`, and then start the shell dev server.
 
 ## WSL And Windows-Hosted Ollama
 

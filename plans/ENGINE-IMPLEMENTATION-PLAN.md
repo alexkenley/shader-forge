@@ -102,6 +102,7 @@ Current implementation status:
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
 - Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
+- Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, and input-driven controlled-entity state in the native runtime.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -119,13 +120,14 @@ What is already done:
 - The native runtime now loads `input/actions.toml` plus `input/contexts/*.input.toml` and routes SDL keyboard, mouse, and gamepad input through named engine actions.
 - The native runtime now loads a text-backed tooling layout, exposes a named tool registry, and saves a session tooling layout snapshot for later native panel persistence.
 - The native runtime now loads a data-foundation manifest, validates text-backed content roots under `content/`, resolves the selected runtime scene against `.scene.toml` source assets, and applies bootstrap scene/overlay defaults.
+- The native runtime now composes authored scene entities plus prefab payloads into a first runtime world snapshot, resolves hierarchy-derived world transforms, selects a preferred player/control entity from authored spawn tags, and drives that entity from the named input actions.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
 - Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
 - Phase 5.74 has now started through `physics/layers.toml`, `physics/materials/*.physics-material.toml`, `physics/bodies/*.physics-body.toml`, native physics-system validation/query hooks, and staged cooked physics outputs under `build/cooked/physics/`.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, physics scaffold, input scaffold, and tooling UI scaffold.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, scene authoring, scene runtime scaffold, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, physics scaffold, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -142,6 +144,7 @@ Where the build is currently up to:
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
+- Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, preferred player-entity selection from spawn tags, first input-driven controlled-entity state, and scene-context physics query origins, but real rendered scene content, broader component simulation, materials/shaders, game UI, and full editor/runtime handoff still remain
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -685,6 +688,22 @@ Scope:
 - mounted project and package filesystem layering
 - editor/runtime scene handoff
 - initial AI-driven gameplay integration hooks
+
+Current checkpoint now implemented:
+- the data foundation can now compose authored `.scene.toml` entities plus `.prefab.toml` payloads into a runtime scene snapshot instead of only exposing source-level summaries
+- hierarchy-derived world transforms are now resolved from authored parent chains, with parent-cycle validation added to the scene catalog pass
+- the native runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`
+- named `move_*` and `look_*` actions now drive that controlled entity at runtime instead of only tinting the clear-color loop
+- runtime startup logs and window state now surface composed-scene counts, preferred player entity context, and first interaction-target effect context
+- physics query origins now follow the controlled entity position instead of staying hard-coded at world zero
+- deterministic `scripts/test-engine-scene-runtime-scaffold.mjs` coverage now exists for this Phase 6 slice
+
+Still ahead inside this phase:
+- actual scene rendering, material/shader binding, and visible prefab/component instancing
+- broader runtime component simulation beyond the current controlled-entity transform loop
+- player-facing game UI via RmlUi
+- tighter editor/runtime handoff, hot reload, and mounted project/package layering
+- enough real runtime content to stand up the first small example project end to end
 
 Reference inputs:
 - for end-to-end runtime composition and iteration flow, consult the [Wicked Engine guide](../docs/guides/ENGINE-WICKED-ENGINE-BORROW-GUIDE.md), [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md), [The Forge guide](../docs/guides/ENGINE-THE-FORGE-BORROW-GUIDE.md), [Filament guide](../docs/guides/ENGINE-FILAMENT-BORROW-GUIDE.md), [Distill guide](../docs/guides/ENGINE-DISTILL-BORROW-GUIDE.md), and the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md)

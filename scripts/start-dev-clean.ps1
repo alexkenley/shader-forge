@@ -159,6 +159,10 @@ try {
         & npm run test:tooling-ui-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Tooling UI scaffold test failed" }
 
+        Write-Host "[shader-forge] Running scene runtime scaffold harness..."
+        & npm run test:scene-runtime-scaffold
+        if ($LASTEXITCODE -ne 0) { throw "Scene runtime scaffold test failed" }
+
         Write-Host "[shader-forge] Running runtime scaffold harness..."
         & npm run test:runtime-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Runtime scaffold test failed" }

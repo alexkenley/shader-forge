@@ -22,3 +22,11 @@ parent = ""
 position = "0, 0.5, 0"
 rotation = "0, 35, 0"
 scale = "1, 1, 1"
+
+[entity.crate_satellite]
+display_name = "Crate Satellite"
+source_prefab = "debug_crate"
+parent = "crate_focus"
+position = "1.2, 0.8, 0"
+rotation = "0, -20, 0"
+scale = "0.5, 0.5, 0.5"

@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -197,6 +199,22 @@ std::string vector3String(const std::array<float, 3>& value) {
   std::ostringstream stream;
   stream << value[0] << ", " << value[1] << ", " << value[2];
   return stream.str();
+}
+
+std::array<float, 3> addVector3(const std::array<float, 3>& left, const std::array<float, 3>& right) {
+  return {
+    left[0] + right[0],
+    left[1] + right[1],
+    left[2] + right[2],
+  };
+}
+
+std::array<float, 3> multiplyVector3(const std::array<float, 3>& left, const std::array<float, 3>& right) {
+  return {
+    left[0] * right[0],
+    left[1] * right[1],
+    left[2] * right[2],
+  };
 }
 
 bool hasPrefabRenderComponent(const PrefabSourceSnapshot& prefab) {
@@ -874,6 +892,43 @@ struct DataFoundation::Impl {
           }
         }
       }
+
+      if (!scene.valid) {
+        continue;
+      }
+
+      for (const auto& entity : scene.entities) {
+        std::vector<std::string> parentChain;
+        std::string currentParent = entity.parent;
+        while (!currentParent.empty()) {
+          if (currentParent == entity.id
+              || std::find(parentChain.begin(), parentChain.end(), currentParent) != parentChain.end()) {
+            scene.valid = false;
+            markAssetInvalid(
+              DataAssetKind::scene,
+              scene.name,
+              scene.sourcePath,
+              "entity '" + entity.id + "' is part of a parent cycle via '" + currentParent + "'");
+            break;
+          }
+
+          parentChain.push_back(currentParent);
+          const auto parentIt = std::find_if(
+            scene.entities.begin(),
+            scene.entities.end(),
+            [&currentParent](const SceneEntitySnapshot& candidate) {
+              return candidate.id == currentParent;
+            });
+          if (parentIt == scene.entities.end()) {
+            break;
+          }
+          currentParent = parentIt->parent;
+        }
+
+        if (!scene.valid) {
+          break;
+        }
+      }
     }
 
     if (bootstrap.has_value() && bootstrap->valid && !bootstrap->defaultScene.empty() && !hasValidScene(bootstrap->defaultScene)) {
@@ -980,6 +1035,116 @@ std::optional<PrefabSourceSnapshot> DataFoundation::prefabSource(std::string_vie
     }
   }
   return std::nullopt;
+}
+
+std::optional<ComposedSceneSnapshot> DataFoundation::composeScene(std::string_view sceneName) const {
+  const std::string normalized = normalizeToken(std::string(sceneName));
+  const auto scene = sceneSource(normalized);
+  if (!scene.has_value()) {
+    return std::nullopt;
+  }
+
+  ComposedSceneSnapshot composed;
+  composed.name = scene->name;
+  composed.title = scene->title;
+  composed.primaryPrefab = scene->primaryPrefab;
+  composed.sourcePath = scene->sourcePath;
+  composed.cookedPath = scene->cookedPath;
+  composed.valid = scene->valid;
+  if (!scene->valid) {
+    return composed;
+  }
+
+  composed.entities.reserve(scene->entities.size());
+  std::unordered_map<std::string, std::size_t> entityIndices;
+  entityIndices.reserve(scene->entities.size());
+
+  auto appendPrefabName = [&composed](const std::string& prefabName) {
+    if (prefabName.empty()) {
+      return;
+    }
+    if (std::find(composed.prefabNames.begin(), composed.prefabNames.end(), prefabName) == composed.prefabNames.end()) {
+      composed.prefabNames.push_back(prefabName);
+    }
+  };
+
+  appendPrefabName(scene->primaryPrefab);
+
+  for (const auto& entity : scene->entities) {
+    ComposedSceneEntitySnapshot composedEntity;
+    composedEntity.id = entity.id;
+    composedEntity.displayName = entity.displayName.empty() ? entity.id : entity.displayName;
+    composedEntity.prefabName = entity.sourcePrefab;
+    composedEntity.parent = entity.parent;
+    composedEntity.localPosition = entity.position;
+    composedEntity.localRotation = entity.rotation;
+    composedEntity.localScale = entity.scale;
+    composedEntity.worldPosition = entity.position;
+    composedEntity.worldRotation = entity.rotation;
+    composedEntity.worldScale = entity.scale;
+
+    if (const auto prefab = prefabSource(entity.sourcePrefab); prefab.has_value() && prefab->valid) {
+      composedEntity.prefabCategory = prefab->category;
+      composedEntity.spawnTag = prefab->spawnTag;
+      composedEntity.hasRenderComponent = hasPrefabRenderComponent(*prefab);
+      composedEntity.renderProcgeo = prefab->renderComponent.procgeo;
+      composedEntity.renderMaterialHint = prefab->renderComponent.materialHint;
+      composedEntity.hasEffectComponent = hasPrefabEffectComponent(*prefab);
+      composedEntity.effectName = prefab->effectComponent.effect;
+      composedEntity.effectTrigger = prefab->effectComponent.trigger;
+      if (composed.preferredPlayerEntity.empty()
+          && (prefab->spawnTag == "player_camera" || prefab->spawnTag == "player_spawn")) {
+        composed.preferredPlayerEntity = entity.id;
+      }
+    }
+
+    entityIndices.emplace(composedEntity.id, composed.entities.size());
+    appendPrefabName(composedEntity.prefabName);
+    composed.entities.push_back(std::move(composedEntity));
+  }
+
+  for (auto& entity : composed.entities) {
+    if (entity.parent.empty()) {
+      composed.rootEntities.push_back(entity.id);
+      continue;
+    }
+
+    const auto parentIt = entityIndices.find(entity.parent);
+    if (parentIt != entityIndices.end()) {
+      composed.entities[parentIt->second].children.push_back(entity.id);
+    }
+  }
+
+  std::vector<std::uint8_t> state(composed.entities.size(), 0);
+  std::function<void(std::size_t)> resolveWorldTransform = [&](std::size_t entityIndex) {
+    if (entityIndex >= composed.entities.size() || state[entityIndex] == 2) {
+      return;
+    }
+    if (state[entityIndex] == 1) {
+      composed.valid = false;
+      return;
+    }
+
+    state[entityIndex] = 1;
+    auto& entity = composed.entities[entityIndex];
+    if (!entity.parent.empty()) {
+      const auto parentIt = entityIndices.find(entity.parent);
+      if (parentIt != entityIndices.end()) {
+        resolveWorldTransform(parentIt->second);
+        const auto& parent = composed.entities[parentIt->second];
+        entity.worldPosition = addVector3(parent.worldPosition, entity.localPosition);
+        entity.worldRotation = addVector3(parent.worldRotation, entity.localRotation);
+        entity.worldScale = multiplyVector3(parent.worldScale, entity.localScale);
+      }
+    }
+    state[entityIndex] = 2;
+  };
+
+  for (std::size_t entityIndex = 0; entityIndex < composed.entities.size(); entityIndex += 1) {
+    resolveWorldTransform(entityIndex);
+  }
+
+  return composed;
 }
 
 std::optional<RuntimeBootstrapSnapshot> DataFoundation::runtimeBootstrap() const {
@@ -1150,6 +1315,57 @@ std::string DataFoundation::scenePrefabComponentSummary(std::string_view sceneNa
       }
     }
   }
+  return summary.str();
+}
+
+std::string DataFoundation::composedSceneSummary(std::string_view sceneName) const {
+  const std::string normalized = normalizeToken(std::string(sceneName));
+  const auto composed = composeScene(normalized);
+  if (!composed.has_value()) {
+    return "Composed scene missing: " + normalized;
+  }
+  if (!composed->valid) {
+    return "Composed scene invalid: " + normalized;
+  }
+
+  std::ostringstream summary;
+  summary << "Composed scene: " << composed->name
+          << " [entities=" << composed->entities.size()
+          << ", roots=" << composed->rootEntities.size()
+          << ", prefabs=" << composed->prefabNames.size() << ']';
+  if (!composed->preferredPlayerEntity.empty()) {
+    summary << "\n- preferred_player_entity=" << composed->preferredPlayerEntity;
+  }
+
+  for (const auto& entity : composed->entities) {
+    summary << "\n- entity " << entity.id
+            << " -> prefab " << entity.prefabName;
+    if (!entity.spawnTag.empty()) {
+      summary << " [spawn_tag=" << entity.spawnTag << ']';
+    }
+    if (!entity.parent.empty()) {
+      summary << ", parent=" << entity.parent;
+    }
+    if (!entity.children.empty()) {
+      summary << ", children=" << entity.children.size();
+    }
+    summary << ", local_pos=(" << vector3String(entity.localPosition) << ')'
+            << ", world_pos=(" << vector3String(entity.worldPosition) << ')';
+
+    if (entity.hasRenderComponent) {
+      summary << "\n  - render -> procgeo " << entity.renderProcgeo;
+      if (!entity.renderMaterialHint.empty()) {
+        summary << ", material_hint=" << entity.renderMaterialHint;
+      }
+    }
+    if (entity.hasEffectComponent) {
+      summary << "\n  - effect -> asset " << entity.effectName;
+      if (!entity.effectTrigger.empty()) {
+        summary << ", trigger=" << entity.effectTrigger;
+      }
+    }
+  }
+
   return summary.str();
 }
 

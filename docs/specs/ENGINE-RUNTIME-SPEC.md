@@ -39,6 +39,10 @@ The current runtime slice is the first real native bring-up pass:
 - scene metadata such as title and primary prefab now feeds runtime title/log state instead of staying disconnected from execution
 - authored scene-entity hierarchy and transform summaries now feed runtime startup logs instead of staying disconnected from execution
 - referenced prefab component payload summaries now feed runtime startup logs instead of staying disconnected from execution
+- authored scenes and prefabs can now compose into a first runtime scene snapshot with resolved hierarchy-derived world transforms
+- the runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`
+- named `move_*` and `look_*` actions now drive that controlled entity position and orientation at runtime
+- physics query origins and runtime interaction logs now follow the composed scene entity state instead of staying hard-coded at world zero
 - animation graph and entry-state context now feeds runtime title/log state instead of staying disconnected from execution
 - physics scene-query state is now logged against the authored scene context instead of staying disconnected from execution
 

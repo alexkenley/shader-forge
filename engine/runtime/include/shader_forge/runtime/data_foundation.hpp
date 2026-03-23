@@ -85,6 +85,41 @@ struct PrefabSourceSnapshot {
   bool valid = false;
 };
 
+struct ComposedSceneEntitySnapshot {
+  std::string id;
+  std::string displayName;
+  std::string prefabName;
+  std::string prefabCategory;
+  std::string spawnTag;
+  std::string parent;
+  std::vector<std::string> children;
+  std::array<float, 3> localPosition{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> localRotation{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> localScale{1.0F, 1.0F, 1.0F};
+  std::array<float, 3> worldPosition{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> worldRotation{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> worldScale{1.0F, 1.0F, 1.0F};
+  bool hasRenderComponent = false;
+  std::string renderProcgeo;
+  std::string renderMaterialHint;
+  bool hasEffectComponent = false;
+  std::string effectName;
+  std::string effectTrigger;
+};
+
+struct ComposedSceneSnapshot {
+  std::string name;
+  std::string title;
+  std::string primaryPrefab;
+  std::vector<ComposedSceneEntitySnapshot> entities;
+  std::vector<std::string> rootEntities;
+  std::vector<std::string> prefabNames;
+  std::string preferredPlayerEntity;
+  std::filesystem::path sourcePath;
+  std::filesystem::path cookedPath;
+  bool valid = false;
+};
+
 struct RuntimeBootstrapSnapshot {
   std::string name;
   std::string defaultScene;
@@ -126,6 +161,7 @@ public:
   std::vector<ProcgeoSourceSnapshot> snapshotProcgeoSources() const;
   std::optional<SceneSourceSnapshot> sceneSource(std::string_view sceneName) const;
   std::optional<PrefabSourceSnapshot> prefabSource(std::string_view prefabName) const;
+  std::optional<ComposedSceneSnapshot> composeScene(std::string_view sceneName) const;
   std::optional<RuntimeBootstrapSnapshot> runtimeBootstrap() const;
 
   std::string foundationSummary() const;
@@ -133,6 +169,7 @@ public:
   std::string sceneLookupSummary(std::string_view sceneName) const;
   std::string sceneEntitySummary(std::string_view sceneName) const;
   std::string scenePrefabComponentSummary(std::string_view sceneName) const;
+  std::string composedSceneSummary(std::string_view sceneName) const;
   std::string relationshipSummary() const;
   std::string cookPlanSummary(std::size_t maxAssets = 6) const;
 

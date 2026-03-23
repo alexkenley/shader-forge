@@ -113,8 +113,10 @@ Assistant entry points:
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
 - The runtime validates the content roots through `DataFoundation` before startup continues.
 - Scene-to-prefab relationships are validated across the catalog.
+- The runtime can now compose authored scene entities plus prefab payloads into a first runtime scene snapshot with resolved hierarchy-derived world transforms.
 - `runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.
 - The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.
+- The runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`, and `move_*` plus `look_*` input now drives that entity state.
 - The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.
 - `Play Mode` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Edit Mode` is restored.
 - The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
@@ -166,6 +168,7 @@ Assistant entry points:
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
+- `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.
 - `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
@@ -177,7 +180,7 @@ Assistant entry points:
 
 - A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
 - A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy, transform editing, and first prefab component payload editing.
-- A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.
+- A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, and first composed scene-runtime hooks.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
@@ -187,7 +190,7 @@ Assistant entry points:
 
 - The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.
 - Scene authoring still needs transform gizmos, deeper scene/component payload authoring, and bake-back flows beyond the current text-backed entity plus prefab-component slice.
-- The runtime still needs richer rendering, real scene loading, and broader native verification.
+- The runtime still needs richer rendering, visible prefab/component instancing, broader scene simulation, and broader native verification.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.

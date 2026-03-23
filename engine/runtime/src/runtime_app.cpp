@@ -50,6 +50,12 @@ void logMultiline(const std::string& message) {
   }
 }
 
+std::string runtimeVector3String(const std::array<float, 3>& value) {
+  std::ostringstream stream;
+  stream << value[0] << ", " << value[1] << ", " << value[2];
+  return stream.str();
+}
+
 #if SHADER_FORGE_NATIVE_RUNTIME
 
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
@@ -127,6 +133,18 @@ struct FrameSync {
   VkSemaphore imageAvailable = VK_NULL_HANDLE;
   VkSemaphore renderFinished = VK_NULL_HANDLE;
   VkFence inFlight = VK_NULL_HANDLE;
+};
+
+struct RuntimeControlledEntityState {
+  std::string id;
+  std::string displayName;
+  std::string prefabName;
+  std::string spawnTag;
+  std::string effectName;
+  std::string effectTrigger;
+  std::array<float, 3> position{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> rotation{0.0F, 0.0F, 0.0F};
+  bool valid = false;
 };
 
 bool instanceLayerAvailable(const char* layerName) {
@@ -356,6 +374,7 @@ private:
     initializeAnimationSystem();
     initializeDataFoundation();
     resolveDataDrivenRuntimeState();
+    resolveRuntimeSceneComposition();
     initializePhysicsSystem();
     resolveAnimationRuntimeState();
     initializeToolingUi();
@@ -459,6 +478,67 @@ private:
     }
   }
 
+  void resolveRuntimeSceneComposition() {
+    activeSceneEntityCount_ = 0;
+    activeSceneRootCount_ = 0;
+    activeScenePrefabCount_ = 0;
+    activeControlledEntity_ = RuntimeControlledEntityState{};
+    activeInteractionTarget_ = RuntimeControlledEntityState{};
+
+    const auto composed = dataFoundation_.composeScene(activeSceneName_);
+    if (!composed.has_value() || !composed->valid) {
+      return;
+    }
+
+    activeSceneEntityCount_ = composed->entities.size();
+    activeSceneRootCount_ = composed->rootEntities.size();
+    activeScenePrefabCount_ = composed->prefabNames.size();
+
+    const ComposedSceneEntitySnapshot* preferredEntity = nullptr;
+    const ComposedSceneEntitySnapshot* interactionTarget = nullptr;
+
+    if (!composed->preferredPlayerEntity.empty()) {
+      const auto playerIt = std::find_if(
+        composed->entities.begin(),
+        composed->entities.end(),
+        [&composed](const ComposedSceneEntitySnapshot& entity) {
+          return entity.id == composed->preferredPlayerEntity;
+        });
+      if (playerIt != composed->entities.end()) {
+        preferredEntity = &(*playerIt);
+      }
+    }
+
+    if (preferredEntity == nullptr && !composed->entities.empty()) {
+      preferredEntity = &composed->entities.front();
+    }
+
+    for (const auto& entity : composed->entities) {
+      if (interactionTarget == nullptr && entity.hasEffectComponent) {
+        interactionTarget = &entity;
+      }
+    }
+
+    auto applyEntityState = [](const ComposedSceneEntitySnapshot& source, RuntimeControlledEntityState* target) {
+      target->id = source.id;
+      target->displayName = source.displayName;
+      target->prefabName = source.prefabName;
+      target->spawnTag = source.spawnTag;
+      target->effectName = source.effectName;
+      target->effectTrigger = source.effectTrigger;
+      target->position = source.worldPosition;
+      target->rotation = source.worldRotation;
+      target->valid = true;
+    };
+
+    if (preferredEntity != nullptr) {
+      applyEntityState(*preferredEntity, &activeControlledEntity_);
+    }
+    if (interactionTarget != nullptr) {
+      applyEntityState(*interactionTarget, &activeInteractionTarget_);
+    }
+  }
+
   void resolveAnimationRuntimeState() {
     activeAnimationGraphName_.clear();
     activeAnimationEntryState_.clear();
@@ -487,6 +567,39 @@ private:
 
     toolingUi_.toggleOverlay();
     bootstrapOverlayApplied_ = true;
+  }
+
+  void logControlledEntityState(std::string_view reason) {
+    if (!activeControlledEntity_.valid) {
+      return;
+    }
+
+    std::ostringstream message;
+    message << "Controlled scene entity via " << reason
+            << ": id=" << activeControlledEntity_.id
+            << ", prefab=" << activeControlledEntity_.prefabName;
+    if (!activeControlledEntity_.spawnTag.empty()) {
+      message << ", spawn_tag=" << activeControlledEntity_.spawnTag;
+    }
+    message << ", position=(" << runtimeVector3String(activeControlledEntity_.position) << ')'
+            << ", rotation=(" << runtimeVector3String(activeControlledEntity_.rotation) << ')';
+    logRuntimeLine(message.str());
+  }
+
+  void logInteractionTarget(std::string_view reason) {
+    if (!activeInteractionTarget_.valid || activeInteractionTarget_.effectName.empty()) {
+      return;
+    }
+
+    std::ostringstream message;
+    message << "Scene interaction via " << reason
+            << ": entity=" << activeInteractionTarget_.id
+            << ", effect=" << activeInteractionTarget_.effectName;
+    if (!activeInteractionTarget_.effectTrigger.empty()) {
+      message << ", trigger=" << activeInteractionTarget_.effectTrigger;
+    }
+    message << ", position=(" << runtimeVector3String(activeInteractionTarget_.position) << ')';
+    logRuntimeLine(message.str());
   }
 
   void logRuntimeLine(const std::string& message) {
@@ -821,6 +934,7 @@ private:
     logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
     logRuntimeMultiline(dataFoundation_.sceneEntitySummary(activeSceneName_));
     logRuntimeMultiline(dataFoundation_.scenePrefabComponentSummary(activeSceneName_));
+    logRuntimeMultiline(dataFoundation_.composedSceneSummary(activeSceneName_));
     logRuntimeMultiline(audioSystem_.busRoutingSummary());
     logRuntimeMultiline(audioSystem_.eventCatalogSummary());
     logRuntimeMultiline(animationSystem_.graphCatalogSummary());
@@ -830,6 +944,15 @@ private:
     logRuntimeMultiline(dataFoundation_.cookPlanSummary());
     logRuntimeMultiline(inputSystem_.bindingSummary());
     logRuntimeMultiline(toolingUi_.panelRegistrySummary());
+    if (activeSceneEntityCount_ > 0) {
+      std::ostringstream sceneRuntimeSummary;
+      sceneRuntimeSummary << "Runtime scene state: entities=" << activeSceneEntityCount_
+                          << ", roots=" << activeSceneRootCount_
+                          << ", prefabs=" << activeScenePrefabCount_;
+      logRuntimeLine(sceneRuntimeSummary.str());
+    }
+    logControlledEntityState("startup");
+    logInteractionTarget("startup");
     triggerAudioEvent("runtime_boot", "startup");
     triggerAnimationGraph(activeAnimationGraphName_, "startup");
     logPhysicsQueries("startup");
@@ -892,9 +1015,24 @@ private:
   }
 
   void logPhysicsQueries(std::string_view reason) {
+    std::array<double, 3> rayOrigin{0.0, 3.0, 0.0};
+    std::array<double, 3> overlapCenter{0.0, 0.5, 0.0};
+    if (activeControlledEntity_.valid) {
+      rayOrigin = {
+        static_cast<double>(activeControlledEntity_.position[0]),
+        static_cast<double>(activeControlledEntity_.position[1] + 1.6F),
+        static_cast<double>(activeControlledEntity_.position[2]),
+      };
+      overlapCenter = {
+        static_cast<double>(activeControlledEntity_.position[0]),
+        static_cast<double>(activeControlledEntity_.position[1]),
+        static_cast<double>(activeControlledEntity_.position[2]),
+      };
+    }
+
     const auto raycastHit = physicsSystem_.raycastScene(
       activeSceneName_.empty() ? config_.scene : activeSceneName_,
-      std::array<double, 3>{0.0, 3.0, 0.0},
+      rayOrigin,
       std::array<double, 3>{0.0, -1.0, 0.0},
       10.0);
     if (raycastHit.has_value()) {
@@ -912,7 +1050,7 @@ private:
 
     const auto overlaps = physicsSystem_.overlapSphereScene(
       activeSceneName_.empty() ? config_.scene : activeSceneName_,
-      std::array<double, 3>{0.0, 0.5, 0.0},
+      overlapCenter,
       0.75);
     std::ostringstream overlapMessage;
     overlapMessage << "Physics overlap via " << reason << ": count=" << overlaps.size();
@@ -985,12 +1123,19 @@ private:
       if (!activePrimaryPrefab_.empty()) {
         title << " prefab=" << activePrimaryPrefab_;
       }
+      if (activeSceneEntityCount_ > 0) {
+        title << " entities=" << activeSceneEntityCount_;
+      }
     }
     if (!activeAnimationGraphName_.empty()) {
       title << " anim=" << activeAnimationGraphName_;
       if (!activeAnimationEntryState_.empty()) {
         title << ':' << activeAnimationEntryState_;
       }
+    }
+    if (activeControlledEntity_.valid) {
+      title << " | player=" << activeControlledEntity_.id
+            << " pos=(" << runtimeVector3String(activeControlledEntity_.position) << ')';
     }
 
     if (toolingUi_.overlayVisible()) {
@@ -1042,6 +1187,33 @@ private:
     refreshWindowTitle();
   }
 
+  void updateRuntimeSceneState(double deltaSeconds) {
+    if (!activeControlledEntity_.valid) {
+      return;
+    }
+
+    constexpr float kMoveSpeedUnitsPerSecond = 3.5F;
+    constexpr float kLookSpeedDegreesPerSecond = 90.0F;
+    constexpr float kPi = 3.1415926535F;
+
+    activeControlledEntity_.rotation[1] += lookX_ * kLookSpeedDegreesPerSecond * static_cast<float>(deltaSeconds);
+    activeControlledEntity_.rotation[0] = std::clamp(
+      activeControlledEntity_.rotation[0] + lookY_ * kLookSpeedDegreesPerSecond * static_cast<float>(deltaSeconds),
+      -89.0F,
+      89.0F);
+
+    const float yawRadians = activeControlledEntity_.rotation[1] * (kPi / 180.0F);
+    const float forwardX = std::sin(yawRadians);
+    const float forwardZ = std::cos(yawRadians);
+    const float rightX = std::cos(yawRadians);
+    const float rightZ = -std::sin(yawRadians);
+
+    activeControlledEntity_.position[0] +=
+      ((forwardX * moveY_) + (rightX * moveX_)) * kMoveSpeedUnitsPerSecond * static_cast<float>(deltaSeconds);
+    activeControlledEntity_.position[2] +=
+      ((forwardZ * moveY_) + (rightZ * moveX_)) * kMoveSpeedUnitsPerSecond * static_cast<float>(deltaSeconds);
+  }
+
   void updateInputDrivenState() {
     if (inputSystem_.actionPressed("runtime_exit")) {
       runtimeExitRequested_ = true;
@@ -1081,6 +1253,8 @@ private:
       lastUiAction_ = "ui_accept";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
       logRuntimeLine("ui_accept action triggered.");
+      logControlledEntityState("ui_accept");
+      logInteractionTarget("ui_accept");
       triggerAudioEvent("ui_accept", "ui_accept");
     }
 
@@ -1088,6 +1262,7 @@ private:
       lastUiAction_ = "ui_back";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
       logRuntimeLine("ui_back action triggered.");
+      logControlledEntityState("ui_back");
       triggerAnimationGraph(activeAnimationGraphName_, "ui_back");
       logPhysicsQueries("ui_back");
     }
@@ -1156,6 +1331,7 @@ private:
         : static_cast<double>(currentTicks - previousFrameTicks_) / 1'000'000'000.0;
       previousFrameTicks_ = currentTicks;
 
+      updateRuntimeSceneState(deltaSeconds);
       updateToolingState(deltaSeconds);
 
       const std::uint64_t elapsedTicks = currentTicks - startTicks_;
@@ -1359,9 +1535,14 @@ private:
   std::string activeSceneName_;
   std::string activeSceneTitle_;
   std::string activePrimaryPrefab_;
+  std::size_t activeSceneEntityCount_ = 0;
+  std::size_t activeSceneRootCount_ = 0;
+  std::size_t activeScenePrefabCount_ = 0;
   std::string activeAnimationGraphName_;
   std::string activeAnimationEntryState_;
   std::string activeAnimationEntryClip_;
+  RuntimeControlledEntityState activeControlledEntity_;
+  RuntimeControlledEntityState activeInteractionTarget_;
   std::string lastUiAction_;
   bool sceneSelectedFromBootstrap_ = false;
   bool hasBootstrapOverlayPreference_ = false;

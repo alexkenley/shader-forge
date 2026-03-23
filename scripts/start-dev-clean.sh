@@ -134,6 +134,8 @@ if [[ "$skip_tests" != "1" ]]; then
   npm run test:input-scaffold
   printf '[shader-forge] Running tooling UI scaffold harness...\n'
   npm run test:tooling-ui-scaffold
+  printf '[shader-forge] Running scene runtime scaffold harness...\n'
+  npm run test:scene-runtime-scaffold
   printf '[shader-forge] Running runtime scaffold harness...\n'
   npm run test:runtime-scaffold
   printf '[shader-forge] Running shell build validation...\n'
