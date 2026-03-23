@@ -1,0 +1,9 @@
+schema = "shader_forge.effect"
+schema_version = 1
+name = "impact_spark"
+owner_system = "vfx_system"
+runtime_format = "flatbuffer"
+authoring_mode = "simple_descriptor"
+runtime_model = "engine_descriptor"
+trigger = "on_hit"
+category = "impact"

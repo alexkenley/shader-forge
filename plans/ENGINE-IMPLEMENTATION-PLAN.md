@@ -95,6 +95,7 @@ Current implementation status:
 - Phase 4 now has shell-side runtime build/run/pause controls, bridge diagnostics, and dedicated viewer-workflow surfaces, but not a full embedded viewer yet.
 - Phase 4.2 has now started through a first engine-owned input slice with text-backed actions/contexts and runtime-side named action queries.
 - Phase 4.4 has now started through a native tooling substrate slice with a panel registry, text-backed layout loading/saving, and runtime inspection hooks, but not a Dear ImGui frontend yet.
+- Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
 
@@ -108,7 +109,8 @@ What is already done:
 - The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
 - The native runtime now loads `input/actions.toml` plus `input/contexts/*.input.toml` and routes SDL keyboard, mouse, and gamepad input through named engine actions.
 - The native runtime now loads a text-backed tooling layout, exposes a named tool registry, and saves a session tooling layout snapshot for later native panel persistence.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, input scaffold, tooling UI scaffold, and runtime scaffold.
+- The native runtime now loads a data-foundation manifest, validates text-backed content roots under `content/`, resolves the selected runtime scene against `.scene.toml` source assets, and applies bootstrap scene/overlay defaults.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -119,6 +121,7 @@ Where the build is currently up to:
 - the runtime has moved past pure scaffolding into a first native render-loop slice, but still needs full local-toolchain verification, richer rendering, and tighter shell/runtime integration around real project execution
 - engine-owned input has moved past ad-hoc raw-event handling into a first text-backed action/context slice, but rebinding, user overrides, and richer gameplay/tool context switching still remain
 - native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
+- Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
 
@@ -379,6 +382,9 @@ Exit criteria:
 
 Goal:
 - establish the engine-wide data and effects foundation before gameplay scale-up
+
+Status:
+- first foundation slice now exists through an engine-wide format manifest, runtime-side asset catalog validation, scene/prefab/bootstrap relationship handling, text-backed scene/prefab/data/effect roots, and a first simple effect descriptor asset
 
 Scope:
 - TOML source-data schema and validation path
@@ -714,6 +720,6 @@ Current build target:
 - Phase 3 advance: native SDL3/Vulkan runtime stabilization, local-toolchain verification, and renderer expansion
 - Phase 4 continuation: shell/runtime control surfaces and viewer workflow preparation, but not ahead of runtime and input stabilization
 - Phase 4.4 planning: native tooling UI substrate before deep authoring and profiling work
-- Phase 5.5 before Phase 5 execution: lock data/cook format choices before broad asset-pipeline expansion
+- Phase 5.5 advance: keep locking data/cook format choices and source-asset ownership boundaries before broad asset-pipeline expansion
 - Phase 5.95 before Phase 5.9 execution: land trust and policy groundwork before assistant-triggered code and apply workflows expand
 - keep harness coverage current as each major slice lands

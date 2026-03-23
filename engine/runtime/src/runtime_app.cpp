@@ -1,3 +1,4 @@
+#include "shader_forge/runtime/data_foundation.hpp"
 #include "shader_forge/runtime/input_system.hpp"
 #include "shader_forge/runtime/runtime_app.hpp"
 #include "shader_forge/runtime/tooling_ui.hpp"
@@ -348,7 +349,10 @@ private:
     sdlInitialized_ = true;
 
     initializeInputSystem();
+    initializeDataFoundation();
+    resolveDataDrivenRuntimeState();
     initializeToolingUi();
+    applyBootstrapPreferences();
 
     window_ = SDL_CreateWindow(config_.title.c_str(), config_.width, config_.height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
@@ -367,6 +371,7 @@ private:
     startTicks_ = SDL_GetTicksNS();
     previousFrameTicks_ = startTicks_;
     nextToolingLogTicks_ = startTicks_ + 2'000'000'000ULL;
+    refreshWindowTitle();
   }
 
   void initializeInputSystem() {
@@ -389,6 +394,50 @@ private:
     }, &error)) {
       throw std::runtime_error("Tooling UI initialization failed: " + error);
     }
+  }
+
+  void initializeDataFoundation() {
+    std::string error;
+    if (!dataFoundation_.loadFromDisk(DataFoundationConfig{
+      .contentRoot = config_.contentRoot,
+      .foundationPath = config_.dataFoundationPath,
+    }, &error)) {
+      throw std::runtime_error("Data foundation initialization failed: " + error);
+    }
+  }
+
+  void resolveDataDrivenRuntimeState() {
+    activeSceneName_ = config_.scene;
+    activeSceneTitle_.clear();
+    activePrimaryPrefab_.clear();
+    sceneSelectedFromBootstrap_ = false;
+    hasBootstrapOverlayPreference_ = false;
+    bootstrapOverlayApplied_ = false;
+
+    const auto bootstrap = dataFoundation_.runtimeBootstrap();
+    if (!dataFoundation_.hasScene(activeSceneName_) && bootstrap.has_value() && bootstrap->valid && !bootstrap->defaultScene.empty()) {
+      activeSceneName_ = bootstrap->defaultScene;
+      sceneSelectedFromBootstrap_ = true;
+    }
+
+    if (const auto scene = dataFoundation_.sceneSource(activeSceneName_); scene.has_value() && scene->valid) {
+      activeSceneTitle_ = scene->title;
+      activePrimaryPrefab_ = scene->primaryPrefab;
+    }
+
+    if (bootstrap.has_value() && bootstrap->valid && bootstrap->hasToolingOverlayPreference) {
+      hasBootstrapOverlayPreference_ = true;
+      bootstrapOverlayEnabled_ = bootstrap->toolingOverlayEnabled;
+    }
+  }
+
+  void applyBootstrapPreferences() {
+    if (!hasBootstrapOverlayPreference_ || bootstrapOverlayEnabled_ == toolingUi_.overlayVisible()) {
+      return;
+    }
+
+    toolingUi_.toggleOverlay();
+    bootstrapOverlayApplied_ = true;
   }
 
   void logRuntimeLine(const std::string& message) {
@@ -695,13 +744,28 @@ private:
 
   void logStartup() {
     std::ostringstream startup;
-    startup << "scene=" << config_.scene
+    startup << "requested-scene=" << config_.scene
+            << ", active-scene=" << activeSceneName_
             << ", device=" << physicalDeviceName_
             << ", queue-family=" << graphicsQueueFamily_
             << ", validation=" << (validationEnabled_ ? "enabled" : "disabled")
             << ", input-root=" << std::filesystem::absolute(config_.inputRoot).string()
+            << ", content-root=" << std::filesystem::absolute(config_.contentRoot).string()
+            << ", data-foundation=" << std::filesystem::absolute(config_.dataFoundationPath).string()
             << ", tooling-layout=" << std::filesystem::absolute(config_.toolingLayoutPath).string();
     logRuntimeLine(startup.str());
+    if (sceneSelectedFromBootstrap_) {
+      logRuntimeLine("Requested scene was not found. Runtime fell back to the bootstrap default scene.");
+    }
+    if (bootstrapOverlayApplied_) {
+      logRuntimeLine(std::string("Bootstrap overlay preference applied: ")
+        + (toolingUi_.overlayVisible() ? "enabled." : "disabled."));
+    }
+    logRuntimeLine(dataFoundation_.foundationSummary());
+    logRuntimeLine(dataFoundation_.assetCatalogSummary());
+    logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
+    logRuntimeMultiline(dataFoundation_.relationshipSummary());
+    logRuntimeMultiline(dataFoundation_.cookPlanSummary());
     logRuntimeMultiline(inputSystem_.bindingSummary());
     logRuntimeMultiline(toolingUi_.panelRegistrySummary());
     logSwapchain("Swapchain ready");
@@ -764,6 +828,15 @@ private:
 
     std::ostringstream title;
     title << config_.title;
+    if (!activeSceneName_.empty()) {
+      title << " | scene=" << activeSceneName_;
+      if (!activeSceneTitle_.empty() && activeSceneTitle_ != activeSceneName_) {
+        title << " (" << activeSceneTitle_ << ')';
+      }
+      if (!activePrimaryPrefab_.empty()) {
+        title << " prefab=" << activePrimaryPrefab_;
+      }
+    }
 
     if (toolingUi_.overlayVisible()) {
       title << " | " << toolingUi_.overlaySummary();
@@ -802,7 +875,7 @@ private:
   }
 
   void updateToolingState(double deltaSeconds) {
-    toolingUi_.recordFrame(deltaSeconds, config_.scene);
+    toolingUi_.recordFrame(deltaSeconds, activeSceneName_.empty() ? config_.scene : activeSceneName_);
     toolingUi_.recordInputState(moveX_, moveY_, lookX_, lookY_, lastUiAction_, inputDebugEnabled_);
 
     const std::uint64_t now = SDL_GetTicksNS();
@@ -1086,6 +1159,7 @@ private:
   }
 
   RuntimeConfig config_;
+  DataFoundation dataFoundation_;
   InputSystem inputSystem_;
   ToolingUiSystem toolingUi_;
   SDL_Window* window_ = nullptr;
@@ -1121,7 +1195,14 @@ private:
   float moveY_ = 0.0F;
   float lookX_ = 0.0F;
   float lookY_ = 0.0F;
+  std::string activeSceneName_;
+  std::string activeSceneTitle_;
+  std::string activePrimaryPrefab_;
   std::string lastUiAction_;
+  bool sceneSelectedFromBootstrap_ = false;
+  bool hasBootstrapOverlayPreference_ = false;
+  bool bootstrapOverlayEnabled_ = true;
+  bool bootstrapOverlayApplied_ = false;
   std::uint64_t uiFlashUntilTicks_ = 0;
   std::uint64_t startTicks_ = 0;
   std::uint64_t previousFrameTicks_ = 0;

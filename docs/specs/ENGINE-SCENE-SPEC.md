@@ -33,6 +33,15 @@ Rules:
 - selection surfaces for the shell
 - procedural-to-scene bake support
 
+## Current Early Foundation
+
+Before the full scene-system phase lands, the repo now has a first authored scene lane:
+
+- `.scene.toml` metadata is already present under `content/scenes/`
+- scenes can declare a primary prefab relationship into `content/prefabs/`
+- the shared data foundation validates those scene-to-prefab references
+- the runtime can now resolve its selected scene against those authored scene assets and surface that choice in logs and window state
+
 ## Non-Goals
 
 - persisting arbitrary viewport edits back into C++ source files

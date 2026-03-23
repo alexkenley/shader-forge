@@ -1,0 +1,8 @@
+schema = "shader_forge.prefab"
+schema_version = 1
+name = "debug_camera"
+owner_system = "scene_system"
+runtime_format = "flatbuffer"
+
+category = "tools"
+spawn_tag = "player_camera"

@@ -1,0 +1,8 @@
+schema = "shader_forge.data"
+schema_version = 1
+name = "runtime_bootstrap"
+owner_system = "data_system"
+runtime_format = "flatbuffer"
+
+default_scene = "sandbox"
+tooling_overlay = "enabled"

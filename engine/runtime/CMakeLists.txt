@@ -4,6 +4,7 @@ find_package(Vulkan QUIET)
 add_executable(
   shader_forge_runtime
   src/main.cpp
+  src/data_foundation.cpp
   src/input_system.cpp
   src/tooling_ui.cpp
   src/runtime_app.cpp

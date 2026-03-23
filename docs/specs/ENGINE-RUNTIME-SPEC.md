@@ -27,6 +27,10 @@ The current runtime slice is the first real native bring-up pass:
 - engine-owned input loading from `input/actions.toml` and `input/contexts/*.input.toml`
 - named input actions and axes consumed inside the runtime instead of direct raw SDL checks
 - native tooling registry/layout loading and session-layout save groundwork for later Dear ImGui-backed panels
+- engine-owned data foundation loading from `data/foundation/engine-data-layout.toml` plus scene/prefab/data/effect source catalog validation under `content/`
+- runtime startup logs now expose the current data/cook decisions and scene-source lookup path for the selected runtime scene
+- runtime startup can now resolve the active scene and initial tooling-overlay preference from `runtime_bootstrap.data.toml`
+- scene metadata such as title and primary prefab now feeds runtime title/log state instead of staying disconnected from execution
 
 ## Future AI Runtime Boundary
 

@@ -9,13 +9,16 @@ const runtimeRoot = path.join(repoRoot, 'engine', 'runtime');
 const includeRoot = path.join(runtimeRoot, 'include');
 const cliSource = fs.readFileSync(path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs'), 'utf8');
 const runtimeHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'runtime_app.hpp'), 'utf8');
+const dataFoundationHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'data_foundation.hpp'), 'utf8');
 const inputHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'input_system.hpp'), 'utf8');
 const toolingHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'tooling_ui.hpp'), 'utf8');
 const runtimeMain = path.join(runtimeRoot, 'src', 'main.cpp');
 const runtimeApp = path.join(runtimeRoot, 'src', 'runtime_app.cpp');
+const dataFoundationSourcePath = path.join(runtimeRoot, 'src', 'data_foundation.cpp');
 const inputSourcePath = path.join(runtimeRoot, 'src', 'input_system.cpp');
 const toolingSourcePath = path.join(runtimeRoot, 'src', 'tooling_ui.cpp');
 const runtimeSource = fs.readFileSync(runtimeApp, 'utf8');
+const dataFoundationSource = fs.readFileSync(dataFoundationSourcePath, 'utf8');
 const inputSource = fs.readFileSync(inputSourcePath, 'utf8');
 const toolingSource = fs.readFileSync(toolingSourcePath, 'utf8');
 
@@ -23,8 +26,11 @@ assert.match(cliSource, /engine build/);
 assert.match(cliSource, /engine run/);
 assert.match(runtimeHeader, /RuntimeConfig/);
 assert.match(runtimeHeader, /inputRoot/);
+assert.match(runtimeHeader, /contentRoot/);
+assert.match(runtimeHeader, /dataFoundationPath/);
 assert.match(runtimeHeader, /toolingLayoutPath/);
 assert.match(runtimeHeader, /class RuntimeApp/);
+assert.match(dataFoundationHeader, /class DataFoundation/);
 assert.match(inputHeader, /class InputSystem/);
 assert.match(toolingHeader, /class ToolingUiSystem/);
 assert.match(runtimeSource, /vkAcquireNextImageKHR/);
@@ -33,11 +39,19 @@ assert.match(runtimeSource, /vkCreateRenderPass/);
 assert.match(runtimeSource, /SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED/);
 assert.match(runtimeSource, /actionValue\("move_x"\)/);
 assert.match(runtimeSource, /toggle_tooling_overlay/);
+assert.match(runtimeSource, /DataFoundation dataFoundation_/);
+assert.match(runtimeSource, /active-scene=/);
+assert.match(runtimeSource, /relationshipSummary/);
+assert.match(runtimeSource, /resolveDataDrivenRuntimeState/);
+assert.match(dataFoundationSource, /flatbuffer/);
+assert.match(dataFoundationSource, /sqlite/);
+assert.match(dataFoundationSource, /primary_prefab/);
 assert.match(inputSource, /SDL_EVENT_GAMEPAD_AXIS_MOTION/);
 assert.match(inputSource, /bindingSummary/);
 assert.match(toolingSource, /overlay_visible/);
 assert.match(toolingSource, /runtime_stats/);
 assert.match(cliSource, /--tooling-layout/);
+assert.match(cliSource, /--data-foundation/);
 
 const isWindows = process.platform === 'win32';
 let syntaxChecked = false;
@@ -53,6 +67,7 @@ if (!isWindows) {
       '-DSHADER_FORGE_HAS_VULKAN=0',
       '-fsyntax-only',
       runtimeMain,
+      dataFoundationSourcePath,
       inputSourcePath,
       toolingSourcePath,
       runtimeApp,
@@ -78,7 +93,7 @@ if (!isWindows) {
 console.log('Engine runtime scaffold passed.');
 console.log(`- Verified runtime sources under ${runtimeRoot}`);
 console.log('- Verified CLI runtime build/run command surfaces are present');
-console.log('- Verified the runtime source contains swapchain, present, resize-aware render-loop, engine-owned input plumbing, and native tooling UI substrate hooks');
+console.log('- Verified the runtime source contains swapchain, present, resize-aware render-loop, engine-owned input plumbing, native tooling UI substrate hooks, and data foundation loading');
 console.log(syntaxChecked
   ? '- Verified native runtime C++ sources pass fallback syntax-only compilation'
   : '- Skipped g++ syntax check (not available on Windows — use WSL or CI for native compilation)');
