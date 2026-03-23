@@ -59,6 +59,9 @@ assert.match(assetPipelineSource, /shader_forge\.cooked_asset\.stage/);
 assert.match(assetPipelineSource, /shader_forge\.cooked_audio\.stage/);
 assert.match(assetPipelineSource, /source_prefab/);
 assert.match(assetPipelineSource, /entity \"/);
+assert.match(assetPipelineSource, /component\.render/);
+assert.match(assetPipelineSource, /component\.effect/);
+assert.match(assetPipelineSource, /hasRenderComponent/);
 assert.match(foundationManifest, /procgeo_subdir = "procgeo"/);
 assert.match(foundationManifest, /procgeo_owner = "procgeo_system"/);
 assert.match(audioBuses, /schema = "shader_forge\.audio_buses"/);
@@ -82,6 +85,7 @@ assert.match(procgeoFloor, /schema = "shader_forge\.procgeo"/);
 assert.match(procgeoFloor, /generator = "plane_grid"/);
 assert.match(procgeoFloor, /bake_output = "generated_mesh"/);
 assert.match(procgeoCrate, /generator = "box"/);
+assert.match(fs.readFileSync(path.join(repoRoot, 'content', 'prefabs', 'debug_crate.prefab.toml'), 'utf8'), /\[component\.render\]/);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 fs.mkdirSync(tempRoot, { recursive: true });
@@ -157,8 +161,11 @@ assert.match(report.notes.join('\n'), /Audio currently bakes staged bus, sound, 
 assert.match(report.notes.join('\n'), /Animation currently bakes staged skeleton, clip, and graph metadata registries/);
 assert.match(report.notes.join('\n'), /Physics currently bakes staged layer, material, and body metadata registries/);
 assert.match(JSON.stringify(report.assets || report, null, 2), /entityCount/);
+assert.match(JSON.stringify(report.assets || report, null, 2), /hasRenderComponent/);
+assert.match(JSON.stringify(report.assets || report, null, 2), /hasEffectComponent/);
 
 const cookedScenePath = path.join(tempRoot, 'scenes', 'sandbox.bin');
+const cookedPrefabPath = path.join(tempRoot, 'prefabs', 'debug_crate.bin');
 const cookedProcgeoPath = path.join(tempRoot, 'procgeo', 'sandbox_floor.bin');
 const cookedAudioBusesPath = path.join(tempRoot, 'audio', 'audio-buses.bin');
 const cookedAudioSoundPath = path.join(tempRoot, 'audio', 'sounds', 'ui_confirm.bin');
@@ -173,6 +180,7 @@ const floorPreviewPath = path.join(tempRoot, 'generated-meshes', 'sandbox_floor.
 const cratePreviewPath = path.join(tempRoot, 'generated-meshes', 'debug_crate.mesh.json');
 
 assert.ok(fs.existsSync(cookedScenePath), 'Expected staged cooked scene payload.');
+assert.ok(fs.existsSync(cookedPrefabPath), 'Expected staged cooked prefab payload.');
 assert.ok(fs.existsSync(cookedProcgeoPath), 'Expected staged cooked procgeo payload.');
 assert.ok(fs.existsSync(cookedAudioBusesPath), 'Expected staged cooked audio buses payload.');
 assert.ok(fs.existsSync(cookedAudioSoundPath), 'Expected staged cooked audio sound payload.');
@@ -188,12 +196,15 @@ assert.ok(fs.existsSync(cratePreviewPath), 'Expected generated box preview outpu
 
 const floorPreview = JSON.parse(fs.readFileSync(floorPreviewPath, 'utf8'));
 const cratePreview = JSON.parse(fs.readFileSync(cratePreviewPath, 'utf8'));
+const cookedPrefab = JSON.parse(fs.readFileSync(cookedPrefabPath, 'utf8'));
 assert.equal(floorPreview.generator, 'plane_grid');
 assert.equal(floorPreview.mesh.vertexCount, 169);
 assert.equal(floorPreview.mesh.triangleCount, 288);
 assert.equal(cratePreview.generator, 'box');
 assert.equal(cratePreview.mesh.vertexCount, 8);
 assert.equal(cratePreview.mesh.triangleCount, 12);
+assert.equal(cookedPrefab.renderComponent.procgeo, 'debug_crate');
+assert.equal(cookedPrefab.effectComponent.effect, 'impact_spark');
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 

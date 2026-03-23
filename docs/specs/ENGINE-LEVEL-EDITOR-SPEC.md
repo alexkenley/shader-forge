@@ -44,13 +44,14 @@ Current implemented behavior:
 - `Play Mode` is currently a discard-only stance that drops unsaved drafts before returning to a non-persistent preview state
 - authored scenes can now round-trip deterministic `[entity.<id>]` sections with `source_prefab`, `parent`, `position`, `rotation`, and `scale`
 - a world outliner now exposes the authored scene plus its placed-entity hierarchy
-- a details surface can edit current scene metadata, placed-entity transform/source-prefab/parent data, and prefab metadata
+- prefab assets can now round-trip first-pass `[component.render]` and `[component.effect]` sections for procgeo/effect-driven component payloads
+- a details surface can edit current scene metadata, placed-entity transform/source-prefab/parent data, prefab metadata, and the first prefab component payload fields
 - an asset browser can inspect prefabs, assign the scene primary prefab, and instantiate prefab-backed entities into the active scene
 - save, reload-from-disk, revert-draft, duplicate-scene, create-entity, duplicate-entity, delete-entity, and local undo/redo flows now exist for this first authoring slice
 
 Current boundary:
 
-- viewport gizmos, in-viewport manipulation, deeper component payload editing, and procedural bake-back are still ahead
+- viewport gizmos, in-viewport manipulation, deeper scene/component payload editing, and procedural bake-back are still ahead
 - this slice is intentionally honest about being shell-side authoring over current text assets, not a fake full visual editor
 
 ## Core Surfaces

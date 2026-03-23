@@ -41,16 +41,19 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - scenes can declare a primary prefab relationship into `content/prefabs/`
 - scenes can now declare deterministic `[entity.<id>]` sections with stable ids, `source_prefab`, `parent`, `position`, `rotation`, and `scale`
 - the shared data foundation validates those scene-to-prefab references
+- prefab assets can now declare first-pass `[component.render]` and `[component.effect]` sections that reference authored `procgeo` and `effect` assets
 - the shared data foundation now validates scene-entity prefab references plus parent relationships inside those authored scenes
+- the shared data foundation now also validates prefab-component references into the procgeo and effect catalogs
 - the runtime can now resolve its selected scene against those authored scene assets, surface that choice in logs and window state, and print an authored scene-entity layout summary
-- the shell `Scene` workspace can now open authored scene assets from the active session, inspect linked prefab assets, round-trip deterministic save/reload/duplicate flows, and edit placed-entity hierarchy plus transforms back to those same files
+- the runtime can now print referenced prefab component summaries for the active scene instead of leaving authored prefab payloads disconnected from startup diagnostics
+- the shell `Scene` workspace can now open authored scene assets from the active session, inspect linked prefab assets, round-trip deterministic save/reload/duplicate flows, and edit placed-entity hierarchy, transforms, plus first-pass prefab component payloads back to those same files
 - `engine_sessiond` now provides safe session-root file writes so shell workflows and future assistants can mutate the same scene/prefab assets without relying on hidden editor-only state
-- `engine bake` now stages scene-entity summaries into the cooked asset report so authored scene structure is visible outside the shell
+- `engine bake` now stages scene-entity summaries plus prefab component payloads into the cooked outputs and bake report so authored scene structure is visible outside the shell
 
 Current boundary:
 
-- this slice now covers scene metadata plus first-pass entity hierarchy and transform editing, but not full runtime scene composition yet
-- transform gizmos, broader component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
+- this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, and first prefab component payloads, but not full runtime scene composition yet
+- transform gizmos, broader scene/component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
 
 ## Non-Goals
 

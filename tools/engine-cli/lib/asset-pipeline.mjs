@@ -356,15 +356,41 @@ function loadSceneEntitySections(sections, problems) {
   return entities;
 }
 
-function loadPrefabAsset(repoRoot, outputRoot, filePath, fields, config, manifest) {
+function loadPrefabComponentSections(sections, problems) {
+  const renderSection = sections.find((section) => section.name === 'component.render');
+  const effectSection = sections.find((section) => section.name === 'component.effect');
+
+  const renderComponent = {
+    procgeo: normalizeToken(parseStringValue(renderSection?.fields.procgeo || '')),
+    materialHint: normalizeToken(parseStringValue(renderSection?.fields.material_hint || '')),
+  };
+  const effectComponent = {
+    effect: normalizeToken(parseStringValue(effectSection?.fields.effect || '')),
+    trigger: normalizeToken(parseStringValue(effectSection?.fields.trigger || '')),
+  };
+
+  if (renderComponent.materialHint && !renderComponent.procgeo) {
+    problems.push('render component material_hint requires procgeo');
+  }
+  if (effectComponent.trigger && !effectComponent.effect) {
+    problems.push('effect component trigger requires effect');
+  }
+
+  return { renderComponent, effectComponent };
+}
+
+function loadPrefabAsset(repoRoot, outputRoot, filePath, fields, sections, config, manifest) {
   const asset = buildCommonAssetSnapshot(repoRoot, outputRoot, filePath, fields, config);
   const category = normalizeToken(parseStringValue(fields.category || ''));
   const spawnTag = normalizeToken(parseStringValue(fields.spawn_tag || ''));
   const problems = validateCommonAsset(asset, config, manifest);
+  const { renderComponent, effectComponent } = loadPrefabComponentSections(sections, problems);
   return {
     ...asset,
     category,
     spawnTag,
+    renderComponent,
+    effectComponent,
     valid: problems.length === 0,
     problems,
   };
@@ -1533,7 +1559,7 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
         asset.valid = asset.problems.length === 0;
         scenes.set(asset.name, asset);
       } else if (config.kind === 'prefab') {
-        asset = loadPrefabAsset(repoRoot, outputRoot, filePath, fields, config, manifest);
+        asset = loadPrefabAsset(repoRoot, outputRoot, filePath, fields, structuredDocument.sections, config, manifest);
         prefabs.set(asset.name, asset);
       } else if (config.kind === 'data') {
         asset = loadDataAsset(repoRoot, outputRoot, filePath, fields, config, manifest);
@@ -1547,8 +1573,37 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
   }
 
   for (const asset of assets) {
+    if (asset.kind !== 'prefab') {
+      continue;
+    }
+
+    if (asset.renderComponent?.procgeo) {
+      const procgeoAsset = assets.find((candidate) =>
+        candidate.valid && candidate.kind === 'procgeo' && candidate.name === asset.renderComponent.procgeo);
+      if (!procgeoAsset) {
+        asset.valid = false;
+        asset.problems.push(`render component references missing procgeo "${asset.renderComponent.procgeo}"`);
+      } else {
+        relationships.push(`prefab ${asset.name} render -> procgeo ${asset.renderComponent.procgeo}`);
+      }
+    }
+
+    if (asset.effectComponent?.effect) {
+      const effectAsset = assets.find((candidate) =>
+        candidate.valid && candidate.kind === 'effect' && candidate.name === asset.effectComponent.effect);
+      if (!effectAsset) {
+        asset.valid = false;
+        asset.problems.push(`effect component references missing effect "${asset.effectComponent.effect}"`);
+      } else {
+        relationships.push(`prefab ${asset.name} effect -> asset ${asset.effectComponent.effect}`);
+      }
+    }
+  }
+
+  for (const asset of assets) {
     if (asset.kind === 'scene' && asset.primaryPrefab) {
-      if (!prefabs.has(asset.primaryPrefab)) {
+      const primaryPrefab = prefabs.get(asset.primaryPrefab);
+      if (!primaryPrefab || !primaryPrefab.valid) {
         asset.valid = false;
         asset.problems.push(`primary_prefab references missing prefab "${asset.primaryPrefab}"`);
       } else {
@@ -1558,7 +1613,8 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
     if (asset.kind === 'scene' && Array.isArray(asset.entities)) {
       const entityIds = new Set(asset.entities.map((entity) => entity.id));
       for (const entity of asset.entities) {
-        if (!prefabs.has(entity.sourcePrefab)) {
+        const prefab = prefabs.get(entity.sourcePrefab);
+        if (!prefab || !prefab.valid) {
           asset.valid = false;
           asset.problems.push(`entity "${entity.id}" source_prefab references missing prefab "${entity.sourcePrefab}"`);
         } else {
@@ -1598,7 +1654,12 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
           entities: asset.entities,
         }
       : asset.kind === 'prefab'
-        ? { category: asset.category, spawnTag: asset.spawnTag }
+        ? {
+            category: asset.category,
+            spawnTag: asset.spawnTag,
+            renderComponent: asset.renderComponent,
+            effectComponent: asset.effectComponent,
+          }
         : asset.kind === 'data'
           ? { defaultScene: asset.defaultScene, toolingOverlay: asset.toolingOverlay }
           : asset.kind === 'effect'
@@ -1798,6 +1859,11 @@ export async function bakeAssetPipeline(options) {
         ? {
             entityCount: asset.entities.length,
           }
+        : asset.kind === 'prefab'
+          ? {
+              hasRenderComponent: Boolean(asset.renderComponent?.procgeo || asset.renderComponent?.materialHint),
+              hasEffectComponent: Boolean(asset.effectComponent?.effect || asset.effectComponent?.trigger),
+            }
         : {}),
     }));
 

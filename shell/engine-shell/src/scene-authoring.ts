@@ -33,8 +33,20 @@ export type PrefabAssetDocument = {
   runtimeFormat: string;
   category: string;
   spawnTag: string;
+  renderComponent: PrefabRenderComponentDocument;
+  effectComponent: PrefabEffectComponentDocument;
   modifiedAt: string;
   content: string;
+};
+
+export type PrefabRenderComponentDocument = {
+  procgeo: string;
+  materialHint: string;
+};
+
+export type PrefabEffectComponentDocument = {
+  effect: string;
+  trigger: string;
 };
 
 type ParsedFieldValue = number | string;
@@ -168,6 +180,14 @@ export function buildSceneAssetPath(sceneName: string) {
   return `content/scenes/${sanitizeAssetName(sceneName)}.scene.toml`;
 }
 
+function hasPrefabRenderComponent(document: PrefabRenderComponentDocument) {
+  return Boolean(document.procgeo || document.materialHint);
+}
+
+function hasPrefabEffectComponent(document: PrefabEffectComponentDocument) {
+  return Boolean(document.effect || document.trigger);
+}
+
 function parseSceneEntitySections(sections: ParsedSection[]) {
   return sections
     .filter((section) => section.name.startsWith('entity.'))
@@ -221,6 +241,8 @@ export function parsePrefabAssetDocument(payload: {
   modifiedAt: string;
 }): PrefabAssetDocument {
   const document = parseStructuredTomlDocument(payload.content);
+  const renderSection = document.sections.find((section) => section.name === 'component.render');
+  const effectSection = document.sections.find((section) => section.name === 'component.effect');
   return {
     path: payload.path,
     schema: readStringField(document.fields, 'schema', 'shader_forge.prefab'),
@@ -230,6 +252,14 @@ export function parsePrefabAssetDocument(payload: {
     runtimeFormat: readStringField(document.fields, 'runtime_format', 'flatbuffer'),
     category: readStringField(document.fields, 'category', 'gameplay'),
     spawnTag: readStringField(document.fields, 'spawn_tag', ''),
+    renderComponent: {
+      procgeo: sanitizeAssetName(readStringField(renderSection?.fields ?? new Map(), 'procgeo', '')),
+      materialHint: sanitizeAssetName(readStringField(renderSection?.fields ?? new Map(), 'material_hint', '')),
+    },
+    effectComponent: {
+      effect: sanitizeAssetName(readStringField(effectSection?.fields ?? new Map(), 'effect', '')),
+      trigger: sanitizeAssetName(readStringField(effectSection?.fields ?? new Map(), 'trigger', '')),
+    },
     modifiedAt: payload.modifiedAt,
     content: payload.content,
   };
@@ -269,9 +299,9 @@ export function formatSceneAssetDocument(document: Pick<
 
 export function formatPrefabAssetDocument(document: Pick<
   PrefabAssetDocument,
-  'schema' | 'schemaVersion' | 'name' | 'ownerSystem' | 'runtimeFormat' | 'category' | 'spawnTag'
+  'schema' | 'schemaVersion' | 'name' | 'ownerSystem' | 'runtimeFormat' | 'category' | 'spawnTag' | 'renderComponent' | 'effectComponent'
 >) {
-  return [
+  const lines = [
     `schema = ${quoteTomlString(document.schema)}`,
     `schema_version = ${document.schemaVersion}`,
     `name = ${quoteTomlString(document.name)}`,
@@ -280,8 +310,28 @@ export function formatPrefabAssetDocument(document: Pick<
     '',
     `category = ${quoteTomlString(document.category)}`,
     `spawn_tag = ${quoteTomlString(document.spawnTag)}`,
-    '',
-  ].join('\n');
+  ];
+
+  if (hasPrefabRenderComponent(document.renderComponent)) {
+    lines.push(
+      '',
+      '[component.render]',
+      `procgeo = ${quoteTomlString(document.renderComponent.procgeo)}`,
+      `material_hint = ${quoteTomlString(document.renderComponent.materialHint)}`,
+    );
+  }
+
+  if (hasPrefabEffectComponent(document.effectComponent)) {
+    lines.push(
+      '',
+      '[component.effect]',
+      `effect = ${quoteTomlString(document.effectComponent.effect)}`,
+      `trigger = ${quoteTomlString(document.effectComponent.trigger)}`,
+    );
+  }
+
+  lines.push('');
+  return lines.join('\n');
 }
 
 export function createSceneEntityDocument(

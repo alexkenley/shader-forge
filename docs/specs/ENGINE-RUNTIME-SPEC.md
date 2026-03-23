@@ -38,6 +38,7 @@ The current runtime slice is the first real native bring-up pass:
 - runtime startup can now resolve the active scene and initial tooling-overlay preference from `runtime_bootstrap.data.toml`
 - scene metadata such as title and primary prefab now feeds runtime title/log state instead of staying disconnected from execution
 - authored scene-entity hierarchy and transform summaries now feed runtime startup logs instead of staying disconnected from execution
+- referenced prefab component payload summaries now feed runtime startup logs instead of staying disconnected from execution
 - animation graph and entry-state context now feeds runtime title/log state instead of staying disconnected from execution
 - physics scene-query state is now logged against the authored scene context instead of staying disconnected from execution
 

@@ -176,7 +176,7 @@ Assistant entry points:
 ### What Exists Now
 
 - A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
-- A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy and transform editing.
+- A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy, transform editing, and first prefab component payload editing.
 - A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, and physics hooks.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
@@ -186,7 +186,7 @@ Assistant entry points:
 ### What Still Needs Widening
 
 - The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.
-- Scene authoring still needs transform gizmos, deeper component payload authoring, and bake-back flows beyond the current text-backed entity-authoring slice.
+- Scene authoring still needs transform gizmos, deeper scene/component payload authoring, and bake-back flows beyond the current text-backed entity plus prefab-component slice.
 - The runtime still needs richer rendering, real scene loading, and broader native verification.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.

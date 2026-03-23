@@ -25,8 +25,10 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - the native runtime loads that foundation manifest through `DataFoundation`, validates source assets, and logs the resulting cook plan
 - scene lookup is now tied to real text assets instead of a purely free-form runtime scene name
 - scene-to-prefab relationships and `runtime_bootstrap` defaults are validated across the catalog rather than treated as isolated files
+- prefab component payloads can now reference `content/procgeo/*.procgeo.toml` and `content/effects/*.effect.toml` through deterministic `[component.render]` and `[component.effect]` sections
 - runtime startup now resolves the active scene and overlay preference from the text-backed source assets when possible
 - cooked outputs are still planning targets only in this slice, but they now target a stable `FlatBuffers` runtime-data lane under `build/cooked/`
+- the current staged cook lane now also validates prefab-component references and stages prefab component payloads into cooked prefab outputs under the same deterministic authored-data workflow
 - the current staged cook lane now also validates animation graph relationships and animation-to-audio event links under the same deterministic authored-data workflow
 - the current staged cook lane now also validates physics layer/material/body relationships under the same deterministic authored-data workflow
 

@@ -64,10 +64,22 @@ struct SceneSourceSnapshot {
   bool valid = false;
 };
 
+struct PrefabRenderComponentSnapshot {
+  std::string procgeo;
+  std::string materialHint;
+};
+
+struct PrefabEffectComponentSnapshot {
+  std::string effect;
+  std::string trigger;
+};
+
 struct PrefabSourceSnapshot {
   std::string name;
   std::string category;
   std::string spawnTag;
+  PrefabRenderComponentSnapshot renderComponent;
+  PrefabEffectComponentSnapshot effectComponent;
   std::filesystem::path sourcePath;
   std::filesystem::path cookedPath;
   bool valid = false;
@@ -120,6 +132,7 @@ public:
   std::string assetCatalogSummary() const;
   std::string sceneLookupSummary(std::string_view sceneName) const;
   std::string sceneEntitySummary(std::string_view sceneName) const;
+  std::string scenePrefabComponentSummary(std::string_view sceneName) const;
   std::string relationshipSummary() const;
   std::string cookPlanSummary(std::size_t maxAssets = 6) const;
 

@@ -20,6 +20,7 @@ The current first slice in the repo now includes:
 - staged cooked outputs emitted into the stable `build/cooked/` layout
 - a structured bake report at `build/cooked/asset-pipeline-report.json`
 - text-backed procedural geometry assets under `content/procgeo/*.procgeo.toml`
+- first-pass prefab component payload staging from `[component.render]` and `[component.effect]` sections in `content/prefabs/*.prefab.toml`
 - text-backed audio buses, sounds, and events under `audio/`
 - text-backed animation skeletons, clips, and graphs under `animation/`
 - text-backed physics layers, materials, and primitive bodies under `physics/`
@@ -30,6 +31,7 @@ The current first slice in the repo now includes:
 
 The animation lane also validates clip-to-skeleton, graph-to-clip, graph entry-state, and clip `audio_event` bindings during bake so later runtime sampling work can rely on a real staged catalog instead of ad-hoc file discovery.
 The physics lane validates layer/material/body relationships and preserves primitive-query metadata in the cooked layout so later backend integration can replace the implementation without changing authored roots or tool paths.
+The prefab lane now validates `procgeo` and `effect` component references and stages those component payloads into cooked prefab outputs so later runtime composition can target a stable cooked shape.
 
 This is a real first cook lane, but it is still a staging slice rather than the final FlatBuffers writer. The current bake command emits deterministic placeholder cooked payloads in the stable cooked layout so later runtime and tool work can target real paths before the binary writer lands.
 

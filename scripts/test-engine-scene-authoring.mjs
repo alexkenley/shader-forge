@@ -38,9 +38,13 @@ try {
   assert.match(sceneEditorView, /Position/);
   assert.match(sceneEditorView, /Rotation/);
   assert.match(sceneEditorView, /Scale/);
+  assert.match(sceneEditorView, /Render procgeo/);
+  assert.match(sceneEditorView, /Effect asset/);
   assert.match(sceneAuthoringSource, /formatSceneAssetDocument/);
   assert.match(sceneAuthoringSource, /formatPrefabAssetDocument/);
   assert.match(sceneAuthoringSource, /\[entity\./);
+  assert.match(sceneAuthoringSource, /\[component\.render\]/);
+  assert.match(sceneAuthoringSource, /\[component\.effect\]/);
   assert.match(sceneAuthoringSource, /createSceneEntityDocument/);
   assert.match(sceneAuthoringSource, /sourcePrefab/);
   assert.match(sceneAuthoringSource, /content\/scenes/);
@@ -63,6 +67,14 @@ try {
     '',
     'category = "tools"',
     'spawn_tag = "player_camera"',
+    '',
+    '[component.render]',
+    'procgeo = "debug_crate"',
+    'material_hint = "debug_crate"',
+    '',
+    '[component.effect]',
+    'effect = "impact_spark"',
+    'trigger = "on_interact"',
     '',
   ].join('\n');
 
@@ -92,6 +104,9 @@ try {
     content: prefabContent,
   });
   assert.equal(prefabWritePayload.path, 'content/prefabs/debug_camera.prefab.toml');
+  assert.match(prefabWritePayload.content, /\[component\.render\]/);
+  assert.match(prefabWritePayload.content, /procgeo = "debug_crate"/);
+  assert.match(prefabWritePayload.content, /\[component\.effect\]/);
 
   const sceneWritePayload = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
     sessionId,
@@ -122,8 +137,8 @@ try {
 
   console.log('Engine scene authoring smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
-  console.log('- Verified the shell Scene workspace exposes edit/play, save/reload, outliner, details, and prefab assignment surfaces');
-  console.log('- Verified deterministic scene and prefab authoring assets can be written through engine_sessiond inside a session root');
+  console.log('- Verified the shell Scene workspace exposes edit/play, save/reload, outliner, details, prefab assignment, and prefab component editing surfaces');
+  console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component assets can be written through engine_sessiond inside a session root');
 } finally {
   await service.close();
   await fs.rm(tempProjectRoot, { recursive: true, force: true });

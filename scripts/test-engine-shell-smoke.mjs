@@ -77,6 +77,10 @@ try {
   assert.match(sceneEditorView, /Position/);
   assert.match(sceneEditorView, /Rotation/);
   assert.match(sceneEditorView, /Scale/);
+  assert.match(sceneEditorView, /Render procgeo/);
+  assert.match(sceneEditorView, /Material hint/);
+  assert.match(sceneEditorView, /Effect asset/);
+  assert.match(sceneEditorView, /Effect trigger/);
   assert.match(referenceGuideSource, /ENGINE-REFERENCE-GUIDE\.json/);
   assert.match(referenceGuideJson, /"Shader Forge Reference Guide"/);
   assert.match(referenceGuideJson, /"assistantEntryPoints"/);

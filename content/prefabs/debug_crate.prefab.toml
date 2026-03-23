@@ -6,3 +6,11 @@ runtime_format = "flatbuffer"
 
 category = "environment"
 spawn_tag = "debug_prop"
+
+[component.render]
+procgeo = "debug_crate"
+material_hint = "debug_crate"
+
+[component.effect]
+effect = "impact_spark"
+trigger = "on_interact"

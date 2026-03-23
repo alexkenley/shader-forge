@@ -199,6 +199,14 @@ std::string vector3String(const std::array<float, 3>& value) {
   return stream.str();
 }
 
+bool hasPrefabRenderComponent(const PrefabSourceSnapshot& prefab) {
+  return !prefab.renderComponent.procgeo.empty() || !prefab.renderComponent.materialHint.empty();
+}
+
+bool hasPrefabEffectComponent(const PrefabSourceSnapshot& prefab) {
+  return !prefab.effectComponent.effect.empty() || !prefab.effectComponent.trigger.empty();
+}
+
 struct ParsedAssetFields {
   struct SceneEntityFields {
     std::string id;
@@ -208,6 +216,16 @@ struct ParsedAssetFields {
     std::array<float, 3> position{0.0F, 0.0F, 0.0F};
     std::array<float, 3> rotation{0.0F, 0.0F, 0.0F};
     std::array<float, 3> scale{1.0F, 1.0F, 1.0F};
+  };
+
+  struct PrefabRenderComponentFields {
+    std::string procgeo;
+    std::string materialHint;
+  };
+
+  struct PrefabEffectComponentFields {
+    std::string effect;
+    std::string trigger;
   };
 
   std::string name;
@@ -227,6 +245,8 @@ struct ParsedAssetFields {
   std::string generator;
   std::string bakeOutput;
   std::string materialHint;
+  PrefabRenderComponentFields renderComponent;
+  PrefabEffectComponentFields effectComponent;
   std::vector<SceneEntityFields> sceneEntities;
 };
 
@@ -332,6 +352,13 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
 
   std::string line;
   std::size_t lineNumber = 0;
+  enum class SectionMode {
+    none,
+    sceneEntity,
+    prefabRenderComponent,
+    prefabEffectComponent,
+  };
+  SectionMode currentSection = SectionMode::none;
   ParsedAssetFields::SceneEntityFields* currentSceneEntity = nullptr;
   while (std::getline(stream, line)) {
     lineNumber += 1;
@@ -342,6 +369,7 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
 
     if (cleaned.front() == '[' && cleaned.back() == ']') {
       currentSceneEntity = nullptr;
+      currentSection = SectionMode::none;
       const std::string sectionName = trim(cleaned.substr(1, cleaned.size() - 2));
       constexpr std::string_view kSceneEntityPrefix = "entity.";
       if (sectionName.rfind(kSceneEntityPrefix.data(), 0) == 0) {
@@ -349,6 +377,11 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
         entity.id = normalizeToken(sectionName.substr(kSceneEntityPrefix.size()));
         asset->sceneEntities.push_back(entity);
         currentSceneEntity = &asset->sceneEntities.back();
+        currentSection = SectionMode::sceneEntity;
+      } else if (sectionName == "component.render") {
+        currentSection = SectionMode::prefabRenderComponent;
+      } else if (sectionName == "component.effect") {
+        currentSection = SectionMode::prefabEffectComponent;
       }
       continue;
     }
@@ -363,7 +396,7 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
     }
 
     const std::string parsedValue = parseStringValue(value);
-    if (currentSceneEntity != nullptr) {
+    if (currentSection == SectionMode::sceneEntity && currentSceneEntity != nullptr) {
       if (key == "display_name") {
         currentSceneEntity->displayName = parsedValue;
       } else if (key == "source_prefab") {
@@ -391,6 +424,24 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
           }
           return false;
         }
+      }
+      continue;
+    }
+
+    if (currentSection == SectionMode::prefabRenderComponent) {
+      if (key == "procgeo") {
+        asset->renderComponent.procgeo = normalizeToken(parsedValue);
+      } else if (key == "material_hint") {
+        asset->renderComponent.materialHint = normalizeToken(parsedValue);
+      }
+      continue;
+    }
+
+    if (currentSection == SectionMode::prefabEffectComponent) {
+      if (key == "effect") {
+        asset->effectComponent.effect = normalizeToken(parsedValue);
+      } else if (key == "trigger") {
+        asset->effectComponent.trigger = normalizeToken(parsedValue);
       }
       continue;
     }
@@ -661,6 +712,14 @@ struct DataFoundation::Impl {
         .name = parsed.name,
         .category = parsed.category,
         .spawnTag = parsed.spawnTag,
+        .renderComponent = PrefabRenderComponentSnapshot{
+          .procgeo = parsed.renderComponent.procgeo,
+          .materialHint = parsed.renderComponent.materialHint,
+        },
+        .effectComponent = PrefabEffectComponentSnapshot{
+          .effect = parsed.effectComponent.effect,
+          .trigger = parsed.effectComponent.trigger,
+        },
         .sourcePath = path,
         .cookedPath = asset.cookedPath,
         .valid = asset.valid,
@@ -705,6 +764,52 @@ struct DataFoundation::Impl {
   }
 
   void validateRelationships() {
+    for (auto& prefab : prefabs) {
+      if (!prefab.valid) {
+        continue;
+      }
+
+      if (!prefab.renderComponent.materialHint.empty() && prefab.renderComponent.procgeo.empty()) {
+        prefab.valid = false;
+        markAssetInvalid(
+          DataAssetKind::prefab,
+          prefab.name,
+          prefab.sourcePath,
+          "render component declares material_hint without procgeo");
+        continue;
+      }
+
+      if (!prefab.renderComponent.procgeo.empty() && !hasValidAsset(DataAssetKind::procgeo, prefab.renderComponent.procgeo)) {
+        prefab.valid = false;
+        markAssetInvalid(
+          DataAssetKind::prefab,
+          prefab.name,
+          prefab.sourcePath,
+          "render component references missing procgeo '" + prefab.renderComponent.procgeo + "'");
+        continue;
+      }
+
+      if (!prefab.effectComponent.trigger.empty() && prefab.effectComponent.effect.empty()) {
+        prefab.valid = false;
+        markAssetInvalid(
+          DataAssetKind::prefab,
+          prefab.name,
+          prefab.sourcePath,
+          "effect component declares trigger without effect");
+        continue;
+      }
+
+      if (!prefab.effectComponent.effect.empty() && !hasValidAsset(DataAssetKind::effect, prefab.effectComponent.effect)) {
+        prefab.valid = false;
+        markAssetInvalid(
+          DataAssetKind::prefab,
+          prefab.name,
+          prefab.sourcePath,
+          "effect component references missing effect '" + prefab.effectComponent.effect + "'");
+        continue;
+      }
+    }
+
     for (auto& scene : scenes) {
       if (!scene.valid) {
         continue;
@@ -781,24 +886,22 @@ struct DataFoundation::Impl {
     }
   }
 
-  bool hasValidScene(std::string_view sceneName) const {
-    const std::string normalized = normalizeToken(std::string(sceneName));
-    for (const auto& scene : scenes) {
-      if (scene.valid && scene.name == normalized) {
+  bool hasValidAsset(DataAssetKind kind, std::string_view assetName) const {
+    const std::string normalized = normalizeToken(std::string(assetName));
+    for (const auto& asset : assets) {
+      if (asset.valid && asset.kind == kind && asset.name == normalized) {
         return true;
       }
     }
     return false;
   }
 
+  bool hasValidScene(std::string_view sceneName) const {
+    return hasValidAsset(DataAssetKind::scene, sceneName);
+  }
+
   bool hasValidPrefab(std::string_view prefabName) const {
-    const std::string normalized = normalizeToken(std::string(prefabName));
-    for (const auto& prefab : prefabs) {
-      if (prefab.valid && prefab.name == normalized) {
-        return true;
-      }
-    }
-    return false;
+    return hasValidAsset(DataAssetKind::prefab, prefabName);
   }
 
   void markAssetInvalid(
@@ -982,9 +1085,105 @@ std::string DataFoundation::sceneEntitySummary(std::string_view sceneName) const
   return summary.str();
 }
 
+std::string DataFoundation::scenePrefabComponentSummary(std::string_view sceneName) const {
+  const std::string normalized = normalizeToken(std::string(sceneName));
+  const auto scene = sceneSource(normalized);
+  if (!scene.has_value()) {
+    return "Scene prefab components missing: " + normalized;
+  }
+  if (!scene->valid) {
+    return "Scene prefab components invalid: " + normalized;
+  }
+
+  std::vector<std::string> prefabNames;
+  auto pushUniquePrefab = [&prefabNames](const std::string& prefabName) {
+    if (prefabName.empty()) {
+      return;
+    }
+    if (std::find(prefabNames.begin(), prefabNames.end(), prefabName) == prefabNames.end()) {
+      prefabNames.push_back(prefabName);
+    }
+  };
+
+  pushUniquePrefab(scene->primaryPrefab);
+  for (const auto& entity : scene->entities) {
+    pushUniquePrefab(entity.sourcePrefab);
+  }
+
+  std::ostringstream summary;
+  summary << "Scene prefab components: " << scene->name << " (" << prefabNames.size() << " prefabs)";
+  for (const auto& prefabName : prefabNames) {
+    const auto prefab = prefabSource(prefabName);
+    if (!prefab.has_value()) {
+      summary << "\n- prefab " << prefabName << " missing";
+      continue;
+    }
+    if (!prefab->valid) {
+      summary << "\n- prefab " << prefab->name << " invalid";
+      continue;
+    }
+
+    summary << "\n- prefab " << prefab->name;
+    if (!prefab->category.empty()) {
+      summary << " [category=" << prefab->category << ']';
+    }
+    if (!prefab->spawnTag.empty()) {
+      summary << " [spawn_tag=" << prefab->spawnTag << ']';
+    }
+
+    if (!hasPrefabRenderComponent(*prefab) && !hasPrefabEffectComponent(*prefab)) {
+      summary << " [no explicit components]";
+      continue;
+    }
+
+    if (hasPrefabRenderComponent(*prefab)) {
+      summary << "\n  - render -> procgeo " << prefab->renderComponent.procgeo;
+      if (!prefab->renderComponent.materialHint.empty()) {
+        summary << ", material_hint=" << prefab->renderComponent.materialHint;
+      }
+    }
+
+    if (hasPrefabEffectComponent(*prefab)) {
+      summary << "\n  - effect -> asset " << prefab->effectComponent.effect;
+      if (!prefab->effectComponent.trigger.empty()) {
+        summary << ", trigger=" << prefab->effectComponent.trigger;
+      }
+    }
+  }
+  return summary.str();
+}
+
 std::string DataFoundation::relationshipSummary() const {
   std::ostringstream summary;
   summary << "Content relationships:";
+
+  for (const auto& prefab : impl_->prefabs) {
+    if (!prefab.valid) {
+      continue;
+    }
+
+    summary << "\n- prefab " << prefab.name;
+    if (!prefab.category.empty()) {
+      summary << " (category=" << prefab.category << ')';
+    }
+    if (!prefab.spawnTag.empty()) {
+      summary << " [spawn_tag=" << prefab.spawnTag << ']';
+    }
+
+    if (hasPrefabRenderComponent(prefab)) {
+      summary << "\n  - render -> procgeo " << prefab.renderComponent.procgeo;
+      if (!prefab.renderComponent.materialHint.empty()) {
+        summary << ", material_hint=" << prefab.renderComponent.materialHint;
+      }
+    }
+
+    if (hasPrefabEffectComponent(prefab)) {
+      summary << "\n  - effect -> asset " << prefab.effectComponent.effect;
+      if (!prefab.effectComponent.trigger.empty()) {
+        summary << ", trigger=" << prefab.effectComponent.trigger;
+      }
+    }
+  }
 
   for (const auto& scene : impl_->scenes) {
     if (!scene.valid) {

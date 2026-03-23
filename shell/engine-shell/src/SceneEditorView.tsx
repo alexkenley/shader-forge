@@ -68,7 +68,13 @@ function cloneSceneDocument(document: SceneAssetDocument | null) {
 }
 
 function clonePrefabDocument(document: PrefabAssetDocument | null) {
-  return document ? { ...document } : null;
+  return document
+    ? {
+        ...document,
+        renderComponent: { ...document.renderComponent },
+        effectComponent: { ...document.effectComponent },
+      }
+    : null;
 }
 
 function cloneSnapshot(snapshot: EditorSnapshot) {
@@ -1035,7 +1041,7 @@ export function SceneEditorView({
           <div>
             <div className="surface-eyebrow">Level Tools</div>
             <h2>Outliner, Details, And Assets</h2>
-            <p>Shell-side level authoring now round-trips scene metadata, placed entities, hierarchy, and transforms through the same text assets the runtime and bake lane read.</p>
+            <p>Shell-side level authoring now round-trips scene metadata, placed entities, hierarchy, transforms, and first-pass prefab component payloads through the same text assets the runtime and bake lane read.</p>
           </div>
         </div>
 
@@ -1317,6 +1323,74 @@ export function SceneEditorView({
                     value={prefabDraft.spawnTag}
                   />
                 </label>
+                <label className="form-field">
+                  <span>Render procgeo</span>
+                  <input
+                    disabled={!canEdit || busy}
+                    onChange={(event) =>
+                      updatePrefabDraft({
+                        ...prefabDraft,
+                        renderComponent: {
+                          ...prefabDraft.renderComponent,
+                          procgeo: sanitizeAssetName(event.target.value),
+                        },
+                      })
+                    }
+                    type="text"
+                    value={prefabDraft.renderComponent.procgeo}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Material hint</span>
+                  <input
+                    disabled={!canEdit || busy}
+                    onChange={(event) =>
+                      updatePrefabDraft({
+                        ...prefabDraft,
+                        renderComponent: {
+                          ...prefabDraft.renderComponent,
+                          materialHint: sanitizeAssetName(event.target.value),
+                        },
+                      })
+                    }
+                    type="text"
+                    value={prefabDraft.renderComponent.materialHint}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Effect asset</span>
+                  <input
+                    disabled={!canEdit || busy}
+                    onChange={(event) =>
+                      updatePrefabDraft({
+                        ...prefabDraft,
+                        effectComponent: {
+                          ...prefabDraft.effectComponent,
+                          effect: sanitizeAssetName(event.target.value),
+                        },
+                      })
+                    }
+                    type="text"
+                    value={prefabDraft.effectComponent.effect}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Effect trigger</span>
+                  <input
+                    disabled={!canEdit || busy}
+                    onChange={(event) =>
+                      updatePrefabDraft({
+                        ...prefabDraft,
+                        effectComponent: {
+                          ...prefabDraft.effectComponent,
+                          trigger: sanitizeAssetName(event.target.value),
+                        },
+                      })
+                    }
+                    type="text"
+                    value={prefabDraft.effectComponent.trigger}
+                  />
+                </label>
                 <dl className="fact-list">
                   <div>
                     <dt>Schema</dt>
@@ -1360,6 +1434,12 @@ export function SceneEditorView({
                     >
                       <strong>{document.name}</strong>
                       <span>{document.category}</span>
+                      {document.renderComponent.procgeo ? (
+                        <span>render: {document.renderComponent.procgeo}</span>
+                      ) : null}
+                      {document.effectComponent.effect ? (
+                        <span>effect: {document.effectComponent.effect}</span>
+                      ) : null}
                     </button>
                     <div className="scene-asset__actions">
                       <button
