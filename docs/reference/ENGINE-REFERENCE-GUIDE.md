@@ -74,7 +74,8 @@ Assistant entry points:
 - `engine build runtime` configures and builds the native runtime with CMake.
 - `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, and tooling roots.
 - `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
-- `engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
+- `engine migrate detect|unity|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
+- `engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane, lower conversion confidence, and low-confidence Blueprint package manifests when exporter-assisted Unreal data is unavailable in the current slice.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import`, `engine package`, and `engine export` are still later phases.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
@@ -82,10 +83,12 @@ Assistant entry points:
 
 ### Migration Foundation
 
-- `fixtures/migration/unity-minimal`, `fixtures/migration/unreal-minimal`, and `fixtures/migration/godot-minimal` are the deterministic source-project fixtures for the first migration slice.
+- `fixtures/migration/unity-minimal`, `fixtures/migration/unreal-minimal`, `fixtures/migration/unreal-offline-minimal`, and `fixtures/migration/godot-minimal` are the deterministic source-project fixtures for the current migration slices.
 - `engine migrate detect` auto-detects Unity, Unreal, or Godot project structure and writes `migration-manifest.toml`, `report.toml`, and `warnings.toml` under `migration/<run-id>/`.
-- `engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` now pin the requested source-engine lane while also emitting a self-contained `shader-forge-project/` skeleton under each run root.
+- `engine migrate unity` and `engine migrate godot` now pin the requested source-engine lane while also emitting a self-contained `shader-forge-project/` skeleton under each run root.
+- `engine migrate unreal` currently pins the explicit `unreal_offline_fallback` lane, emits the same `shader-forge-project/` skeleton shape, and records the preferred exporter-assisted lane separately in the manifest and report.
 - Pinned engine lanes now generate first-pass migrated `.scene.toml`, `.prefab.toml`, `.data.toml`, and `script-porting/*.port.toml` outputs for the current fixtures.
+- The Unreal offline fallback currently derives scene and prefab placeholders from `.umap` names, Blueprint-like `.uasset` package names, and available C++ class symbols rather than exported Unreal actor data.
 - The current migration slice now converts project structure into a usable Shader Forge skeleton, but it still does not provide full asset, hierarchy, or gameplay parity.
 
 ## Runtime And Authoring

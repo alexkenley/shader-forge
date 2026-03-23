@@ -9,6 +9,7 @@ const cliPath = path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs');
 const migrationModulePath = path.join(repoRoot, 'tools', 'engine-cli', 'lib', 'migration-foundation.mjs');
 const unityFixtureRoot = path.join(repoRoot, 'fixtures', 'migration', 'unity-minimal');
 const unrealFixtureRoot = path.join(repoRoot, 'fixtures', 'migration', 'unreal-minimal');
+const unrealOfflineFixtureRoot = path.join(repoRoot, 'fixtures', 'migration', 'unreal-offline-minimal');
 const godotFixtureRoot = path.join(repoRoot, 'fixtures', 'migration', 'godot-minimal');
 const tempRoot = path.join(repoRoot, 'tmp', 'migration-harness');
 
@@ -16,6 +17,7 @@ const cliSource = fs.readFileSync(cliPath, 'utf8');
 const migrationSource = fs.readFileSync(migrationModulePath, 'utf8');
 const unityVersionFile = fs.readFileSync(path.join(unityFixtureRoot, 'ProjectSettings', 'ProjectVersion.txt'), 'utf8');
 const unrealProjectFile = fs.readFileSync(path.join(unrealFixtureRoot, 'ExampleProject.uproject'), 'utf8');
+const unrealOfflineProjectFile = fs.readFileSync(path.join(unrealOfflineFixtureRoot, 'ExampleOfflineProject.uproject'), 'utf8');
 const godotProjectFile = fs.readFileSync(path.join(godotFixtureRoot, 'project.godot'), 'utf8');
 
 assert.match(cliSource, /engine migrate detect/);
@@ -27,6 +29,7 @@ assert.match(migrationSource, /detect_and_manifest_only/);
 assert.match(migrationSource, /project_skeleton_conversion/);
 assert.match(unityVersionFile, /m_EditorVersion:/);
 assert.match(unrealProjectFile, /EngineAssociation/);
+assert.match(unrealOfflineProjectFile, /EngineAssociation/);
 assert.match(godotProjectFile, /config\/name/);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -125,11 +128,17 @@ const unrealRun = runCli([
 ]);
 assert.match(unrealRun.stdout, /Source engine: unreal/);
 assert.match(unrealRun.stdout, /Migration conversion run complete\./);
+assert.match(unrealRun.stdout, /Active lane: unreal_offline_fallback/);
+assert.match(unrealRun.stdout, /Conversion confidence: low/);
 const unrealRoot = path.join(tempRoot, 'unreal-lane');
 const unrealManifest = fs.readFileSync(path.join(unrealRoot, 'migration-manifest.toml'), 'utf8');
 assert.match(unrealManifest, /requested_engine = "unreal"/);
 assert.match(unrealManifest, /detected_version = "5\.4"/);
-assert.match(unrealManifest, /conversion_mode = "project_skeleton_conversion"/);
+assert.match(unrealManifest, /conversion_mode = "unreal_offline_fallback_conversion"/);
+assert.match(unrealManifest, /\[migration_lane\]/);
+assert.match(unrealManifest, /active = "unreal_offline_fallback"/);
+assert.match(unrealManifest, /preferred = "unreal_exporter_assisted"/);
+assert.match(fs.readFileSync(path.join(unrealRoot, 'report.toml'), 'utf8'), /current_slice = "unreal_offline_fallback"/);
 assert.ok(
   fs.readdirSync(path.join(unrealRoot, 'shader-forge-project', 'content', 'scenes', 'migrated', 'unreal')).some((name) => name.endsWith('.scene.toml')),
   'Expected Unreal migrated scene output.',
@@ -138,6 +147,39 @@ assert.ok(
   fs.readdirSync(path.join(unrealRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'unreal')).some((name) => name.endsWith('.prefab.toml')),
   'Expected Unreal migrated prefab output.',
 );
+
+const unrealOfflineRun = runCli([
+  'migrate',
+  'unreal',
+  'fixtures/migration/unreal-offline-minimal',
+  '--output-root',
+  'tmp/migration-harness',
+  '--run-id',
+  'unreal-offline-lane',
+]);
+assert.match(unrealOfflineRun.stdout, /Source engine: unreal/);
+assert.match(unrealOfflineRun.stdout, /Active lane: unreal_offline_fallback/);
+const unrealOfflineRoot = path.join(tempRoot, 'unreal-offline-lane');
+const unrealOfflineManifest = fs.readFileSync(path.join(unrealOfflineRoot, 'migration-manifest.toml'), 'utf8');
+const unrealOfflineReport = fs.readFileSync(path.join(unrealOfflineRoot, 'report.toml'), 'utf8');
+const unrealOfflineBlueprintPortPath = path.join(unrealOfflineRoot, 'script-porting', 'bp_playerpawn.port.toml');
+assert.match(unrealOfflineManifest, /detected_version = "5\.3"/);
+assert.match(unrealOfflineManifest, /conversion_mode = "unreal_offline_fallback_conversion"/);
+assert.match(unrealOfflineManifest, /blueprint_package_files = 3/);
+assert.match(unrealOfflineReport, /current_slice = "unreal_offline_fallback"/);
+assert.match(unrealOfflineReport, /converted_items = 4/);
+assert.match(unrealOfflineReport, /approximated_items = 3/);
+assert.ok(
+  fs.existsSync(path.join(unrealOfflineRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'unreal', 'bp_playerpawn.prefab.toml')),
+  'Expected Unreal offline fallback prefab output for BP_PlayerPawn.',
+);
+assert.ok(
+  fs.existsSync(path.join(unrealOfflineRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'unreal', 'bp_door.prefab.toml')),
+  'Expected Unreal offline fallback prefab output for BP_Door.',
+);
+assert.ok(fs.existsSync(unrealOfflineBlueprintPortPath), 'Expected offline Blueprint script-porting manifest.');
+assert.match(fs.readFileSync(unrealOfflineBlueprintPortPath, 'utf8'), /strategy = "offline_low_confidence_blueprint_manifest"/);
+assert.match(fs.readFileSync(unrealOfflineBlueprintPortPath, 'utf8'), /extraction_confidence = "low"/);
 
 const godotRun = runCli([
   'migrate',
@@ -172,6 +214,7 @@ const reportRun = runCli([
 assert.match(reportRun.stdout, /Migration report summary:/);
 assert.match(reportRun.stdout, /Engine: unity/);
 assert.match(reportRun.stdout, /Detection support: Supported/);
+assert.match(reportRun.stdout, /Active lane: unity_project_skeleton/);
 assert.match(reportRun.stdout, /Target project root:/);
 assert.match(reportRun.stdout, /Converted items: 3/);
 
@@ -180,4 +223,4 @@ fs.rmSync(tempRoot, { recursive: true, force: true });
 console.log('Engine migration fixtures harness passed.');
 console.log(`- Verified migration fixtures under ${path.join(repoRoot, 'fixtures', 'migration')}`);
 console.log(`- Verified CLI migration detect/report surfaces through ${cliPath}`);
-console.log('- Verified normalized migration manifest/report outputs plus first-pass migrated project skeletons for Unity, Unreal, and Godot fixtures');
+console.log('- Verified normalized migration manifest/report outputs plus first-pass migrated project skeletons for Unity, Godot, and both Unreal conversion lanes including the explicit offline fallback');

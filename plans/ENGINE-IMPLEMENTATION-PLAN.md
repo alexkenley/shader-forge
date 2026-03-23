@@ -98,6 +98,7 @@ Current implementation status:
 - Phase 5 has now started through a first asset-pipeline slice with `engine bake`, staged cooked outputs, and a text-backed procedural-geometry lane.
 - Phase 5.6 has now started through a migration-foundation slice with source-engine detection, normalized manifest/report outputs, provenance capture, and fixture-backed CLI migration commands.
 - Phase 5.8 has now started through a first source-engine conversion slice with self-contained Shader Forge project skeleton output for Unity, Unreal, and Godot fixtures.
+- Phase 5.85 has now started through an explicit Unreal offline fallback lane with raw-project detection, lower-confidence migration-lane reporting, Blueprint package-name manifests, and dedicated fixture coverage.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
@@ -124,6 +125,7 @@ What is already done:
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
+- Phase 5.85 has now started through `engine migrate unreal` reporting an explicit `unreal_offline_fallback` lane, lower conversion confidence, heuristic Blueprint package manifests from `.uasset` names, and a dedicated `fixtures/migration/unreal-offline-minimal` lane.
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
 - Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
 - Phase 5.74 has now started through `physics/layers.toml`, `physics/materials/*.physics-material.toml`, `physics/bodies/*.physics-body.toml`, native physics-system validation/query hooks, and staged cooked physics outputs under `build/cooked/physics/`.
@@ -140,6 +142,7 @@ Where the build is currently up to:
 - native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
 - Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture, but no source-project content is converted into Shader Forge-native assets yet
 - Phase 5.8 groundwork now exists through fixture-backed Shader Forge project skeleton conversion, but full asset/material import, richer hierarchy/component mapping, exporter-assisted Unreal actor extraction, and shell-side migration inspection still remain
+- Phase 5.85 groundwork now exists through an explicit Unreal offline fallback lane with raw-project `.uproject`/`.umap` detection plus low-confidence Blueprint package manifests, but real `.uasset` graph parsing, exporter-manifest ingestion, and richer actor/component extraction still remain
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
@@ -612,6 +615,18 @@ Scope:
 - offline `.uasset`/project parsing research and parser hardening
 - low-confidence Blueprint extraction fallback
 - clear reporting for reduced coverage relative to exporter-assisted migration
+
+Current checkpoint now implemented:
+- `engine migrate unreal` now records the active migration lane as `unreal_offline_fallback` whenever exporter-assisted Unreal data is unavailable in the current slice
+- migration manifests and reports now capture the fallback lane, lower conversion confidence, and explicit preferred-lane vs active-lane reporting instead of treating the fallback as a normal Phase 5.8 parity path
+- the Unreal fallback now derives first-pass `.scene.toml`, `.prefab.toml`, and script-porting outputs from `.uproject`, `.umap`, `.uasset` package names, and available C++ class symbols
+- Blueprint-like `.uasset` packages now emit low-confidence script-porting manifests rather than pretending graph extraction exists
+- deterministic fixture coverage now includes `fixtures/migration/unreal-offline-minimal` for the explicit offline fallback lane
+
+Still ahead inside this phase:
+- real offline `.uasset` parser hardening beyond package-name heuristics
+- richer actor placement, transform, component, and Blueprint graph extraction from raw Unreal project data
+- comparison and handoff rules between the offline lane and the later exporter-assisted lane
 
 Exit criteria:
 - the engine can detect when exporter-assisted migration is unavailable and fall back explicitly

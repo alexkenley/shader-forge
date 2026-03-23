@@ -149,7 +149,7 @@
           "id": "engine-cli-surfaces",
           "title": "Engine CLI Surfaces",
           "summary": "The current CLI now covers backend bring-up, runtime bring-up, a first asset bake lane, a first migration detect/report lane, and explicit audio-root, animation-root, plus physics-root wiring rather than only shell support commands.",
-          "keywords": ["engine", "commands", "build runtime", "run", "bake", "cook", "procgeo", "audio", "animation", "physics", "migrate", "migration", "unity", "unreal", "godot"],
+          "keywords": ["engine", "commands", "build runtime", "run", "bake", "cook", "procgeo", "audio", "animation", "physics", "migrate", "migration", "unity", "unreal", "godot", "offline fallback", "blueprint"],
           "references": [
             "tools/engine-cli/shaderforge.mjs",
             "tools/engine-cli/lib/asset-pipeline.mjs",
@@ -170,7 +170,8 @@
                 "`engine build runtime` configures and builds the native runtime with CMake.",
                 "`engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, and tooling roots.",
                 "`engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.",
-                "`engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests plus report/warning outputs for supported source-engine project shapes.",
+                "`engine migrate detect|unity|godot <path>` now emits normalized migration manifests plus report/warning outputs for supported source-engine project shapes.",
+                "`engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane, lower conversion confidence, and low-confidence Blueprint package manifests when exporter-assisted Unreal data is unavailable in the current slice.",
                 "`engine migrate report <path>` summarizes a generated migration report from the terminal."
               ]
             },
@@ -181,7 +182,7 @@
                 "`engine import`, `engine package`, and `engine export` are still later phases.",
                 "The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.",
                 "The CLI audio lane is now real for authored metadata and staged cook outputs, but it does not drive real playback yet.",
-                "The CLI migration lane is now split honestly: `detect` is report-only, while pinned engine lanes emit a first-pass Shader Forge project skeleton instead of claiming full parity."
+                "The CLI migration lane is now split honestly: `detect` is report-only, Unity and Godot emit first-pass Shader Forge project skeletons, and Unreal currently records the explicit `unreal_offline_fallback` lane instead of claiming exporter-assisted parity."
               ]
             }
           ]
@@ -189,12 +190,13 @@
         {
           "id": "migration-foundation",
           "title": "Migration Foundation",
-          "summary": "The current migration slice is a detect/report foundation plus a first fixture-backed Shader Forge project-skeleton converter for Unity, Unreal, and Godot.",
-          "keywords": ["migration", "detect", "report", "manifest", "provenance", "fixtures"],
+          "summary": "The current migration slice is a detect/report foundation plus first fixture-backed Shader Forge project-skeleton converters for Unity, Godot, and the explicit Unreal offline fallback lane.",
+          "keywords": ["migration", "detect", "report", "manifest", "provenance", "fixtures", "offline fallback", "unreal", "blueprint"],
           "references": [
             "tools/engine-cli/lib/migration-foundation.mjs",
             "fixtures/migration/unity-minimal/ProjectSettings/ProjectVersion.txt",
             "fixtures/migration/unreal-minimal/ExampleProject.uproject",
+            "fixtures/migration/unreal-offline-minimal/ExampleOfflineProject.uproject",
             "fixtures/migration/godot-minimal/project.godot",
             "scripts/test-engine-migration-fixtures.mjs",
             "docs/specs/ENGINE-MIGRATION-SPEC.md"
@@ -205,7 +207,8 @@
               "keywords": ["unity", "unreal", "godot", "report root"],
               "items": [
                 "`engine migrate detect` auto-detects Unity, Unreal, or Godot project structure and writes `migration-manifest.toml`, `report.toml`, and `warnings.toml` under `migration/<run-id>/`.",
-                "`engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` now pin the requested source-engine lane while also emitting a self-contained `shader-forge-project/` skeleton under each run root.",
+                "`engine migrate unity` and `engine migrate godot` now pin the requested source-engine lane while also emitting a self-contained `shader-forge-project/` skeleton under each run root.",
+                "`engine migrate unreal` now pins the explicit `unreal_offline_fallback` lane, records the preferred exporter-assisted lane separately, and emits the same first-pass target-project skeleton shape.",
                 "Pinned engine lanes now emit first-pass scene, prefab, bootstrap-data, and script-porting outputs for the current fixtures."
               ]
             },
@@ -214,6 +217,7 @@
               "keywords": ["foundation only", "manual follow-up", "conversion"],
               "items": [
                 "The current migration slice now converts project structure into a usable Shader Forge skeleton, but not full runtime parity.",
+                "The Unreal offline fallback currently derives scene and prefab placeholders from `.umap` names, Blueprint-like `.uasset` package names, and available C++ class symbols rather than exported Unreal actor data.",
                 "Art assets, materials, detailed hierarchy/component graphs, and gameplay translation still require later migration passes.",
                 "The run output must keep calling out approximations and manual follow-up instead of implying parity."
               ]

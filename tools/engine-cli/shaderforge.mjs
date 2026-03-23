@@ -242,11 +242,19 @@ async function runMigration(commandName, positionals, flags) {
     runId: flags['run-id'] ? String(flags['run-id']) : '',
   });
 
-  console.log(result.conversionMode === 'project_skeleton_conversion'
+  console.log(result.generatedProjectSkeleton
     ? 'Migration conversion run complete.'
     : 'Migration foundation run complete.');
   console.log(`- Source engine: ${result.detection.engine}`);
   console.log(`- Requested lane: ${result.requestedEngine || 'auto-detect'}`);
+  console.log(`- Active lane: ${result.migrationLane.active}`);
+  console.log(`- Conversion confidence: ${result.migrationLane.conversionConfidence}`);
+  if (result.migrationLane.preferred && result.migrationLane.preferred !== result.migrationLane.active) {
+    console.log(`- Preferred lane: ${result.migrationLane.preferred}`);
+  }
+  if (result.migrationLane.exporterManifest) {
+    console.log(`- Exporter manifest: ${result.migrationLane.exporterManifest}`);
+  }
   console.log(`- Source root: ${path.isAbsolute(projectPath) ? projectPath : String(projectPath)}`);
   console.log(`- Report root: ${result.reportRoot}`);
   if (result.targetProjectRoot) {
@@ -260,7 +268,10 @@ async function runMigration(commandName, positionals, flags) {
   console.log(`- Warnings file: ${result.warningsPath}`);
   console.log(`- Script porting placeholder: ${result.scriptPortingReadmePath}`);
   console.log(`- Manual tasks: ${result.manualTasks.length}`);
-  console.log(result.conversionMode === 'project_skeleton_conversion'
+  if (result.migrationLane.fallbackReason) {
+    console.log(`- Fallback: ${result.migrationLane.fallbackReason}`);
+  }
+  console.log(result.generatedProjectSkeleton
     ? '- A first-pass Shader Forge project skeleton was generated in this slice.'
     : '- No content conversion was performed in this slice.');
 }

@@ -183,6 +183,15 @@ function readFileIfPresent(filePath) {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
+function firstExistingFile(filePaths) {
+  for (const filePath of filePaths) {
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      return filePath;
+    }
+  }
+  return '';
+}
+
 function hasDirectory(rootPath, relativeDirectory) {
   const directoryPath = path.join(rootPath, relativeDirectory);
   return fs.existsSync(directoryPath) && fs.statSync(directoryPath).isDirectory();
@@ -245,6 +254,15 @@ function detectUnrealProject(projectRoot) {
   if (hasDirectory(projectRoot, 'Config')) {
     reasons.push('Found Unreal Config directory.');
   }
+  const exporterManifestPath = firstExistingFile([
+    path.join(projectRoot, 'Saved', 'ShaderForgeMigration', 'export-manifest.json'),
+    path.join(projectRoot, 'Saved', 'ShaderForgeMigration', 'export-manifest.toml'),
+    path.join(projectRoot, 'Saved', 'ShaderForgeMigration', 'shader-forge-export.json'),
+    path.join(projectRoot, 'ShaderForgeMigration', 'export-manifest.json'),
+  ]);
+  if (exporterManifestPath) {
+    reasons.push(`Found Shader Forge Unreal exporter manifest ${path.relative(projectRoot, exporterManifestPath).split(path.sep).join('/')}.`);
+  }
   return {
     engine: 'unreal',
     score: reasons.length,
@@ -252,6 +270,7 @@ function detectUnrealProject(projectRoot) {
     version,
     projectMarker: projectFile,
     sourceRoots: ['Content', 'Config', 'Source'].filter((entry) => fs.existsSync(path.join(projectRoot, entry))),
+    exporterManifestPath,
   };
 }
 
@@ -366,13 +385,19 @@ function collectSourceCounts(projectRoot, engine) {
   }
 
   if (engine === 'unreal') {
+    const blueprintKinds = relativeFiles.map((filePath) => classifyUnrealAssetKind(filePath));
     return {
       total_files: relativeFiles.length,
       level_files: countFiles(relativeFiles, (filePath) => filePath.endsWith('.umap')),
       asset_package_files: countFiles(relativeFiles, (filePath) => filePath.endsWith('.uasset')),
+      blueprint_package_files: blueprintKinds.filter((kind) => kind === 'actor_blueprint' || kind === 'widget_blueprint' || kind === 'animation_blueprint').length,
+      actor_blueprint_files: blueprintKinds.filter((kind) => kind === 'actor_blueprint').length,
+      widget_blueprint_files: blueprintKinds.filter((kind) => kind === 'widget_blueprint').length,
+      animation_blueprint_files: blueprintKinds.filter((kind) => kind === 'animation_blueprint').length,
       source_files: countFiles(relativeFiles, (filePath) => filePath.endsWith('.cpp') || filePath.endsWith('.h')),
       config_files: countFiles(relativeFiles, (filePath) => filePath.endsWith('.ini')),
       project_files: countFiles(relativeFiles, (filePath) => filePath.endsWith('.uproject')),
+      exporter_manifest_files: countFiles(relativeFiles, (filePath) => /(^|\/)(Saved\/ShaderForgeMigration|ShaderForgeMigration)\//.test(filePath) && (filePath.endsWith('export-manifest.json') || filePath.endsWith('export-manifest.toml') || filePath.endsWith('shader-forge-export.json'))),
     };
   }
 
@@ -396,14 +421,86 @@ function buildTargetRoots(engine) {
   };
 }
 
-function buildSupportLevels(conversionMode) {
-  if (conversionMode === 'project_skeleton_conversion') {
+function classifyUnrealAssetKind(filePath) {
+  const normalized = String(filePath || '').split(path.sep).join('/').toLowerCase();
+  if (!normalized.endsWith('.uasset')) {
+    return '';
+  }
+  const baseName = path.basename(normalized, '.uasset').toLowerCase();
+  if (baseName.startsWith('wbp_') || normalized.includes('/ui/') || normalized.includes('/widgets/')) {
+    return 'widget_blueprint';
+  }
+  if (baseName.startsWith('abp_') || baseName.startsWith('animbp_')) {
+    return 'animation_blueprint';
+  }
+  if (baseName.startsWith('bp_') || normalized.includes('/blueprints/')) {
+    return 'actor_blueprint';
+  }
+  return 'asset_package';
+}
+
+function determineMigrationSlice(commandName, detection) {
+  if (commandName === 'detect') {
+    return {
+      phase: '5_6_foundation',
+      conversionMode: 'detect_and_manifest_only',
+      currentSlice: 'foundation_detect_only',
+      generatedProjectSkeleton: false,
+      activeLane: 'detect_and_manifest_only',
+      preferredLane: 'detect_and_manifest_only',
+      conversionConfidence: 'high',
+      fallbackReason: '',
+    };
+  }
+
+  if (detection.engine === 'unreal') {
+    return {
+      phase: '5_85_offline_unreal_fallback',
+      conversionMode: 'unreal_offline_fallback_conversion',
+      currentSlice: 'unreal_offline_fallback',
+      generatedProjectSkeleton: true,
+      activeLane: 'unreal_offline_fallback',
+      preferredLane: 'unreal_exporter_assisted',
+      conversionConfidence: 'low',
+      fallbackReason: detection.exporterManifestPath
+        ? 'A Shader Forge Unreal exporter manifest was detected, but exporter-assisted manifest parsing is not implemented in this slice, so the offline fallback stayed active.'
+        : 'No Shader Forge Unreal exporter manifest was detected, so the CLI used the explicit offline raw-project fallback.',
+    };
+  }
+
+  return {
+    phase: '5_8_conversion',
+    conversionMode: 'project_skeleton_conversion',
+    currentSlice: 'project_skeleton_conversion',
+    generatedProjectSkeleton: true,
+    activeLane: `${detection.engine}_project_skeleton`,
+    preferredLane: `${detection.engine}_project_skeleton`,
+    conversionConfidence: 'medium',
+    fallbackReason: '',
+  };
+}
+
+function buildSupportLevels(slice) {
+  if (slice.conversionMode === 'unreal_offline_fallback_conversion') {
+    return {
+      detection: 'Supported',
+      asset_conversion: 'Manual',
+      scene_conversion: 'BestEffort',
+      script_porting: 'BestEffort',
+      project_settings: 'BestEffort',
+      blueprint_extraction: 'BestEffort',
+      exporter_assisted_unreal: 'Manual',
+    };
+  }
+  if (slice.conversionMode === 'project_skeleton_conversion') {
     return {
       detection: 'Supported',
       asset_conversion: 'BestEffort',
       scene_conversion: 'BestEffort',
       script_porting: 'BestEffort',
       project_settings: 'BestEffort',
+      blueprint_extraction: 'Manual',
+      exporter_assisted_unreal: 'Manual',
     };
   }
   return {
@@ -412,11 +509,23 @@ function buildSupportLevels(conversionMode) {
     scene_conversion: 'Manual',
     script_porting: 'Manual',
     project_settings: 'BestEffort',
+    blueprint_extraction: 'Manual',
+    exporter_assisted_unreal: 'Manual',
   };
 }
 
-function buildManualTasks(engine, targetRoots, conversionMode) {
-  if (conversionMode === 'project_skeleton_conversion') {
+function buildManualTasks(engine, targetRoots, slice, counts) {
+  if (slice.conversionMode === 'unreal_offline_fallback_conversion') {
+    return [
+      'Prefer an exporter-assisted Unreal migration run once that lane exists; the current output is intentionally marked as an offline fallback rather than a parity conversion.',
+      `Review generated scenes under ${targetRoots.content_scenes} and repair actor placement, transforms, hierarchy, and component coverage because the fallback only inspects project structure, map names, package names, and source-class symbols.`,
+      Number(counts.blueprint_package_files || 0) > 0
+        ? `Review the low-confidence Blueprint script-porting manifests under migration/<run-id>/script-porting; ${Number(counts.blueprint_package_files || 0)} Blueprint-like package(s) were inferred from offline .uasset names only.`
+        : 'Review any emitted Unreal script-porting manifests manually; the offline fallback cannot inspect Blueprint graphs or serialized node data in this slice.',
+      `Populate real imported assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; the fallback does not convert materials, textures, animation, or audio payloads.`,
+    ];
+  }
+  if (slice.conversionMode === 'project_skeleton_conversion') {
     return [
       `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
       `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
@@ -432,7 +541,7 @@ function buildManualTasks(engine, targetRoots, conversionMode) {
   ];
 }
 
-function buildWarnings(detection, requestedEngine, conversionMode) {
+function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
   const warnings = [];
   if (!detection.version) {
     warnings.push('Source-engine version could not be read from the detected project markers.');
@@ -440,17 +549,25 @@ function buildWarnings(detection, requestedEngine, conversionMode) {
   if (requestedEngine && detection.engine !== requestedEngine) {
     warnings.push(`Requested lane ${requestedEngine} does not match detected engine ${detection.engine}.`);
   }
-  if (detection.engine === 'unreal') {
-    warnings.push('Unreal conversion remains exporter-manifest first; raw .uasset conversion is not implemented in this slice.');
+  if (slice.conversionMode === 'unreal_offline_fallback_conversion') {
+    warnings.push('Unreal exporter-assisted migration is still the preferred path, but this run used the explicit offline fallback lane.');
+    if (detection.exporterManifestPath) {
+      warnings.push(`A Shader Forge Unreal exporter manifest was detected at ${relativePathFromRepo(repoRoot, detection.exporterManifestPath)}, but parser integration is not implemented yet; offline fallback stayed active.`);
+    } else {
+      warnings.push('No Shader Forge Unreal exporter manifest was detected under the project root, so actor and Blueprint extraction fell back to project-structure heuristics.');
+    }
+    warnings.push('Offline fallback currently derives scenes and prefabs from .uproject, .umap, .uasset package names, and source-class inspection rather than Unreal editor export data.');
+    if (Number(counts.blueprint_package_files || 0) > 0) {
+      warnings.push(`Detected ${Number(counts.blueprint_package_files || 0)} Blueprint-like .uasset package(s). These only emit low-confidence script-porting manifests in the offline fallback lane.`);
+    }
+    return warnings;
   }
-  if (conversionMode === 'project_skeleton_conversion') {
+  if (slice.conversionMode === 'project_skeleton_conversion') {
     warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
     if (detection.engine === 'unity') {
       warnings.push('Unity conversion currently extracts scene, prefab, and script identifiers from minimal text assets rather than full serialized component graphs.');
     } else if (detection.engine === 'godot') {
       warnings.push('Godot conversion currently maps root scene nodes and script placeholders only; full node/component translation is still ahead.');
-    } else if (detection.engine === 'unreal') {
-      warnings.push('Unreal conversion currently maps level and gameplay class names into skeleton scene/prefab outputs; exporter-assisted actor extraction is still ahead.');
     }
   }
   return warnings;
@@ -537,21 +654,37 @@ function buildDataToml(defaultScene) {
   ].join('\n');
 }
 
-function buildTargetProjectReadme(engine, detection, conversionOutputs) {
-  return [
+function buildTargetProjectReadme(engine, detection, conversionOutputs, migrationLane) {
+  const lines = [
     '# Shader Forge Migrated Project Skeleton',
     '',
     `Source engine: ${engine}`,
     `Detected version: ${detection.version || 'unknown'}`,
+    `Active migration lane: ${migrationLane.activeLane}`,
+    `Conversion confidence: ${migrationLane.conversionConfidence}`,
+  ];
+
+  if (migrationLane.preferredLane && migrationLane.preferredLane !== migrationLane.activeLane) {
+    lines.push(`Preferred migration lane: ${migrationLane.preferredLane}`);
+  }
+  if (migrationLane.fallbackReason) {
+    lines.push(`Fallback note: ${migrationLane.fallbackReason}`);
+  }
+
+  lines.push(
     '',
-    'This is a first-pass migrated project skeleton emitted by the Phase 5.8 conversion slice.',
+    migrationLane.activeLane === 'unreal_offline_fallback'
+      ? 'This is a first-pass migrated project skeleton emitted by the Phase 5.85 Unreal offline fallback slice.'
+      : 'This is a first-pass migrated project skeleton emitted by the Phase 5.8 conversion slice.',
     'It contains text-backed scene, prefab, and bootstrap outputs plus script-porting manifests.',
     '',
     `Scenes: ${conversionOutputs.sceneFiles.length}`,
     `Prefabs: ${conversionOutputs.prefabFiles.length}`,
     `Data files: ${conversionOutputs.dataFiles.length}`,
     '',
-  ].join('\n');
+  );
+
+  return lines.join('\n');
 }
 
 function extractScriptSymbols(filePath, engine) {
@@ -569,6 +702,9 @@ function extractScriptSymbols(filePath, engine) {
   }
 
   if (symbols.length === 0) {
+    if (engine === 'unreal') {
+      return [];
+    }
     return [basenameWithoutExtension(filePath)];
   }
   return uniqueBy(symbols.filter(Boolean), (symbol) => normalizeToken(symbol));
@@ -599,6 +735,27 @@ function ensureFallbackScenesForPrefabs(scenes, prefabs, engine) {
     entityDisplayName: prefabs[0].displayName || displayNameFromToken(prefabs[0].name),
     sourcePath: prefabs[0].sourcePath,
   }];
+}
+
+function buildScriptPortManifestDocument(manifest) {
+  return {
+    schema: 'shader_forge.script_port_manifest',
+    schema_version: 1,
+    name: manifest.name,
+    source_engine: manifest.sourceEngine,
+    source_path: manifest.sourcePath,
+    source_symbol: manifest.sourceSymbol,
+    source_kind: manifest.sourceKind || 'source_symbol',
+    extraction_confidence: manifest.extractionConfidence || 'medium',
+    strategy: manifest.strategy || 'best_effort_manifest_only',
+    status: manifest.status || 'manual_review_required',
+    notes: Array.isArray(manifest.notes) && manifest.notes.length > 0
+      ? manifest.notes
+      : [
+          'Generated from migration fixture or minimal source inspection.',
+          'Review gameplay behavior manually before claiming parity.',
+        ],
+  };
 }
 
 function collectUnityConversionPlan(repoRoot, projectRoot) {
@@ -648,6 +805,7 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
       sourcePath: relativePathFromRepo(repoRoot, filePath),
       sourceSymbol: symbol,
       sourceEngine: 'unity',
+      sourceKind: 'source_class',
     }))), (item) => item.name);
 
   return { scenes, prefabs, scriptManifests };
@@ -688,6 +846,7 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
       sourcePath: relativePathFromRepo(repoRoot, filePath),
       sourceSymbol: symbol,
       sourceEngine: 'godot',
+      sourceKind: 'source_script',
     }))), (item) => item.name);
 
   return {
@@ -697,10 +856,17 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
   };
 }
 
-function collectUnrealConversionPlan(repoRoot, projectRoot) {
+function collectUnrealOfflineFallbackPlan(repoRoot, projectRoot) {
   const files = walkFiles(projectRoot);
   const mapFiles = files.filter((filePath) => filePath.endsWith('.umap'));
   const sourceFiles = files.filter((filePath) => filePath.endsWith('.h') || filePath.endsWith('.cpp'));
+  const blueprintPackages = files
+    .filter((filePath) => filePath.endsWith('.uasset'))
+    .map((filePath) => ({
+      filePath,
+      kind: classifyUnrealAssetKind(path.relative(projectRoot, filePath).split(path.sep).join('/')),
+    }))
+    .filter((entry) => entry.kind === 'actor_blueprint' || entry.kind === 'widget_blueprint' || entry.kind === 'animation_blueprint');
 
   let prefabs = uniqueBy(sourceFiles.flatMap((filePath) =>
     extractScriptSymbols(filePath, 'unreal').map((symbol) => ({
@@ -710,6 +876,22 @@ function collectUnrealConversionPlan(repoRoot, projectRoot) {
       spawnTag: 'unreal_actor',
       sourcePath: relativePathFromRepo(repoRoot, filePath),
     }))), (item) => item.name);
+
+  prefabs = uniqueBy([
+    ...prefabs,
+    ...blueprintPackages
+      .filter((entry) => entry.kind === 'actor_blueprint')
+      .map((entry) => {
+        const baseName = basenameWithoutExtension(entry.filePath);
+        return {
+          name: normalizeToken(baseName) || 'unreal_blueprint_actor',
+          displayName: displayNameFromToken(baseName),
+          category: 'migrated_unreal_blueprint',
+          spawnTag: 'unreal_blueprint_actor',
+          sourcePath: relativePathFromRepo(repoRoot, entry.filePath),
+        };
+      }),
+  ], (item) => item.name);
 
   let scenes = mapFiles.map((filePath, index) => {
     const source = fs.readFileSync(filePath, 'utf8');
@@ -740,9 +922,36 @@ function collectUnrealConversionPlan(repoRoot, projectRoot) {
       sourcePath: relativePathFromRepo(repoRoot, filePath),
       sourceSymbol: symbol,
       sourceEngine: 'unreal',
+      sourceKind: 'source_class',
+      strategy: 'offline_source_class_manifest',
+      notes: [
+        'Generated from offline Unreal C++ source inspection.',
+        'Actor placement, reflected properties, and Blueprint links still require manual review.',
+      ],
     }))), (item) => item.name);
 
-  return { scenes, prefabs, scriptManifests };
+  const blueprintScriptManifests = blueprintPackages.map((entry) => {
+    const baseName = basenameWithoutExtension(entry.filePath);
+    return {
+      name: normalizeToken(baseName) || 'unreal_blueprint',
+      sourcePath: relativePathFromRepo(repoRoot, entry.filePath),
+      sourceSymbol: displayNameFromToken(baseName),
+      sourceEngine: 'unreal',
+      sourceKind: entry.kind,
+      extractionConfidence: 'low',
+      strategy: 'offline_low_confidence_blueprint_manifest',
+      notes: [
+        'Generated from offline Unreal .uasset package-name inspection only.',
+        'Blueprint graphs, components, pins, and engine-specific behavior were not parsed in this slice.',
+      ],
+    };
+  });
+
+  return {
+    scenes,
+    prefabs,
+    scriptManifests: uniqueBy([...scriptManifests, ...blueprintScriptManifests], (item) => item.name),
+  };
 }
 
 function collectConversionPlan(repoRoot, projectRoot, detection) {
@@ -750,22 +959,25 @@ function collectConversionPlan(repoRoot, projectRoot, detection) {
     return collectUnityConversionPlan(repoRoot, projectRoot);
   }
   if (detection.engine === 'unreal') {
-    return collectUnrealConversionPlan(repoRoot, projectRoot);
+    return collectUnrealOfflineFallbackPlan(repoRoot, projectRoot);
   }
   return collectGodotConversionPlan(repoRoot, projectRoot);
 }
 
-function estimateSkippedItems(counts, engine) {
+function estimateSkippedItems(counts, engine, slice) {
   if (engine === 'unity') {
     return Number(counts.material_files || 0);
   }
   if (engine === 'unreal') {
+    if (slice.conversionMode === 'unreal_offline_fallback_conversion') {
+      return Math.max(Number(counts.asset_package_files || 0) - Number(counts.blueprint_package_files || 0), 0);
+    }
     return Number(counts.asset_package_files || 0);
   }
   return Number(counts.resource_files || 0) + Number(counts.import_files || 0);
 }
 
-function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan) {
+function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan, migrationLane) {
   const targetProjectRoot = path.join(reportRoot, 'shader-forge-project');
   const conversionOutputs = {
     targetProjectRoot: relativePathFromRepo(repoRoot, targetProjectRoot),
@@ -823,26 +1035,13 @@ function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan
 
   for (const manifest of plan.scriptManifests) {
     const outputPath = path.join(reportRoot, 'script-porting', `${manifest.name}.port.toml`);
-    writeTextFile(outputPath, stringifyToml({
-      schema: 'shader_forge.script_port_manifest',
-      schema_version: 1,
-      name: manifest.name,
-      source_engine: manifest.sourceEngine,
-      source_path: manifest.sourcePath,
-      source_symbol: manifest.sourceSymbol,
-      strategy: 'best_effort_manifest_only',
-      status: 'manual_review_required',
-      notes: [
-        'Generated from migration fixture or minimal source inspection.',
-        'Review gameplay behavior manually before claiming parity.',
-      ],
-    }));
+    writeTextFile(outputPath, stringifyToml(buildScriptPortManifestDocument(manifest)));
     conversionOutputs.scriptManifestFiles.push(relativePathFromRepo(repoRoot, outputPath));
   }
 
   writeTextFile(
     path.join(targetProjectRoot, 'README.md'),
-    buildTargetProjectReadme(detection.engine, detection, conversionOutputs),
+    buildTargetProjectReadme(detection.engine, detection, conversionOutputs, migrationLane),
   );
 
   return {
@@ -884,18 +1083,18 @@ export async function createMigrationRun(options) {
   const detection = detectSourceProject(projectRoot, requestedEngine);
   const runId = normalizeRunId(options.runId || '') || defaultRunId(detection.engine, commandName);
   const reportRoot = path.join(outputRoot, runId);
-  const conversionMode = commandName === 'detect' ? 'detect_and_manifest_only' : 'project_skeleton_conversion';
+  const slice = determineMigrationSlice(commandName, detection);
   const targetRoots = buildTargetRoots(detection.engine);
-  const support = buildSupportLevels(conversionMode);
+  const support = buildSupportLevels(slice);
   const counts = collectSourceCounts(projectRoot, detection.engine);
-  const warnings = buildWarnings(detection, requestedEngine, conversionMode);
-  const manualTasks = buildManualTasks(detection.engine, targetRoots, conversionMode);
+  const warnings = buildWarnings(detection, requestedEngine, slice, counts, repoRoot);
+  const manualTasks = buildManualTasks(detection.engine, targetRoots, slice, counts);
 
   ensureDirectory(reportRoot);
   ensureDirectory(path.join(reportRoot, 'script-porting'));
 
-  const conversion = conversionMode === 'project_skeleton_conversion'
-    ? writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, collectConversionPlan(repoRoot, projectRoot, detection))
+  const conversion = slice.generatedProjectSkeleton
+    ? writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, collectConversionPlan(repoRoot, projectRoot, detection), slice)
     : {
         targetProjectRoot: '',
         outputs: {
@@ -918,13 +1117,13 @@ export async function createMigrationRun(options) {
   const manifestDocument = {
     schema: 'shader_forge.migration_manifest',
     schema_version: 1,
-    phase: conversionMode === 'project_skeleton_conversion' ? '5_8_conversion' : '5_6_foundation',
+    phase: slice.phase,
     command: commandName,
     requested_engine: requestedEngine,
     detected_engine: detection.engine,
     detected_version: detection.version,
     confidence: detection.confidence,
-    conversion_mode: conversionMode,
+    conversion_mode: slice.conversionMode,
     source_root: relativePathFromRepo(repoRoot, projectRoot),
     output_root: relativePathFromRepo(repoRoot, reportRoot),
     target_project_root: conversion.targetProjectRoot,
@@ -939,7 +1138,7 @@ export async function createMigrationRun(options) {
     conversion_counts: {
       converted_items: conversion.convertedItems,
       approximated_items: conversion.approximatedItems,
-      skipped_items: estimateSkippedItems(counts, detection.engine),
+      skipped_items: estimateSkippedItems(counts, detection.engine, slice),
       scene_files: conversion.outputs.sceneFiles.length,
       prefab_files: conversion.outputs.prefabFiles.length,
       data_files: conversion.outputs.dataFiles.length,
@@ -953,6 +1152,13 @@ export async function createMigrationRun(options) {
       asset_placeholder_files: conversion.outputs.assetPlaceholderFiles,
     },
     target_roots: targetRoots,
+    migration_lane: {
+      active: slice.activeLane,
+      preferred: slice.preferredLane,
+      conversion_confidence: slice.conversionConfidence,
+      fallback_reason: slice.fallbackReason,
+      exporter_manifest: detection.exporterManifestPath ? relativePathFromRepo(repoRoot, detection.exporterManifestPath) : '',
+    },
     support,
     provenance: {
       source_project_root: relativePathFromRepo(repoRoot, projectRoot),
@@ -966,27 +1172,43 @@ export async function createMigrationRun(options) {
     schema: 'shader_forge.migration_report',
     schema_version: 1,
     run_id: runId,
+    phase: slice.phase,
     detected_engine: detection.engine,
     detected_version: detection.version,
-    current_slice: conversionMode === 'project_skeleton_conversion' ? 'project_skeleton_conversion' : 'foundation_detect_only',
+    current_slice: slice.currentSlice,
     source_root: relativePathFromRepo(repoRoot, projectRoot),
     report_root: relativePathFromRepo(repoRoot, reportRoot),
     target_project_root: conversion.targetProjectRoot,
     converted_items: conversion.convertedItems,
     approximated_items: conversion.approximatedItems,
-    skipped_items: estimateSkippedItems(counts, detection.engine),
+    skipped_items: estimateSkippedItems(counts, detection.engine, slice),
     manual_items: manualTasks.length,
     warning_count: warnings.length,
-    notes: conversionMode === 'project_skeleton_conversion'
+    migration_lane: {
+      active: slice.activeLane,
+      preferred: slice.preferredLane,
+      conversion_confidence: slice.conversionConfidence,
+      fallback_reason: slice.fallbackReason,
+      exporter_manifest: detection.exporterManifestPath ? relativePathFromRepo(repoRoot, detection.exporterManifestPath) : '',
+    },
+    notes: slice.conversionMode === 'unreal_offline_fallback_conversion'
       ? [
-          'A first-pass Shader Forge project skeleton was generated for this migration run.',
-          'Scenes and prefabs were converted into text-backed Shader Forge outputs using minimal fixture-aware extraction.',
-          'Art, materials, runtime parity, and full gameplay translation still require follow-up.',
+          'An explicit Unreal offline-fallback project skeleton was generated for this migration run.',
+          'Scenes and prefabs were derived from .uproject, .umap, .uasset package names, and source-class inspection rather than Unreal editor export data.',
+          Number(counts.blueprint_package_files || 0) > 0
+            ? 'Blueprint-like .uasset packages emitted low-confidence script-porting manifests and still require manual review.'
+            : 'No Blueprint-like .uasset packages were detected in this fallback run.',
         ]
-      : [
-          'No content conversion is performed in this slice.',
-          'This run only normalizes source-project detection, target layout intent, provenance, and manual follow-up.',
-        ],
+      : slice.conversionMode === 'project_skeleton_conversion'
+        ? [
+            'A first-pass Shader Forge project skeleton was generated for this migration run.',
+            'Scenes and prefabs were converted into text-backed Shader Forge outputs using minimal fixture-aware extraction.',
+            'Art, materials, runtime parity, and full gameplay translation still require follow-up.',
+          ]
+        : [
+            'No content conversion is performed in this slice.',
+            'This run only normalizes source-project detection, target layout intent, provenance, and manual follow-up.',
+          ],
     support,
     conversion_outputs: {
       scene_files: conversion.outputs.sceneFiles,
@@ -1011,11 +1233,13 @@ export async function createMigrationRun(options) {
   writeTextFile(warningsPath, stringifyToml(warningsDocument));
   writeTextFile(
     scriptPortingReadmePath,
-    conversionMode === 'project_skeleton_conversion'
+    slice.generatedProjectSkeleton
       ? [
           '# Script Porting Manifests',
           '',
-          'This directory now contains first-pass script porting manifests generated during migration.',
+          slice.conversionMode === 'unreal_offline_fallback_conversion'
+            ? 'This directory now contains first-pass script porting manifests generated during the Unreal offline fallback lane.'
+            : 'This directory now contains first-pass script porting manifests generated during migration.',
           'They are review inputs, not parity guarantees.',
           '',
         ].join('\n')
@@ -1031,7 +1255,17 @@ export async function createMigrationRun(options) {
   return {
     runId,
     commandName,
-    conversionMode,
+    conversionMode: slice.conversionMode,
+    currentSlice: slice.currentSlice,
+    phase: slice.phase,
+    generatedProjectSkeleton: slice.generatedProjectSkeleton,
+    migrationLane: {
+      active: slice.activeLane,
+      preferred: slice.preferredLane,
+      conversionConfidence: slice.conversionConfidence,
+      fallbackReason: slice.fallbackReason,
+      exporterManifest: detection.exporterManifestPath ? relativePathFromRepo(repoRoot, detection.exporterManifestPath) : '',
+    },
     requestedEngine,
     detection,
     support,
@@ -1041,7 +1275,7 @@ export async function createMigrationRun(options) {
     targetProjectRoot: conversion.targetProjectRoot,
     convertedItems: conversion.convertedItems,
     approximatedItems: conversion.approximatedItems,
-    skippedItems: estimateSkippedItems(counts, detection.engine),
+    skippedItems: estimateSkippedItems(counts, detection.engine, slice),
     conversionOutputs: conversion.outputs,
     reportRoot: relativePathFromRepo(repoRoot, reportRoot),
     manifestPath: relativePathFromRepo(repoRoot, manifestPath),
@@ -1068,6 +1302,7 @@ export function readMigrationReport(reportInputPath) {
 export function summarizeMigrationReport(reportInputPath) {
   const { reportPath, report } = readMigrationReport(reportInputPath);
   const support = report.support || {};
+  const migrationLane = report.migration_lane || {};
   return {
     reportPath,
     lines: [
@@ -1076,6 +1311,8 @@ export function summarizeMigrationReport(reportInputPath) {
       `- Run id: ${trim(report.run_id) || 'unknown'}`,
       `- Engine: ${trim(report.detected_engine) || 'unknown'}`,
       `- Slice: ${trim(report.current_slice) || 'unknown'}`,
+      `- Active lane: ${trim(migrationLane.active) || 'unknown'}`,
+      `- Conversion confidence: ${trim(migrationLane.conversion_confidence) || 'unknown'}`,
       `- Target project root: ${trim(report.target_project_root) || 'none'}`,
       `- Detection support: ${trim(support.detection) || 'unknown'}`,
       `- Asset conversion support: ${trim(support.asset_conversion) || 'unknown'}`,

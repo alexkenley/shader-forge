@@ -26,7 +26,7 @@ Rules:
 
 ## Current Implemented Slice
 
-The current implementation now spans the Phase 5.6 foundation plus a first real Phase 5.8 conversion slice.
+The current implementation now spans the Phase 5.6 foundation, a first real Phase 5.8 conversion slice, and a first explicit Phase 5.85 Unreal offline fallback lane.
 
 Implemented now:
 
@@ -37,10 +37,12 @@ Implemented now:
 - `engine migrate report <path>`
 - normalized `migration-manifest.toml`, `report.toml`, and `warnings.toml` outputs under `migration/<run-id>/`
 - `engine migrate detect` remains detect/report only and still writes a `script-porting/README.md` placeholder
-- `engine migrate unity|unreal|godot` now emit a self-contained `shader-forge-project/` skeleton under each run root
+- `engine migrate unity|godot` now emit a self-contained `shader-forge-project/` skeleton under each run root
+- `engine migrate unreal` now marks the active lane as `unreal_offline_fallback`, emits the same target-project skeleton shape, and records lower conversion confidence instead of pretending exporter-assisted parity
 - the current fixture lanes now generate first-pass `content/scenes/migrated/<engine>/*.scene.toml`, `content/prefabs/migrated/<engine>/*.prefab.toml`, and `content/data/migrated/<engine>/runtime_bootstrap.data.toml`
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
-- deterministic Unity, Unreal, and Godot fixture projects under `fixtures/migration/`
+- the Unreal offline fallback now derives scene/prefab/script outputs from `.uproject`, `.umap`, `.uasset` package names, and C++ class symbols when no exporter-assisted data is available
+- deterministic Unity, Unreal, Unreal offline fallback, and Godot fixture projects under `fixtures/migration/`
 
 Current boundaries:
 
@@ -48,7 +50,8 @@ Current boundaries:
 - target layout intent and provenance are captured in the emitted manifest/report files
 - engine-specific lanes now perform a real first conversion pass, but only to project skeleton depth rather than full parity
 - generated scenes, prefabs, and script manifests are first-pass approximations based on minimal fixture/source inspection rather than full source-engine graph extraction
-- art assets, materials, animation, audio, detailed hierarchy/component graphs, and exporter-assisted Unreal actor data are still ahead
+- the Unreal lane is currently explicit about its fallback status: Blueprint package outputs are low-confidence manifests derived from package names rather than parsed graphs
+- art assets, materials, animation, audio, detailed hierarchy/component graphs, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
 
 ## Primary Targets
 
@@ -142,11 +145,18 @@ Preferred approach:
 - map exported levels and actor placements into Shader Forge scene assets
 - surface unsupported Blueprint/material features explicitly in the migration report
 
-Later phase:
+Fallback widening still ahead:
 
-- add a raw-project offline fallback for cases where Unreal cannot be run
+- harden the raw-project offline fallback for cases where Unreal cannot be run
 - treat offline Blueprint parsing as a lower-confidence lane until a real parser with fixture coverage exists
 - keep Blueprint-heavy projects primarily on the exporter-assisted path
+
+Current implemented fallback:
+
+- `engine migrate unreal` now records the active lane as `unreal_offline_fallback` whenever exporter-assisted data is unavailable in the current slice
+- offline fallback scene and prefab outputs are derived from `.umap` names, Blueprint-like `.uasset` package names, and C++ class symbols
+- Blueprint-like packages currently emit low-confidence script-porting manifests instead of parsed graph data
+- migration reports now call out the fallback lane, lower conversion confidence, and manual follow-up explicitly
 
 ### Godot
 
@@ -241,6 +251,7 @@ Required harnesses:
 
 - Unity fixture migration smoke
 - Unreal exporter-manifest migration smoke
+- Unreal offline fallback migration smoke
 - Godot text-scene migration smoke
 - migration-report validation harness
 
