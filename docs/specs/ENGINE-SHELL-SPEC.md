@@ -78,6 +78,9 @@ Current implemented bridge surfaces:
 - `engine_sessiond` health status in the shell header
 - session create/list state in the `Sessions` rail
 - file list/read preview in the `Explorer` rail
+- runtime build, play, stop, restart, and pause/resume controls in the shell chrome and runtime-facing panels
+- runtime and build logs routed into shell bottom-dock surfaces
+- `Game` and `Preview` tabs that track external-runtime bridge state, recent runtime/build activity, and shell-side viewer workflow diagnostics
 
 The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.
 

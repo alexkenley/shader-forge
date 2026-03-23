@@ -12,7 +12,7 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
   };
 }
 
@@ -118,24 +118,28 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
     try {
       if (request.method === 'GET' && pathname === '/health') {
+        const capabilities = [
+          'sessions',
+          'sessions:update',
+          'sessions:delete',
+          'files:list',
+          'files:read',
+          'hostfs:list',
+          'git:status',
+          'git:init',
+          'terminals',
+          'runtime:lifecycle',
+          'build:lifecycle',
+          'events',
+        ];
+        if (runtimeStore.supportsPause()) {
+          capabilities.push('runtime:lifecycle:pause', 'runtime:lifecycle:resume');
+        }
         writeJson(response, 200, {
           ok: true,
           service: 'engine_sessiond',
           now: new Date().toISOString(),
-          capabilities: [
-            'sessions',
-            'sessions:update',
-            'sessions:delete',
-            'files:list',
-            'files:read',
-            'hostfs:list',
-            'git:status',
-            'git:init',
-            'terminals',
-            'runtime:lifecycle',
-            'build:lifecycle',
-            'events',
-          ],
+          capabilities,
         });
         return;
       }
@@ -264,6 +268,18 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/runtime/stop') {
         const status = await runtimeStore.stopRuntime();
+        writeJson(response, 200, status);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/runtime/pause') {
+        const status = runtimeStore.pauseRuntime();
+        writeJson(response, 200, status);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/runtime/resume') {
+        const status = runtimeStore.resumeRuntime();
         writeJson(response, 200, status);
         return;
       }

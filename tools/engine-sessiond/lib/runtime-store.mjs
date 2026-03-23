@@ -12,6 +12,7 @@ const defaultBinaryPath = path.join(
   'bin',
   process.platform === 'win32' ? 'shader_forge_runtime.exe' : 'shader_forge_runtime',
 );
+const pauseSupported = process.platform !== 'win32';
 
 function defaultLaunchFactory({ scene }) {
   if (!fs.existsSync(defaultBinaryPath)) {
@@ -36,6 +37,10 @@ export class RuntimeStore {
     this.#launchFactory = typeof launchFactory === 'function' ? launchFactory : defaultLaunchFactory;
   }
 
+  supportsPause() {
+    return pauseSupported;
+  }
+
   status() {
     if (!this.#record) {
       return {
@@ -43,16 +48,20 @@ export class RuntimeStore {
         scene: null,
         pid: null,
         startedAt: null,
+        pausedAt: null,
         executablePath: defaultBinaryPath,
+        supportsPause: pauseSupported,
       };
     }
 
     return {
-      state: 'running',
+      state: this.#record.paused ? 'paused' : 'running',
       scene: this.#record.scene,
       pid: this.#record.child.pid ?? null,
       startedAt: this.#record.startedAt,
+      pausedAt: this.#record.pausedAt,
       executablePath: this.#record.displayPath,
+      supportsPause: pauseSupported,
     };
   }
 
@@ -75,6 +84,8 @@ export class RuntimeStore {
       child,
       scene,
       startedAt: new Date().toISOString(),
+      paused: false,
+      pausedAt: null,
       displayPath: launch.displayPath || launch.command,
       exitPromise: null,
     };
@@ -121,8 +132,57 @@ export class RuntimeStore {
     }
 
     const { child, exitPromise } = this.#record;
+    if (this.#record.paused) {
+      child.kill('SIGCONT');
+      this.#record.paused = false;
+      this.#record.pausedAt = null;
+    }
     child.kill('SIGTERM');
     await exitPromise;
+    return this.status();
+  }
+
+  pauseRuntime() {
+    if (!this.#record) {
+      throw new Error('Runtime is not running.');
+    }
+    if (!pauseSupported) {
+      throw new Error('Runtime pause/resume is not supported on this host yet.');
+    }
+    if (this.#record.paused) {
+      return this.status();
+    }
+
+    const paused = this.#record.child.kill('SIGSTOP');
+    if (!paused) {
+      throw new Error('Failed to pause the runtime process.');
+    }
+
+    this.#record.paused = true;
+    this.#record.pausedAt = new Date().toISOString();
+    this.#emitEvent('runtime.status', this.status());
+    return this.status();
+  }
+
+  resumeRuntime() {
+    if (!this.#record) {
+      throw new Error('Runtime is not running.');
+    }
+    if (!pauseSupported) {
+      throw new Error('Runtime pause/resume is not supported on this host yet.');
+    }
+    if (!this.#record.paused) {
+      return this.status();
+    }
+
+    const resumed = this.#record.child.kill('SIGCONT');
+    if (!resumed) {
+      throw new Error('Failed to resume the runtime process.');
+    }
+
+    this.#record.paused = false;
+    this.#record.pausedAt = null;
+    this.#emitEvent('runtime.status', this.status());
     return this.status();
   }
 

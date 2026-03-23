@@ -16,6 +16,15 @@ Current implemented surfaces:
 - `GET /api/sessions/:id`
 - `GET /api/files/list`
 - `GET /api/files/read`
+- `GET /api/runtime/status`
+- `POST /api/runtime/start`
+- `POST /api/runtime/stop`
+- `POST /api/runtime/restart`
+- `POST /api/runtime/pause`
+- `POST /api/runtime/resume`
+- `POST /api/build/runtime`
+- `POST /api/build/stop`
+- `GET /api/events`
 
 This gives the shell and harnesses a real backend-owned session and file model before PTY and runtime lifecycle work land.
 
@@ -35,6 +44,9 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - UTF-8 file reads
 - directory listing with stable relative paths and timestamps
 - JSON HTTP API suitable for local shell integration and harness use
+- runtime status now includes `running`, `paused`, and `stopped` states
+- pause/resume is exposed on hosts where process-signal control is available
+- `/health` reports runtime pause/resume capabilities truthfully for the current host
 
 ## Future AI APIs
 

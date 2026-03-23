@@ -92,7 +92,7 @@ Current implementation status:
 - Phase 1 is substantially underway.
 - Phase 2 has a working first implementation and is the main active backend surface.
 - Phase 3 now has a first real native runtime slice in the repo, with native SDL3/Vulkan verification and follow-on renderer expansion still ahead.
-- Phase 4 has started through shell-side runtime build/run controls and log surfaces, but not through a full embedded viewer.
+- Phase 4 now has shell-side runtime build/run/pause controls, bridge diagnostics, and dedicated viewer-workflow surfaces, but not a full embedded viewer yet.
 
 What is already done:
 
@@ -102,9 +102,9 @@ What is already done:
 - A real multi-tab PTY terminal dock is wired through `engine_sessiond` and the shell.
 - Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
-- The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, and runtime build/run/log controls.
+- The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, runtime build/run/pause/log controls, and external-window viewer workflow diagnostics.
 - The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
-- Deterministic harnesses exist for the shell, session backend, and runtime scaffold.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, and runtime scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -265,7 +265,7 @@ Goal:
 - make the shell a useful engine workspace rather than only a code surface
 
 Status:
-- early bridge work started through build/run/log control surfaces in the shell
+- bridge work now includes build/run/pause/log control surfaces plus shell-side viewer workflow dashboards and dedicated harness coverage; embedded viewer transport is still deferred
 
 Scope:
 - runtime status and control

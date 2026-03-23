@@ -71,11 +71,13 @@ export type SessionTerminalOpen = {
 };
 
 export type RuntimeStatus = {
-  state: 'stopped' | 'running';
+  state: 'stopped' | 'running' | 'paused';
   scene: string | null;
   pid: number | null;
   startedAt: string | null;
+  pausedAt: string | null;
   executablePath: string | null;
+  supportsPause: boolean;
 };
 
 export type BuildStatus = {
@@ -306,6 +308,20 @@ export async function startRuntime(scene = 'sandbox') {
 
 export async function stopRuntime() {
   return requestJson<RuntimeStatus>('/api/runtime/stop', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function pauseRuntime() {
+  return requestJson<RuntimeStatus>('/api/runtime/pause', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function resumeRuntime() {
+  return requestJson<RuntimeStatus>('/api/runtime/resume', {
     method: 'POST',
     body: JSON.stringify({}),
   });

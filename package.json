@@ -26,6 +26,7 @@
     "test:shell-smoke": "node scripts/test-engine-shell-smoke.mjs",
     "test:sessiond": "node scripts/test-engine-sessiond.mjs",
     "test:runtime-scaffold": "node scripts/test-engine-runtime-scaffold.mjs",
+    "test:viewer-bridge": "node scripts/test-engine-viewer-bridge.mjs",
     "test:ollama-smoke": "node scripts/test-ollama-smoke.mjs"
   },
   "dependencies": {

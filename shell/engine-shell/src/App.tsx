@@ -16,8 +16,10 @@ import {
   listFiles,
   listSessions,
   openTerminal,
+  pauseRuntime,
   readFile,
   restartRuntime,
+  resumeRuntime,
   resizeTerminal,
   startRuntimeBuild,
   startRuntime,
@@ -55,7 +57,9 @@ const stoppedRuntimeStatus: RuntimeStatus = {
   scene: null,
   pid: null,
   startedAt: null,
+  pausedAt: null,
   executablePath: null,
+  supportsPause: false,
 };
 const idleBuildStatus: BuildStatus = {
   state: 'idle',
@@ -96,6 +100,14 @@ type TerminalTabState = {
   output: string;
   cols: number;
   rows: number;
+};
+
+type ViewerBridgeEvent = {
+  id: string;
+  title: string;
+  detail: string;
+  at: string;
+  tone: 'active' | 'paused' | 'error' | 'idle';
 };
 
 type TerminalDockProps = {
@@ -180,6 +192,77 @@ function trimTerminalOutput(value: string) {
     return value;
   }
   return value.slice(-maxLength);
+}
+
+function takeLastLogLines(value: string, count = 6) {
+  const lines = value
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line, index, all) => line.length > 0 || index < all.length - 1)
+    .filter((line) => line.length > 0);
+  if (!lines.length) {
+    return '[no log output yet]';
+  }
+  return lines.slice(-count).join('\n');
+}
+
+function appendViewerBridgeEvent(
+  current: ViewerBridgeEvent[],
+  event: Omit<ViewerBridgeEvent, 'id'>,
+) {
+  return [
+    {
+      ...event,
+      id: `${event.at}-${current.length}-${Math.random().toString(16).slice(2, 8)}`,
+    },
+    ...current,
+  ].slice(0, 12);
+}
+
+function buildStatusTone(state: BuildStatus['state']): ViewerBridgeEvent['tone'] {
+  if (state === 'running' || state === 'succeeded') {
+    return 'active';
+  }
+  if (state === 'failed') {
+    return 'error';
+  }
+  return 'idle';
+}
+
+function runtimeStateTone(state: RuntimeStatus['state']) {
+  if (state === 'running') {
+    return 'active';
+  }
+  if (state === 'paused') {
+    return 'paused';
+  }
+  return 'idle';
+}
+
+function runtimeStateLabel(state: RuntimeStatus['state']) {
+  if (state === 'running') {
+    return 'Running';
+  }
+  if (state === 'paused') {
+    return 'Paused';
+  }
+  return 'Stopped';
+}
+
+function buildStateLabel(state: BuildStatus['state']) {
+  if (state === 'running') {
+    return 'Running';
+  }
+  if (state === 'succeeded') {
+    return 'Succeeded';
+  }
+  if (state === 'failed') {
+    return 'Failed';
+  }
+  if (state === 'stopped') {
+    return 'Stopped';
+  }
+  return 'Idle';
 }
 
 async function copyTextToClipboard(text: string) {
@@ -337,6 +420,11 @@ function renderRightPanel(
   onStartRuntimeBuild: () => void,
   onBuildAndPlay: () => void,
   onStopBuild: () => void,
+  onStartRuntime: () => void,
+  onStopRuntime: () => void,
+  onRestartRuntime: () => void,
+  onPauseRuntime: () => void,
+  onResumeRuntime: () => void,
 ) {
   if (activeTab === 'Details') {
     return (
@@ -470,7 +558,7 @@ function renderRightPanel(
       <section className="card compact-card">
         <div className="section-titlebar">
           <h3>Runtime</h3>
-          <span className={`status-dot status-dot--${runtimeStatus.state === 'running' ? 'active' : 'idle'}`} />
+          <span className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`} />
         </div>
         <div className="form-grid">
           <label className="form-field">
@@ -478,12 +566,31 @@ function renderRightPanel(
             <input onChange={(event) => onLaunchSceneChange(event.target.value)} type="text" value={launchScene} />
           </label>
         </div>
+        <div className="inline-actions">
+          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'} onClick={onStartRuntime} type="button">
+            Play
+          </button>
+          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state === 'stopped'} onClick={onStopRuntime} type="button">
+            Stop
+          </button>
+          <button
+            className="ghost-button ghost-button--sm"
+            disabled={buildStatus.state === 'running' || !runtimeStatus.supportsPause || runtimeStatus.state === 'stopped'}
+            onClick={runtimeStatus.state === 'paused' ? onResumeRuntime : onPauseRuntime}
+            type="button"
+          >
+            {runtimeStatus.state === 'paused' ? 'Resume' : 'Pause'}
+          </button>
+          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state === 'stopped'} onClick={onRestartRuntime} type="button">
+            Restart
+          </button>
+        </div>
       </section>
       <section className="card compact-card">
         <dl className="fact-list">
           <div>
             <dt>State</dt>
-            <dd>{runtimeStatus.state}</dd>
+            <dd>{runtimeStateLabel(runtimeStatus.state)}</dd>
           </div>
           <div>
             <dt>Scene</dt>
@@ -492,6 +599,16 @@ function renderRightPanel(
           <div>
             <dt>Process</dt>
             <dd>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</dd>
+          </div>
+          <div>
+            <dt>Pause</dt>
+            <dd>
+              {!runtimeStatus.supportsPause
+                ? 'unsupported on this host'
+                : runtimeStatus.pausedAt
+                  ? `paused ${formatSessionTimestamp(runtimeStatus.pausedAt)}`
+                  : 'available'}
+            </dd>
           </div>
         </dl>
       </section>
@@ -943,10 +1060,17 @@ function renderCenterContent(
   buildStatus: BuildStatus,
   launchScene: string,
   buildConfig: BuildConfig,
+  buildDir: string,
+  runtimeLog: string,
+  buildLog: string,
+  viewerBridgeEvents: ViewerBridgeEvent[],
+  pendingRunAfterBuild: boolean,
   onBuildAndPlay: () => void,
   onStartRuntime: () => void,
   onStopRuntime: () => void,
   onRestartRuntime: () => void,
+  onPauseRuntime: () => void,
+  onResumeRuntime: () => void,
 ) {
   if (activeTab === 'Code') {
     return renderCodeBridge(layoutMode, showLegacyBridge, onToggleLegacyBridge);
@@ -972,7 +1096,7 @@ function renderCenterContent(
               </button>
               <button
                 className="ghost-button"
-                disabled={buildStatus.state === 'running'}
+                disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'}
                 onClick={onStartRuntime}
                 type="button"
               >
@@ -980,7 +1104,7 @@ function renderCenterContent(
               </button>
               <button
                 className="ghost-button"
-                disabled={runtimeStatus.state !== 'running' || buildStatus.state === 'running'}
+                disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
                 onClick={onStopRuntime}
                 type="button"
               >
@@ -988,7 +1112,15 @@ function renderCenterContent(
               </button>
               <button
                 className="ghost-button"
-                disabled={buildStatus.state === 'running'}
+                disabled={!runtimeStatus.supportsPause || runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
+                onClick={runtimeStatus.state === 'paused' ? onResumeRuntime : onPauseRuntime}
+                type="button"
+              >
+                {runtimeStatus.state === 'paused' ? 'Resume' : 'Pause'}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
                 onClick={onRestartRuntime}
                 type="button"
               >
@@ -1006,7 +1138,7 @@ function renderCenterContent(
           <div className="metric-stack">
             <article className="mini-card">
               <span>Status</span>
-              <strong>{runtimeStatus.state === 'running' ? 'Running' : 'Stopped'}</strong>
+              <strong>{runtimeStateLabel(runtimeStatus.state)}</strong>
             </article>
             <article className="mini-card">
               <span>Scene</span>
@@ -1019,6 +1151,10 @@ function renderCenterContent(
             <article className="mini-card">
               <span>Build config</span>
               <strong>{buildConfig}</strong>
+            </article>
+            <article className="mini-card">
+              <span>Pause</span>
+              <strong>{runtimeStatus.supportsPause ? (runtimeStatus.state === 'paused' ? 'Paused' : 'Available') : 'Unsupported'}</strong>
             </article>
           </div>
         </section>
@@ -1063,30 +1199,185 @@ function renderCenterContent(
     );
   }
 
+  const runtimeLogTail = takeLastLogLines(runtimeLog, 8);
+  const buildLogTail = takeLastLogLines(buildLog, 8);
+
   return (
     <div className="workspace-layout workspace-layout--preview">
       <section className="surface">
         <div className="surface-header">
           <div>
             <div className="surface-eyebrow">Preview</div>
-            <h2>Asset Review</h2>
+            <h2>Viewer Workflow</h2>
+            <p>Keep the browser shell paired with the native runtime window until embedded streaming is worth the added complexity.</p>
+          </div>
+          <div className="inline-actions">
+            <button
+              className="ghost-button"
+              disabled={buildStatus.state === 'running'}
+              onClick={onBuildAndPlay}
+              type="button"
+            >
+              Build + Play
+            </button>
+            <button
+              className="ghost-button"
+              disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'}
+              onClick={onStartRuntime}
+              type="button"
+            >
+              Play
+            </button>
+            <button
+              className="ghost-button"
+              disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
+              onClick={onStopRuntime}
+              type="button"
+            >
+              Stop
+            </button>
+            <button
+              className="ghost-button"
+              disabled={!runtimeStatus.supportsPause || runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
+              onClick={runtimeStatus.state === 'paused' ? onResumeRuntime : onPauseRuntime}
+              type="button"
+            >
+              {runtimeStatus.state === 'paused' ? 'Resume' : 'Pause'}
+            </button>
+            <button
+              className="ghost-button"
+              disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
+              onClick={onRestartRuntime}
+              type="button"
+            >
+              Restart
+            </button>
           </div>
         </div>
-        <div className="preview-grid">
+        <div className="preview-grid preview-grid--bridge">
           <article className="preview-card">
-            <span>Model</span>
-            <strong>robot.glb</strong>
-            <p>glTF-first import lane</p>
+            <span>Runtime</span>
+            <strong>{runtimeStateLabel(runtimeStatus.state)}</strong>
+            <p>{runtimeStatus.scene || launchScene}</p>
           </article>
           <article className="preview-card">
-            <span>Effect</span>
-            <strong>fx_sparks.efk</strong>
-            <p>Effekseer integration target</p>
+            <span>Build</span>
+            <strong>{buildStateLabel(buildStatus.state)}</strong>
+            <p>{buildStatus.config || buildConfig}</p>
           </article>
           <article className="preview-card">
-            <span>Scene</span>
-            <strong>castle.scene.toml</strong>
-            <p>text-backed authoring asset</p>
+            <span>Window</span>
+            <strong>External native runtime</strong>
+            <p>Browser shell stays the primary workspace</p>
+          </article>
+          <article className="preview-card">
+            <span>Queue</span>
+            <strong>{pendingRunAfterBuild ? 'Build + Play armed' : 'Idle'}</strong>
+            <p>{pendingRunAfterBuild ? `scene ${launchScene}` : 'No pending launch chain'}</p>
+          </article>
+        </div>
+      </section>
+      <section className="surface">
+        <div className="surface-header">
+          <div>
+            <div className="surface-eyebrow">Runtime Bridge</div>
+            <h2>External Runtime Window</h2>
+            <p>The shell owns orchestration while the SDL3/Vulkan process remains the real renderer.</p>
+          </div>
+        </div>
+        <div className="bridge-panel-grid">
+          <article className="bridge-card">
+            <div className="bridge-card__header">
+              <div className="bridge-card__title">
+                <span className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`} />
+                <strong>Bridge State</strong>
+              </div>
+              <span>{runtimeStateLabel(runtimeStatus.state)}</span>
+            </div>
+            <dl className="fact-list">
+              <div>
+                <dt>Scene</dt>
+                <dd>{runtimeStatus.scene || launchScene}</dd>
+              </div>
+              <div>
+                <dt>Executable</dt>
+                <dd>{runtimeStatus.executablePath || 'not built yet'}</dd>
+              </div>
+              <div>
+                <dt>Process</dt>
+                <dd>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</dd>
+              </div>
+              <div>
+                <dt>Started</dt>
+                <dd>{runtimeStatus.startedAt ? formatSessionTimestamp(runtimeStatus.startedAt) : 'not running'}</dd>
+              </div>
+              <div>
+                <dt>Pause support</dt>
+                <dd>{runtimeStatus.supportsPause ? 'available on this host' : 'unsupported on this host'}</dd>
+              </div>
+              <div>
+                <dt>Paused at</dt>
+                <dd>{runtimeStatus.pausedAt ? formatSessionTimestamp(runtimeStatus.pausedAt) : 'not paused'}</dd>
+              </div>
+            </dl>
+          </article>
+          <article className="bridge-card">
+            <div className="bridge-card__header">
+              <div className="bridge-card__title">
+                <span className="status-dot status-dot--active" />
+                <strong>Recent Bridge Activity</strong>
+              </div>
+              <span>{viewerBridgeEvents.length ? `${viewerBridgeEvents.length} entries` : 'waiting'}</span>
+            </div>
+            {viewerBridgeEvents.length ? (
+              <ul className="bridge-event-list">
+                {viewerBridgeEvents.map((event) => (
+                  <li className="bridge-event" key={event.id}>
+                    <div className="bridge-event__header">
+                      <div className="bridge-card__title">
+                        <span className={`status-dot status-dot--${event.tone}`} />
+                        <strong>{event.title}</strong>
+                      </div>
+                      <span>{formatSessionTimestamp(event.at)}</span>
+                    </div>
+                    <p>{event.detail}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="bridge-empty">
+                Runtime and build transitions will accumulate here as the shell drives the native window.
+              </div>
+            )}
+          </article>
+        </div>
+      </section>
+      <section className="surface">
+        <div className="surface-header">
+          <div>
+            <div className="surface-eyebrow">Log Tail</div>
+            <h2>Bridge Diagnostics</h2>
+            <p>Keep the viewer workflow inspectable from the shell even before there is an embedded frame stream.</p>
+          </div>
+        </div>
+        <div className="bridge-log-grid">
+          <article className="bridge-log-card">
+            <span>Runtime log</span>
+            <pre>{runtimeLogTail}</pre>
+          </article>
+          <article className="bridge-log-card">
+            <span>Build log</span>
+            <pre>{buildLogTail}</pre>
+          </article>
+          <article className="bridge-log-card">
+            <span>Build target</span>
+            <strong>{buildStatus.target || 'runtime'}</strong>
+            <p>{buildStatus.buildDir || buildDir}</p>
+          </article>
+          <article className="bridge-log-card">
+            <span>Bridge mode</span>
+            <strong>External window pairing</strong>
+            <p>Screenshot capture and embedded viewer transport stay deferred until the runtime side is ready.</p>
           </article>
         </div>
       </section>
@@ -1132,12 +1423,17 @@ export default function App() {
   const [buildConfig, setBuildConfig] = useState<BuildConfig>('Debug');
   const [buildDir, setBuildDir] = useState('build/runtime');
   const [pendingRunAfterBuild, setPendingRunAfterBuild] = useState(false);
+  const [viewerBridgeEvents, setViewerBridgeEvents] = useState<ViewerBridgeEvent[]>([]);
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
   const defaultShell: TerminalShell = platformInfo?.platform === 'win32' ? 'powershell.exe' : 'bash';
   const availableShells: TerminalShell[] = platformInfo?.platform === 'win32'
     ? [...windowsShells, ...unixShells]
     : [...unixShells];
+
+  function recordViewerBridgeEvent(event: Omit<ViewerBridgeEvent, 'id'>) {
+    setViewerBridgeEvents((current) => appendViewerBridgeEvent(current, event));
+  }
 
   async function refreshSessions() {
     const nextSessions = await listSessions();
@@ -1371,6 +1667,14 @@ export default function App() {
           ...stoppedRuntimeStatus,
           executablePath: event.data.executablePath,
         });
+        if ((event.data.exitCode ?? 0) !== 0 || event.data.signal != null) {
+          recordViewerBridgeEvent({
+            title: 'Runtime exited unexpectedly',
+            detail: `${event.data.scene} · code ${event.data.exitCode ?? 'null'} · signal ${event.data.signal ?? 'none'}`,
+            at: new Date().toISOString(),
+            tone: 'error',
+          });
+        }
         setRuntimeLog((current) =>
           trimTerminalOutput(`${current}[runtime] exited with code ${event.data.exitCode ?? 'null'}\n`),
         );
@@ -1394,6 +1698,16 @@ export default function App() {
         if (event.data.config === 'Debug' || event.data.config === 'Release') {
           setBuildConfig(event.data.config);
         }
+        if (event.type === 'build.completed') {
+          recordViewerBridgeEvent({
+            title: `Build ${buildStateLabel(event.data.state).toLowerCase()}`,
+            detail: [event.data.target || 'runtime', event.data.config || buildConfig, event.data.buildDir || buildDir]
+              .filter(Boolean)
+              .join(' · '),
+            at: event.data.finishedAt || event.data.startedAt || new Date().toISOString(),
+            tone: buildStatusTone(event.data.state),
+          });
+        }
       }
     });
 
@@ -1405,30 +1719,54 @@ export default function App() {
       return;
     }
 
-    if (buildStatus.state === 'succeeded') {
-      setPendingRunAfterBuild(false);
-      if (runtimeStatus.state === 'running') {
-        void restartRuntime(launchScene)
-          .then((nextStatus) => {
-            setRuntimeStatus(nextStatus);
-            setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested after build\n`));
-            setActiveBottomTab('Logs');
-          })
-          .catch((error) => {
-            setRuntimeLog((current) =>
-              trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
-            );
-          });
+      if (buildStatus.state === 'succeeded') {
+        setPendingRunAfterBuild(false);
+        if (runtimeStatus.state === 'running' || runtimeStatus.state === 'paused') {
+          void restartRuntime(launchScene)
+            .then((nextStatus) => {
+              setRuntimeStatus(nextStatus);
+              recordViewerBridgeEvent({
+                title: 'Runtime restarted after build',
+                detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+                at: new Date().toISOString(),
+                tone: runtimeStateTone(nextStatus.state),
+              });
+              setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested after build\n`));
+              setActiveBottomTab('Logs');
+            })
+            .catch((error) => {
+              recordViewerBridgeEvent({
+                title: 'Restart after build failed',
+                detail: error instanceof Error ? error.message : String(error),
+                at: new Date().toISOString(),
+                tone: 'error',
+              });
+              setRuntimeLog((current) =>
+                trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+              );
+            });
         return;
       }
 
       void startRuntime(launchScene)
         .then((nextStatus) => {
           setRuntimeStatus(nextStatus);
+          recordViewerBridgeEvent({
+            title: 'Runtime started after build',
+            detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+            at: new Date().toISOString(),
+            tone: runtimeStateTone(nextStatus.state),
+          });
           setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested after build\n`));
           setActiveBottomTab('Logs');
         })
         .catch((error) => {
+          recordViewerBridgeEvent({
+            title: 'Start after build failed',
+            detail: error instanceof Error ? error.message : String(error),
+            at: new Date().toISOString(),
+            tone: 'error',
+          });
           setRuntimeLog((current) =>
             trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
           );
@@ -1754,9 +2092,21 @@ export default function App() {
     try {
       const nextStatus = await startRuntime(launchScene);
       setRuntimeStatus(nextStatus);
+      recordViewerBridgeEvent({
+        title: 'Runtime started',
+        detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+        at: new Date().toISOString(),
+        tone: runtimeStateTone(nextStatus.state),
+      });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested\n`));
       setActiveBottomTab('Logs');
     } catch (error) {
+      recordViewerBridgeEvent({
+        title: 'Runtime start failed',
+        detail: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+        tone: 'error',
+      });
       setRuntimeLog((current) =>
         trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
       );
@@ -1767,9 +2117,71 @@ export default function App() {
     try {
       const nextStatus = await stopRuntime();
       setRuntimeStatus(nextStatus);
+      recordViewerBridgeEvent({
+        title: 'Runtime stopped',
+        detail: launchScene,
+        at: new Date().toISOString(),
+        tone: 'idle',
+      });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] stop requested\n`));
       setActiveBottomTab('Logs');
     } catch (error) {
+      recordViewerBridgeEvent({
+        title: 'Runtime stop failed',
+        detail: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+        tone: 'error',
+      });
+      setRuntimeLog((current) =>
+        trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+      );
+    }
+  }
+
+  async function handlePauseRuntime() {
+    try {
+      const nextStatus = await pauseRuntime();
+      setRuntimeStatus(nextStatus);
+      recordViewerBridgeEvent({
+        title: 'Runtime paused',
+        detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+        at: nextStatus.pausedAt || new Date().toISOString(),
+        tone: 'paused',
+      });
+      setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] pause requested\n`));
+      setActiveBottomTab('Logs');
+    } catch (error) {
+      recordViewerBridgeEvent({
+        title: 'Runtime pause failed',
+        detail: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+        tone: 'error',
+      });
+      setRuntimeLog((current) =>
+        trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+      );
+    }
+  }
+
+  async function handleResumeRuntime() {
+    try {
+      const nextStatus = await resumeRuntime();
+      setRuntimeStatus(nextStatus);
+      recordViewerBridgeEvent({
+        title: 'Runtime resumed',
+        detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+        at: new Date().toISOString(),
+        tone: runtimeStateTone(nextStatus.state),
+      });
+      setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] resume requested\n`));
+      setActiveBottomTab('Logs');
+    } catch (error) {
+      recordViewerBridgeEvent({
+        title: 'Runtime resume failed',
+        detail: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+        tone: 'error',
+      });
       setRuntimeLog((current) =>
         trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
       );
@@ -1780,9 +2192,21 @@ export default function App() {
     try {
       const nextStatus = await restartRuntime(launchScene);
       setRuntimeStatus(nextStatus);
+      recordViewerBridgeEvent({
+        title: 'Runtime restarted',
+        detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+        at: new Date().toISOString(),
+        tone: runtimeStateTone(nextStatus.state),
+      });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested\n`));
       setActiveBottomTab('Logs');
     } catch (error) {
+      recordViewerBridgeEvent({
+        title: 'Runtime restart failed',
+        detail: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+        tone: 'error',
+      });
       setRuntimeLog((current) =>
         trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
       );
@@ -1794,12 +2218,26 @@ export default function App() {
       const nextStatus = await startRuntimeBuild(buildConfig, buildDir.trim() || undefined);
       setPendingRunAfterBuild(runAfterBuild);
       setBuildStatus(nextStatus);
+      recordViewerBridgeEvent({
+        title: runAfterBuild ? 'Build + Play queued' : 'Build requested',
+        detail: [nextStatus.target || 'runtime', nextStatus.config || buildConfig, nextStatus.buildDir || buildDir]
+          .filter(Boolean)
+          .join(' · '),
+        at: nextStatus.startedAt || new Date().toISOString(),
+        tone: buildStatusTone(nextStatus.state),
+      });
       setBuildLog((current) => trimTerminalOutput(`${current}[build] runtime build requested\n`));
       setActiveBottomTab('Output');
       setActiveRightTab('Build');
     } catch (error) {
       setPendingRunAfterBuild(false);
       const message = error instanceof Error ? error.message : String(error);
+      recordViewerBridgeEvent({
+        title: 'Build request failed',
+        detail: message,
+        at: new Date().toISOString(),
+        tone: 'error',
+      });
       setBuildStatus({
         ...idleBuildStatus,
         state: 'failed',
@@ -1828,9 +2266,23 @@ export default function App() {
     try {
       const nextStatus = await stopBuild();
       setBuildStatus(nextStatus);
+      recordViewerBridgeEvent({
+        title: 'Build stopped',
+        detail: [nextStatus.target || 'runtime', nextStatus.config || buildConfig, nextStatus.buildDir || buildDir]
+          .filter(Boolean)
+          .join(' · '),
+        at: nextStatus.finishedAt || new Date().toISOString(),
+        tone: 'idle',
+      });
       setBuildLog((current) => trimTerminalOutput(`${current}[build] stop requested\n`));
       setActiveBottomTab('Output');
     } catch (error) {
+      recordViewerBridgeEvent({
+        title: 'Build stop failed',
+        detail: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+        tone: 'error',
+      });
       setBuildLog((current) =>
         trimTerminalOutput(`${current}[build] ${error instanceof Error ? error.message : String(error)}\n`),
       );
@@ -1877,11 +2329,19 @@ export default function App() {
           <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleBuildAndPlay} type="button">
             Build + Play
           </button>
-          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleStartRuntime} type="button">
+          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'} onClick={handleStartRuntime} type="button">
             Play
           </button>
-          <button className="ghost-button ghost-button--sm" disabled={runtimeStatus.state !== 'running' || buildStatus.state === 'running'} onClick={handleStopRuntime} type="button">
+          <button className="ghost-button ghost-button--sm" disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'} onClick={handleStopRuntime} type="button">
             Stop
+          </button>
+          <button
+            className="ghost-button ghost-button--sm"
+            disabled={!runtimeStatus.supportsPause || runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
+            onClick={runtimeStatus.state === 'paused' ? handleResumeRuntime : handlePauseRuntime}
+            type="button"
+          >
+            {runtimeStatus.state === 'paused' ? 'Resume' : 'Pause'}
           </button>
         </div>
         <div className="chrome-strip-meta">
@@ -1889,6 +2349,7 @@ export default function App() {
           <span className="chrome-meta-chip">{buildConfig}</span>
           {buildStatus.state === 'running' ? <span className="chrome-meta-chip chrome-meta-chip--accent">Building</span> : null}
           {runtimeStatus.state === 'running' ? <span className="chrome-meta-chip chrome-meta-chip--accent">Running</span> : null}
+          {runtimeStatus.state === 'paused' ? <span className="chrome-meta-chip chrome-meta-chip--warning">Paused</span> : null}
         </div>
       </header>
 
@@ -2180,10 +2641,17 @@ export default function App() {
             buildStatus,
             launchScene,
             buildConfig,
+            buildDir,
+            runtimeLog,
+            buildLog,
+            viewerBridgeEvents,
+            pendingRunAfterBuild,
             handleBuildAndPlay,
             handleStartRuntime,
             handleStopRuntime,
             handleRestartRuntime,
+            handlePauseRuntime,
+            handleResumeRuntime,
           )}
         </section>
 
@@ -2215,6 +2683,11 @@ export default function App() {
             handleStartRuntimeBuild,
             handleBuildAndPlay,
             handleStopBuild,
+            handleStartRuntime,
+            handleStopRuntime,
+            handleRestartRuntime,
+            handlePauseRuntime,
+            handleResumeRuntime,
           )}
         </aside>
       </main>

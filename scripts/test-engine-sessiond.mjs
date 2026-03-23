@@ -101,6 +101,12 @@ try {
   assert.equal(health.ok, true);
   assert.equal(health.service, 'engine_sessiond');
 
+  const corsPreflight = await fetch(`${service.baseUrl}/api/sessions/example`, {
+    method: 'OPTIONS',
+  });
+  assert.equal(corsPreflight.status, 204);
+  assert.match(corsPreflight.headers.get('access-control-allow-methods') || '', /PATCH/);
+
   const createPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
     name: 'repo-root',
     rootPath: repoRoot,
@@ -226,14 +232,31 @@ try {
   assert.equal(runtimeStartPayload.state, 'running');
   assert.equal(runtimeStartPayload.scene, 'sandbox');
   assert.equal(runtimeStartPayload.executablePath, 'test-runtime');
+  assert.equal(runtimeStartPayload.pausedAt, null);
+  assert.equal(runtimeStartPayload.supportsPause, !isWindows);
 
   const runtimeStatusPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/status`);
   assert.equal(runtimeStatusPayload.state, 'running');
   assert.equal(runtimeStatusPayload.scene, 'sandbox');
+  assert.equal(runtimeStatusPayload.supportsPause, !isWindows);
 
   const runtimeLogEvent = await runtimeLogPromise;
   assert.equal(runtimeLogEvent.type, 'runtime.log');
   assert.match(runtimeLogEvent.data.data, /runtime:sandbox:boot/);
+
+  if (!isWindows) {
+    const runtimePausePayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/pause`, 'POST', {});
+    assert.equal(runtimePausePayload.state, 'paused');
+    assert.equal(runtimePausePayload.scene, 'sandbox');
+    assert.ok(typeof runtimePausePayload.pausedAt === 'string' && runtimePausePayload.pausedAt.length > 0);
+
+    const pausedRuntimeStatusPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/status`);
+    assert.equal(pausedRuntimeStatusPayload.state, 'paused');
+
+    const runtimeResumePayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/resume`, 'POST', {});
+    assert.equal(runtimeResumePayload.state, 'running');
+    assert.equal(runtimeResumePayload.pausedAt, null);
+  }
 
   const runtimeStopPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/stop`, 'POST', {});
   assert.equal(runtimeStopPayload.state, 'stopped');
@@ -268,10 +291,10 @@ try {
   console.log('Engine sessiond smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log(`- Created session for ${path.basename(repoRoot)}`);
-  console.log('- Verified session create/update/delete plus safe file and host-fs listing APIs');
+  console.log('- Verified CORS preflight plus session create/update/delete and safe file/host-fs listing APIs');
   console.log('- Verified git status and git-init APIs against real session roots');
   console.log('- Verified PTY terminal open/input/stream/close flow');
-  console.log('- Verified runtime start/status/log/stop lifecycle');
+  console.log(`- Verified runtime start/status/log/${isWindows ? 'stop' : 'pause/resume/stop'} lifecycle`);
   console.log('- Verified runtime build start/log/completion lifecycle');
 } finally {
   await service.close();

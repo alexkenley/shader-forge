@@ -119,6 +119,10 @@ try {
         & npm run test:sessiond
         if ($LASTEXITCODE -ne 0) { throw "Sessiond test failed" }
 
+        Write-Host "[shader-forge] Running viewer bridge harness..."
+        & npm run test:viewer-bridge
+        if ($LASTEXITCODE -ne 0) { throw "Viewer bridge test failed" }
+
         Write-Host "[shader-forge] Running runtime scaffold harness..."
         & npm run test:runtime-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Runtime scaffold test failed" }
