@@ -7,6 +7,26 @@ name = "toggle_input_debug"
 kind = "button"
 
 [[action]]
+name = "toggle_tooling_overlay"
+kind = "button"
+
+[[action]]
+name = "toggle_runtime_stats_panel"
+kind = "button"
+
+[[action]]
+name = "toggle_input_panel"
+kind = "button"
+
+[[action]]
+name = "toggle_log_panel"
+kind = "button"
+
+[[action]]
+name = "toggle_debug_state_panel"
+kind = "button"
+
+[[action]]
 name = "move_x"
 kind = "axis"
 deadzone = 0.12

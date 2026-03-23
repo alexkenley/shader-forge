@@ -1,0 +1,34 @@
+layout_name = "default"
+overlay_visible = true
+
+[[tool]]
+name = "runtime_stats"
+title = "Runtime Stats"
+context = "tool.runtime_stats"
+dock = "left"
+visible = true
+order = 0
+
+[[tool]]
+name = "input_debug"
+title = "Input Debug"
+context = "tool.input_debug"
+dock = "right"
+visible = false
+order = 1
+
+[[tool]]
+name = "log_view"
+title = "Log View"
+context = "tool.log_view"
+dock = "bottom"
+visible = true
+order = 2
+
+[[tool]]
+name = "debug_state"
+title = "Debug State"
+context = "tool.debug_state"
+dock = "right"
+visible = true
+order = 3

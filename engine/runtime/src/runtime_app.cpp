@@ -1,5 +1,6 @@
 #include "shader_forge/runtime/input_system.hpp"
 #include "shader_forge/runtime/runtime_app.hpp"
+#include "shader_forge/runtime/tooling_ui.hpp"
 
 #include <algorithm>
 #include <array>
@@ -331,7 +332,7 @@ public:
     if (device_ != VK_NULL_HANDLE) {
       vkDeviceWaitIdle(device_);
     }
-    logLine("Runtime exiting.");
+    logRuntimeLine("Runtime exiting.");
     return 0;
   }
 
@@ -347,6 +348,7 @@ private:
     sdlInitialized_ = true;
 
     initializeInputSystem();
+    initializeToolingUi();
 
     window_ = SDL_CreateWindow(config_.title.c_str(), config_.width, config_.height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
@@ -363,12 +365,44 @@ private:
     createSwapchainResources();
 
     startTicks_ = SDL_GetTicksNS();
+    previousFrameTicks_ = startTicks_;
+    nextToolingLogTicks_ = startTicks_ + 2'000'000'000ULL;
   }
 
   void initializeInputSystem() {
     std::string error;
     if (!inputSystem_.loadFromDisk(InputConfig{.rootPath = config_.inputRoot}, &error)) {
       throw std::runtime_error("Input system initialization failed: " + error);
+    }
+  }
+
+  void initializeToolingUi() {
+    std::filesystem::path layoutPath = config_.toolingLayoutPath;
+    if (std::filesystem::exists(config_.toolingSessionLayoutPath)) {
+      layoutPath = config_.toolingSessionLayoutPath;
+    }
+
+    std::string error;
+    if (!toolingUi_.loadLayout(ToolingUiConfig{
+      .layoutPath = layoutPath,
+      .sessionLayoutPath = config_.toolingSessionLayoutPath,
+    }, &error)) {
+      throw std::runtime_error("Tooling UI initialization failed: " + error);
+    }
+  }
+
+  void logRuntimeLine(const std::string& message) {
+    toolingUi_.appendLogLine(message);
+    logLine(message);
+  }
+
+  void logRuntimeMultiline(const std::string& message) {
+    std::istringstream lines(message);
+    std::string line;
+    while (std::getline(lines, line)) {
+      if (!line.empty()) {
+        logRuntimeLine(line);
+      }
     }
   }
 
@@ -381,7 +415,7 @@ private:
         layers.push_back(kValidationLayerName);
         validationEnabled_ = true;
       } else {
-        logLine("Validation requested, but VK_LAYER_KHRONOS_validation is not available.");
+        logRuntimeLine("Validation requested, but VK_LAYER_KHRONOS_validation is not available.");
       }
     }
 
@@ -659,25 +693,28 @@ private:
     return drawableWidth > 0 && drawableHeight > 0;
   }
 
-  void logStartup() const {
+  void logStartup() {
     std::ostringstream startup;
     startup << "scene=" << config_.scene
             << ", device=" << physicalDeviceName_
             << ", queue-family=" << graphicsQueueFamily_
             << ", validation=" << (validationEnabled_ ? "enabled" : "disabled")
-            << ", input-root=" << std::filesystem::absolute(config_.inputRoot).string();
-    logLine(startup.str());
-    logMultiline(inputSystem_.bindingSummary());
+            << ", input-root=" << std::filesystem::absolute(config_.inputRoot).string()
+            << ", tooling-layout=" << std::filesystem::absolute(config_.toolingLayoutPath).string();
+    logRuntimeLine(startup.str());
+    logRuntimeMultiline(inputSystem_.bindingSummary());
+    logRuntimeMultiline(toolingUi_.panelRegistrySummary());
     logSwapchain("Swapchain ready");
-    logLine("Native runtime window is live. Press Escape to exit and F1 to toggle input diagnostics.");
+    logRuntimeLine(
+      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, and F2-F6 for tooling panels.");
   }
 
-  void logSwapchain(const char* prefix) const {
+  void logSwapchain(const char* prefix) {
     std::ostringstream message;
     message << prefix
             << ": extent=" << swapchainExtent_.width << 'x' << swapchainExtent_.height
             << ", images=" << swapchainImages_.size();
-    logLine(message.str());
+    logRuntimeLine(message.str());
   }
 
   void openGamepad(SDL_JoystickID instanceId) {
@@ -687,13 +724,13 @@ private:
 
     SDL_Gamepad* gamepad = SDL_OpenGamepad(instanceId);
     if (gamepad == nullptr) {
-      logLine("SDL_OpenGamepad failed: " + sdlErrorString());
+      logRuntimeLine("SDL_OpenGamepad failed: " + sdlErrorString());
       return;
     }
 
     gamepads_[instanceId] = gamepad;
     const char* name = SDL_GetGamepadName(gamepad);
-    logLine("Gamepad connected: " + std::string(name && *name ? name : "unknown gamepad"));
+    logRuntimeLine("Gamepad connected: " + std::string(name && *name ? name : "unknown gamepad"));
   }
 
   void closeGamepad(SDL_JoystickID instanceId) {
@@ -706,7 +743,75 @@ private:
       SDL_CloseGamepad(it->second);
     }
     gamepads_.erase(it);
-    logLine("Gamepad disconnected.");
+    logRuntimeLine("Gamepad disconnected.");
+  }
+
+  void toggleToolPanel(const char* panelName, const char* label) {
+    if (!toolingUi_.togglePanel(panelName)) {
+      return;
+    }
+
+    std::ostringstream message;
+    message << label << ' ' << (toolingUi_.panelVisible(panelName) ? "shown." : "hidden.");
+    logRuntimeLine(message.str());
+    logRuntimeMultiline(toolingUi_.panelRegistrySummary());
+  }
+
+  void refreshWindowTitle() {
+    if (window_ == nullptr) {
+      return;
+    }
+
+    std::ostringstream title;
+    title << config_.title;
+
+    if (toolingUi_.overlayVisible()) {
+      title << " | " << toolingUi_.overlaySummary();
+      SDL_SetWindowTitle(window_, title.str().c_str());
+      return;
+    }
+
+    const std::uint64_t now = SDL_GetTicksNS();
+    if (!lastUiAction_.empty() && now > uiFlashUntilTicks_ + 1'500'000'000ULL) {
+      lastUiAction_.clear();
+    }
+
+    if (!inputDebugEnabled_ && lastUiAction_.empty()) {
+      SDL_SetWindowTitle(window_, title.str().c_str());
+      return;
+    }
+
+    title << " | move=(" << moveX_ << ',' << moveY_ << ')'
+          << " look=(" << lookX_ << ',' << lookY_ << ')';
+    if (!lastUiAction_.empty()) {
+      title << " ui=" << lastUiAction_;
+    }
+
+    const auto activeContexts = inputSystem_.activeContexts();
+    if (!activeContexts.empty()) {
+      title << " ctx=";
+      for (std::size_t index = 0; index < activeContexts.size(); index += 1) {
+        if (index > 0) {
+          title << '+';
+        }
+        title << activeContexts[index];
+      }
+    }
+
+    SDL_SetWindowTitle(window_, title.str().c_str());
+  }
+
+  void updateToolingState(double deltaSeconds) {
+    toolingUi_.recordFrame(deltaSeconds, config_.scene);
+    toolingUi_.recordInputState(moveX_, moveY_, lookX_, lookY_, lastUiAction_, inputDebugEnabled_);
+
+    const std::uint64_t now = SDL_GetTicksNS();
+    if (toolingUi_.overlayVisible() && now >= nextToolingLogTicks_) {
+      logRuntimeLine(toolingUi_.overlaySummary());
+      nextToolingLogTicks_ = now + 2'500'000'000ULL;
+    }
+
+    refreshWindowTitle();
   }
 
   void updateInputDrivenState() {
@@ -716,62 +821,50 @@ private:
 
     if (inputSystem_.actionPressed("toggle_input_debug")) {
       inputDebugEnabled_ = !inputDebugEnabled_;
-      logLine(std::string("Input diagnostics ") + (inputDebugEnabled_ ? "enabled." : "disabled."));
+      logRuntimeLine(std::string("Input diagnostics ") + (inputDebugEnabled_ ? "enabled." : "disabled."));
       if (inputDebugEnabled_) {
-        logMultiline(inputSystem_.bindingSummary());
+        logRuntimeMultiline(inputSystem_.bindingSummary());
       }
+    }
+
+    if (inputSystem_.actionPressed("toggle_tooling_overlay")) {
+      toolingUi_.toggleOverlay();
+      logRuntimeLine(std::string("Tooling overlay ") + (toolingUi_.overlayVisible() ? "enabled." : "hidden."));
+      logRuntimeMultiline(toolingUi_.panelRegistrySummary());
+    }
+
+    if (inputSystem_.actionPressed("toggle_runtime_stats_panel")) {
+      toggleToolPanel("runtime_stats", "Runtime Stats panel");
+    }
+
+    if (inputSystem_.actionPressed("toggle_input_panel")) {
+      toggleToolPanel("input_debug", "Input Debug panel");
+    }
+
+    if (inputSystem_.actionPressed("toggle_log_panel")) {
+      toggleToolPanel("log_view", "Log View panel");
+    }
+
+    if (inputSystem_.actionPressed("toggle_debug_state_panel")) {
+      toggleToolPanel("debug_state", "Debug State panel");
     }
 
     if (inputSystem_.actionPressed("ui_accept")) {
       lastUiAction_ = "ui_accept";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
-      logLine("ui_accept action triggered.");
+      logRuntimeLine("ui_accept action triggered.");
     }
 
     if (inputSystem_.actionPressed("ui_back")) {
       lastUiAction_ = "ui_back";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
-      logLine("ui_back action triggered.");
+      logRuntimeLine("ui_back action triggered.");
     }
 
     moveX_ = inputSystem_.actionValue("move_x");
     moveY_ = inputSystem_.actionValue("move_y");
     lookX_ = inputSystem_.actionValue("look_x");
     lookY_ = inputSystem_.actionValue("look_y");
-
-    if (window_ != nullptr) {
-      const std::uint64_t now = SDL_GetTicksNS();
-      if (!lastUiAction_.empty() && now > uiFlashUntilTicks_ + 1'500'000'000ULL) {
-        lastUiAction_.clear();
-      }
-
-      if (!inputDebugEnabled_ && lastUiAction_.empty()) {
-        SDL_SetWindowTitle(window_, config_.title.c_str());
-        return;
-      }
-
-      std::ostringstream title;
-      title << config_.title
-            << " | move=(" << moveX_ << ',' << moveY_ << ')'
-            << " look=(" << lookX_ << ',' << lookY_ << ')';
-
-      if (!lastUiAction_.empty()) {
-        title << " ui=" << lastUiAction_;
-      }
-
-      const auto activeContexts = inputSystem_.activeContexts();
-      if (!activeContexts.empty()) {
-        title << " ctx=";
-        for (std::size_t index = 0; index < activeContexts.size(); index += 1) {
-          if (index > 0) {
-            title << '+';
-          }
-          title << activeContexts[index];
-        }
-      }
-
-      SDL_SetWindowTitle(window_, title.str().c_str());
-    }
   }
 
   bool pumpEvents() {
@@ -826,7 +919,15 @@ private:
         recreateSwapchain();
       }
 
-      const std::uint64_t elapsedTicks = SDL_GetTicksNS() - startTicks_;
+      const std::uint64_t currentTicks = SDL_GetTicksNS();
+      const double deltaSeconds = previousFrameTicks_ == 0
+        ? (1.0 / 60.0)
+        : static_cast<double>(currentTicks - previousFrameTicks_) / 1'000'000'000.0;
+      previousFrameTicks_ = currentTicks;
+
+      updateToolingState(deltaSeconds);
+
+      const std::uint64_t elapsedTicks = currentTicks - startTicks_;
       const double elapsedSeconds = static_cast<double>(elapsedTicks) / 1'000'000'000.0;
       drawFrame(elapsedSeconds);
     }
@@ -923,6 +1024,11 @@ private:
       vkDeviceWaitIdle(device_);
     }
 
+    std::string toolingSaveError;
+    if (!toolingUi_.saveSessionLayout(&toolingSaveError)) {
+      logLine("Tooling layout save failed: " + toolingSaveError);
+    }
+
     if (device_ != VK_NULL_HANDLE) {
       destroySwapchainResources();
 
@@ -981,6 +1087,7 @@ private:
 
   RuntimeConfig config_;
   InputSystem inputSystem_;
+  ToolingUiSystem toolingUi_;
   SDL_Window* window_ = nullptr;
   bool sdlInitialized_ = false;
   std::unordered_map<SDL_JoystickID, SDL_Gamepad*> gamepads_;
@@ -1017,6 +1124,8 @@ private:
   std::string lastUiAction_;
   std::uint64_t uiFlashUntilTicks_ = 0;
   std::uint64_t startTicks_ = 0;
+  std::uint64_t previousFrameTicks_ = 0;
+  std::uint64_t nextToolingLogTicks_ = 0;
 };
 
 int runNativeRuntime(const RuntimeConfig& config) {

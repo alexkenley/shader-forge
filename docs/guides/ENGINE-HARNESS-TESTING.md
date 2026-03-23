@@ -20,6 +20,7 @@ Rules:
 | `scripts/test-engine-sessiond.mjs` | Starts the local backend in-process, creates a project session, and validates safe file list/read behavior over HTTP | deterministic |
 | `scripts/test-engine-viewer-bridge.mjs` | Starts the local backend in-process, validates viewer-bridge SSE/runtime/build flows, and checks the shell bridge surfaces remain present | deterministic |
 | `scripts/test-engine-input-scaffold.mjs` | Validates the native input subsystem sources plus text-backed action/context assets and runs a fallback syntax-only compile | deterministic |
+| `scripts/test-engine-tooling-ui-scaffold.mjs` | Validates the native tooling registry/layout substrate, runtime integration hooks, and runs a fallback syntax-only compile | deterministic |
 | `scripts/test-ollama-smoke.mjs` | Resolves a reachable Ollama endpoint, optionally autostarts local WSL Ollama, and performs a minimal OpenAI-compatible chat completion smoke test | real local-model |
 
 ## Current Commands
@@ -30,6 +31,7 @@ node scripts/test-engine-shell-smoke.mjs
 node scripts/test-engine-sessiond.mjs
 node scripts/test-engine-viewer-bridge.mjs
 node scripts/test-engine-input-scaffold.mjs
+node scripts/test-engine-tooling-ui-scaffold.mjs
 HARNESS_OLLAMA_MODEL=<your-model> node scripts/test-ollama-smoke.mjs
 node scripts/test-ollama-smoke.mjs --list-candidates
 node scripts/serve-engine-shell.mjs
@@ -47,7 +49,7 @@ Unix/WSL clean-start path:
 ./scripts/start-dev-clean.sh
 ```
 
-These scripts are the preferred dev entrypoints while the stack is still shell-first. They remove generated outputs, rerun the deterministic shell, sessiond, viewer-bridge, input-scaffold, and runtime-scaffold harnesses, start `engine_sessiond`, and then start the shell dev server.
+These scripts are the preferred dev entrypoints while the stack is still shell-first. They remove generated outputs, rerun the deterministic shell, sessiond, viewer-bridge, input-scaffold, tooling-ui-scaffold, and runtime-scaffold harnesses, start `engine_sessiond`, and then start the shell dev server.
 
 ## WSL And Windows-Hosted Ollama
 

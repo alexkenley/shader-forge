@@ -94,6 +94,7 @@ Current implementation status:
 - Phase 3 now has a first real native runtime slice in the repo, with native SDL3/Vulkan verification and follow-on renderer expansion still ahead.
 - Phase 4 now has shell-side runtime build/run/pause controls, bridge diagnostics, and dedicated viewer-workflow surfaces, but not a full embedded viewer yet.
 - Phase 4.2 has now started through a first engine-owned input slice with text-backed actions/contexts and runtime-side named action queries.
+- Phase 4.4 has now started through a native tooling substrate slice with a panel registry, text-backed layout loading/saving, and runtime inspection hooks, but not a Dear ImGui frontend yet.
 
 What is already done:
 
@@ -106,7 +107,8 @@ What is already done:
 - The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, runtime build/run/pause/log controls, and external-window viewer workflow diagnostics.
 - The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
 - The native runtime now loads `input/actions.toml` plus `input/contexts/*.input.toml` and routes SDL keyboard, mouse, and gamepad input through named engine actions.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, input scaffold, and runtime scaffold.
+- The native runtime now loads a text-backed tooling layout, exposes a named tool registry, and saves a session tooling layout snapshot for later native panel persistence.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, input scaffold, tooling UI scaffold, and runtime scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -116,6 +118,7 @@ Where the build is currently up to:
 - source control and project-root workflows are in the shell, but still need UX refinement
 - the runtime has moved past pure scaffolding into a first native render-loop slice, but still needs full local-toolchain verification, richer rendering, and tighter shell/runtime integration around real project execution
 - engine-owned input has moved past ad-hoc raw-event handling into a first text-backed action/context slice, but rebinding, user overrides, and richer gameplay/tool context switching still remain
+- native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
 
 ## External Reference Track: Hell2025
 
@@ -312,7 +315,7 @@ Goal:
 - stand up the native tooling UI substrate that later profiling, level-authoring, and runtime-inspection work will depend on
 
 Status:
-- not started yet; guides now make this an explicit dependency rather than an implied later concern
+- first substrate slice now exists through tool registry, layout persistence groundwork, runtime inspection snapshots, and input-driven overlay toggles; Dear ImGui docking is still ahead
 
 Scope:
 - Dear ImGui runtime bootstrap with docking

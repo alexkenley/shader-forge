@@ -127,6 +127,10 @@ try {
         & npm run test:input-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Input scaffold test failed" }
 
+        Write-Host "[shader-forge] Running tooling UI scaffold harness..."
+        & npm run test:tooling-ui-scaffold
+        if ($LASTEXITCODE -ne 0) { throw "Tooling UI scaffold test failed" }
+
         Write-Host "[shader-forge] Running runtime scaffold harness..."
         & npm run test:runtime-scaffold
         if ($LASTEXITCODE -ne 0) { throw "Runtime scaffold test failed" }

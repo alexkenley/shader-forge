@@ -12,6 +12,31 @@ source = "keyboard"
 code = "f1"
 
 [[binding]]
+action = "toggle_tooling_overlay"
+source = "keyboard"
+code = "f2"
+
+[[binding]]
+action = "toggle_runtime_stats_panel"
+source = "keyboard"
+code = "f3"
+
+[[binding]]
+action = "toggle_input_panel"
+source = "keyboard"
+code = "f4"
+
+[[binding]]
+action = "toggle_log_panel"
+source = "keyboard"
+code = "f5"
+
+[[binding]]
+action = "toggle_debug_state_panel"
+source = "keyboard"
+code = "f6"
+
+[[binding]]
 action = "move_x"
 source = "keyboard"
 code = "a"
@@ -70,3 +95,18 @@ action = "look_y"
 source = "gamepad_axis"
 code = "right_y"
 scale = -1.0
+
+[[binding]]
+action = "toggle_tooling_overlay"
+source = "gamepad_button"
+code = "guide"
+
+[[binding]]
+action = "toggle_runtime_stats_panel"
+source = "gamepad_button"
+code = "left_shoulder"
+
+[[binding]]
+action = "toggle_log_panel"
+source = "gamepad_button"
+code = "right_shoulder"

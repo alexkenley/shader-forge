@@ -22,7 +22,7 @@ int parseIntOrDefault(const char* value, int fallback) {
 void printHelp() {
   std::cout << "Shader Forge Runtime\n\n"
             << "Usage:\n"
-            << "  shader_forge_runtime [--scene <name>] [--title <name>] [--input-root <path>] [--width <px>] [--height <px>] [--no-validation]\n";
+            << "  shader_forge_runtime [--scene <name>] [--title <name>] [--input-root <path>] [--tooling-layout <path>] [--tooling-layout-save <path>] [--width <px>] [--height <px>] [--no-validation]\n";
 }
 
 }  // namespace
@@ -42,6 +42,14 @@ int main(int argc, char** argv) {
     }
     if (argument == "--input-root" && index + 1 < argc) {
       config.inputRoot = argv[++index];
+      continue;
+    }
+    if (argument == "--tooling-layout" && index + 1 < argc) {
+      config.toolingLayoutPath = argv[++index];
+      continue;
+    }
+    if (argument == "--tooling-layout-save" && index + 1 < argc) {
+      config.toolingSessionLayoutPath = argv[++index];
       continue;
     }
     if (argument == "--width" && index + 1 < argc) {

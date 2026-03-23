@@ -35,3 +35,13 @@ code = "east"
 action = "toggle_input_debug"
 source = "gamepad_button"
 code = "back"
+
+[[binding]]
+action = "toggle_input_panel"
+source = "gamepad_button"
+code = "back"
+
+[[binding]]
+action = "toggle_debug_state_panel"
+source = "gamepad_button"
+code = "start"

@@ -44,9 +44,11 @@ assert.match(runtimeMain, /--input-root/);
 assert.match(actionsToml, /\[\[action\]\]/);
 assert.match(actionsToml, /runtime_exit/);
 assert.match(actionsToml, /move_x/);
+assert.match(actionsToml, /toggle_tooling_overlay/);
 assert.match(gameplayToml, /source = "keyboard"/);
 assert.match(gameplayToml, /source = "mouse_motion"/);
 assert.match(gameplayToml, /source = "gamepad_axis"/);
+assert.match(gameplayToml, /code = "f2"/);
 assert.match(uiToml, /source = "mouse_button"/);
 assert.match(uiToml, /source = "gamepad_button"/);
 

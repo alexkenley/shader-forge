@@ -20,7 +20,7 @@ Usage:
   engine file list <path> --session <id> [--base-url <url>]
   engine file read <path> --session <id> [--base-url <url>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
-  engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input]
+  engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
 
 Reserved commands:
   engine test
@@ -154,6 +154,12 @@ async function runRuntime(sceneName, flags) {
   const args = ['--scene', sceneName || 'sandbox'];
   if (flags['input-root']) {
     args.push('--input-root', String(flags['input-root']));
+  }
+  if (flags['tooling-layout']) {
+    args.push('--tooling-layout', String(flags['tooling-layout']));
+  }
+  if (flags['tooling-layout-save']) {
+    args.push('--tooling-layout-save', String(flags['tooling-layout-save']));
   }
   await runCommand(buildResult.binaryPath, args, { cwd: repoRoot });
 }

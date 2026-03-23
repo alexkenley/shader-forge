@@ -27,6 +27,7 @@
     "test:sessiond": "node scripts/test-engine-sessiond.mjs",
     "test:runtime-scaffold": "node scripts/test-engine-runtime-scaffold.mjs",
     "test:input-scaffold": "node scripts/test-engine-input-scaffold.mjs",
+    "test:tooling-ui-scaffold": "node scripts/test-engine-tooling-ui-scaffold.mjs",
     "test:viewer-bridge": "node scripts/test-engine-viewer-bridge.mjs",
     "test:ollama-smoke": "node scripts/test-ollama-smoke.mjs"
   },
