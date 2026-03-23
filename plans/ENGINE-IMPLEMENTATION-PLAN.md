@@ -96,6 +96,7 @@ Current implementation status:
 - Phase 4.2 has now started through a first engine-owned input slice with text-backed actions/contexts and runtime-side named action queries.
 - Phase 4.4 has now started through a native tooling substrate slice with a panel registry, text-backed layout loading/saving, and runtime inspection hooks, but not a Dear ImGui frontend yet.
 - Phase 5 has now started through a first asset-pipeline slice with `engine bake`, staged cooked outputs, and a text-backed procedural-geometry lane.
+- Phase 5.6 has now started through a migration-foundation slice with source-engine detection, normalized manifest/report outputs, provenance capture, and fixture-backed CLI migration commands.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -113,7 +114,8 @@ What is already done:
 - The native runtime now loads a text-backed tooling layout, exposes a named tool registry, and saves a session tooling layout snapshot for later native panel persistence.
 - The native runtime now loads a data-foundation manifest, validates text-backed content roots under `content/`, resolves the selected runtime scene against `.scene.toml` source assets, and applies bootstrap scene/overlay defaults.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, input scaffold, and tooling UI scaffold.
+- Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
+- Deterministic harnesses exist for the shell, session backend, viewer bridge, runtime scaffold, data foundation scaffold, asset pipeline, migration fixtures, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -124,6 +126,7 @@ Where the build is currently up to:
 - the runtime has moved past pure scaffolding into a first native render-loop slice, but still needs full local-toolchain verification, richer rendering, and tighter shell/runtime integration around real project execution
 - engine-owned input has moved past ad-hoc raw-event handling into a first text-backed action/context slice, but rebinding, user overrides, and richer gameplay/tool context switching still remain
 - native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
+- Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture, but no source-project content is converted into Shader Forge-native assets yet
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -368,6 +371,9 @@ Exit criteria:
 
 Goal:
 - create the conversion foundation needed to bring Unity, Unreal, and Godot projects into Shader Forge for continued development
+
+Status:
+- first slice now exists through source-engine detection, normalized migration-manifest/report outputs, provenance capture, script-porting placeholders, fixture projects, and CLI migration report inspection
 
 Scope:
 - source-engine detection
@@ -729,5 +735,6 @@ Current build target:
 - Phase 4.4 planning: native tooling UI substrate before deep authoring and profiling work
 - Phase 5.5 advance: keep locking data/cook format choices and source-asset ownership boundaries before broad asset-pipeline expansion
 - Phase 5 start: widen the new bake lane, generated content path, and preview/report surfaces before jumping to audio or level authoring
+- Phase 5.6 start: extend migration detection into actual content mapping and provenance-backed conversion fixtures without claiming parity early
 - Phase 5.95 before Phase 5.9 execution: land trust and policy groundwork before assistant-triggered code and apply workflows expand
 - keep harness coverage current as each major slice lands

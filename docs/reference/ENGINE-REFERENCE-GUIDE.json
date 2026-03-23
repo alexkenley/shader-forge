@@ -146,33 +146,72 @@
         {
           "id": "engine-cli-surfaces",
           "title": "Engine CLI Surfaces",
-          "summary": "The current CLI now covers backend bring-up, runtime bring-up, and a first asset bake lane rather than only shell support commands.",
-          "keywords": ["engine", "commands", "build runtime", "run", "bake", "cook", "procgeo"],
+          "summary": "The current CLI now covers backend bring-up, runtime bring-up, a first asset bake lane, and a first migration detect/report lane rather than only shell support commands.",
+          "keywords": ["engine", "commands", "build runtime", "run", "bake", "cook", "procgeo", "migrate", "migration", "unity", "unreal", "godot"],
           "references": [
             "tools/engine-cli/shaderforge.mjs",
             "tools/engine-cli/lib/asset-pipeline.mjs",
+            "tools/engine-cli/lib/migration-foundation.mjs",
             "docs/specs/ENGINE-CLI-SPEC.md",
-            "docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md"
+            "docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md",
+            "docs/specs/ENGINE-MIGRATION-SPEC.md"
           ],
           "sections": [
             {
               "title": "Implemented Commands",
-              "keywords": ["sessiond start", "session create", "build", "run", "bake"],
+              "keywords": ["sessiond start", "session create", "build", "run", "bake", "migrate"],
               "items": [
                 "`engine sessiond start` starts the local backend service.",
                 "`engine session create` and `engine session list` expose session bring-up from the terminal.",
                 "`engine file list` and `engine file read` expose safe file inspection.",
                 "`engine build runtime` configures and builds the native runtime with CMake.",
                 "`engine run <scene>` builds and launches the native runtime and now forwards content, data, and tooling roots.",
-                "`engine bake` scans text-backed content roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report."
+                "`engine bake` scans text-backed content roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.",
+                "`engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests plus report/warning outputs for supported source-engine project shapes.",
+                "`engine migrate report <path>` summarizes a generated migration report from the terminal."
               ]
             },
             {
               "title": "Current Non-Goals",
-              "keywords": ["import", "bake", "package", "export"],
+              "keywords": ["import", "bake", "migration", "package", "export"],
               "items": [
                 "`engine import`, `engine package`, and `engine export` are still later phases.",
-                "The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer."
+                "The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.",
+                "The CLI migration lane is now real for detection and report generation, but it does not convert source-engine content into Shader Forge-native assets yet."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "migration-foundation",
+          "title": "Migration Foundation",
+          "summary": "The first migration slice is a normalized detect/report lane with fixture-backed Unity, Unreal, and Godot coverage rather than a fake one-click converter.",
+          "keywords": ["migration", "detect", "report", "manifest", "provenance", "fixtures"],
+          "references": [
+            "tools/engine-cli/lib/migration-foundation.mjs",
+            "fixtures/migration/unity-minimal/ProjectSettings/ProjectVersion.txt",
+            "fixtures/migration/unreal-minimal/ExampleProject.uproject",
+            "fixtures/migration/godot-minimal/project.godot",
+            "scripts/test-engine-migration-fixtures.mjs",
+            "docs/specs/ENGINE-MIGRATION-SPEC.md"
+          ],
+          "sections": [
+            {
+              "title": "Implemented Now",
+              "keywords": ["unity", "unreal", "godot", "report root"],
+              "items": [
+                "`engine migrate detect` auto-detects Unity, Unreal, or Godot project structure and writes `migration-manifest.toml`, `report.toml`, and `warnings.toml` under `migration/<run-id>/`.",
+                "`engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` pin the requested source-engine lane while producing the same normalized outputs.",
+                "Every migration run now creates a `script-porting/README.md` placeholder so later gameplay/code translation has a stable destination."
+              ]
+            },
+            {
+              "title": "Current Boundaries",
+              "keywords": ["foundation only", "manual follow-up", "conversion"],
+              "items": [
+                "The current migration slice captures provenance and target layout intent only.",
+                "No asset, scene, prefab, or gameplay conversion is performed yet.",
+                "The run output must say that no content conversion was performed in this slice instead of implying parity."
               ]
             }
           ]
@@ -325,6 +364,7 @@
             "scripts/test-engine-viewer-bridge.mjs",
             "scripts/test-engine-runtime-scaffold.mjs",
             "scripts/test-engine-asset-pipeline.mjs",
+            "scripts/test-engine-migration-fixtures.mjs",
             "scripts/test-engine-input-scaffold.mjs",
             "scripts/test-engine-tooling-ui-scaffold.mjs",
             "scripts/test-engine-data-foundation-scaffold.mjs",
@@ -339,7 +379,7 @@
                 "`npm test` runs the preserved shell smoke harness.",
                 "`npm run test:sessiond` validates the local backend session and file flows.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
-                "`npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
+                "`npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
               ]
             },
             {
@@ -372,6 +412,7 @@
                 "A real native SDL3/Vulkan runtime slice with input, tooling, and data-foundation hooks.",
                 "Text-backed scene, prefab, data, effect, and procedural-geometry roots represented in the repo.",
                 "A first CLI bake lane that emits staged cooked outputs and generated-mesh preview artifacts.",
+                "A first CLI migration lane that detects supported source-engine project shapes and emits normalized migration manifests plus reports.",
                 "A searchable in-app guide and repo-native assistant guide."
               ]
             },
@@ -382,6 +423,7 @@
                 "The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.",
                 "The runtime still needs richer rendering, real scene loading, and broader native verification.",
                 "The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.",
+                "Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.",
                 "Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels."
               ]
             }

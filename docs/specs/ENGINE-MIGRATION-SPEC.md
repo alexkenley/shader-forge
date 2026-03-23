@@ -24,6 +24,28 @@ Rules:
 - converted projects must land in Shader Forge-native assets, scenes, prefabs, and code layouts
 - every migration run must produce a report of converted, approximated, skipped, and manual items
 
+## Current First Slice
+
+The current implementation is a migration-foundation slice rather than a fake converter.
+
+Implemented now:
+
+- `engine migrate detect <path>`
+- `engine migrate unity <path>`
+- `engine migrate unreal <path>`
+- `engine migrate godot <path>`
+- `engine migrate report <path>`
+- normalized `migration-manifest.toml`, `report.toml`, and `warnings.toml` outputs under `migration/<run-id>/`
+- a `script-porting/README.md` placeholder per migration run
+- deterministic Unity, Unreal, and Godot fixture projects under `fixtures/migration/`
+
+Current boundaries:
+
+- source-engine detection is real for the first supported lanes
+- target layout intent and provenance are captured in the emitted manifest/report files
+- asset, scene, prefab, and gameplay conversion are not implemented yet in this slice
+- the run must state that no content conversion was performed rather than implying parity
+
 ## Primary Targets
 
 Initial engine targets:
@@ -138,8 +160,9 @@ Expected outputs:
 
 - `assets-src/migrated/<engine>/...`
 - `assets/migrated/<engine>/...`
-- `levels/*.scene.toml`
-- `prefabs/*.prefab.toml`
+- `content/scenes/migrated/<engine>/*.scene.toml`
+- `content/prefabs/migrated/<engine>/*.prefab.toml`
+- `content/data/migrated/<engine>/*.data.toml`
 - `migration/<timestamp>/report.toml`
 - `migration/<timestamp>/warnings.toml`
 - `migration/<timestamp>/script-porting/`

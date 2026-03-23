@@ -74,8 +74,19 @@ Assistant entry points:
 - `engine build runtime` configures and builds the native runtime with CMake.
 - `engine run <scene>` builds and launches the native runtime and now forwards content, data, and tooling roots.
 - `engine bake` scans text-backed content roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
+- `engine migrate detect|unity|unreal|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
+- `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import`, `engine package`, and `engine export` are still later phases.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
+- The CLI migration lane is now real for detection and reporting, but it does not convert source-engine content into Shader Forge-native assets yet.
+
+### Migration Foundation
+
+- `fixtures/migration/unity-minimal`, `fixtures/migration/unreal-minimal`, and `fixtures/migration/godot-minimal` are the deterministic source-project fixtures for the first migration slice.
+- `engine migrate detect` auto-detects Unity, Unreal, or Godot project structure and writes `migration-manifest.toml`, `report.toml`, and `warnings.toml` under `migration/<run-id>/`.
+- `engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` pin the requested source-engine lane while producing the same normalized outputs.
+- Every migration run currently creates a `script-porting/README.md` placeholder so later gameplay/code translation has a stable destination.
+- The current migration slice captures provenance and target layout intent only. No asset, scene, prefab, or gameplay conversion is performed yet.
 
 ## Runtime And Authoring
 
@@ -122,7 +133,7 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
-- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
+- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
 - Both scripts remove generated outputs, rerun the current deterministic baseline, start `engine_sessiond`, and then launch the active shell workflow.
@@ -135,6 +146,7 @@ Assistant entry points:
 - A real native SDL3/Vulkan runtime slice with input, tooling, and data-foundation hooks.
 - Text-backed scene, prefab, data, effect, and procedural-geometry roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs and generated-mesh preview artifacts.
+- A first CLI migration lane that detects supported source-engine project shapes and emits normalized migration manifests plus reports.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
 ### What Still Needs Widening
@@ -142,4 +154,5 @@ Assistant entry points:
 - The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.
 - The runtime still needs richer rendering, real scene loading, and broader native verification.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
+- Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

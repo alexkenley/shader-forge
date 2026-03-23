@@ -120,6 +120,8 @@ if [[ "$skip_tests" != "1" ]]; then
   npm run test:data-foundation-scaffold
   printf '[shader-forge] Running asset pipeline harness...\n'
   npm run test:asset-pipeline
+  printf '[shader-forge] Running migration fixtures harness...\n'
+  npm run test:migration-fixtures
   printf '[shader-forge] Running input scaffold harness...\n'
   npm run test:input-scaffold
   printf '[shader-forge] Running tooling UI scaffold harness...\n'

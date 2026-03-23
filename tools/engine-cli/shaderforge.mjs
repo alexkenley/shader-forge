@@ -4,6 +4,7 @@ import process from 'node:process';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bakeAssetPipeline } from './lib/asset-pipeline.mjs';
+import { createMigrationRun, summarizeMigrationReport } from './lib/migration-foundation.mjs';
 import { startEngineSessiond } from '../engine-sessiond/server.mjs';
 
 const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http://127.0.0.1:41741';
@@ -23,6 +24,11 @@ Usage:
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine bake [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
+  engine migrate detect <path> [--output-root migration] [--run-id detect-unity]
+  engine migrate unity <path> [--output-root migration] [--run-id unity-project]
+  engine migrate unreal <path> [--output-root migration] [--run-id unreal-project]
+  engine migrate godot <path> [--output-root migration] [--run-id godot-project]
+  engine migrate report <path>
 
 Reserved commands:
   engine test
@@ -74,7 +80,7 @@ function resolvedBaseUrl(flags) {
 
 async function runReservedPlaceholder(commandName) {
   console.log(`engine ${commandName} is not implemented yet in this slice.`);
-  console.log('Current implemented surfaces: sessiond, files, runtime build, runtime run, and asset bake.');
+  console.log('Current implemented surfaces: sessiond, files, runtime build, runtime run, asset bake, and migration detection/report foundations.');
 }
 
 function commandExists(command) {
@@ -188,6 +194,47 @@ async function bakeAssets(flags) {
   console.log(`- Report: ${path.isAbsolute(String(flags.report || '')) ? String(flags.report) : String(flags.report || path.join(report.outputRoot, 'asset-pipeline-report.json'))}`);
 }
 
+async function runMigration(commandName, positionals, flags) {
+  if (commandName === 'report') {
+    const targetPath = positionals[0];
+    if (!targetPath) {
+      throw new Error('engine migrate report requires a report.toml path or migration run directory.');
+    }
+    const summary = summarizeMigrationReport(path.isAbsolute(targetPath) ? targetPath : path.join(repoRoot, targetPath));
+    for (const line of summary.lines) {
+      console.log(line);
+    }
+    return;
+  }
+
+  const projectPath = positionals[0];
+  if (!projectPath) {
+    throw new Error(`engine migrate ${commandName} requires a source project path.`);
+  }
+
+  const requestedEngine = ['unity', 'unreal', 'godot'].includes(commandName) ? commandName : '';
+  const result = await createMigrationRun({
+    repoRoot,
+    commandName,
+    requestedEngine,
+    projectPath,
+    outputRoot: String(flags['output-root'] || 'migration'),
+    runId: flags['run-id'] ? String(flags['run-id']) : '',
+  });
+
+  console.log('Migration foundation run complete.');
+  console.log(`- Source engine: ${result.detection.engine}`);
+  console.log(`- Requested lane: ${result.requestedEngine || 'auto-detect'}`);
+  console.log(`- Source root: ${path.isAbsolute(projectPath) ? projectPath : String(projectPath)}`);
+  console.log(`- Report root: ${result.reportRoot}`);
+  console.log(`- Manifest: ${result.manifestPath}`);
+  console.log(`- Report: ${result.reportPath}`);
+  console.log(`- Warnings file: ${result.warningsPath}`);
+  console.log(`- Script porting placeholder: ${result.scriptPortingReadmePath}`);
+  console.log(`- Manual tasks: ${result.manualTasks.length}`);
+  console.log('- No content conversion was performed in this slice.');
+}
+
 async function run() {
   const argv = process.argv.slice(2);
   if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
@@ -205,6 +252,19 @@ async function run() {
   if (command === 'bake') {
     const { flags } = parseFlags(argv.slice(1));
     await bakeAssets(flags);
+    return;
+  }
+
+  if (command === 'migrate') {
+    const migrationCommand = argv[1];
+    const { positionals, flags } = parseFlags(argv.slice(2));
+    if (!migrationCommand) {
+      throw new Error('engine migrate requires a subcommand.');
+    }
+    if (!['detect', 'unity', 'unreal', 'godot', 'report'].includes(migrationCommand)) {
+      throw new Error(`Unknown migrate subcommand: ${migrationCommand}`);
+    }
+    await runMigration(migrationCommand, positionals, flags);
     return;
   }
 
