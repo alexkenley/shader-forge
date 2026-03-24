@@ -102,7 +102,7 @@ Current implementation status:
 - Phase 5.8 has now started through a first source-engine conversion slice with self-contained Shader Forge project skeleton output for Unity, Unreal, and Godot fixtures.
 - Phase 5.85 has now started through an explicit Unreal offline fallback lane with raw-project detection, lower-confidence migration-lane reporting, Blueprint package-name manifests, and dedicated fixture coverage.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
-- Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
+- Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph plus named-state resolution, and staged cooked animation metadata.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
 - Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
 - Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, input-driven controlled-entity state, first projected debug-proxy rendering for authored render components in the native runtime, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, active-session-root runtime handoff from the shell/session backend, a first authored-content reload lane for manual iteration, and first view-resolved interaction/effect feedback.
@@ -150,7 +150,7 @@ Where the build is currently up to:
 - Phase 5.8 groundwork now exists through fixture-backed Shader Forge project skeleton conversion, but full asset/material import, richer hierarchy/component mapping, exporter-assisted Unreal actor extraction, and shell-side migration inspection still remain
 - Phase 5.85 groundwork now exists through an explicit Unreal offline fallback lane with raw-project `.uproject`/`.umap` detection plus low-confidence Blueprint package manifests, but real `.uasset` graph parsing, exporter-manifest ingestion, and richer actor/component extraction still remain
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
-- Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
+- Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph and named-state resolution, first movement-driven runtime state selection, and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
 - Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, preferred player-entity selection from spawn tags, first input-driven controlled-entity state, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, scene-context physics query origins, projected debug-proxy scene rendering, a first active-session-root editor/runtime handoff, a first polling/manual authored-content reload lane, and first view-resolved interaction/effect feedback, but full mesh/material rendering, broader component simulation, game UI, and deeper editor/runtime handoff still remain
@@ -351,13 +351,13 @@ Goal:
 - stand up the native tooling UI substrate that later profiling, level-authoring, and runtime-inspection work will depend on
 
 Status:
-- first substrate slice now exists through tool registry, layout persistence groundwork, runtime inspection snapshots, and input-driven overlay toggles; Dear ImGui docking is still ahead
+- first substrate slice now exists through tool registry, layout persistence groundwork, runtime inspection snapshots, input-driven overlay toggles, and first live gameplay-state context in the overlay for player, animation, movement-block, and interaction-target inspection; Dear ImGui docking is still ahead
 
 Scope:
 - Dear ImGui runtime bootstrap with docking
 - basic native debug overlay and panel host
 - tool registry and layout-persistence groundwork
-- runtime inspection hooks for logs, frame timing, and debug state
+- runtime inspection hooks for logs, frame timing, debug state, and first live gameplay-state context
 - bridge points for later gizmos, debug drawing, and editor-only native panels
 
 Reference inputs:
@@ -486,7 +486,7 @@ Goal:
 - establish an engine-owned animation subsystem so animation logic, state, and procedural control can be authored natively inside Shader Forge and through assistant-editable text/code workflows rather than requiring Blender
 
 Status:
-- first slice now exists through authored skeleton/clip/graph assets, native animation-system validation plus default-graph resolution, runtime animation-event logging plus audio-event hooks, staged cooked animation metadata, and deterministic harness coverage
+- first slice now exists through authored skeleton/clip/graph assets, native animation-system validation plus default-graph and named-state resolution, runtime animation-event logging plus audio-event hooks, first movement-driven runtime state selection, staged cooked animation metadata, and deterministic harness coverage
 
 Scope:
 - `engine_animation` runtime subsystem
@@ -734,13 +734,15 @@ Current checkpoint now implemented:
 - the native runtime now resolves effect-capable interaction targets from the current crosshair/view and surfaces first triggered-effect feedback plus effect-descriptor-backed interaction logs on Enter/left-click
 - controlled-entity movement now respects a first authored-physics blocking lane by testing movement against scene physics bodies and surfacing the blocking body in logs/window state
 - overlap-triggered effect entities can now activate automatically from query-only scene bodies during runtime movement instead of requiring every authored effect to be manually targeted with `ui_accept`
+- movement now also drives a first runtime animation-state lane: the authored graph can resolve named states such as `idle` and `walk`, and walk clip `audio_event` hooks now fire during movement-driven playback
+- the native tooling overlay now also surfaces live controlled-entity, movement-speed, animation-state, movement-block, and interaction-target context during manual runtime testing instead of leaving that state only in logs and the window title
 - runtime startup logs and window state now surface composed-scene counts, preferred player entity context, and first interaction-target effect context
 - physics query origins now follow the controlled entity position instead of staying hard-coded at world zero
 - deterministic `scripts/test-engine-scene-runtime-scaffold.mjs` coverage now exists for this Phase 6 slice
 
 Still ahead inside this phase:
 - full mesh-based scene rendering, material/shader binding, and richer visible prefab/component instancing beyond the current projected debug-proxy slice
-- broader runtime component simulation beyond the current controlled-entity transform loop, first authored-physics movement blocking, first overlap-triggered effect activation, and first interaction-trigger feedback
+- broader runtime component simulation beyond the current controlled-entity transform loop, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, and first interaction-trigger feedback
 - player-facing game UI via RmlUi
 - deeper editor/runtime handoff, broader hot reload coverage including shaders/watchers, and mounted project/package layering
 - enough real runtime content to stand up the first small example project end to end

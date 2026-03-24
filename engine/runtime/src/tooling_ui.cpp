@@ -170,6 +170,7 @@ struct ToolingUiSystem::Impl {
   std::string layoutName = "default";
   std::string sceneName = "sandbox";
   std::string lastUiAction;
+  ToolingRuntimeStateSnapshot runtimeState;
   bool overlayVisible = true;
   bool inputDebugEnabled = false;
   double frameTimeMs = 0.0;
@@ -485,6 +486,10 @@ void ToolingUiSystem::recordInputState(
   impl_->inputDebugEnabled = inputDebugEnabled;
 }
 
+void ToolingUiSystem::recordRuntimeState(const ToolingRuntimeStateSnapshot& state) {
+  impl_->runtimeState = state;
+}
+
 void ToolingUiSystem::appendLogLine(std::string_view line) {
   const std::string cleaned = trim(line);
   if (cleaned.empty()) {
@@ -559,6 +564,41 @@ std::string ToolingUiSystem::overlaySummary() const {
   if (impl_->inputDebugEnabled || panelVisible("input_debug")) {
     summary << " move=(" << formatFloat(impl_->moveX, 2) << ',' << formatFloat(impl_->moveY, 2) << ')'
             << " look=(" << formatFloat(impl_->lookX, 2) << ',' << formatFloat(impl_->lookY, 2) << ')';
+  }
+
+  if (impl_->runtimeState.controlledEntityValid) {
+    summary << " player=" << impl_->runtimeState.controlledEntityId;
+    if (!impl_->runtimeState.controlledEntityPosition.empty()) {
+      summary << " pos=(" << impl_->runtimeState.controlledEntityPosition << ')';
+    }
+    if (impl_->runtimeState.moveSpeed > 0.0F) {
+      summary << " move-speed=" << formatFloat(impl_->runtimeState.moveSpeed, 2);
+    }
+  }
+
+  if (!impl_->runtimeState.animationGraphName.empty()) {
+    summary << " anim=" << impl_->runtimeState.animationGraphName;
+    if (!impl_->runtimeState.animationStateName.empty()) {
+      summary << ':' << impl_->runtimeState.animationStateName;
+    }
+    if (!impl_->runtimeState.animationClipName.empty()) {
+      summary << " clip=" << impl_->runtimeState.animationClipName;
+    }
+  }
+
+  if (!impl_->runtimeState.blockedBodyName.empty()) {
+    summary << " blocked=" << impl_->runtimeState.blockedBodyName;
+  }
+
+  if (impl_->runtimeState.interactionTargetValid) {
+    summary << " target=" << impl_->runtimeState.interactionTargetId;
+    if (!impl_->runtimeState.interactionEffectName.empty()) {
+      summary << " target-fx=" << impl_->runtimeState.interactionEffectName;
+    }
+  }
+
+  if (!impl_->runtimeState.activeTriggeredEffectName.empty()) {
+    summary << " fx=" << impl_->runtimeState.activeTriggeredEffectName;
   }
 
   if (!impl_->lastUiAction.empty()) {

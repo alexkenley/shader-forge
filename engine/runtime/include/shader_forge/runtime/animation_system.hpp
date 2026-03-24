@@ -76,6 +76,18 @@ struct ResolvedAnimationGraphSnapshot {
   std::vector<AnimationClipEventSnapshot> entryClipEvents;
 };
 
+struct ResolvedAnimationStateSnapshot {
+  std::string graphName;
+  std::string stateName;
+  std::string skeletonName;
+  std::string clipName;
+  double speed = 1.0;
+  bool loop = false;
+  double durationSeconds = 0.0;
+  double rootMotionMeters = 0.0;
+  std::vector<AnimationClipEventSnapshot> clipEvents;
+};
+
 class AnimationSystem {
 public:
   AnimationSystem();
@@ -99,6 +111,9 @@ public:
   std::vector<ClipDefinitionSnapshot> snapshotClips() const;
   std::vector<GraphDefinitionSnapshot> snapshotGraphs() const;
   std::optional<ResolvedAnimationGraphSnapshot> resolveGraph(std::string_view graphName) const;
+  std::optional<ResolvedAnimationStateSnapshot> resolveGraphState(
+    std::string_view graphName,
+    std::string_view stateName) const;
 
   std::string foundationSummary() const;
   std::string graphCatalogSummary() const;

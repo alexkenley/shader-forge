@@ -31,6 +31,21 @@ struct ToolPanelSnapshot {
   int order = 0;
 };
 
+struct ToolingRuntimeStateSnapshot {
+  std::string controlledEntityId;
+  std::string controlledEntityPosition;
+  std::string blockedBodyName;
+  std::string animationGraphName;
+  std::string animationStateName;
+  std::string animationClipName;
+  std::string interactionTargetId;
+  std::string interactionEffectName;
+  std::string activeTriggeredEffectName;
+  float moveSpeed = 0.0F;
+  bool controlledEntityValid = false;
+  bool interactionTargetValid = false;
+};
+
 class ToolingUiSystem {
 public:
   ToolingUiSystem();
@@ -59,6 +74,7 @@ public:
     float lookY,
     std::string_view lastUiAction,
     bool inputDebugEnabled);
+  void recordRuntimeState(const ToolingRuntimeStateSnapshot& state);
   void appendLogLine(std::string_view line);
 
   std::vector<ToolPanelSnapshot> snapshotPanels() const;

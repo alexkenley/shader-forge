@@ -30,6 +30,7 @@ The current runtime slice is the first real native bring-up pass:
 - runtime startup now resolves a `runtime_boot` audio event and logs engine-owned audio event requests such as `ui_accept`
 - engine-owned animation loading from `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml`
 - runtime startup now resolves a default animation graph, logs animation graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio-event API
+- movement can now drive a first runtime animation-state lane by resolving authored named graph states such as `idle` and `walk`, with walk clip `audio_event` hooks firing during movement-driven playback
 - engine-owned physics loading from `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml`
 - runtime startup now logs physics layer/body summaries and runs deterministic raycast plus overlap queries for the active scene through engine-owned physics APIs
 - native tooling registry/layout loading and session-layout save groundwork for later Dear ImGui-backed panels
@@ -50,6 +51,8 @@ The current runtime slice is the first real native bring-up pass:
 - `ui_accept` can now trigger first effect-descriptor-backed runtime feedback and logs for the current interaction target, with visible debug-proxy feedback in the external window
 - controlled-entity movement now respects a first authored-physics blocking lane by testing horizontal movement against scene physics bodies instead of always moving freely through the composed scene
 - authored `on_overlap` effect triggers can now activate automatically from query-only scene bodies during runtime movement instead of requiring every effect-capable entity to be manually targeted with `ui_accept`
+- movement now also drives a first runtime animation-state lane with authored `idle`/`walk` state selection, active clip context in the window title, and movement-triggered clip-event audio requests
+- the native tooling overlay now also surfaces live controlled-entity, movement-speed, animation-state, movement-block, and interaction-target context during manual runtime testing
 - physics query origins and runtime interaction logs now follow the composed scene entity state instead of staying hard-coded at world zero
 - animation graph and entry-state context now feeds runtime title/log state instead of staying disconnected from execution
 - physics scene-query state is now logged against the authored scene context instead of staying disconnected from execution
@@ -57,7 +60,7 @@ The current runtime slice is the first real native bring-up pass:
 Current boundary:
 
 - the runtime now has first visible composed-scene rendering through projected debug proxies, but not a full mesh/material/shader pipeline yet
-- the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, first authored-physics movement blocking, first overlap-triggered effect activation, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, or deeper mounted-project/package layering yet
+- the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, or deeper mounted-project/package layering yet
 - Dear ImGui-native panels, real asset-backed geometry submission, and player-facing game UI are still later widening passes
 
 ## Future AI Runtime Boundary

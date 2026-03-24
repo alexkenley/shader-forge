@@ -766,6 +766,10 @@ private:
     activeAnimationGraphName_.clear();
     activeAnimationEntryState_.clear();
     activeAnimationEntryClip_.clear();
+    activeAnimationState_.clear();
+    activeAnimationClip_.clear();
+    activeAnimationStateTimeSeconds_ = 0.0;
+    activeControlledEntityMoveSpeed_ = 0.0F;
 
     const auto defaultGraph = animationSystem_.defaultGraphName();
     if (!defaultGraph.has_value()) {
@@ -781,6 +785,8 @@ private:
 
     activeAnimationEntryState_ = resolved->entryState;
     activeAnimationEntryClip_ = resolved->entryClipName;
+    activeAnimationState_ = resolved->entryState;
+    activeAnimationClip_ = resolved->entryClipName;
   }
 
   void applyBootstrapPreferences() {
@@ -1023,6 +1029,12 @@ private:
     }
     message << ", position=(" << runtimeVector3String(activeControlledEntity_.position) << ')'
             << ", rotation=(" << runtimeVector3String(activeControlledEntity_.rotation) << ')';
+    if (activeControlledEntityMoveSpeed_ > 0.0F) {
+      message << ", move_speed=" << activeControlledEntityMoveSpeed_;
+    }
+    if (!activeAnimationState_.empty()) {
+      message << ", anim_state=" << activeAnimationState_;
+    }
     if (!activeMovementBlockedBodyName_.empty()) {
       message << ", blocked_by=" << activeMovementBlockedBodyName_;
     }
@@ -1463,6 +1475,100 @@ private:
     }
   }
 
+  void emitAnimationStateEvents(
+    const ResolvedAnimationStateSnapshot& state,
+    double startTimeSeconds,
+    double endTimeSeconds,
+    std::string_view reason) {
+    for (const auto& eventSnapshot : state.clipEvents) {
+      if (!eventSnapshot.valid || eventSnapshot.timeSeconds < startTimeSeconds || eventSnapshot.timeSeconds > endTimeSeconds) {
+        continue;
+      }
+
+      std::ostringstream eventMessage;
+      eventMessage << "Animation state event " << state.clipName << '.' << eventSnapshot.name
+                   << " -> type=" << eventSnapshot.type
+                   << ", target=" << eventSnapshot.target
+                   << ", time=" << eventSnapshot.timeSeconds
+                   << ", state=" << state.stateName;
+      logRuntimeLine(eventMessage.str());
+
+      if (eventSnapshot.type == "audio_event") {
+        triggerAudioEvent(eventSnapshot.target, std::string(reason) + ":animation_state_event");
+      }
+    }
+  }
+
+  std::string selectRuntimeAnimationState() const {
+    if (activeAnimationGraphName_.empty()) {
+      return {};
+    }
+    if (activeControlledEntityMoveSpeed_ > 0.2F) {
+      if (animationSystem_.resolveGraphState(activeAnimationGraphName_, "walk").has_value()) {
+        return "walk";
+      }
+    }
+    if (animationSystem_.resolveGraphState(activeAnimationGraphName_, "idle").has_value()) {
+      return "idle";
+    }
+    return activeAnimationEntryState_;
+  }
+
+  void updateAnimationRuntimeState(double deltaSeconds) {
+    if (activeAnimationGraphName_.empty()) {
+      return;
+    }
+
+    const std::string desiredState = selectRuntimeAnimationState();
+    if (desiredState.empty()) {
+      return;
+    }
+
+    const auto resolvedState = animationSystem_.resolveGraphState(activeAnimationGraphName_, desiredState);
+    if (!resolvedState.has_value()) {
+      return;
+    }
+
+    if (activeAnimationState_ != resolvedState->stateName || activeAnimationClip_ != resolvedState->clipName) {
+      activeAnimationState_ = resolvedState->stateName;
+      activeAnimationClip_ = resolvedState->clipName;
+      activeAnimationStateTimeSeconds_ = 0.0;
+
+      std::ostringstream message;
+      message << "Animation state " << resolvedState->graphName << '.' << resolvedState->stateName
+              << " active via runtime_state"
+              << ": clip=" << resolvedState->clipName
+              << ", speed=" << resolvedState->speed
+              << ", duration=" << resolvedState->durationSeconds
+              << ", root_motion_meters=" << resolvedState->rootMotionMeters;
+      logRuntimeLine(message.str());
+    }
+
+    if (deltaSeconds <= 0.0 || resolvedState->durationSeconds <= 0.0) {
+      return;
+    }
+
+    const double previousTime = activeAnimationStateTimeSeconds_;
+    const double advancedTime = previousTime + deltaSeconds * resolvedState->speed;
+
+    if (resolvedState->loop) {
+      double localStart = previousTime;
+      double remainingTime = advancedTime;
+      while (remainingTime >= resolvedState->durationSeconds) {
+        emitAnimationStateEvents(*resolvedState, localStart, resolvedState->durationSeconds, resolvedState->stateName);
+        remainingTime -= resolvedState->durationSeconds;
+        localStart = 0.0;
+      }
+      emitAnimationStateEvents(*resolvedState, localStart, remainingTime, resolvedState->stateName);
+      activeAnimationStateTimeSeconds_ = remainingTime;
+      return;
+    }
+
+    const double clampedTime = std::min(advancedTime, resolvedState->durationSeconds);
+    emitAnimationStateEvents(*resolvedState, previousTime, clampedTime, resolvedState->stateName);
+    activeAnimationStateTimeSeconds_ = clampedTime;
+  }
+
   void logPhysicsQueries(std::string_view reason) {
     std::array<double, 3> rayOrigin{0.0, 3.0, 0.0};
     std::array<double, 3> overlapCenter{0.0, 0.5, 0.0};
@@ -1585,8 +1691,13 @@ private:
     }
     if (!activeAnimationGraphName_.empty()) {
       title << " anim=" << activeAnimationGraphName_;
-      if (!activeAnimationEntryState_.empty()) {
+      if (!activeAnimationState_.empty()) {
+        title << ':' << activeAnimationState_;
+      } else if (!activeAnimationEntryState_.empty()) {
         title << ':' << activeAnimationEntryState_;
+      }
+      if (!activeAnimationClip_.empty()) {
+        title << " clip=" << activeAnimationClip_;
       }
     }
     if (activeControlledEntity_.valid) {
@@ -1770,6 +1881,20 @@ private:
   void updateToolingState(double deltaSeconds) {
     toolingUi_.recordFrame(deltaSeconds, activeSceneName_.empty() ? config_.scene : activeSceneName_);
     toolingUi_.recordInputState(moveX_, moveY_, lookX_, lookY_, lastUiAction_, inputDebugEnabled_);
+    toolingUi_.recordRuntimeState(ToolingRuntimeStateSnapshot{
+      .controlledEntityId = activeControlledEntity_.id,
+      .controlledEntityPosition = activeControlledEntity_.valid ? runtimeVector3String(activeControlledEntity_.position) : std::string{},
+      .blockedBodyName = activeMovementBlockedBodyName_,
+      .animationGraphName = activeAnimationGraphName_,
+      .animationStateName = activeAnimationState_,
+      .animationClipName = activeAnimationClip_,
+      .interactionTargetId = activeInteractionTarget_.id,
+      .interactionEffectName = activeInteractionTarget_.effectName,
+      .activeTriggeredEffectName = activeTriggeredInteractionEffectName_,
+      .moveSpeed = activeControlledEntityMoveSpeed_,
+      .controlledEntityValid = activeControlledEntity_.valid,
+      .interactionTargetValid = activeInteractionTarget_.valid,
+    });
 
     const std::uint64_t now = SDL_GetTicksNS();
     if (toolingUi_.overlayVisible() && now >= nextToolingLogTicks_) {
@@ -1782,6 +1907,7 @@ private:
 
   void updateRuntimeSceneState(double deltaSeconds) {
     if (!activeControlledEntity_.valid) {
+      activeControlledEntityMoveSpeed_ = 0.0F;
       return;
     }
 
@@ -1825,7 +1951,13 @@ private:
       }
     }
 
+    const std::array<float, 3> previousPosition = activeControlledEntity_.position;
     activeControlledEntity_.position = nextPosition;
+    const float movementDistance = std::sqrt(
+      std::pow(activeControlledEntity_.position[0] - previousPosition[0], 2.0F)
+      + std::pow(activeControlledEntity_.position[2] - previousPosition[2], 2.0F));
+    activeControlledEntityMoveSpeed_ =
+      deltaSeconds > 0.0 ? movementDistance / static_cast<float>(deltaSeconds) : 0.0F;
     updateControlledEntityMovementBlock(blockingBodyName);
   }
 
@@ -1956,6 +2088,7 @@ private:
 
       pollAuthoredContentReload(currentTicks);
       updateRuntimeSceneState(deltaSeconds);
+      updateAnimationRuntimeState(deltaSeconds);
       updateOverlapTriggeredEffects();
       updateInteractionTargetFromView();
       updateToolingState(deltaSeconds);
@@ -2377,6 +2510,10 @@ private:
   std::string activeAnimationGraphName_;
   std::string activeAnimationEntryState_;
   std::string activeAnimationEntryClip_;
+  std::string activeAnimationState_;
+  std::string activeAnimationClip_;
+  double activeAnimationStateTimeSeconds_ = 0.0;
+  float activeControlledEntityMoveSpeed_ = 0.0F;
   RuntimeControlledEntityState activeControlledEntity_;
   RuntimeControlledEntityState activeInteractionTarget_;
   std::string activeMovementBlockedBodyName_;

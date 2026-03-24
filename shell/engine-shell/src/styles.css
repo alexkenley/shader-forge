@@ -51,7 +51,7 @@ pre {
 .shell-app {
   height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
@@ -146,6 +146,7 @@ pre {
 .shell-grid {
   display: grid;
   grid-template-columns: 240px 1fr 280px;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -924,6 +925,7 @@ pre {
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -935,6 +937,7 @@ pre {
 .legacy-surface {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -2119,14 +2122,73 @@ pre {
   background: var(--bg-elevated);
   display: flex;
   flex-direction: column;
-  max-height: 35vh;
+  flex-shrink: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
-.bottom-pane > .tab-row {
+.bottom-pane__resize-handle {
+  height: 6px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0),
+      rgba(255, 255, 255, 0.08) 50%,
+      rgba(255, 255, 255, 0)
+    );
+}
+
+.bottom-pane__resize-handle:hover,
+.bottom-pane.is-resizing .bottom-pane__resize-handle {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(14, 165, 233, 0),
+      rgba(14, 165, 233, 0.55) 50%,
+      rgba(14, 165, 233, 0)
+    );
+}
+
+.bottom-pane__chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
   padding: 2px 6px;
   border-bottom: 1px solid var(--border);
   background: #2a2a2a;
+}
+
+.bottom-pane__chrome > .tab-row {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.bottom-pane__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bottom-pane__meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.bottom-pane__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bottom-pane.is-collapsed .bottom-pane__chrome {
+  border-bottom: 0;
 }
 
 /* ─── Terminal Dock ─── */

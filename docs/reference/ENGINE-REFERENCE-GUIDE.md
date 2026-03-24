@@ -51,6 +51,7 @@ Assistant entry points:
 - The center dock currently exposes `Code`, `Game`, `Scene`, `Preview`, and `Guide`.
 - The right panel currently exposes `Details`, `Build`, and `Run`.
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
+- The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
 - Use `Game` and `Preview` to drive the external native runtime window from the shell.
 - Use `Scene` for repo-backed scene/prefab authoring with edit/play separation, save/reload/duplicate commands, a world outliner, details editing, and prefab assignment over the real text assets.
@@ -137,6 +138,8 @@ Assistant entry points:
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
 - The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.
 - Runtime startup resolves a default animation graph, logs graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio event API.
+- Movement now drives a first authored animation-state lane in runtime: `idle` and `walk` can be resolved by name from the current graph, the active state/clip is surfaced in window state, and walk clip `audio_event` hooks now fire during movement playback.
+- The native tooling overlay now also surfaces live player id/position, movement speed, active animation state/clip, blocking body, current interaction target, and active triggered effect so manual runtime testing is not dependent on log scanning alone.
 - The runtime now loads authored physics layers, materials, and primitive bodies through `PhysicsSystem`.
 - Runtime startup logs physics layer/body summaries and runs deterministic raycast plus overlap queries against the active scene.
 - `engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, stages cooked audio metadata under `build/cooked/audio/`, stages cooked animation metadata under `build/cooked/animation/`, and stages cooked physics metadata under `build/cooked/physics/`.
@@ -173,6 +176,7 @@ Assistant entry points:
 - The native tooling substrate currently has a named panel registry.
 - Tooling layouts are loaded from text and session layouts can be saved back to disk.
 - The current panel set covers runtime stats, input debug, log view, and debug state.
+- The overlay summary now also carries first live gameplay-state context for the controlled entity, animation state, movement blocking, and interaction target during manual testing.
 - Tooling overlay and panel toggles are already bound through the engine-owned input actions.
 - Dear ImGui docking and real in-process native panel rendering are still ahead.
 

@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
 import {
@@ -85,6 +85,10 @@ const emptyGitStatus: GitStatus = {
   untracked: [],
   notARepo: true,
 };
+const DEFAULT_BOTTOM_PANE_HEIGHT = 260;
+const MIN_BOTTOM_PANE_HEIGHT = 180;
+const MAX_BOTTOM_PANE_VIEWPORT_RATIO = 0.8;
+const COLLAPSED_BOTTOM_PANE_HEIGHT = 38;
 
 type LeftTab = (typeof leftTabs)[number];
 type CenterTab = (typeof centerTabs)[number];
@@ -197,6 +201,17 @@ function trimTerminalOutput(value: string) {
     return value;
   }
   return value.slice(-maxLength);
+}
+
+function maxBottomPaneHeight() {
+  if (typeof window === 'undefined') {
+    return DEFAULT_BOTTOM_PANE_HEIGHT;
+  }
+  return Math.max(MIN_BOTTOM_PANE_HEIGHT, Math.floor(window.innerHeight * MAX_BOTTOM_PANE_VIEWPORT_RATIO));
+}
+
+function clampBottomPaneHeight(value: number) {
+  return Math.max(MIN_BOTTOM_PANE_HEIGHT, Math.min(maxBottomPaneHeight(), Math.round(value)));
 }
 
 function takeLastLogLines(value: string, count = 6) {
@@ -1405,6 +1420,9 @@ export default function App() {
   const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Scene');
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('Details');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
+  const [bottomPaneHeight, setBottomPaneHeight] = useState(() => clampBottomPaneHeight(DEFAULT_BOTTOM_PANE_HEIGHT));
+  const [bottomPaneCollapsed, setBottomPaneCollapsed] = useState(false);
+  const [bottomPaneResizing, setBottomPaneResizing] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('Triptych');
   const [showLegacyBridge, setShowLegacyBridge] = useState(false);
   const [sessiondState, setSessiondState] = useState<'connecting' | 'connected' | 'offline'>('connecting');
@@ -1446,8 +1464,71 @@ export default function App() {
     ? [...windowsShells, ...unixShells]
     : [...unixShells];
 
+  useEffect(() => {
+    if (!bottomPaneResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      event.preventDefault();
+      setBottomPaneCollapsed(false);
+      setBottomPaneHeight(clampBottomPaneHeight(window.innerHeight - event.clientY));
+    };
+
+    const stopResize = () => {
+      setBottomPaneResizing(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [bottomPaneResizing]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setBottomPaneHeight((current) => clampBottomPaneHeight(current));
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   function recordViewerBridgeEvent(event: Omit<ViewerBridgeEvent, 'id'>) {
     setViewerBridgeEvents((current) => appendViewerBridgeEvent(current, event));
+  }
+
+  function handleBottomTabSelect(tab: BottomTab) {
+    setActiveBottomTab(tab);
+    setBottomPaneCollapsed(false);
+  }
+
+  function handleBottomPaneResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    setBottomPaneCollapsed(false);
+    setBottomPaneResizing(true);
+  }
+
+  function handleExpandBottomPane() {
+    setBottomPaneCollapsed(false);
+    setBottomPaneHeight(maxBottomPaneHeight());
+  }
+
+  function handleToggleBottomPane() {
+    setBottomPaneCollapsed((current) => !current);
   }
 
   async function refreshSessions() {
@@ -2330,6 +2411,8 @@ export default function App() {
   const workspaceRootPlaceholder = platformInfo?.isWSL
     ? platformInfo.defaultBrowsePath || '/mnt/c/Users'
     : '/home/user/projects/my-game';
+  const bottomPaneMaxHeight = maxBottomPaneHeight();
+  const bottomPaneVisibleHeight = bottomPaneCollapsed ? COLLAPSED_BOTTOM_PANE_HEIGHT : bottomPaneHeight;
 
   return (
     <div className="shell-app">
@@ -2729,15 +2812,46 @@ export default function App() {
         </aside>
       </main>
 
-      <section className="pane bottom-pane">
-        <div className="tab-row">
-          {bottomTabs.map((tab) => (
-            <TabButton active={activeBottomTab === tab} key={tab} onClick={() => setActiveBottomTab(tab)}>
-              {tab}
-            </TabButton>
-          ))}
+      <section
+        className={`pane bottom-pane${bottomPaneCollapsed ? ' is-collapsed' : ''}${bottomPaneResizing ? ' is-resizing' : ''}`}
+        style={{ height: `${bottomPaneVisibleHeight}px` }}
+      >
+        <div
+          aria-label="Resize bottom dock"
+          className="bottom-pane__resize-handle"
+          onPointerDown={handleBottomPaneResizeStart}
+          role="separator"
+        />
+        <div className="bottom-pane__chrome">
+          <div className="tab-row">
+            {bottomTabs.map((tab) => (
+              <TabButton active={activeBottomTab === tab} key={tab} onClick={() => handleBottomTabSelect(tab)}>
+                {tab}
+              </TabButton>
+            ))}
+          </div>
+          <div className="bottom-pane__actions">
+            <span className="bottom-pane__meta">
+              {bottomPaneCollapsed ? 'collapsed' : `${bottomPaneHeight}px`}
+            </span>
+            <button
+              className="ghost-button ghost-button--sm"
+              disabled={!bottomPaneCollapsed && bottomPaneHeight >= bottomPaneMaxHeight}
+              onClick={handleExpandBottomPane}
+              type="button"
+            >
+              Maximize
+            </button>
+            <button className="ghost-button ghost-button--sm" onClick={handleToggleBottomPane} type="button">
+              {bottomPaneCollapsed ? 'Restore' : 'Collapse'}
+            </button>
+          </div>
         </div>
-        {renderBottomPanel(activeBottomTab, terminalDock, runtimeLog, buildLog)}
+        {!bottomPaneCollapsed ? (
+          <div className="bottom-pane__body">
+            {renderBottomPanel(activeBottomTab, terminalDock, runtimeLog, buildLog)}
+          </div>
+        ) : null}
       </section>
     </div>
   );

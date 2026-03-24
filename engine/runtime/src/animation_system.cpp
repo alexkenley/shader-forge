@@ -863,6 +863,41 @@ std::optional<ResolvedAnimationGraphSnapshot> AnimationSystem::resolveGraph(std:
   return std::nullopt;
 }
 
+std::optional<ResolvedAnimationStateSnapshot> AnimationSystem::resolveGraphState(
+  std::string_view graphName,
+  std::string_view stateName) const {
+  const std::string normalizedGraph = normalizeToken(std::string(graphName));
+  const std::string normalizedState = normalizeToken(std::string(stateName));
+  for (const auto& graph : impl_->graphs) {
+    if (graph.name != normalizedGraph) {
+      continue;
+    }
+
+    const AnimationGraphStateSnapshot* state = findStateByName(graph.states, normalizedState);
+    if (state == nullptr) {
+      return std::nullopt;
+    }
+
+    const ClipDefinitionSnapshot* clip = findClipByName(impl_->clips, state->clip);
+    if (clip == nullptr) {
+      return std::nullopt;
+    }
+
+    ResolvedAnimationStateSnapshot resolved;
+    resolved.graphName = graph.name;
+    resolved.stateName = state->name;
+    resolved.skeletonName = graph.skeletonName;
+    resolved.clipName = clip->name;
+    resolved.speed = state->speed;
+    resolved.loop = state->loop;
+    resolved.durationSeconds = clip->durationSeconds;
+    resolved.rootMotionMeters = clip->rootMotionMeters;
+    resolved.clipEvents = clip->events;
+    return resolved;
+  }
+  return std::nullopt;
+}
+
 std::string AnimationSystem::foundationSummary() const {
   std::ostringstream summary;
   summary << "Animation foundation: root=" << relativePathString(impl_->config.rootPath)
