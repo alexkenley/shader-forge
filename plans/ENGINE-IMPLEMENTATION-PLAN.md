@@ -23,6 +23,8 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 - shipped game UI: RmlUi
 - VFX framework direction: Effekseer integration plus code-defined engine effect descriptors
 - data framework direction: TOML source via `toml++`, FlatBuffers cooked data, SQLite tooling/session DB
+- large-scale gameplay-data authoring direction: keep schemas, manifests, and validation rules text-backed, but use a queryable authoring store for large tabular datasets instead of forcing high-volume gameplay data into giant TOML assets
+- data access direction: shell UI, terminal assistants via CLI/`engine_sessiond`, and the future native in-engine assistant should all use the same engine-owned data query/update/validate/cook services with explicit policy gates
 - shell model: editor/viewer tabs, split layouts, PTY terminals
 - primary development workflow: Windows + WSL2, with native Linux support
 - runtime bring-up: native runtime window first
@@ -423,15 +425,26 @@ Goal:
 
 Status:
 - first foundation slice now exists through an engine-wide format manifest, runtime-side asset catalog validation, scene/prefab/bootstrap relationship handling, text-backed scene/prefab/data/effect roots, and a first simple effect descriptor asset
+- the later large-dataset authoring direction is now explicit in the plan: use queryable engine-owned data services and tooling surfaces rather than giant text assets for high-volume gameplay tables
 
 Scope:
 - TOML source-data schema and validation path
 - FlatBuffers cooking path for runtime data
 - SQLite tooling/session/asset database path
+- queryable authoring/query path for large gameplay and tabular datasets
+- shell-side data workspace for search, filtering, paging, saved queries, and bulk edit workflows
+- shared data query/update/validate/cook surfaces for CLI, `engine_sessiond`, terminal assistants, and the future native in-engine assistant
+- preview, dry-run, validation, and approval flows for destructive or assistant-driven bulk data edits
 - Effekseer runtime integration plan
 - code-defined simple effect descriptor model
 - explicit scene/prefab source-data ownership boundaries shared with the scene system
 - adapt the Hell2025 create-info serialization approach into engine-generic TOML scene/prefab source schemas instead of adopting its JSON and binary map formats directly
+
+Still ahead inside this phase:
+- land the SQLite-backed authoring/query store and shell data-workspace surfaces for large gameplay datasets
+- make large data workflows page- and query-based so humans and assistants do not have to load entire tables or giant assets at once
+- keep runtime consumption on cooked data rather than reading the live authoring/query store directly
+- expose the same data operations through shell UI, CLI/`engine_sessiond`, and native assistant tool surfaces instead of creating separate editor-only paths
 
 Reference inputs:
 - for import/cook/cache flow and tooling data boundaries, consult the [Distill guide](../docs/guides/ENGINE-DISTILL-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), [Stride guide](../docs/guides/ENGINE-STRIDE-BORROW-GUIDE.md), [Godot guide](../docs/guides/ENGINE-GODOT-BORROW-GUIDE.md), [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md), and [Hell2025 borrow plan](../docs/guides/ENGINE-HELL2025-BORROW-PLAN.md)
@@ -654,6 +667,7 @@ Scope:
 - shell and CLI inspection/test surfaces
 - native in-engine assistant surface for runtime/editor workflows
 - shared provider and tool/skill core for terminal and in-engine assistant clients
+- shared data-authoring tool surfaces for schema discovery, paged queries, relationship lookups, bulk-update preview, validation, and cook operations
 - explicit policy hooks for assistant-triggered compile, hot reload, install, and apply operations
 - optional BYOK desktop mode
 - treat the first useful Phase 5.95 trust and policy slice as a prerequisite for assistant-triggered compile, install, apply, and hot reload workflows
@@ -667,6 +681,7 @@ Exit criteria:
 - AI-facing gameplay outputs are validated through explicit schemas and deterministic code paths
 - terminal, shell, and native in-engine assistants can discover and execute shared tools and skills through explicit policies
 - assistant scene-authoring workflows can inspect and patch structured scene data without relying on hidden editor-only state
+- assistant data-authoring workflows can query, preview, validate, and apply bulk gameplay-data changes through shared engine services instead of ad-hoc editor-only mutations
 - deterministic and optional real-provider harness lanes exist for the subsystem
 
 ## Phase 5.95: Code Access, Trust, And Hot Reload Safety
