@@ -241,6 +241,31 @@ float pointDistanceToRect(float x, float y, const VkRect2D& rect) {
   return std::sqrt(deltaX * deltaX + deltaY * deltaY);
 }
 
+bool physicsBodyBlocksControlledMovement(const PhysicsBodySnapshot& body) {
+  return body.valid
+    && body.motionType != "kinematic"
+    && body.layer != "Query_Only";
+}
+
+bool overlapsHorizontalCircleAabb(const std::array<float, 3>& center, float radius, const PhysicsBodySnapshot& body) {
+  const double minX = body.position[0] - body.halfExtents[0];
+  const double maxX = body.position[0] + body.halfExtents[0];
+  const double minZ = body.position[2] - body.halfExtents[2];
+  const double maxZ = body.position[2] + body.halfExtents[2];
+  const double nearestX = std::clamp(static_cast<double>(center[0]), minX, maxX);
+  const double nearestZ = std::clamp(static_cast<double>(center[2]), minZ, maxZ);
+  const double deltaX = static_cast<double>(center[0]) - nearestX;
+  const double deltaZ = static_cast<double>(center[2]) - nearestZ;
+  return deltaX * deltaX + deltaZ * deltaZ < static_cast<double>(radius * radius);
+}
+
+bool overlapsHorizontalCircleSphere(const std::array<float, 3>& center, float radius, const PhysicsBodySnapshot& body) {
+  const double deltaX = static_cast<double>(center[0]) - body.position[0];
+  const double deltaZ = static_cast<double>(center[2]) - body.position[2];
+  const double combinedRadius = static_cast<double>(radius) + body.radius;
+  return deltaX * deltaX + deltaZ * deltaZ < combinedRadius * combinedRadius;
+}
+
 void clearAttachmentRect(VkCommandBuffer commandBuffer, const VkRect2D& rect, const std::array<float, 4>& color) {
   if (rect.extent.width == 0 || rect.extent.height == 0) {
     return;
@@ -645,6 +670,7 @@ private:
     activeSceneRenderableCount_ = 0;
     activeControlledEntity_ = RuntimeControlledEntityState{};
     activeInteractionTarget_ = RuntimeControlledEntityState{};
+    activeMovementBlockedBodyName_.clear();
     activeSceneRenderProxies_.clear();
     activeTriggeredInteractionEntityId_.clear();
     activeTriggeredInteractionEffectName_.clear();
@@ -984,6 +1010,9 @@ private:
     }
     message << ", position=(" << runtimeVector3String(activeControlledEntity_.position) << ')'
             << ", rotation=(" << runtimeVector3String(activeControlledEntity_.rotation) << ')';
+    if (!activeMovementBlockedBodyName_.empty()) {
+      message << ", blocked_by=" << activeMovementBlockedBodyName_;
+    }
     logRuntimeLine(message.str());
   }
 
@@ -1550,6 +1579,9 @@ private:
     if (activeControlledEntity_.valid) {
       title << " | player=" << activeControlledEntity_.id
             << " pos=(" << runtimeVector3String(activeControlledEntity_.position) << ')';
+      if (!activeMovementBlockedBodyName_.empty()) {
+        title << " blocked=" << activeMovementBlockedBodyName_;
+      }
     }
     if (activeInteractionTarget_.valid && !activeInteractionTarget_.effectName.empty()) {
       title << " target=" << activeInteractionTarget_.id;
@@ -1593,6 +1625,49 @@ private:
     SDL_SetWindowTitle(window_, title.str().c_str());
   }
 
+  bool controlledEntityBlockedAt(
+    const std::array<float, 3>& position,
+    const std::vector<PhysicsBodySnapshot>& sceneBodies,
+    std::string* blockingBodyName) const {
+    constexpr float kControlledEntityRadius = 0.38F;
+
+    if (blockingBodyName != nullptr) {
+      blockingBodyName->clear();
+    }
+
+    for (const auto& body : sceneBodies) {
+      if (!physicsBodyBlocksControlledMovement(body)) {
+        continue;
+      }
+
+      const bool blocked = body.shapeType == "box"
+        ? overlapsHorizontalCircleAabb(position, kControlledEntityRadius, body)
+        : overlapsHorizontalCircleSphere(position, kControlledEntityRadius, body);
+      if (!blocked) {
+        continue;
+      }
+
+      if (blockingBodyName != nullptr) {
+        *blockingBodyName = body.name;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  void updateControlledEntityMovementBlock(std::string_view bodyName) {
+    const std::string normalizedBodyName(bodyName);
+    if (activeMovementBlockedBodyName_ == normalizedBodyName) {
+      return;
+    }
+
+    activeMovementBlockedBodyName_ = normalizedBodyName;
+    if (!activeMovementBlockedBodyName_.empty()) {
+      logRuntimeLine("Controlled entity movement blocked by physics body " + activeMovementBlockedBodyName_ + '.');
+    }
+  }
+
   void updateToolingState(double deltaSeconds) {
     toolingUi_.recordFrame(deltaSeconds, activeSceneName_.empty() ? config_.scene : activeSceneName_);
     toolingUi_.recordInputState(moveX_, moveY_, lookX_, lookY_, lastUiAction_, inputDebugEnabled_);
@@ -1626,11 +1701,33 @@ private:
     const float forwardZ = std::cos(yawRadians);
     const float rightX = std::cos(yawRadians);
     const float rightZ = -std::sin(yawRadians);
-
-    activeControlledEntity_.position[0] +=
+    const float deltaX =
       ((forwardX * moveY_) + (rightX * moveX_)) * kMoveSpeedUnitsPerSecond * static_cast<float>(deltaSeconds);
-    activeControlledEntity_.position[2] +=
+    const float deltaZ =
       ((forwardZ * moveY_) + (rightZ * moveX_)) * kMoveSpeedUnitsPerSecond * static_cast<float>(deltaSeconds);
+
+    const auto sceneBodies = physicsSystem_.bodiesForScene(activeSceneName_.empty() ? config_.scene : activeSceneName_);
+    std::string blockingBodyName;
+    std::array<float, 3> nextPosition = activeControlledEntity_.position;
+
+    if (std::abs(deltaX) > 0.0001F) {
+      auto axisCandidate = nextPosition;
+      axisCandidate[0] += deltaX;
+      if (!controlledEntityBlockedAt(axisCandidate, sceneBodies, &blockingBodyName)) {
+        nextPosition[0] = axisCandidate[0];
+      }
+    }
+
+    if (std::abs(deltaZ) > 0.0001F) {
+      auto axisCandidate = nextPosition;
+      axisCandidate[2] += deltaZ;
+      if (!controlledEntityBlockedAt(axisCandidate, sceneBodies, &blockingBodyName)) {
+        nextPosition[2] = axisCandidate[2];
+      }
+    }
+
+    activeControlledEntity_.position = nextPosition;
+    updateControlledEntityMovementBlock(blockingBodyName);
   }
 
   void updateInputDrivenState() {
@@ -2182,6 +2279,7 @@ private:
   std::string activeAnimationEntryClip_;
   RuntimeControlledEntityState activeControlledEntity_;
   RuntimeControlledEntityState activeInteractionTarget_;
+  std::string activeMovementBlockedBodyName_;
   std::vector<RuntimeSceneRenderProxy> activeSceneRenderProxies_;
   std::string activeTriggeredInteractionEntityId_;
   std::string activeTriggeredInteractionEffectName_;

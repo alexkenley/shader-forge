@@ -45,6 +45,8 @@ assert.match(runtimeApp, /vkCmdClearAttachments/);
 assert.match(runtimeApp, /Controlled scene entity via/);
 assert.match(runtimeApp, /Scene interaction via/);
 assert.match(runtimeApp, /Scene effect /);
+assert.match(runtimeApp, /Controlled entity movement blocked by physics body/);
+assert.match(runtimeApp, /blocked=/);
 assert.match(runtimeApp, /player=/);
 assert.match(runtimeApp, /Runtime scene renderables:/);
 assert.match(runtimeApp, /projected_debug_proxies/);
@@ -54,6 +56,7 @@ assert.match(sceneAsset, /\[entity\.crate_satellite\]/);
 assert.match(sceneAsset, /parent = "crate_focus"/);
 assert.match(implementationPlan, /Phase 6 has now started through a first scene-runtime composition slice/);
 assert.match(implementationPlan, /input-driven controlled-entity state/);
+assert.match(implementationPlan, /first authored-physics movement blocking against scene bodies/);
 
 const isWindows = process.platform === 'win32';
 let syntaxChecked = false;

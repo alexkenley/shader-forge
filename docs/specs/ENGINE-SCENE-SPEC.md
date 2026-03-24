@@ -54,12 +54,13 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - shell play/restart now hand off the active session-root project context to the runtime so authored scene files and runtime manual testing stay aligned
 - the runtime now also supports a first saved-file iteration lane for scene testing: authored content reload can be triggered explicitly with `F7`, and the running runtime also polls for saved content/audio/animation/physics/data changes
 - the runtime now also resolves effect-capable scene entities from the current view/crosshair and can trigger first visible interaction feedback on those authored effect components from manual runtime input
+- controlled-entity movement now also respects a first authored-physics blocking lane against the active scene bodies, so the runtime no longer walks freely through every visible proxy during manual testing
 - `engine_sessiond` now provides safe session-root file writes so shell workflows and future assistants can mutate the same scene/prefab assets without relying on hidden editor-only state
 - `engine bake` now stages scene-entity summaries plus prefab component payloads into the cooked outputs and bake report so authored scene structure is visible outside the shell
 
 Current boundary:
 
-- this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, first prefab component payloads, a first runtime composition path, first projected debug-proxy visibility, first session-root editor/runtime handoff, first authored-content reload/manual iteration, and first interaction-trigger feedback on effect-capable entities, but not full rendered mesh/material instancing yet
+- this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, first prefab component payloads, a first runtime composition path, first projected debug-proxy visibility, first session-root editor/runtime handoff, first authored-content reload/manual iteration, first authored-physics movement blocking, and first interaction-trigger feedback on effect-capable entities, but not full rendered mesh/material instancing yet
 - transform gizmos, broader scene/component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
 
 ## Non-Goals

@@ -126,6 +126,7 @@ Assistant entry points:
 - `runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.
 - The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.
 - The runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`, and `move_*` plus `look_*` input now drives that entity state.
+- Controlled-entity movement now respects a first authored-physics blocking lane against scene physics bodies, and the runtime surfaces the blocking body in logs plus window state during manual testing.
 - The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.
 - Shell play/restart now forward the active session root into runtime launch so the external runtime reads the same authored scene files the shell edits.
 - The running runtime now follows those authored edits through a first polling/manual reload lane rather than requiring a full process restart for every save.
