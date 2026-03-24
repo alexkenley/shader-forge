@@ -42,6 +42,16 @@ source = "keyboard"
 code = "f7"
 
 [[binding]]
+action = "save_runtime_state"
+source = "keyboard"
+code = "f8"
+
+[[binding]]
+action = "load_runtime_state"
+source = "keyboard"
+code = "f9"
+
+[[binding]]
 action = "move_x"
 source = "keyboard"
 code = "a"

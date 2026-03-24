@@ -22,7 +22,7 @@ Usage:
   engine file list <path> --session <id> [--base-url <url>]
   engine file read <path> --session <id> [--base-url <url>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
-  engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
+  engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
   engine migrate detect <path> [--output-root migration] [--run-id detect-unity]
   engine migrate unity <path> [--output-root migration] [--run-id unity-project]
@@ -176,6 +176,9 @@ async function runRuntime(sceneName, flags) {
   }
   if (flags['data-foundation']) {
     args.push('--data-foundation', String(flags['data-foundation']));
+  }
+  if (flags['save-root']) {
+    args.push('--save-root', String(flags['save-root']));
   }
   if (flags['tooling-layout']) {
     args.push('--tooling-layout', String(flags['tooling-layout']));

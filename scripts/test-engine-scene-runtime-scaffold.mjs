@@ -15,6 +15,7 @@ const animationSourcePath = path.join(runtimeRoot, 'src', 'animation_system.cpp'
 const audioSourcePath = path.join(runtimeRoot, 'src', 'audio_system.cpp');
 const inputSourcePath = path.join(runtimeRoot, 'src', 'input_system.cpp');
 const physicsSourcePath = path.join(runtimeRoot, 'src', 'physics_system.cpp');
+const saveSourcePath = path.join(runtimeRoot, 'src', 'save_system.cpp');
 const toolingSourcePath = path.join(runtimeRoot, 'src', 'tooling_ui.cpp');
 const sceneAssetPath = path.join(repoRoot, 'content', 'scenes', 'sandbox.scene.toml');
 const triggerPrefabPath = path.join(repoRoot, 'content', 'prefabs', 'debug_trigger.prefab.toml');
@@ -39,6 +40,8 @@ assert.match(runtimeApp, /resolveRuntimeSceneComposition/);
 assert.match(runtimeApp, /updateInteractionTargetFromView/);
 assert.match(runtimeApp, /triggerSceneInteraction/);
 assert.match(runtimeApp, /reloadRuntimeContent/);
+assert.match(runtimeApp, /saveRuntimeState/);
+assert.match(runtimeApp, /loadRuntimeState/);
 assert.match(runtimeApp, /pollAuthoredContentReload/);
 assert.match(runtimeApp, /updateRuntimeSceneState/);
 assert.match(runtimeApp, /recordRuntimeState/);
@@ -59,6 +62,8 @@ assert.match(runtimeApp, /player=/);
 assert.match(runtimeApp, /Runtime scene renderables:/);
 assert.match(runtimeApp, /projected_debug_proxies/);
 assert.match(runtimeApp, /Detected authored runtime content change on disk/);
+assert.match(runtimeApp, /Saved runtime state via/);
+assert.match(runtimeApp, /Loaded runtime state via/);
 assert.match(runtimeApp, /dataFoundation_\.composedSceneSummary/);
 assert.match(sceneAsset, /\[entity\.crate_satellite\]/);
 assert.match(sceneAsset, /parent = "crate_focus"/);
@@ -89,6 +94,7 @@ if (!isWindows) {
       dataFoundationSourcePath,
       inputSourcePath,
       physicsSourcePath,
+      saveSourcePath,
       toolingSourcePath,
       runtimeAppPath,
     ],

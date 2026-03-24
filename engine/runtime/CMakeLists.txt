@@ -9,6 +9,7 @@ add_executable(
   src/data_foundation.cpp
   src/input_system.cpp
   src/physics_system.cpp
+  src/save_system.cpp
   src/tooling_ui.cpp
   src/runtime_app.cpp
 )

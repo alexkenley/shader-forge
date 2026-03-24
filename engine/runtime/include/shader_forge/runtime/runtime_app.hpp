@@ -14,6 +14,7 @@ struct RuntimeConfig {
   std::filesystem::path animationRoot = "animation";
   std::filesystem::path physicsRoot = "physics";
   std::filesystem::path dataFoundationPath = "data/foundation/engine-data-layout.toml";
+  std::filesystem::path saveRoot = "saved/runtime";
   std::filesystem::path toolingLayoutPath = "tooling/layouts/default.tooling-layout.toml";
   std::filesystem::path toolingSessionLayoutPath = "tooling/layouts/runtime-session.tooling-layout.toml";
   int width = 1600;

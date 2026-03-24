@@ -38,6 +38,11 @@ function defaultLaunchFactory({ scene, sessionId = '', workspaceRoot }) {
     'foundation',
     'engine-data-layout.toml',
   );
+  const saveRoot = path.join(
+    resolvedWorkspaceRoot,
+    'saved',
+    'runtime',
+  );
   const toolingLayoutPath = path.join(
     resolvedWorkspaceRoot,
     'tooling',
@@ -68,6 +73,8 @@ function defaultLaunchFactory({ scene, sessionId = '', workspaceRoot }) {
       physicsRoot,
       '--data-foundation',
       dataFoundationPath,
+      '--save-root',
+      saveRoot,
       '--tooling-layout',
       toolingLayoutPath,
       '--tooling-layout-save',

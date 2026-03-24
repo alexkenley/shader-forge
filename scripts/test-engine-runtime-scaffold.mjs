@@ -14,6 +14,7 @@ const audioHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runt
 const dataFoundationHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'data_foundation.hpp'), 'utf8');
 const inputHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'input_system.hpp'), 'utf8');
 const physicsHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'physics_system.hpp'), 'utf8');
+const saveHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'save_system.hpp'), 'utf8');
 const toolingHeader = fs.readFileSync(path.join(includeRoot, 'shader_forge', 'runtime', 'tooling_ui.hpp'), 'utf8');
 const runtimeMain = path.join(runtimeRoot, 'src', 'main.cpp');
 const runtimeApp = path.join(runtimeRoot, 'src', 'runtime_app.cpp');
@@ -22,6 +23,7 @@ const audioSourcePath = path.join(runtimeRoot, 'src', 'audio_system.cpp');
 const dataFoundationSourcePath = path.join(runtimeRoot, 'src', 'data_foundation.cpp');
 const inputSourcePath = path.join(runtimeRoot, 'src', 'input_system.cpp');
 const physicsSourcePath = path.join(runtimeRoot, 'src', 'physics_system.cpp');
+const saveSourcePath = path.join(runtimeRoot, 'src', 'save_system.cpp');
 const toolingSourcePath = path.join(runtimeRoot, 'src', 'tooling_ui.cpp');
 const runtimeSource = fs.readFileSync(runtimeApp, 'utf8');
 const animationSource = fs.readFileSync(animationSourcePath, 'utf8');
@@ -29,6 +31,7 @@ const audioSource = fs.readFileSync(audioSourcePath, 'utf8');
 const dataFoundationSource = fs.readFileSync(dataFoundationSourcePath, 'utf8');
 const inputSource = fs.readFileSync(inputSourcePath, 'utf8');
 const physicsSource = fs.readFileSync(physicsSourcePath, 'utf8');
+const saveSource = fs.readFileSync(saveSourcePath, 'utf8');
 const toolingSource = fs.readFileSync(toolingSourcePath, 'utf8');
 
 assert.match(cliSource, /engine build/);
@@ -40,6 +43,7 @@ assert.match(runtimeHeader, /audioRoot/);
 assert.match(runtimeHeader, /animationRoot/);
 assert.match(runtimeHeader, /physicsRoot/);
 assert.match(runtimeHeader, /dataFoundationPath/);
+assert.match(runtimeHeader, /saveRoot/);
 assert.match(runtimeHeader, /toolingLayoutPath/);
 assert.match(runtimeHeader, /class RuntimeApp/);
 assert.match(animationHeader, /class AnimationSystem/);
@@ -51,6 +55,8 @@ assert.match(dataFoundationHeader, /effectDescriptor/);
 assert.match(dataFoundationHeader, /procgeoSource/);
 assert.match(inputHeader, /class InputSystem/);
 assert.match(physicsHeader, /class PhysicsSystem/);
+assert.match(saveHeader, /class SaveSystem/);
+assert.match(saveHeader, /struct RuntimeSaveSnapshot/);
 assert.match(toolingHeader, /class ToolingUiSystem/);
 assert.match(toolingHeader, /ToolingRuntimeStateSnapshot/);
 assert.match(runtimeSource, /vkAcquireNextImageKHR/);
@@ -65,9 +71,16 @@ assert.match(runtimeSource, /initializeAnimationSystem/);
 assert.match(runtimeSource, /triggerAnimationGraph\(/);
 assert.match(runtimeSource, /animation-root=/);
 assert.match(runtimeSource, /PhysicsSystem physicsSystem_/);
+assert.match(runtimeSource, /SaveSystem saveSystem_/);
 assert.match(runtimeSource, /initializePhysicsSystem/);
+assert.match(runtimeSource, /initializeSaveSystem/);
 assert.match(runtimeSource, /logPhysicsQueries/);
 assert.match(runtimeSource, /physics-root=/);
+assert.match(runtimeSource, /save-root=/);
+assert.match(runtimeSource, /saveRuntimeState/);
+assert.match(runtimeSource, /loadRuntimeState/);
+assert.match(runtimeSource, /save_runtime_state/);
+assert.match(runtimeSource, /load_runtime_state/);
 assert.match(runtimeSource, /Physics raycast via/);
 assert.match(runtimeSource, /anim=/);
 assert.match(runtimeSource, /clip=/);
@@ -135,6 +148,8 @@ assert.match(physicsSource, /shader_forge\.physics_material/);
 assert.match(physicsSource, /shader_forge\.physics_body/);
 assert.match(physicsSource, /raycastScene/);
 assert.match(physicsSource, /overlapSphereScene/);
+assert.match(saveSource, /shader_forge\.runtime_save/);
+assert.match(saveSource, /quickslot_01/);
 assert.match(toolingSource, /overlay_visible/);
 assert.match(toolingSource, /runtime_stats/);
 assert.match(toolingSource, /move-speed=/);
@@ -144,6 +159,7 @@ assert.match(cliSource, /--data-foundation/);
 assert.match(cliSource, /--audio-root/);
 assert.match(cliSource, /--animation-root/);
 assert.match(cliSource, /--physics-root/);
+assert.match(cliSource, /--save-root/);
 
 const isWindows = process.platform === 'win32';
 let syntaxChecked = false;
@@ -164,6 +180,7 @@ if (!isWindows) {
       dataFoundationSourcePath,
       inputSourcePath,
       physicsSourcePath,
+      saveSourcePath,
       toolingSourcePath,
       runtimeApp,
     ],
@@ -188,7 +205,7 @@ if (!isWindows) {
 console.log('Engine runtime scaffold passed.');
 console.log(`- Verified runtime sources under ${runtimeRoot}`);
 console.log('- Verified CLI runtime build/run command surfaces are present');
-console.log('- Verified the runtime source contains swapchain, present, resize-aware render-loop, engine-owned input plumbing, native tooling UI substrate hooks, audio/animation/physics loading, and data foundation loading');
+console.log('- Verified the runtime source contains swapchain, present, resize-aware render-loop, engine-owned input plumbing, native tooling UI substrate hooks, audio/animation/physics/save-system loading, and data foundation loading');
 console.log(syntaxChecked
   ? '- Verified native runtime C++ sources pass fallback syntax-only compilation'
   : '- Skipped g++ syntax check (not available on Windows — use WSL or CI for native compilation)');

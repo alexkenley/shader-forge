@@ -50,6 +50,7 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - JSON HTTP API suitable for local shell integration and harness use
 - session persistence defaults to `~/.shader-forge/engine-sessiond/sessions.json`, with `SHADER_FORGE_SESSIOND_DATA_DIR` available to override the storage directory for local setups and harnesses
 - runtime start/restart can now resolve the active session root and launch the native runtime against that project context instead of only a repo-default root
+- runtime start/restart now also derives a save root under `<session-root>/saved/runtime` so runtime quick-saves stay attached to the active project workspace instead of the backend process directory
 - runtime status now includes `running`, `paused`, and `stopped` states plus the active session/workspace root when the runtime was started from a shell session
 - pause/resume is exposed on hosts where process-signal control is available
 - `/health` reports runtime pause/resume capabilities truthfully for the current host

@@ -4,6 +4,7 @@
 #include "shader_forge/runtime/input_system.hpp"
 #include "shader_forge/runtime/physics_system.hpp"
 #include "shader_forge/runtime/runtime_app.hpp"
+#include "shader_forge/runtime/save_system.hpp"
 #include "shader_forge/runtime/tooling_ui.hpp"
 
 #include <algorithm>
@@ -65,6 +66,7 @@ std::string runtimeVector3String(const std::array<float, 3>& value) {
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 constexpr std::uint32_t kMaxFramesInFlight = 2;
 constexpr std::uint64_t kAuthoredContentPollIntervalNs = 750'000'000ULL;
+constexpr std::string_view kQuickSaveSlotName = "quickslot_01";
 
 std::string sdlErrorString() {
   const char* error = SDL_GetError();
@@ -564,6 +566,7 @@ private:
     initializeAudioSystem();
     initializeAnimationSystem();
     initializeDataFoundation();
+    initializeSaveSystem();
     resolveDataDrivenRuntimeState();
     resolveRuntimeSceneComposition();
     initializePhysicsSystem();
@@ -637,6 +640,13 @@ private:
       .foundationPath = config_.dataFoundationPath,
     }, &error)) {
       throw std::runtime_error("Data foundation initialization failed: " + error);
+    }
+  }
+
+  void initializeSaveSystem() {
+    std::string error;
+    if (!saveSystem_.initialize(SaveSystemConfig{.rootPath = config_.saveRoot}, &error)) {
+      throw std::runtime_error("Save system initialization failed: " + error);
     }
   }
 
@@ -904,6 +914,117 @@ private:
     foldPathLatestTimestamp(config_.physicsRoot, &latestTimestamp);
     foldPathLatestTimestamp(config_.dataFoundationPath, &latestTimestamp);
     return latestTimestamp;
+  }
+
+  std::string currentSaveTimestamp() const {
+    const auto nowSeconds = std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+    return std::to_string(nowSeconds);
+  }
+
+  RuntimeSaveSnapshot captureRuntimeSaveSnapshot(std::string_view slotName) const {
+    RuntimeSaveSnapshot snapshot;
+    snapshot.slotName = std::string(slotName);
+    snapshot.savedAt = currentSaveTimestamp();
+    snapshot.sceneName = activeSceneName_.empty() ? config_.scene : activeSceneName_;
+    snapshot.controlledEntityId = activeControlledEntity_.id;
+    snapshot.controlledDisplayName = activeControlledEntity_.displayName;
+    snapshot.controlledPrefabName = activeControlledEntity_.prefabName;
+    snapshot.controlledSpawnTag = activeControlledEntity_.spawnTag;
+    snapshot.controlledPosition = activeControlledEntity_.position;
+    snapshot.controlledRotation = activeControlledEntity_.rotation;
+    snapshot.animationGraphName = activeAnimationGraphName_;
+    snapshot.animationStateName = activeAnimationState_;
+    snapshot.triggeredOverlapBodies.assign(
+      activeOverlapTriggeredBodies_.begin(),
+      activeOverlapTriggeredBodies_.end());
+    std::sort(snapshot.triggeredOverlapBodies.begin(), snapshot.triggeredOverlapBodies.end());
+    snapshot.valid =
+      activeControlledEntity_.valid
+      && !snapshot.sceneName.empty()
+      && !snapshot.controlledEntityId.empty();
+    return snapshot;
+  }
+
+  bool saveRuntimeState(std::string_view reason) {
+    const RuntimeSaveSnapshot snapshot = captureRuntimeSaveSnapshot(kQuickSaveSlotName);
+    if (!snapshot.valid) {
+      logRuntimeLine("Runtime quicksave skipped because there is no active controlled entity to persist.");
+      return false;
+    }
+
+    std::string error;
+    if (!saveSystem_.saveSlot(kQuickSaveSlotName, snapshot, &error)) {
+      logRuntimeLine("Runtime quicksave failed: " + error);
+      return false;
+    }
+
+    std::ostringstream message;
+    message << "Saved runtime state via " << reason
+            << ": slot=" << snapshot.slotName
+            << ", path=" << saveSystem_.slotPath(kQuickSaveSlotName).generic_string()
+            << ", scene=" << snapshot.sceneName
+            << ", player=" << snapshot.controlledEntityId
+            << ", overlap_bodies=" << snapshot.triggeredOverlapBodies.size();
+    logRuntimeLine(message.str());
+    return true;
+  }
+
+  bool applyRuntimeSaveSnapshot(const RuntimeSaveSnapshot& snapshot, std::string_view reason) {
+    if (!snapshot.valid) {
+      logRuntimeLine("Runtime quickload failed because the save snapshot is invalid.");
+      return false;
+    }
+    if (!dataFoundation_.hasScene(snapshot.sceneName)) {
+      logRuntimeLine("Runtime quickload failed because scene '" + snapshot.sceneName + "' is not present in the current project.");
+      return false;
+    }
+
+    if (activeSceneName_ != snapshot.sceneName) {
+      resolveDataDrivenRuntimeState(snapshot.sceneName);
+      resolveRuntimeSceneComposition();
+      resolveAnimationRuntimeState();
+    }
+
+    activeControlledEntity_.id = snapshot.controlledEntityId;
+    activeControlledEntity_.displayName = snapshot.controlledDisplayName;
+    activeControlledEntity_.prefabName = snapshot.controlledPrefabName;
+    activeControlledEntity_.spawnTag = snapshot.controlledSpawnTag;
+    activeControlledEntity_.position = snapshot.controlledPosition;
+    activeControlledEntity_.rotation = snapshot.controlledRotation;
+    activeControlledEntity_.valid = true;
+
+    activeControlledEntityMoveSpeed_ = 0.0F;
+    activeMovementBlockedBodyName_.clear();
+    activeOverlapTriggeredBodies_ = std::unordered_set<std::string>(
+      snapshot.triggeredOverlapBodies.begin(),
+      snapshot.triggeredOverlapBodies.end());
+    activeTriggeredInteractionEntityId_.clear();
+    activeTriggeredInteractionEffectName_.clear();
+    activeTriggeredInteractionUntilTicks_ = 0;
+    updateInteractionTargetFromView();
+    refreshWindowTitle();
+
+    std::ostringstream message;
+    message << "Loaded runtime state via " << reason
+            << ": slot=" << snapshot.slotName
+            << ", path=" << snapshot.sourcePath.generic_string()
+            << ", scene=" << snapshot.sceneName
+            << ", player=" << snapshot.controlledEntityId
+            << ", overlap_bodies=" << snapshot.triggeredOverlapBodies.size();
+    logRuntimeLine(message.str());
+    logControlledEntityState(reason);
+    return true;
+  }
+
+  bool loadRuntimeState(std::string_view reason) {
+    std::string error;
+    const auto snapshot = saveSystem_.loadSlot(kQuickSaveSlotName, &error);
+    if (!snapshot.has_value()) {
+      logRuntimeLine("Runtime quickload failed: " + error);
+      return false;
+    }
+    return applyRuntimeSaveSnapshot(*snapshot, reason);
   }
 
   bool reloadRuntimeContent(std::string_view reason) {
@@ -1372,6 +1493,7 @@ private:
             << ", animation-root=" << std::filesystem::absolute(config_.animationRoot).string()
             << ", physics-root=" << std::filesystem::absolute(config_.physicsRoot).string()
             << ", data-foundation=" << std::filesystem::absolute(config_.dataFoundationPath).string()
+            << ", save-root=" << std::filesystem::absolute(config_.saveRoot).string()
             << ", tooling-layout=" << std::filesystem::absolute(config_.toolingLayoutPath).string();
     logRuntimeLine(startup.str());
     if (sceneSelectedFromBootstrap_) {
@@ -1385,6 +1507,7 @@ private:
     logRuntimeLine(animationSystem_.foundationSummary());
     logRuntimeLine(physicsSystem_.foundationSummary());
     logRuntimeLine(dataFoundation_.foundationSummary());
+    logRuntimeLine(saveSystem_.foundationSummary());
     logRuntimeLine(dataFoundation_.assetCatalogSummary());
     logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
     logRuntimeMultiline(dataFoundation_.sceneEntitySummary(activeSceneName_));
@@ -1419,7 +1542,7 @@ private:
     logPhysicsQueries("startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
-      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, Enter/left click to trigger the current interaction target, and F7 to reload authored runtime content.");
+      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, Enter/left click to trigger the current interaction target, F7 to reload authored runtime content, F8 to quicksave runtime state, and F9 to quickload it.");
   }
 
   void triggerAudioEvent(std::string_view eventName, std::string_view reason) {
@@ -2003,6 +2126,18 @@ private:
       (void)reloadRuntimeContent("manual_reload");
     }
 
+    if (inputSystem_.actionPressed("save_runtime_state")) {
+      lastUiAction_ = "save_runtime_state";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      (void)saveRuntimeState("manual_quicksave");
+    }
+
+    if (inputSystem_.actionPressed("load_runtime_state")) {
+      lastUiAction_ = "load_runtime_state";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      (void)loadRuntimeState("manual_quickload");
+    }
+
     if (inputSystem_.actionPressed("ui_accept")) {
       lastUiAction_ = "ui_accept";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
@@ -2466,6 +2601,7 @@ private:
   DataFoundation dataFoundation_;
   InputSystem inputSystem_;
   PhysicsSystem physicsSystem_;
+  SaveSystem saveSystem_;
   ToolingUiSystem toolingUi_;
   SDL_Window* window_ = nullptr;
   bool sdlInitialized_ = false;

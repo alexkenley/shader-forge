@@ -31,6 +31,14 @@ name = "reload_runtime_content"
 kind = "button"
 
 [[action]]
+name = "save_runtime_state"
+kind = "button"
+
+[[action]]
+name = "load_runtime_state"
+kind = "button"
+
+[[action]]
 name = "move_x"
 kind = "axis"
 deadzone = 0.12

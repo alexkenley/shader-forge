@@ -65,6 +65,7 @@ Assistant entry points:
 - Session records now persist across `engine_sessiond` restarts and stay available until deleted.
 - Safe file list, file read, and file write APIs are now available inside the active session root.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
+- Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
 - Host filesystem directory listing is already used by the workspace-root picker.
 - Git status and repository initialization are already used by the `Source Control` rail.
 - PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces.
@@ -75,7 +76,7 @@ Assistant entry points:
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
 - `engine build runtime` configures and builds the native runtime with CMake.
-- `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, and tooling roots.
+- `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.
 - `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
 - `engine migrate detect|unity|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
 - `engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane, lower conversion confidence, and low-confidence Blueprint package manifests when exporter-assisted Unreal data is unavailable in the current slice.
@@ -105,6 +106,7 @@ Assistant entry points:
 - The native runtime now projects authored prefab render components into visible debug-proxy scene cards in the external Vulkan window, so the active scene is no longer only a clear-color loop during manual testing.
 - The native runtime now also has a first authored-content iteration lane: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps to pick up shell edits without a full restart.
 - The native runtime now resolves effect-capable interaction targets from the current view/crosshair, and `ui_accept` input such as Enter or left-click triggers first visible interaction feedback plus effect-descriptor-backed logs.
+- The native runtime now also has a first save-system lane: `F8` writes `saved/runtime/quickslot_01.runtime-save.toml`, `F9` reloads it, and the save path follows the active session/project root instead of mixing runtime persistence into authored content roots.
 - The native runtime still renders in an external window.
 - The browser shell remains the primary workspace.
 - Embedded viewer transport and screenshot capture are still deferred.
@@ -119,6 +121,7 @@ Assistant entry points:
 - `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.
 - `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes.
 - `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml` are the initial authored physics lanes.
+- `saved/runtime/*.runtime-save.toml` is now the initial runtime-persistence lane and is intentionally separate from authored source assets.
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
 - The runtime validates the content roots through `DataFoundation` before startup continues.
 - Scene-to-prefab relationships are validated across the catalog.
@@ -133,6 +136,7 @@ Assistant entry points:
 - Shell play/restart now forward the active session root into runtime launch so the external runtime reads the same authored scene files the shell edits.
 - The running runtime now follows those authored edits through a first polling/manual reload lane rather than requiring a full process restart for every save.
 - Effect-capable proxies in the running scene can now be aimed at with the crosshair and triggered through `ui_accept`, which surfaces first runtime feedback for authored `[component.effect]` data instead of leaving it as static catalog metadata.
+- `saved/runtime/quickslot_01.runtime-save.toml` is now the first inspectable runtime save payload, and the current snapshot stores scene, controlled-entity, transform, animation-context, and triggered-overlap state for manual iteration.
 - `Play Mode` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Edit Mode` is restored.
 - The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
@@ -172,7 +176,7 @@ Assistant entry points:
 
 - `input/actions.toml` plus `input/contexts/*.input.toml` define the current action and context maps.
 - Keyboard, mouse, and gamepad input are routed through engine-owned named actions and axes.
-- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, with `F7` now active for authored-content reload.
+- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `save_runtime_state`, `load_runtime_state`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, with `F7` active for authored-content reload plus `F8` and `F9` active for quick-save and quick-load.
 - The native tooling substrate currently has a named panel registry.
 - Tooling layouts are loaded from text and session layouts can be saved back to disk.
 - The current panel set covers runtime stats, input debug, log view, and debug state.
@@ -187,7 +191,7 @@ Assistant entry points:
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
 - `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.
-- `npm run test:runtime-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
+- `npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
 - Both scripts remove generated outputs, rerun the current deterministic baseline, start `engine_sessiond`, and then launch the active shell workflow.
@@ -198,7 +202,7 @@ Assistant entry points:
 
 - A React/Vite shell workspace with persistent backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
 - A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy, transform editing, first prefab component payload editing, and active-session-root runtime handoff.
-- A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, first composed scene-runtime hooks, and session-root launch alignment from the shell/session backend.
+- A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, first composed scene-runtime hooks, session-root launch alignment from the shell/session backend, and a first runtime save-system lane.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
@@ -209,6 +213,7 @@ Assistant entry points:
 - The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.
 - Scene authoring still needs transform gizmos, deeper scene/component payload authoring, and bake-back flows beyond the current text-backed entity plus prefab-component slice.
 - The runtime still needs a full mesh/material rendering path, richer prefab/component instancing beyond the current projected debug proxies, broader scene simulation, and broader native verification.
+- The save system still needs wider world-state persistence, multiple slots, profile/settings support, and migration-aware tooling beyond the current quick-save lane.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
