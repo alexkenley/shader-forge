@@ -1466,6 +1466,41 @@ pre {
   background: rgba(96, 165, 250, 0.2);
 }
 
+.scene-viewport__focus {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: grid;
+  gap: 6px;
+  width: min(420px, calc(100% - 48px));
+  padding: 14px 16px;
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 8px;
+  background: rgba(6, 10, 16, 0.74);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.24);
+  transform: translate(-50%, -50%);
+}
+
+.scene-viewport__focus strong {
+  font-size: 18px;
+}
+
+.scene-viewport__focus p {
+  margin: 0;
+  color: #c4d0dd;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.scene-viewport__eyebrow {
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .scene-viewport__axes--horizontal {
   top: 50%;
   left: 8%;
@@ -1586,10 +1621,55 @@ pre {
   font-style: normal;
 }
 
+.scene-selection-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(14, 165, 233, 0.12);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(13, 21, 30, 0.82), rgba(11, 16, 24, 0.94));
+}
+
+.scene-selection-summary div {
+  display: grid;
+  gap: 3px;
+}
+
+.scene-selection-summary span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scene-selection-summary strong {
+  font-size: 13px;
+}
+
+.scene-selection-summary p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #c4d0dd;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scene-selection-summary--empty {
+  grid-template-columns: 1fr;
+}
+
 .scene-form-block,
 .scene-details {
   display: grid;
   gap: 8px;
+}
+
+.scene-form-help {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .scene-vector-field {
@@ -2290,6 +2370,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .scene-authoring-grid {
+    grid-template-columns: 1fr;
+  }
+
   .guide-hero-stats {
     grid-template-columns: 1fr;
   }
@@ -2303,6 +2387,10 @@ pre {
   }
 
   .scene-vector-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scene-selection-summary {
     grid-template-columns: 1fr;
   }
 

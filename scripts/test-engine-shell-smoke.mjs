@@ -46,6 +46,7 @@ try {
   assert.match(shellApp, /Triptych/);
   assert.match(shellApp, /ReferenceGuideView/);
   assert.match(shellApp, /engine_sessiond/);
+  assert.match(shellApp, /if \(createdTerminal\) \{\s*instance\?\.terminal\.focus\(\);/s);
   assert.match(shellApp, /Edit Session/);
   assert.match(shellApp, /Explorer/);
   assert.match(shellApp, /Source Control/);
@@ -68,6 +69,8 @@ try {
   assert.match(sceneEditorView, /Save Scene/);
   assert.match(sceneEditorView, /Save Prefab/);
   assert.match(sceneEditorView, /Duplicate Scene/);
+  assert.match(sceneEditorView, /Scene = Level/);
+  assert.match(sceneEditorView, /Create or open a scene to start authoring\./);
   assert.match(sceneEditorView, /World outliner/);
   assert.match(sceneEditorView, /Use As Primary/);
   assert.match(sceneEditorView, /Add Entity/);

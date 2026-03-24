@@ -897,7 +897,7 @@ export function SceneEditorView({
           <article className="scene-card scene-card--viewport">
             <div className="scene-card__header">
               <div>
-                <span>Scene viewport</span>
+                <span>Scene viewer</span>
                 <strong>{sceneDraft?.title || sceneDraft?.name || 'No scene selected'}</strong>
               </div>
               <div className="scene-status-pills">
@@ -911,6 +911,27 @@ export function SceneEditorView({
               <div className="scene-viewport__label">
                 <strong>{sceneDraft?.name || 'no-scene'}</strong>
                 <span>{sceneDraft?.path || 'content/scenes/*.scene.toml'}</span>
+              </div>
+              <div className="scene-viewport__focus">
+                {sceneDraft ? (
+                  <>
+                    <span className="scene-viewport__eyebrow">Proxy viewer</span>
+                    <strong>{sceneDraft.title}</strong>
+                    <p>
+                      In-shell preview of the authored level/world structure. Use `Play` to inspect
+                      the native runtime window with the same session content.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <span className="scene-viewport__eyebrow">Scene = Level</span>
+                    <strong>Create or open a scene to start authoring.</strong>
+                    <p>
+                      A scene is the level/world instance. Prefabs are reusable assets you place
+                      into that scene.
+                    </p>
+                  </>
+                )}
               </div>
               <div className="scene-viewport__axes scene-viewport__axes--horizontal" />
               <div className="scene-viewport__axes scene-viewport__axes--vertical" />
@@ -935,22 +956,51 @@ export function SceneEditorView({
             </div>
             <div className="scene-note">
               Transform gizmos and live viewport manipulation are still ahead. This slice makes the
-              `Scene` workspace author real placed-entity and transform data now. Play and Restart
-              now launch the native runtime against the active session root so these same authored
-              files drive manual runtime testing, the runtime can now poll for saved authored
-              content changes or force a reload with `F7`, and effect-capable proxies can now be
-              aimed at and triggered from the external window with Enter or left click.
+              `Scene` workspace author real placed-entity and transform data now. The in-shell
+              viewer is a proxy for quick inspection; `Play` and `Restart` launch the native
+              runtime against the active session root so these same authored files drive manual
+              runtime testing. The runtime can poll for saved authored content changes or force a
+              reload with `F7`, and effect-capable proxies can now be aimed at and triggered from
+              the external window with Enter or left click.
             </div>
           </article>
 
           <article className="scene-card">
             <div className="scene-card__header">
               <div>
-                <span>Scene assets</span>
+                <span>Scenes</span>
                 <strong>{sceneDocuments.length ? `${sceneDocuments.length} scene files` : 'No scenes yet'}</strong>
               </div>
-              <span>{activeSession.rootPath}</span>
+              <span>{sceneDraft?.path || activeSession.rootPath}</span>
             </div>
+            {sceneDraft ? (
+              <div className="scene-selection-summary">
+                <div>
+                  <span>Active scene</span>
+                  <strong>{sceneDraft.title}</strong>
+                </div>
+                <div>
+                  <span>Launch target</span>
+                  <strong>{sceneDraft.name}</strong>
+                </div>
+                <div>
+                  <span>Primary prefab</span>
+                  <strong>{sceneDraft.primaryPrefab || 'unassigned'}</strong>
+                </div>
+                <div>
+                  <span>Entities</span>
+                  <strong>{sceneDraft.entities.length}</strong>
+                </div>
+              </div>
+            ) : (
+              <div className="scene-selection-summary scene-selection-summary--empty">
+                <div>
+                  <span>Scene authoring</span>
+                  <strong>Start with a level/world scene asset.</strong>
+                </div>
+                <p>Create a scene, then open it and place prefabs into the world outliner.</p>
+              </div>
+            )}
             <div className="scene-list">
               {sceneDocuments.length ? (
                 sceneDocuments.map((document) => (
@@ -976,13 +1026,24 @@ export function SceneEditorView({
               <label className="form-field">
                 <span>New scene name</span>
                 <input
+                  autoComplete="off"
                   disabled={!canEdit || busy}
                   onChange={(event) => setNewSceneName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void handleCreateScene();
+                    }
+                  }}
                   placeholder="prototype_arena"
+                  spellCheck={false}
                   type="text"
                   value={newSceneName}
                 />
               </label>
+              <p className="scene-form-help">
+                A scene is the authored level/world instance saved under `content/scenes`.
+              </p>
               <button
                 className="ghost-button ghost-button--sm ghost-button--primary"
                 disabled={!canEdit || busy}
@@ -997,13 +1058,24 @@ export function SceneEditorView({
               <label className="form-field">
                 <span>Duplicate active scene as</span>
                 <input
+                  autoComplete="off"
                   disabled={!sceneDraft || !canEdit || busy}
                   onChange={(event) => setDuplicateSceneName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void handleDuplicateScene();
+                    }
+                  }}
                   placeholder="sandbox_copy"
+                  spellCheck={false}
                   type="text"
                   value={duplicateSceneName}
                 />
               </label>
+              <p className="scene-form-help">
+                Copies the active scene asset and its current authored entity layout.
+              </p>
               <button
                 className="ghost-button ghost-button--sm"
                 disabled={!sceneDraft || !canEdit || busy}

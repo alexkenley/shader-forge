@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
 import {
@@ -649,6 +649,12 @@ function TerminalDock({
     disposeDomListeners: () => void;
   } | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null;
+  const writeTerminalInputEvent = useEffectEvent((tabId: string, input: string) => {
+    onTerminalInput(tabId, input);
+  });
+  const resizeTerminalEvent = useEffectEvent((tabId: string, cols: number, rows: number) => {
+    onTerminalResize(tabId, cols, rows);
+  });
 
   useEffect(() => {
     if (!activeTab || !hostRef.current) {
@@ -667,6 +673,7 @@ function TerminalDock({
     };
 
     let instance = terminalInstanceRef.current;
+    let createdTerminal = false;
     if (!instance || instance.tabId !== activeTab.id) {
       disposeTerminal();
       hostRef.current.innerHTML = '';
@@ -696,7 +703,7 @@ function TerminalDock({
         if (!text) {
           return;
         }
-        onTerminalInput(activeTab.id, text);
+        writeTerminalInputEvent(activeTab.id, text);
       };
 
       terminal.attachCustomKeyEventHandler((event) => {
@@ -728,7 +735,7 @@ function TerminalDock({
         fitAddon.fit();
         const cols = terminal.cols;
         const rows = terminal.rows;
-        onTerminalResize(activeTab.id, cols, rows);
+        resizeTerminalEvent(activeTab.id, cols, rows);
       });
 
       resizeObserver.observe(terminalHost);
@@ -790,6 +797,7 @@ function TerminalDock({
         disposeDomListeners,
       };
       instance = terminalInstanceRef.current;
+      createdTerminal = true;
     }
 
     if (instance && instance.writtenOutput !== activeTab.output) {
@@ -808,14 +816,16 @@ function TerminalDock({
     }
 
     instance?.fitAddon.fit();
-    instance?.terminal.focus();
+    if (createdTerminal) {
+      instance?.terminal.focus();
+    }
 
     return () => {
       if (!tabs.length) {
         disposeTerminal();
       }
     };
-  }, [activeTab, onTerminalInput, onTerminalResize, tabs.length]);
+  }, [activeTab, tabs.length]);
 
   useEffect(() => {
     return () => {
