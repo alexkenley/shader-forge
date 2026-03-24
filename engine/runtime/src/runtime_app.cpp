@@ -23,6 +23,7 @@
 #include <system_error>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -245,6 +246,14 @@ bool physicsBodyBlocksControlledMovement(const PhysicsBodySnapshot& body) {
   return body.valid
     && body.motionType != "kinematic"
     && body.layer != "Query_Only";
+}
+
+bool effectTriggerRequiresOverlap(std::string_view trigger) {
+  return trigger == "on_overlap";
+}
+
+bool effectTriggerSupportsManualInteraction(std::string_view trigger) {
+  return !effectTriggerRequiresOverlap(trigger);
 }
 
 bool overlapsHorizontalCircleAabb(const std::array<float, 3>& center, float radius, const PhysicsBodySnapshot& body) {
@@ -671,6 +680,7 @@ private:
     activeControlledEntity_ = RuntimeControlledEntityState{};
     activeInteractionTarget_ = RuntimeControlledEntityState{};
     activeMovementBlockedBodyName_.clear();
+    activeOverlapTriggeredBodies_.clear();
     activeSceneRenderProxies_.clear();
     activeTriggeredInteractionEntityId_.clear();
     activeTriggeredInteractionEffectName_.clear();
@@ -807,6 +817,9 @@ private:
 
     for (const auto& proxy : activeSceneRenderProxies_) {
       if (!proxy.hasEffectComponent || proxy.effectName.empty()) {
+        continue;
+      }
+      if (!effectTriggerSupportsManualInteraction(proxy.effectTrigger)) {
         continue;
       }
 
@@ -1668,6 +1681,92 @@ private:
     }
   }
 
+  const RuntimeSceneRenderProxy* findOverlapEffectProxyForPhysicsBody(const PhysicsBodySnapshot& body) const {
+    const RuntimeSceneRenderProxy* bestProxy = nullptr;
+    float bestDistanceSquared = std::numeric_limits<float>::max();
+
+    for (const auto& proxy : activeSceneRenderProxies_) {
+      if (proxy.prefabName != body.sourcePrefab || proxy.effectName.empty()) {
+        continue;
+      }
+      if (!effectTriggerRequiresOverlap(proxy.effectTrigger)) {
+        continue;
+      }
+
+      const float deltaX = proxy.worldPosition[0] - static_cast<float>(body.position[0]);
+      const float deltaY = proxy.worldPosition[1] - static_cast<float>(body.position[1]);
+      const float deltaZ = proxy.worldPosition[2] - static_cast<float>(body.position[2]);
+      const float distanceSquared = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+      if (distanceSquared < bestDistanceSquared) {
+        bestDistanceSquared = distanceSquared;
+        bestProxy = &proxy;
+      }
+    }
+
+    return bestProxy;
+  }
+
+  void updateOverlapTriggeredEffects() {
+    if (!activeControlledEntity_.valid) {
+      activeOverlapTriggeredBodies_.clear();
+      return;
+    }
+
+    const std::string sceneName = activeSceneName_.empty() ? config_.scene : activeSceneName_;
+    const auto sceneBodies = physicsSystem_.bodiesForScene(sceneName);
+    const auto overlaps = physicsSystem_.overlapSphereScene(
+      sceneName,
+      {
+        static_cast<double>(activeControlledEntity_.position[0]),
+        static_cast<double>(activeControlledEntity_.position[1]),
+        static_cast<double>(activeControlledEntity_.position[2]),
+      },
+      0.75);
+
+    std::unordered_set<std::string> nextTriggeredBodies;
+    for (const auto& overlap : overlaps) {
+      if (overlap.layerName != "Query_Only") {
+        continue;
+      }
+
+      const auto bodyIt = std::find_if(
+        sceneBodies.begin(),
+        sceneBodies.end(),
+        [&overlap](const PhysicsBodySnapshot& body) {
+          return body.name == overlap.bodyName;
+        });
+      if (bodyIt == sceneBodies.end()) {
+        continue;
+      }
+
+      const RuntimeSceneRenderProxy* proxy = findOverlapEffectProxyForPhysicsBody(*bodyIt);
+      if (proxy == nullptr) {
+        continue;
+      }
+
+      nextTriggeredBodies.insert(bodyIt->name);
+      if (activeOverlapTriggeredBodies_.contains(bodyIt->name)) {
+        continue;
+      }
+
+      activeTriggeredInteractionEntityId_ = proxy->id;
+      activeTriggeredInteractionEffectName_ = proxy->effectName;
+      activeTriggeredInteractionUntilTicks_ = SDL_GetTicksNS() + 650'000'000ULL;
+
+      std::ostringstream message;
+      message << "Scene overlap effect " << proxy->effectName
+              << " triggered via on_overlap"
+              << ": entity=" << proxy->id
+              << ", body=" << bodyIt->name
+              << ", prefab=" << proxy->prefabName
+              << ", position=(" << runtimeVector3String(proxy->worldPosition) << ')';
+      logRuntimeLine(message.str());
+      refreshWindowTitle();
+    }
+
+    activeOverlapTriggeredBodies_ = std::move(nextTriggeredBodies);
+  }
+
   void updateToolingState(double deltaSeconds) {
     toolingUi_.recordFrame(deltaSeconds, activeSceneName_.empty() ? config_.scene : activeSceneName_);
     toolingUi_.recordInputState(moveX_, moveY_, lookX_, lookY_, lastUiAction_, inputDebugEnabled_);
@@ -1857,6 +1956,7 @@ private:
 
       pollAuthoredContentReload(currentTicks);
       updateRuntimeSceneState(deltaSeconds);
+      updateOverlapTriggeredEffects();
       updateInteractionTargetFromView();
       updateToolingState(deltaSeconds);
 
@@ -2280,6 +2380,7 @@ private:
   RuntimeControlledEntityState activeControlledEntity_;
   RuntimeControlledEntityState activeInteractionTarget_;
   std::string activeMovementBlockedBodyName_;
+  std::unordered_set<std::string> activeOverlapTriggeredBodies_;
   std::vector<RuntimeSceneRenderProxy> activeSceneRenderProxies_;
   std::string activeTriggeredInteractionEntityId_;
   std::string activeTriggeredInteractionEffectName_;

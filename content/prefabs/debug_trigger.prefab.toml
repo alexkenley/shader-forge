@@ -1,0 +1,16 @@
+schema = "shader_forge.prefab"
+schema_version = 1
+name = "debug_trigger"
+owner_system = "scene_system"
+runtime_format = "flatbuffer"
+
+category = "gameplay"
+spawn_tag = "debug_trigger"
+
+[component.render]
+procgeo = "debug_crate"
+material_hint = "debug_trigger"
+
+[component.effect]
+effect = "impact_spark"
+trigger = "on_overlap"
