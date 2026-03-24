@@ -66,11 +66,23 @@ std::string runtimeVector3String(const std::array<float, 3>& value) {
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 constexpr std::uint32_t kMaxFramesInFlight = 2;
 constexpr std::uint64_t kAuthoredContentPollIntervalNs = 750'000'000ULL;
-constexpr std::string_view kQuickSaveSlotName = "quickslot_01";
+constexpr std::array<std::string_view, 3> kQuickSaveSlotNames = {
+  "quickslot_01",
+  "quickslot_02",
+  "quickslot_03",
+};
 
 std::string sdlErrorString() {
   const char* error = SDL_GetError();
   return error && *error ? error : "unknown SDL error";
+}
+
+std::string describeSdlWindowCreationError(std::string message) {
+  if (message.find("Vulkan support is either not configured in SDL") != std::string::npos
+      || message.find("No dynamic Vulkan support") != std::string::npos) {
+    message += ". Install an SDL3 build with Vulkan window support enabled. On Windows, rerun scripts/install-windows-native-runtime-deps.ps1 so vcpkg installs sdl3[vulkan]:x64-windows, then rebuild.";
+  }
+  return message;
 }
 
 std::string vkResultString(VkResult result) {
@@ -138,7 +150,6 @@ struct SwapchainSupportDetails {
 
 struct FrameSync {
   VkSemaphore imageAvailable = VK_NULL_HANDLE;
-  VkSemaphore renderFinished = VK_NULL_HANDLE;
   VkFence inFlight = VK_NULL_HANDLE;
 };
 
@@ -602,7 +613,7 @@ private:
 
     window_ = SDL_CreateWindow(config_.title.c_str(), config_.width, config_.height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
-      throw std::runtime_error("SDL_CreateWindow failed: " + sdlErrorString());
+      throw std::runtime_error("SDL_CreateWindow failed: " + describeSdlWindowCreationError(sdlErrorString()));
     }
 
     createInstance();
@@ -674,6 +685,7 @@ private:
     if (!saveSystem_.initialize(SaveSystemConfig{.rootPath = config_.saveRoot}, &error)) {
       throw std::runtime_error("Save system initialization failed: " + error);
     }
+    refreshRuntimeSaveSlotCatalog();
   }
 
   void initializePhysicsSystem() {
@@ -960,6 +972,56 @@ private:
     return std::to_string(nowSeconds);
   }
 
+  std::string_view activeQuickSaveSlotName() const {
+    return kQuickSaveSlotNames[activeSaveSlotIndex_];
+  }
+
+  const RuntimeSaveSnapshot* activeQuickSaveSlotSnapshot() const {
+    const std::string_view slotName = activeQuickSaveSlotName();
+    const auto it = std::find_if(
+      availableRuntimeSaveSlots_.begin(),
+      availableRuntimeSaveSlots_.end(),
+      [slotName](const RuntimeSaveSnapshot& snapshot) {
+        return snapshot.slotName == slotName;
+      });
+    return it != availableRuntimeSaveSlots_.end() ? &(*it) : nullptr;
+  }
+
+  void refreshRuntimeSaveSlotCatalog() {
+    std::string error;
+    availableRuntimeSaveSlots_ = saveSystem_.listSlots(&error);
+    if (!error.empty()) {
+      logRuntimeLine("Runtime save slot catalog warning: " + error);
+    }
+  }
+
+  void logActiveRuntimeSaveSlot(std::string_view reason) {
+    std::ostringstream message;
+    message << "Active runtime save slot via " << reason
+            << ": slot=" << activeQuickSaveSlotName()
+            << ", available_slots=" << availableRuntimeSaveSlots_.size();
+    if (const RuntimeSaveSnapshot* snapshot = activeQuickSaveSlotSnapshot(); snapshot != nullptr) {
+      message << ", scene=" << snapshot->sceneName
+              << ", player=" << snapshot->controlledEntityId
+              << ", saved_at=" << snapshot->savedAt;
+    } else {
+      message << ", state=empty";
+    }
+    logRuntimeLine(message.str());
+  }
+
+  void cycleRuntimeSaveSlot(int delta, std::string_view reason) {
+    if (delta == 0) {
+      return;
+    }
+
+    const int count = static_cast<int>(kQuickSaveSlotNames.size());
+    const int nextIndex = (static_cast<int>(activeSaveSlotIndex_) + delta + count) % count;
+    activeSaveSlotIndex_ = static_cast<std::size_t>(nextIndex);
+    logActiveRuntimeSaveSlot(reason);
+    refreshWindowTitle();
+  }
+
   RuntimeSaveSnapshot captureRuntimeSaveSnapshot(std::string_view slotName) const {
     RuntimeSaveSnapshot snapshot;
     snapshot.slotName = std::string(slotName);
@@ -985,26 +1047,30 @@ private:
   }
 
   bool saveRuntimeState(std::string_view reason) {
-    const RuntimeSaveSnapshot snapshot = captureRuntimeSaveSnapshot(kQuickSaveSlotName);
+    const std::string_view slotName = activeQuickSaveSlotName();
+    const RuntimeSaveSnapshot snapshot = captureRuntimeSaveSnapshot(slotName);
     if (!snapshot.valid) {
       logRuntimeLine("Runtime quicksave skipped because there is no active controlled entity to persist.");
       return false;
     }
 
     std::string error;
-    if (!saveSystem_.saveSlot(kQuickSaveSlotName, snapshot, &error)) {
+    if (!saveSystem_.saveSlot(slotName, snapshot, &error)) {
       logRuntimeLine("Runtime quicksave failed: " + error);
       return false;
     }
+    refreshRuntimeSaveSlotCatalog();
 
     std::ostringstream message;
     message << "Saved runtime state via " << reason
             << ": slot=" << snapshot.slotName
-            << ", path=" << saveSystem_.slotPath(kQuickSaveSlotName).generic_string()
+            << ", path=" << saveSystem_.slotPath(slotName).generic_string()
             << ", scene=" << snapshot.sceneName
             << ", player=" << snapshot.controlledEntityId
             << ", overlap_bodies=" << snapshot.triggeredOverlapBodies.size();
     logRuntimeLine(message.str());
+    logActiveRuntimeSaveSlot(reason);
+    refreshWindowTitle();
     return true;
   }
 
@@ -1056,13 +1122,19 @@ private:
   }
 
   bool loadRuntimeState(std::string_view reason) {
+    const std::string_view slotName = activeQuickSaveSlotName();
     std::string error;
-    const auto snapshot = saveSystem_.loadSlot(kQuickSaveSlotName, &error);
+    const auto snapshot = saveSystem_.loadSlot(slotName, &error);
     if (!snapshot.has_value()) {
       logRuntimeLine("Runtime quickload failed: " + error);
       return false;
     }
-    return applyRuntimeSaveSnapshot(*snapshot, reason);
+    refreshRuntimeSaveSlotCatalog();
+    const bool loaded = applyRuntimeSaveSnapshot(*snapshot, reason);
+    if (loaded) {
+      logActiveRuntimeSaveSlot(reason);
+    }
+    return loaded;
   }
 
   bool reloadRuntimeContent(std::string_view reason) {
@@ -1144,6 +1216,7 @@ private:
     if (activeScenePhysicsBodyCount_ > 0) {
       logPhysicsDebugVisualization(reasonLabel);
     }
+    logActiveRuntimeSaveSlot(reasonLabel);
 
     logControlledEntityState(reasonLabel);
     logInteractionTarget(reasonLabel);
@@ -1330,13 +1403,13 @@ private:
 
     for (auto& frame : frames_) {
       throwVkIfFailed(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &frame.imageAvailable), "vkCreateSemaphore(imageAvailable)");
-      throwVkIfFailed(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &frame.renderFinished), "vkCreateSemaphore(renderFinished)");
       throwVkIfFailed(vkCreateFence(device_, &fenceInfo, nullptr, &frame.inFlight), "vkCreateFence");
     }
   }
 
   void createSwapchainResources() {
     createSwapchain();
+    createPresentSemaphores();
     createImageViews();
     createRenderPass();
     createFramebuffers();
@@ -1414,6 +1487,20 @@ private:
     }
   }
 
+  void createPresentSemaphores() {
+    swapchainRenderFinishedSemaphores_.clear();
+    swapchainRenderFinishedSemaphores_.reserve(swapchainImages_.size());
+
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    for (std::size_t imageIndex = 0; imageIndex < swapchainImages_.size(); ++imageIndex) {
+      VkSemaphore semaphore = VK_NULL_HANDLE;
+      throwVkIfFailed(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &semaphore), "vkCreateSemaphore(renderFinishedPerImage)");
+      swapchainRenderFinishedSemaphores_.push_back(semaphore);
+    }
+  }
+
   void createRenderPass() {
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = swapchainImageFormat_;
@@ -1475,6 +1562,13 @@ private:
   }
 
   void destroySwapchainResources() {
+    for (VkSemaphore semaphore : swapchainRenderFinishedSemaphores_) {
+      if (semaphore != VK_NULL_HANDLE) {
+        vkDestroySemaphore(device_, semaphore, nullptr);
+      }
+    }
+    swapchainRenderFinishedSemaphores_.clear();
+
     for (VkFramebuffer framebuffer : swapchainFramebuffers_) {
       if (framebuffer != VK_NULL_HANDLE) {
         vkDestroyFramebuffer(device_, framebuffer, nullptr);
@@ -1579,6 +1673,7 @@ private:
     if (activeScenePhysicsBodyCount_ > 0) {
       logPhysicsDebugVisualization("startup");
     }
+    logActiveRuntimeSaveSlot("startup");
     logControlledEntityState("startup");
     logInteractionTarget("startup");
     triggerAudioEvent("runtime_boot", "startup");
@@ -1586,7 +1681,7 @@ private:
     logPhysicsQueries("startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
-      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, Enter/left click to trigger the current interaction target, F7 to reload authored runtime content, F8 to quicksave runtime state, F9 to quickload it, and F10 to toggle physics debug visualization.");
+      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, Enter/left click to trigger the current interaction target, F7 to reload authored runtime content, F8 to quicksave the active runtime save slot, F9 to quickload it, F10 to toggle physics debug visualization, and F11/F12 to cycle runtime save slots.");
   }
 
   void triggerAudioEvent(std::string_view eventName, std::string_view reason) {
@@ -1874,6 +1969,10 @@ private:
         title << " blocked=" << activeMovementBlockedBodyName_;
       }
     }
+    title << " save=" << activeQuickSaveSlotName();
+    if (!availableRuntimeSaveSlots_.empty()) {
+      title << " saves=" << availableRuntimeSaveSlots_.size();
+    }
     if (activeInteractionTarget_.valid && !activeInteractionTarget_.effectName.empty()) {
       title << " target=" << activeInteractionTarget_.id;
     }
@@ -2074,23 +2173,25 @@ private:
     toolingUi_.recordFrame(deltaSeconds, activeSceneName_.empty() ? config_.scene : activeSceneName_);
     toolingUi_.recordInputState(moveX_, moveY_, lookX_, lookY_, lastUiAction_, inputDebugEnabled_);
     toolingUi_.recordRuntimeState(ToolingRuntimeStateSnapshot{
-      .controlledEntityId = activeControlledEntity_.id,
-      .controlledEntityPosition = activeControlledEntity_.valid ? runtimeVector3String(activeControlledEntity_.position) : std::string{},
-      .blockedBodyName = activeMovementBlockedBodyName_,
-      .physicsFocusBodyName = physicsDebugFocusBodyName(),
-      .animationGraphName = activeAnimationGraphName_,
-      .animationStateName = activeAnimationState_,
-      .animationClipName = activeAnimationClip_,
-      .interactionTargetId = activeInteractionTarget_.id,
-      .interactionEffectName = activeInteractionTarget_.effectName,
-      .activeTriggeredEffectName = activeTriggeredInteractionEffectName_,
-      .physicsBodyCount = activeScenePhysicsBodyCount_,
-      .queryBodyCount = activeSceneQueryBodyCount_,
-      .activeOverlapBodyCount = activeOverlapTriggeredBodies_.size(),
-      .moveSpeed = activeControlledEntityMoveSpeed_,
-      .controlledEntityValid = activeControlledEntity_.valid,
-      .interactionTargetValid = activeInteractionTarget_.valid,
-      .physicsDebugEnabled = physicsDebugEnabled_,
+      activeControlledEntity_.id,
+      activeControlledEntity_.valid ? runtimeVector3String(activeControlledEntity_.position) : std::string{},
+      activeMovementBlockedBodyName_,
+      physicsDebugFocusBodyName(),
+      activeAnimationGraphName_,
+      activeAnimationState_,
+      activeAnimationClip_,
+      std::string(activeQuickSaveSlotName()),
+      activeInteractionTarget_.id,
+      activeInteractionTarget_.effectName,
+      activeTriggeredInteractionEffectName_,
+      availableRuntimeSaveSlots_.size(),
+      activeScenePhysicsBodyCount_,
+      activeSceneQueryBodyCount_,
+      activeOverlapTriggeredBodies_.size(),
+      activeControlledEntityMoveSpeed_,
+      activeControlledEntity_.valid,
+      activeInteractionTarget_.valid,
+      physicsDebugEnabled_,
     });
 
     const std::uint64_t now = SDL_GetTicksNS();
@@ -2216,6 +2317,18 @@ private:
       lastUiAction_ = "toggle_physics_debug";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
       logPhysicsDebugVisualization("toggle_physics_debug");
+    }
+
+    if (inputSystem_.actionPressed("select_previous_save_slot")) {
+      lastUiAction_ = "select_previous_save_slot";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      cycleRuntimeSaveSlot(-1, "select_previous_save_slot");
+    }
+
+    if (inputSystem_.actionPressed("select_next_save_slot")) {
+      lastUiAction_ = "select_next_save_slot";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      cycleRuntimeSaveSlot(1, "select_next_save_slot");
     }
 
     if (inputSystem_.actionPressed("ui_accept")) {
@@ -2665,6 +2778,7 @@ private:
     throwVkIfFailed(vkResetCommandBuffer(commandBuffers_[currentFrame_], 0), "vkResetCommandBuffer");
 
     recordCommandBuffer(commandBuffers_[currentFrame_], imageIndex, elapsedSeconds);
+    VkSemaphore renderFinishedSemaphore = swapchainRenderFinishedSemaphores_.at(imageIndex);
 
     const VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     VkSubmitInfo submitInfo{};
@@ -2675,14 +2789,14 @@ private:
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffers_[currentFrame_];
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &frame.renderFinished;
+    submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
     throwVkIfFailed(vkQueueSubmit(graphicsQueue_, 1, &submitInfo, frame.inFlight), "vkQueueSubmit");
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &frame.renderFinished;
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &swapchain_;
     presentInfo.pImageIndices = &imageIndex;
@@ -2748,10 +2862,6 @@ private:
         if (frame.inFlight != VK_NULL_HANDLE) {
           vkDestroyFence(device_, frame.inFlight, nullptr);
           frame.inFlight = VK_NULL_HANDLE;
-        }
-        if (frame.renderFinished != VK_NULL_HANDLE) {
-          vkDestroySemaphore(device_, frame.renderFinished, nullptr);
-          frame.renderFinished = VK_NULL_HANDLE;
         }
         if (frame.imageAvailable != VK_NULL_HANDLE) {
           vkDestroySemaphore(device_, frame.imageAvailable, nullptr);
@@ -2824,6 +2934,7 @@ private:
   std::vector<VkImage> swapchainImages_;
   std::vector<VkImageView> swapchainImageViews_;
   std::vector<VkFramebuffer> swapchainFramebuffers_;
+  std::vector<VkSemaphore> swapchainRenderFinishedSemaphores_;
   VkRenderPass renderPass_ = VK_NULL_HANDLE;
 
   VkCommandPool commandPool_ = VK_NULL_HANDLE;
@@ -2835,6 +2946,7 @@ private:
   bool runtimeExitRequested_ = false;
   bool inputDebugEnabled_ = false;
   bool physicsDebugEnabled_ = true;
+  std::size_t activeSaveSlotIndex_ = 0;
   float moveX_ = 0.0F;
   float moveY_ = 0.0F;
   float lookX_ = 0.0F;
@@ -2848,6 +2960,7 @@ private:
   std::size_t activeSceneRenderableCount_ = 0;
   std::size_t activeScenePhysicsBodyCount_ = 0;
   std::size_t activeSceneQueryBodyCount_ = 0;
+  std::vector<RuntimeSaveSnapshot> availableRuntimeSaveSlots_;
   std::string activeAnimationGraphName_;
   std::string activeAnimationEntryState_;
   std::string activeAnimationEntryClip_;
@@ -2897,7 +3010,7 @@ int RuntimeApp::run(const RuntimeConfig& config) {
   }
 #else
   (void)config;
-  logLine("shader_forge_runtime built in stub mode. Install SDL3 development files, Vulkan headers/loader, and CMake to launch the native runtime.");
+  logLine("shader_forge_runtime built in stub mode. Install SDL3 development files and the Vulkan SDK/loader to launch the native runtime.");
   return 2;
 #endif
 }

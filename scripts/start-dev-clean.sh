@@ -31,6 +31,88 @@ done
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
+normalize_command_token() {
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+
+  if [[ ${#value} -ge 2 ]]; then
+    if [[ "$value" == '"'*'"' ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == "'"*"'" ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+
+  printf '%s' "$value"
+}
+
+command_responds() {
+  local command
+  command="$(normalize_command_token "${1:-}")"
+  [[ -n "$command" ]] || return 1
+  "$command" --version >/dev/null 2>&1
+}
+
+resolve_cmake_command() {
+  local configured
+  configured="$(normalize_command_token "${SHADER_FORGE_CMAKE:-}")"
+  if [[ -n "$configured" ]] && command_responds "$configured"; then
+    printf '%s' "$configured"
+    return 0
+  fi
+
+  if command -v cmake >/dev/null 2>&1; then
+    command -v cmake
+    return 0
+  fi
+
+  local candidate=''
+  local candidates=(
+    "/mnt/c/Program Files/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files (x86)/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files/Microsoft Visual Studio/2022/Professional/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files/Microsoft Visual Studio/2022/Enterprise/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files/Microsoft Visual Studio/2022/Preview/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files (x86)/Microsoft Visual Studio/2019/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files (x86)/Microsoft Visual Studio/2019/Professional/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+    "/mnt/c/Program Files (x86)/Microsoft Visual Studio/2019/Preview/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+configure_cmake_environment() {
+  local cmake_command=''
+  if cmake_command="$(resolve_cmake_command)"; then
+    export SHADER_FORGE_CMAKE="$cmake_command"
+    if [[ "$cmake_command" == */* ]]; then
+      local cmake_dir
+      cmake_dir="$(dirname "$cmake_command")"
+      case ":$PATH:" in
+        *":$cmake_dir:"*) ;;
+        *) export PATH="$cmake_dir:$PATH" ;;
+      esac
+    fi
+    printf '[shader-forge] Using CMake: %s\n' "$cmake_command"
+    return 0
+  fi
+
+  printf '[shader-forge] CMake was not found on PATH or in common install locations. Build and Build + Run will stay unavailable until it is installed.\n'
+  return 1
+}
+
 clean_targets=(
   build
   out
@@ -50,6 +132,7 @@ clean_targets=(
 )
 
 printf '[shader-forge] Repo root: %s\n' "$repo_root"
+configure_cmake_environment || true
 printf '[shader-forge] Cleaning generated outputs before startup...\n'
 
 cd "$repo_root"

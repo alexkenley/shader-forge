@@ -43,6 +43,14 @@ name = "toggle_physics_debug"
 kind = "button"
 
 [[action]]
+name = "select_previous_save_slot"
+kind = "button"
+
+[[action]]
+name = "select_next_save_slot"
+kind = "button"
+
+[[action]]
 name = "move_x"
 kind = "axis"
 deadzone = 0.12

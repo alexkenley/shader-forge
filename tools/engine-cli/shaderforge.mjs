@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bakeAssetPipeline } from './lib/asset-pipeline.mjs';
 import { createMigrationRun, summarizeMigrationReport } from './lib/migration-foundation.mjs';
 import { startEngineSessiond } from '../engine-sessiond/server.mjs';
+import { requireCMakeCommand } from '../shared/cmake-command.mjs';
 
 const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http://127.0.0.1:41741';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -83,18 +84,6 @@ async function runReservedPlaceholder(commandName) {
   console.log('Current implemented surfaces: sessiond, files, runtime build, runtime run, asset bake, and migration detection/report foundations.');
 }
 
-function commandExists(command) {
-  const result = spawnSync(command, ['--version'], { encoding: 'utf8' });
-  return result.status === 0;
-}
-
-function requireCommand(command, guidance) {
-  if (commandExists(command)) {
-    return;
-  }
-  throw new Error(guidance);
-}
-
 function normalizeBuildConfig(flags) {
   return String(flags.config || 'Debug');
 }
@@ -131,19 +120,23 @@ async function runCommand(command, args, options = {}) {
 }
 
 async function buildRuntime(flags) {
-  requireCommand('cmake', 'cmake is required for runtime build. Install cmake to use `engine build` or `engine run`.');
-
+  const cmakeCommand = requireCMakeCommand('runtime build');
   const buildDir = resolveBuildDirectory(flags);
   const config = normalizeBuildConfig(flags);
   const generator = process.env.CMAKE_GENERATOR?.trim() || '';
+  const toolchainFile = process.env.CMAKE_TOOLCHAIN_FILE?.trim() || '';
   const configureArgs = ['-S', repoRoot, '-B', buildDir, `-DCMAKE_BUILD_TYPE=${config}`, '-DSHADER_FORGE_BUILD_RUNTIME=ON'];
 
   if (generator) {
     configureArgs.push('-G', generator);
   }
 
-  await runCommand('cmake', configureArgs);
-  await runCommand('cmake', ['--build', buildDir, '--config', config, '--target', 'shader_forge_runtime']);
+  if (toolchainFile) {
+    configureArgs.push(`-DCMAKE_TOOLCHAIN_FILE=${toolchainFile}`);
+  }
+
+  await runCommand(cmakeCommand, configureArgs);
+  await runCommand(cmakeCommand, ['--build', buildDir, '--config', config, '--target', 'shader_forge_runtime']);
 
   return {
     buildDir,

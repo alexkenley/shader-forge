@@ -49,6 +49,7 @@ public:
     std::string_view slotName,
     const RuntimeSaveSnapshot& snapshot,
     std::string* errorMessage = nullptr) const;
+  std::vector<RuntimeSaveSnapshot> listSlots(std::string* errorMessage = nullptr) const;
   std::optional<RuntimeSaveSnapshot> loadSlot(
     std::string_view slotName,
     std::string* errorMessage = nullptr) const;

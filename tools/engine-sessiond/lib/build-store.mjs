@@ -1,17 +1,11 @@
 import path from 'node:path';
 import process from 'node:process';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { requireCMakeCommand } from '../../shared/cmake-command.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const defaultBuildDir = path.join(repoRoot, 'build', 'runtime');
-
-function commandExists(command) {
-  const result = spawnSync(command, ['--version'], {
-    encoding: 'utf8',
-  });
-  return result.status === 0;
-}
 
 function resolveBuildDirectory(buildDir) {
   if (!buildDir) {
@@ -25,11 +19,21 @@ function defaultLaunchFactory({ target = 'runtime', config = 'Debug', buildDir }
     throw new Error(`Unsupported build target: ${target}`);
   }
 
-  if (!commandExists('cmake')) {
-    throw new Error('cmake is required for runtime build. Install cmake to use the build lane.');
-  }
-
+  const cmakeCommand = requireCMakeCommand('runtime build');
   const resolvedBuildDir = resolveBuildDirectory(buildDir);
+  const toolchainFile = process.env.CMAKE_TOOLCHAIN_FILE?.trim() || '';
+  const configureArgs = [
+    '-S',
+    repoRoot,
+    '-B',
+    resolvedBuildDir,
+    `-DCMAKE_BUILD_TYPE=${config}`,
+    '-DSHADER_FORGE_BUILD_RUNTIME=ON',
+  ];
+
+  if (toolchainFile) {
+    configureArgs.push(`-DCMAKE_TOOLCHAIN_FILE=${toolchainFile}`);
+  }
 
   return {
     target,
@@ -38,20 +42,13 @@ function defaultLaunchFactory({ target = 'runtime', config = 'Debug', buildDir }
     steps: [
       {
         label: 'Configure',
-        command: 'cmake',
-        args: [
-          '-S',
-          repoRoot,
-          '-B',
-          resolvedBuildDir,
-          `-DCMAKE_BUILD_TYPE=${config}`,
-          '-DSHADER_FORGE_BUILD_RUNTIME=ON',
-        ],
+        command: cmakeCommand,
+        args: configureArgs,
         cwd: repoRoot,
       },
       {
         label: 'Build',
-        command: 'cmake',
+        command: cmakeCommand,
         args: ['--build', resolvedBuildDir, '--config', config, '--target', 'shader_forge_runtime'],
         cwd: repoRoot,
       },

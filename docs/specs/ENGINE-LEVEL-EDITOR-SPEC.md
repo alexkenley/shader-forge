@@ -29,8 +29,8 @@ All three paths must converge on the same saved scene/prefab formats.
 
 ## Editing Modes
 
-- `Edit Mode`: persistent authoring mode; changes save to scene or prefab assets
-- `Play Mode`: runtime simulation mode; changes are discarded unless explicitly applied
+- `Authoring`: persistent authoring mode; changes save to scene or prefab assets
+- `Review`: non-persistent inspection mode inside the shell editor; changes are discarded unless explicitly applied
 - `Simulate In Editor`: future mode for testing without leaving the editing context
 
 ## Current Implemented Slice
@@ -40,14 +40,15 @@ The first real level-authoring slice now lives in the shell `Scene` workspace.
 Current implemented behavior:
 
 - the shell loads `content/scenes/*.scene.toml` and `content/prefabs/*.prefab.toml` from the active session root
-- `Edit Mode` is the persistent authoring lane
-- `Play Mode` is currently a discard-only stance that drops unsaved drafts before returning to a non-persistent preview state
+- `Authoring` is the persistent authoring lane
+- `Review` is currently a discard-only stance that drops unsaved drafts before returning to a non-persistent preview state
 - authored scenes can now round-trip deterministic `[entity.<id>]` sections with `source_prefab`, `parent`, `position`, `rotation`, and `scale`
 - a world outliner now exposes the authored scene plus its placed-entity hierarchy
 - prefab assets can now round-trip first-pass `[component.render]` and `[component.effect]` sections for procgeo/effect-driven component payloads
 - a details surface can edit current scene metadata, placed-entity transform/source-prefab/parent data, prefab metadata, and the first prefab component payload fields
 - an asset browser can inspect prefabs, assign the scene primary prefab, and instantiate prefab-backed entities into the active scene
 - save, reload-from-disk, revert-draft, duplicate-scene, create-entity, duplicate-entity, delete-entity, and local undo/redo flows now exist for this first authoring slice
+- `Run Scene` and `Build + Run` are the explicit native-runtime launch path for the currently open scene and workspace
 
 Current boundary:
 

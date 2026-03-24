@@ -177,6 +177,15 @@ std::string slotFileName(std::string_view slotName) {
   return normalized + ".runtime-save.toml";
 }
 
+std::string slotNameFromFileName(const std::filesystem::path& path) {
+  const std::string fileName = path.filename().string();
+  constexpr std::string_view kSuffix = ".runtime-save.toml";
+  if (fileName.size() <= kSuffix.size() || !std::string_view(fileName).ends_with(kSuffix)) {
+    return {};
+  }
+  return normalizeToken(fileName.substr(0, fileName.size() - kSuffix.size()));
+}
+
 }  // namespace
 
 struct SaveSystem::Impl {
@@ -260,6 +269,64 @@ bool SaveSystem::saveSlot(
   stream << "animation_state = \"" << snapshot.animationStateName << "\"\n";
   stream << "triggered_overlap_bodies = \"" << joinListValue(overlapBodies) << "\"\n";
   return true;
+}
+
+std::vector<RuntimeSaveSnapshot> SaveSystem::listSlots(std::string* errorMessage) const {
+  std::vector<RuntimeSaveSnapshot> snapshots;
+  std::error_code error;
+  const bool exists = std::filesystem::exists(impl_->config.rootPath, error);
+  if (error) {
+    if (errorMessage) {
+      *errorMessage = "Could not inspect runtime save root at " + impl_->config.rootPath.string();
+    }
+    return {};
+  }
+  if (!exists) {
+    return {};
+  }
+
+  std::filesystem::directory_iterator end;
+  for (std::filesystem::directory_iterator it(
+         impl_->config.rootPath,
+         std::filesystem::directory_options::skip_permission_denied,
+         error);
+       !error && it != end;
+       it.increment(error)) {
+    if (!it->is_regular_file()) {
+      continue;
+    }
+
+    const std::string slotName = slotNameFromFileName(it->path());
+    if (slotName.empty()) {
+      continue;
+    }
+
+    std::string loadError;
+    const auto snapshot = loadSlot(slotName, &loadError);
+    if (!snapshot.has_value()) {
+      if (errorMessage && errorMessage->empty()) {
+        *errorMessage = loadError;
+      }
+      continue;
+    }
+
+    snapshots.push_back(*snapshot);
+  }
+
+  if (error) {
+    if (errorMessage) {
+      *errorMessage = "Could not enumerate runtime save root at " + impl_->config.rootPath.string();
+    }
+    return {};
+  }
+
+  std::sort(
+    snapshots.begin(),
+    snapshots.end(),
+    [](const RuntimeSaveSnapshot& left, const RuntimeSaveSnapshot& right) {
+      return left.slotName < right.slotName;
+    });
+  return snapshots;
 }
 
 std::optional<RuntimeSaveSnapshot> SaveSystem::loadSlot(
@@ -386,10 +453,16 @@ std::optional<RuntimeSaveSnapshot> SaveSystem::loadSlot(
 }
 
 std::string SaveSystem::foundationSummary() const {
+  std::string listError;
+  const auto slots = listSlots(&listError);
   std::ostringstream summary;
   summary << "Save system: root=" << relativePathString(impl_->config.rootPath)
           << ", format=runtime_save_toml"
+          << ", slots=" << slots.size()
           << ", quickslot=" << relativePathString(slotPath("quickslot_01"));
+  if (!listError.empty()) {
+    summary << ", catalog_error=" << listError;
+  }
   return summary.str();
 }
 

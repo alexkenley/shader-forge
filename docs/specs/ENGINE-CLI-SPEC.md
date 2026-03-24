@@ -36,7 +36,7 @@ Current implemented commands:
 
 The initial build/run/bake command family now targets the native runtime and cooked-content scaffolds:
 
-- `engine build` configures and builds `shader_forge_runtime` through `cmake`
+- `engine build` configures and builds `shader_forge_runtime` through CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`
 - `engine run sandbox` builds and launches the native runtime target
 - `engine run` now forwards `--input-root`, `--content-root`, `--audio-root`, `--animation-root`, `--physics-root`, `--data-foundation`, `--save-root`, `--tooling-layout`, and `--tooling-layout-save` so native bring-up can inspect text-backed engine assets and configuration directly while keeping runtime persistence under the active project root
 - `engine bake` now scans the text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report plus generated-mesh preview payloads for procedural geometry assets

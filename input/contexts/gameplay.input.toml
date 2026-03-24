@@ -57,6 +57,16 @@ source = "keyboard"
 code = "f10"
 
 [[binding]]
+action = "select_previous_save_slot"
+source = "keyboard"
+code = "f11"
+
+[[binding]]
+action = "select_next_save_slot"
+source = "keyboard"
+code = "f12"
+
+[[binding]]
 action = "move_x"
 source = "keyboard"
 code = "a"

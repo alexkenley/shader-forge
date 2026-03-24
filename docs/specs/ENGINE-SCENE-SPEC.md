@@ -51,7 +51,7 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - the runtime can now project authored prefab render components into first visible debug-proxy scene rendering so composed scene content is no longer invisible during manual runtime testing
 - named runtime input now drives that composed controlled entity instead of leaving authored transforms entirely passive at startup
 - the shell `Scene` workspace can now open authored scene assets from the active session, inspect linked prefab assets, round-trip deterministic save/reload/duplicate flows, and edit placed-entity hierarchy, transforms, plus first-pass prefab component payloads back to those same files
-- shell play/restart now hand off the active session-root project context to the runtime so authored scene files and runtime manual testing stay aligned
+- shell run/restart now hand off the active session-root project context to the runtime so authored scene files and runtime manual testing stay aligned
 - the runtime now also supports a first saved-file iteration lane for scene testing: authored content reload can be triggered explicitly with `F7`, and the running runtime also polls for saved content/audio/animation/physics/data changes
 - the runtime now also resolves effect-capable scene entities from the current view/crosshair and can trigger first visible interaction feedback on those authored effect components from manual runtime input
 - controlled-entity movement now also respects a first authored-physics blocking lane against the active scene bodies, so the runtime no longer walks freely through every visible proxy during manual testing

@@ -42,7 +42,7 @@ import {
 } from './lib/sessiond';
 import { engineReferenceGuide } from './reference-guide';
 
-const leftTabs = ['Sessions', 'Explorer', 'Source Control'] as const;
+const leftTabs = ['Workspaces', 'Explorer', 'Source Control'] as const;
 const centerTabs = ['Scene', 'Game', 'Preview', 'Code', 'Guide'] as const;
 const rightTabs = ['Runtime', 'Build', 'Workspace'] as const;
 const bottomTabs = ['Terminal', 'Logs', 'Output'] as const;
@@ -171,6 +171,52 @@ function formatFileSize(bytes: number) {
   return `${bytes} B`;
 }
 
+const harnessSessionNamePatterns = [/^viewer-bridge(?:-|$)/i, /^scene-authoring(?:-|$)/i];
+
+function getPathLeaf(value: string) {
+  const parts = String(value || '')
+    .split(/[\\/]+/)
+    .filter(Boolean);
+  return parts[parts.length - 1] || value;
+}
+
+function isHarnessSessionRoot(rootPath: string) {
+  return /(?:^|[\\/])(?:tmp|temp)(?:[\\/]|$)/i.test(rootPath) && /shader-forge-/i.test(rootPath);
+}
+
+function isHarnessSession(session: EngineSession) {
+  return (
+    harnessSessionNamePatterns.some((pattern) => pattern.test(session.name))
+    || isHarnessSessionRoot(session.rootPath)
+  );
+}
+
+function pickPreferredSessionId(sessions: EngineSession[], currentSessionId = '') {
+  const activeWorkspace = sessions.find(
+    (session) => session.id === currentSessionId && !isHarnessSession(session),
+  );
+  if (activeWorkspace) {
+    return activeWorkspace.id;
+  }
+
+  const firstWorkspace = sessions.find((session) => !isHarnessSession(session));
+  if (firstWorkspace) {
+    return firstWorkspace.id;
+  }
+
+  return sessions[0]?.id || '';
+}
+
+function findSuggestedWorkspaceSession(sessions: EngineSession[]) {
+  return (
+    sessions.find(
+      (session) =>
+        isHarnessSession(session)
+        && !isHarnessSessionRoot(session.rootPath),
+    ) || null
+  );
+}
+
 function getParentExplorerPath(value: string) {
   if (!value || value === '.') {
     return '.';
@@ -283,6 +329,32 @@ function buildStateLabel(state: BuildStatus['state']) {
     return 'Stopped';
   }
   return 'Idle';
+}
+
+function buildSetupHint(errorMessage: string | null) {
+  const message = String(errorMessage || '');
+  if (/cmake is required/i.test(message)) {
+    return 'CMake is required for Build and Build + Run. The clean-start scripts now auto-detect common installs and export SHADER_FORGE_CMAKE when possible. If it still fails, install CMake or add it to PATH. If the runtime binary already exists under build/runtime/bin, use Run instead.';
+  }
+  return '';
+}
+
+function nativeRuntimeSetupHint(buildLog: string, runtimeLog: string) {
+  const combined = `${buildLog}\n${runtimeLog}`;
+  if (
+    /Vulkan support is either not configured in SDL/i.test(combined)
+    || /No dynamic Vulkan support/i.test(combined)
+  ) {
+    return 'The native runtime found SDL3, but that SDL3 build does not include Vulkan window support. On Windows, rerun .\\scripts\\install-windows-native-runtime-deps.ps1 so vcpkg installs or rebuilds sdl3[vulkan]:x64-windows with --recurse, then rebuild.';
+  }
+  if (
+    /SDL3 was not found/i.test(combined)
+    || /Vulkan was not found/i.test(combined)
+    || /built in stub mode/i.test(combined)
+  ) {
+    return 'The native runtime is still building in stub mode. Visual Studio CMake is working, but SDL3 development files and the Vulkan SDK/loader were not found. Install those native dependencies and rebuild.';
+  }
+  return '';
 }
 
 async function copyTextToClipboard(text: string) {
@@ -431,6 +503,8 @@ function renderRightPanel(
   activeSession: EngineSession | null,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
+  buildLog: string,
+  runtimeLog: string,
   launchScene: string,
   buildConfig: BuildConfig,
   buildDir: string,
@@ -447,25 +521,28 @@ function renderRightPanel(
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
 ) {
+  const buildHint = buildSetupHint(buildStatus.error);
+  const runtimeHint = nativeRuntimeSetupHint(buildLog, runtimeLog);
+
   if (activeTab === 'Workspace') {
     return (
       <div className="stack">
         <section className="card compact-card">
           <div className="section-titlebar">
             <h3>Workspace</h3>
-            <span>{activeSession ? 'Session-backed' : 'No session'}</span>
+            <span>{activeSession ? 'Workspace-backed' : 'No workspace'}</span>
           </div>
           <dl className="fact-list">
             <div>
-              <dt>Session</dt>
+              <dt>Workspace</dt>
               <dd>{activeSession?.name || 'none selected'}</dd>
             </div>
             <div>
               <dt>Root</dt>
-              <dd>{activeSession?.rootPath || 'Select a session from the left rail'}</dd>
+              <dd>{activeSession?.rootPath || 'Select a workspace from the left rail'}</dd>
             </div>
             <div>
-              <dt>Launch scene</dt>
+              <dt>Run scene</dt>
               <dd>{launchScene}</dd>
             </div>
             <div>
@@ -500,8 +577,8 @@ function renderRightPanel(
             <span>Current shell</span>
           </div>
           <p className="panel-copy">
-            `Scene` is for level authoring. `Game` and `Preview` are for runtime launch and
-            inspection. The bottom dock is for terminals, logs, and utility output.
+            `Scene` is for level authoring. `Run` and `Build + Run` launch the native runtime.
+            The bottom dock is for terminals, logs, and utility output.
           </p>
         </section>
       </div>
@@ -537,12 +614,24 @@ function renderRightPanel(
               Build
             </button>
             <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={onBuildAndPlay} type="button">
-              Build + Play
+              Build + Run
             </button>
             <button className="ghost-button ghost-button--sm" disabled={buildStatus.state !== 'running'} onClick={onStopBuild} type="button">
               Stop
             </button>
           </div>
+          {buildHint ? (
+            <div className="setup-hint">
+              <strong>Build Setup Required</strong>
+              <span>{buildHint}</span>
+            </div>
+          ) : null}
+          {!buildHint && runtimeHint ? (
+            <div className="setup-hint">
+              <strong>Native Runtime Setup Required</strong>
+              <span>{runtimeHint}</span>
+            </div>
+          ) : null}
         </section>
         <section className="card compact-card">
           <dl className="fact-list">
@@ -585,13 +674,13 @@ function renderRightPanel(
         </div>
         <div className="form-grid">
           <label className="form-field">
-            <span>Launch scene</span>
+            <span>Run scene</span>
             <input onChange={(event) => onLaunchSceneChange(event.target.value)} type="text" value={launchScene} />
           </label>
         </div>
         <div className="inline-actions">
           <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'} onClick={onStartRuntime} type="button">
-            Play
+            Run
           </button>
           <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state === 'stopped'} onClick={onStopRuntime} type="button">
             Stop
@@ -608,6 +697,12 @@ function renderRightPanel(
             Restart
           </button>
         </div>
+        {runtimeHint ? (
+          <div className="setup-hint">
+            <strong>Native Runtime Setup Required</strong>
+            <span>{runtimeHint}</span>
+          </div>
+        ) : null}
       </section>
       <section className="card compact-card">
         <dl className="fact-list">
@@ -1132,7 +1227,7 @@ function renderCenterContent(
                 onClick={onBuildAndPlay}
                 type="button"
               >
-                Build + Play
+                Build + Run
               </button>
               <button
                 className="ghost-button"
@@ -1140,7 +1235,7 @@ function renderCenterContent(
                 onClick={onStartRuntime}
                 type="button"
               >
-                Play
+                Run
               </button>
               <button
                 className="ghost-button"
@@ -1170,7 +1265,7 @@ function renderCenterContent(
           </div>
           <ViewportShell
             footer="Windows native runtime window first. Aim at effect-capable proxies and press Enter or click to trigger them; F7 reloads authored content."
-            subtitle={`Run target: ${launchScene}`}
+            subtitle={`Run scene: ${launchScene}`}
             title="Game viewport"
           />
         </section>
@@ -1210,9 +1305,15 @@ function renderCenterContent(
     return (
       <SceneEditorView
         activeSession={activeSession}
+        buildStatus={buildStatus}
         launchScene={launchScene}
+        nativeRuntimeHint={nativeRuntimeSetupHint(buildLog, runtimeLog)}
         onBackendStatus={onBackendStatus}
+        onBuildAndRun={onBuildAndPlay}
         onLaunchSceneChange={onLaunchSceneChange}
+        onRestartRuntime={onRestartRuntime}
+        onRunScene={onStartRuntime}
+        onStopRuntime={onStopRuntime}
         runtimeStatus={runtimeStatus}
       />
     );
@@ -1241,7 +1342,7 @@ function renderCenterContent(
               onClick={onBuildAndPlay}
               type="button"
             >
-              Build + Play
+              Build + Run
             </button>
             <button
               className="ghost-button"
@@ -1249,7 +1350,7 @@ function renderCenterContent(
               onClick={onStartRuntime}
               type="button"
             >
-              Play
+              Run
             </button>
             <button
               className="ghost-button"
@@ -1300,8 +1401,8 @@ function renderCenterContent(
           </article>
           <article className="preview-card">
             <span>Queue</span>
-            <strong>{pendingRunAfterBuild ? 'Build + Play armed' : 'Idle'}</strong>
-            <p>{pendingRunAfterBuild ? `scene ${launchScene}` : 'No pending launch chain'}</p>
+            <strong>{pendingRunAfterBuild ? 'Build + Run armed' : 'Idle'}</strong>
+            <p>{pendingRunAfterBuild ? `scene ${launchScene}` : 'No pending run chain'}</p>
           </article>
         </div>
       </section>
@@ -1418,7 +1519,7 @@ function renderCenterContent(
 }
 
 export default function App() {
-  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('Sessions');
+  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('Workspaces');
   const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Scene');
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('Runtime');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
@@ -1536,9 +1637,7 @@ export default function App() {
   async function refreshSessions() {
     const nextSessions = await listSessions();
     setSessions(nextSessions);
-    if (nextSessions.length && !nextSessions.some((session) => session.id === activeSessionId)) {
-      setActiveSessionId(nextSessions[0].id);
-    }
+    setActiveSessionId(pickPreferredSessionId(nextSessions, activeSessionId));
     return nextSessions;
   }
 
@@ -1669,8 +1768,8 @@ export default function App() {
         }
         setSessions(nextSessions);
         if (nextSessions.length) {
-          const nextActiveSessionId = nextSessions[0].id;
-          setActiveSessionId((current) => current || nextActiveSessionId);
+          const nextActiveSessionId = pickPreferredSessionId(nextSessions);
+          setActiveSessionId(nextActiveSessionId);
           await refreshExplorer(nextActiveSessionId, '.');
         }
       } catch (error) {
@@ -1988,8 +2087,10 @@ export default function App() {
       setSessionActionBusy(true);
       await deleteSession(sessionId);
       const nextSessions = await refreshSessions();
-      const nextActiveSessionId =
-        activeSessionId === sessionId ? nextSessions[0]?.id || '' : activeSessionId;
+      const nextActiveSessionId = pickPreferredSessionId(
+        nextSessions,
+        activeSessionId === sessionId ? '' : activeSessionId,
+      );
       setActiveSessionId(nextActiveSessionId);
       if (nextActiveSessionId) {
         await activateSession(nextActiveSessionId);
@@ -2019,11 +2120,84 @@ export default function App() {
       const nextSessions = await refreshSessions();
       setSessiondState('connected');
       setSessiondMessage(`Synced sessions from ${getSessiondBaseUrl()}`);
-      const explorerSessionId = activeSessionId || nextSessions[0]?.id || '';
+      const explorerSessionId = pickPreferredSessionId(nextSessions, activeSessionId);
       if (explorerSessionId) {
         await refreshExplorer(explorerSessionId, explorerPath);
         await refreshGit(explorerSessionId);
       }
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionActionBusy(false);
+    }
+  }
+
+  async function handleDeleteHarnessSessions() {
+    const disposableSessions = sessions.filter((session) => isHarnessSession(session));
+    if (!disposableSessions.length) {
+      return;
+    }
+    if (!window.confirm(`Delete ${disposableSessions.length} temporary harness workspace record(s)?`)) {
+      return;
+    }
+
+    try {
+      setSessionActionBusy(true);
+      for (const session of disposableSessions) {
+        await deleteSession(session.id);
+      }
+      const nextSessions = await refreshSessions();
+      const nextActiveSessionId = pickPreferredSessionId(nextSessions, activeSessionId);
+      setActiveSessionId(nextActiveSessionId);
+      if (nextActiveSessionId) {
+        await activateSession(nextActiveSessionId);
+      } else {
+        setExplorerEntries([]);
+        setExplorerPath('.');
+        setSelectedExplorerPath('');
+        setSelectedFilePreview('');
+        setGitStatus(emptyGitStatus);
+      }
+      setSessiondState('connected');
+      setSessiondMessage(`Deleted ${disposableSessions.length} temporary harness workspace record(s)`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionActionBusy(false);
+    }
+  }
+
+  async function handleCreateSuggestedWorkspace() {
+    const suggestedSession = findSuggestedWorkspaceSession(sessions);
+    if (!suggestedSession) {
+      return;
+    }
+
+    const existingWorkspace = sessions.find(
+      (session) =>
+        !isHarnessSession(session)
+        && session.rootPath.toLowerCase() === suggestedSession.rootPath.toLowerCase(),
+    );
+    if (existingWorkspace) {
+      await activateSession(existingWorkspace.id);
+      setSessiondState('connected');
+      setSessiondMessage(`Using existing workspace ${existingWorkspace.name}`);
+      return;
+    }
+
+    try {
+      setSessionActionBusy(true);
+      const session = await createSession({
+        name: getPathLeaf(suggestedSession.rootPath) || 'workspace',
+        rootPath: suggestedSession.rootPath,
+      });
+      setSessiondState('connected');
+      setSessiondMessage(`Created workspace ${session.name}`);
+      await refreshSessions();
+      await activateSession(session.id);
+      resetSessionForm();
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -2322,7 +2496,7 @@ export default function App() {
       setPendingRunAfterBuild(runAfterBuild);
       setBuildStatus(nextStatus);
       recordViewerBridgeEvent({
-        title: runAfterBuild ? 'Build + Play queued' : 'Build requested',
+        title: runAfterBuild ? 'Build + Run queued' : 'Build requested',
         detail: [nextStatus.target || 'runtime', nextStatus.config || buildConfig, nextStatus.buildDir || buildDir]
           .filter(Boolean)
           .join(' · '),
@@ -2415,6 +2589,10 @@ export default function App() {
     : '/home/user/projects/my-game';
   const bottomPaneMaxHeight = maxBottomPaneHeight();
   const bottomPaneVisibleHeight = bottomPaneCollapsed ? COLLAPSED_BOTTOM_PANE_HEIGHT : bottomPaneHeight;
+  const workspaceSessions = sessions.filter((session) => !isHarnessSession(session));
+  const harnessSessions = sessions.filter((session) => isHarnessSession(session));
+  const suggestedWorkspaceSession = findSuggestedWorkspaceSession(sessions);
+  const activeSessionIsHarness = activeSession ? isHarnessSession(activeSession) : false;
 
   const showSidePane = activeCenterTab !== 'Scene';
 
@@ -2443,10 +2621,10 @@ export default function App() {
             Build
           </button>
           <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleBuildAndPlay} type="button">
-            Build + Play
+            Build + Run
           </button>
           <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'} onClick={handleStartRuntime} type="button">
-            Play
+            Run
           </button>
           <button className="ghost-button ghost-button--sm" disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'} onClick={handleStopRuntime} type="button">
             Stop
@@ -2483,11 +2661,49 @@ export default function App() {
               </button>
             ))}
           </nav>
-          {activeLeftTab === 'Sessions' ? (
+          {activeLeftTab === 'Workspaces' ? (
             <div className="rail-content">
               <section className="rail-section">
                 <div className="section-titlebar">
-                  <h3>{editingSessionId ? 'Edit Session' : 'New Session'}</h3>
+                  <h3>{editingSessionId ? 'Edit Workspace' : 'New Workspace'}</h3>
+                </div>
+                <div className={`session-callout${activeSessionIsHarness ? ' session-callout--warning' : ''}`}>
+                  <div>
+                    <strong>
+                      {activeSession
+                        ? activeSessionIsHarness
+                          ? 'Temporary harness session selected'
+                          : `Current workspace: ${activeSession.name}`
+                        : 'Choose one workspace for the shell'}
+                    </strong>
+                    <span>
+                      {activeSession
+                        ? activeSession.rootPath
+                        : 'Use one repo-root workspace so Scene, Explorer, terminals, and runtime all point at the same project files.'}
+                    </span>
+                  </div>
+                  <div className="inline-actions">
+                    {suggestedWorkspaceSession ? (
+                      <button
+                        className="ghost-button ghost-button--sm ghost-button--primary"
+                        disabled={sessionActionBusy}
+                        onClick={() => void handleCreateSuggestedWorkspace()}
+                        type="button"
+                      >
+                        Create Repo Workspace
+                      </button>
+                    ) : null}
+                    {harnessSessions.length ? (
+                      <button
+                        className="ghost-button ghost-button--sm"
+                        disabled={sessionActionBusy}
+                        onClick={() => void handleDeleteHarnessSessions()}
+                        type="button"
+                      >
+                        Delete Harness Workspaces
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="form-grid">
                   <label className="form-field">
@@ -2602,8 +2818,8 @@ export default function App() {
                 </div>
               </section>
               <ul className="session-list">
-                {sessions.length ? (
-                  sessions.map((session) => (
+                {workspaceSessions.length ? (
+                  workspaceSessions.map((session) => (
                     <li key={session.id}>
                       <button
                         className={`session-item${activeSessionId === session.id ? ' is-active' : ''}`}
@@ -2615,7 +2831,10 @@ export default function App() {
                         }}
                         type="button"
                       >
-                        <strong>{session.name}</strong>
+                        <div className="session-item__row">
+                          <strong>{session.name}</strong>
+                          <span className="session-badge">Workspace</span>
+                        </div>
                         <span>{session.rootPath}</span>
                       </button>
                       <div className="session-item__actions">
@@ -2642,10 +2861,52 @@ export default function App() {
                   <li className="empty-hint">
                     {sessiondState === 'offline'
                       ? 'Start engine_sessiond to begin.'
-                      : 'No sessions yet.'}
+                      : harnessSessions.length
+                        ? 'Only temporary harness sessions exist right now. Create a repo workspace above.'
+                        : 'No workspaces yet.'}
                   </li>
                 )}
               </ul>
+              {harnessSessions.length ? (
+                <>
+                  <div className="section-titlebar section-titlebar--subtle">
+                    <h3>Temporary Harness Workspaces</h3>
+                    <span>Safe to delete</span>
+                  </div>
+                  <ul className="session-list session-list--secondary">
+                    {harnessSessions.map((session) => (
+                      <li key={session.id}>
+                        <button
+                          className={`session-item session-item--secondary${activeSessionId === session.id ? ' is-active' : ''}`}
+                          onClick={() => {
+                            void activateSession(session.id).catch((error) => {
+                              setSessiondState('offline');
+                              setSessiondMessage(error instanceof Error ? error.message : String(error));
+                            });
+                          }}
+                          type="button"
+                        >
+                          <div className="session-item__row">
+                            <strong>{session.name}</strong>
+                            <span className="session-badge session-badge--warning">Harness</span>
+                          </div>
+                          <span>{session.rootPath}</span>
+                        </button>
+                        <div className="session-item__actions">
+                          <button
+                            className="session-action session-action--danger"
+                            onClick={() => void handleDeleteSession(session.id)}
+                            title="Delete"
+                            type="button"
+                          >
+                            Del
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
             </div>
           ) : null}
           {activeLeftTab === 'Explorer' ? (
@@ -2688,7 +2949,7 @@ export default function App() {
                   ) : null}
                 </>
               ) : (
-                <div className="empty-hint">Select a session to browse files.</div>
+                <div className="empty-hint">Select a workspace to browse files.</div>
               )}
             </div>
           ) : null}
@@ -2723,7 +2984,7 @@ export default function App() {
                   )}
                 </>
               ) : (
-                <div className="empty-hint">Select a session first.</div>
+                <div className="empty-hint">Select a workspace first.</div>
               )}
             </div>
           ) : null}
@@ -2750,7 +3011,7 @@ export default function App() {
                 ))}
               </div>
             ) : activeCenterTab === 'Scene' ? (
-              <div className="guide-toolbar-meta">Level editor workspace: keep the viewport primary, with outliner, inspector, and assets grouped beside it.</div>
+              <div className="guide-toolbar-meta">Level editor workspace: author in the viewport, then use the visible Run controls inside Scene to launch the same scene in the native runtime.</div>
             ) : (
               <div className="guide-toolbar-meta">Runtime controls and build operations are grouped with `Game`, `Preview`, and the right-side runtime tools.</div>
             )}
@@ -2802,6 +3063,8 @@ export default function App() {
               activeSession,
               runtimeStatus,
               buildStatus,
+              buildLog,
+              runtimeLog,
               launchScene,
               buildConfig,
               buildDir,

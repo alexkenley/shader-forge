@@ -45,21 +45,44 @@ Assistant entry points:
 - Treat the guide as operator and assistant working documentation, not marketing copy or a post-hoc changelog.
 - Keep the guide concrete enough that a coding assistant in a terminal can search it and act on it without needing the whole codebase first.
 
+### Native Runtime Setup
+
+- Yes: the guide now has an explicit native-runtime setup section for Windows.
+- `.\scripts\start-dev-clean.ps1` now auto-detects CMake, including the copy bundled with Visual Studio, and exports `SHADER_FORGE_CMAKE` when found.
+- `.\scripts\install-windows-native-runtime-deps.ps1` is the repo helper for the Windows native-runtime dependency lane.
+- If the startup script prints `Using CMake: ...`, CMake itself is not the blocker.
+- The real native runtime still requires SDL3 development files plus the Vulkan SDK/loader.
+- On Windows, install the Vulkan SDK from LunarG.
+- For the current Shader Forge setup, the Vulkan installer should use `The Vulkan SDK Core` only; the extra optional SDK components are not required for this repo right now.
+- On Windows, the recommended SDL3 path is `vcpkg`, not Visual Studio Installer.
+- Recommended one-step repo helper:
+  `powershell.exe -ExecutionPolicy Bypass -File .\scripts\install-windows-native-runtime-deps.ps1`
+- That helper clones `vcpkg` if needed, bootstraps it, installs or rebuilds `sdl3[vulkan]:x64-windows` with `--recurse`, sets `VCPKG_ROOT` and `CMAKE_TOOLCHAIN_FILE` for the current process, and persists them to the user environment by default.
+- If `Build + Run` reaches SDL startup and then says Vulkan support is not configured in SDL, the installed SDL3 package is missing the `vulkan` feature; rerun `.\scripts\install-windows-native-runtime-deps.ps1` or run `C:\src\vcpkg\vcpkg.exe install sdl3[vulkan]:x64-windows --recurse`.
+- Recommended environment variables for CMake-based Windows runs:
+  `VCPKG_ROOT=C:\src\vcpkg`
+  `CMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake`
+- `.\scripts\start-dev-clean.ps1` now also auto-detects the `vcpkg` toolchain file and the Vulkan SDK when they are installed.
+- After installing Vulkan SDK or SDL3 through `vcpkg`, reopen PowerShell and rerun `.\scripts\start-dev-clean.ps1`.
+- If build logs say `SDL3 was not found`, `Vulkan was not found`, or `built in stub mode`, that means CMake worked but the native runtime dependencies are still missing.
+
 ### Shell Workspace Overview
 
-- The left rail currently exposes `Sessions`, `Explorer`, and `Source Control`.
+- The left rail currently exposes `Workspaces`, `Explorer`, and `Source Control`.
 - The center dock currently exposes `Scene`, `Game`, `Preview`, `Code`, and `Guide`.
 - The right panel currently exposes `Runtime`, `Build`, and `Workspace` for non-`Scene` tabs, and it is intentionally hidden during `Scene` authoring so the editor can use that space directly.
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
 - The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
 - Use `Game` and `Preview` to drive the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.
-- Use `Scene` for repo-backed scene/prefab authoring with a viewport-first layout, edit/play separation, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.
+- Use `Scene` for repo-backed scene/prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.
+- If `Build` or `Build + Run` fails because `cmake` is missing, the shell now surfaces that as setup guidance; the clean-start scripts also auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible, while plain `Run` still depends on an already-built runtime binary under `build/runtime/bin`.
+- A successful native build can still be a stub runtime if SDL3 or Vulkan are missing; the shell now surfaces that separately as native dependency setup rather than another CMake problem.
 - Use `Guide` for the in-app wiki and repo source references.
 
 ## Session Backend And CLI
 
-### Sessions, Files, And Source Control
+### Workspaces, Files, And Source Control
 
 - `engine_sessiond` currently provides session create/list/get/update/delete.
 - Session records now persist across `engine_sessiond` restarts and stay available until deleted.
@@ -75,7 +98,7 @@ Assistant entry points:
 - `engine sessiond start` starts the local backend service.
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
-- `engine build runtime` configures and builds the native runtime with CMake.
+- `engine build runtime` configures and builds the native runtime with CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`.
 - `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.
 - `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
 - `engine migrate detect|unity|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
@@ -101,16 +124,17 @@ Assistant entry points:
 
 - The native runtime has Vulkan instance, surface, device, swapchain, render pass, framebuffer, submit, and present bring-up.
 - Resize-aware swapchain recreation is already implemented.
-- Runtime build, play, stop, restart, pause, and resume are already controlled from the shell, and shell-driven play/restart now follow the active session root.
+- Runtime build, run, stop, restart, pause, and resume are already controlled from the shell, and shell-driven run/restart now follow the active session root.
 - The shell tracks runtime state, build state, bridge activity, and recent log tails in `Game` and `Preview`.
 - The native runtime now projects authored prefab render components into visible debug-proxy scene cards in the external Vulkan window, so the active scene is no longer only a clear-color loop during manual testing.
 - The native runtime now also has a first authored-content iteration lane: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps to pick up shell edits without a full restart.
 - The native runtime now resolves effect-capable interaction targets from the current view/crosshair, and `ui_accept` input such as Enter or left-click triggers first visible interaction feedback plus effect-descriptor-backed logs.
-- The native runtime now also has a first save-system lane: `F8` writes `saved/runtime/quickslot_01.runtime-save.toml`, `F9` reloads it, and the save path follows the active session/project root instead of mixing runtime persistence into authored content roots.
+- The native runtime now also has a widened first save-system lane: `F8` writes the active `quickslot_01` through `quickslot_03` runtime save, `F9` reloads it, `F11`/`F12` cycle the active slot, and the save path follows the active session/project root instead of mixing runtime persistence into authored content roots.
 - The native runtime now also has a first projected physics-debug lane: authored blocking bodies and query-only trigger bodies can be visualized in the external window, overlap-triggered bodies are highlighted, and `F10` toggles that view during manual testing.
 - The native runtime still renders in an external window.
 - The browser shell remains the primary workspace.
 - Embedded viewer transport and screenshot capture are still deferred.
+- On Windows, Visual Studio can provide CMake without providing the SDL3 development package or Vulkan SDK that the real native runtime needs, so a successful `Build + Run` can still end in stub-mode runtime exit until those native dependencies are installed.
 
 ### Scene, Prefab, And Data Foundation
 
@@ -134,17 +158,17 @@ Assistant entry points:
 - Controlled-entity movement now respects a first authored-physics blocking lane against scene physics bodies, and the runtime surfaces the blocking body in logs plus window state during manual testing.
 - Authored `on_overlap` effect triggers can now activate automatically from query-only scene bodies during runtime movement, so the running scene has a first automatic trigger-volume lane alongside manual `ui_accept` interaction.
 - The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.
-- Shell play/restart now forward the active session root into runtime launch so the external runtime reads the same authored scene files the shell edits.
+- Shell run/restart now forward the active session root into runtime launch so the external runtime reads the same authored scene files the shell edits.
 - The running runtime now follows those authored edits through a first polling/manual reload lane rather than requiring a full process restart for every save.
 - Effect-capable proxies in the running scene can now be aimed at with the crosshair and triggered through `ui_accept`, which surfaces first runtime feedback for authored `[component.effect]` data instead of leaving it as static catalog metadata.
-- `saved/runtime/quickslot_01.runtime-save.toml` is now the first inspectable runtime save payload, and the current snapshot stores scene, controlled-entity, transform, animation-context, and triggered-overlap state for manual iteration.
-- `Play Mode` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Edit Mode` is restored.
+- `saved/runtime/quickslot_01.runtime-save.toml` through `quickslot_03.runtime-save.toml` are now the first inspectable runtime save payloads, and the current snapshot stores scene, controlled-entity, transform, animation-context, and triggered-overlap state for manual iteration.
+- `Review` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Authoring` is restored.
 - The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
 - The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.
 - Runtime startup resolves a default animation graph, logs graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio event API.
 - Movement now drives a first authored animation-state lane in runtime: `idle` and `walk` can be resolved by name from the current graph, the active state/clip is surfaced in window state, and walk clip `audio_event` hooks now fire during movement playback.
-- The native tooling overlay now also surfaces live player id/position, movement speed, active animation state/clip, blocking body, current interaction target, active triggered effect, and physics-debug state so manual runtime testing is not dependent on log scanning alone.
+- The native tooling overlay now also surfaces live player id/position, movement speed, active animation state/clip, blocking body, active save slot, current interaction target, active triggered effect, and physics-debug state so manual runtime testing is not dependent on log scanning alone.
 - The runtime now loads authored physics layers, materials, and primitive bodies through `PhysicsSystem`.
 - Runtime startup logs physics layer/body summaries and runs deterministic raycast plus overlap queries against the active scene.
 - The current runtime slice can now project first physics-debug body visualization for blocking and query-only bodies, but it is still a debug overlay rather than final in-engine physics gizmos.
@@ -178,11 +202,11 @@ Assistant entry points:
 
 - `input/actions.toml` plus `input/contexts/*.input.toml` define the current action and context maps.
 - Keyboard, mouse, and gamepad input are routed through engine-owned named actions and axes.
-- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `save_runtime_state`, `load_runtime_state`, `toggle_physics_debug`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, with `F7` active for authored-content reload plus `F8`, `F9`, and `F10` active for quick-save, quick-load, and physics-debug toggling.
+- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `save_runtime_state`, `load_runtime_state`, `toggle_physics_debug`, `select_previous_save_slot`, `select_next_save_slot`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, with `F7` active for authored-content reload plus `F8`, `F9`, `F10`, `F11`, and `F12` active for quick-save, quick-load, physics-debug toggling, and runtime save-slot cycling.
 - The native tooling substrate currently has a named panel registry.
 - Tooling layouts are loaded from text and session layouts can be saved back to disk.
 - The current panel set covers runtime stats, input debug, log view, and debug state.
-- The overlay summary now also carries first live gameplay-state context for the controlled entity, animation state, movement blocking, interaction target, and physics-debug state during manual testing.
+- The overlay summary now also carries first live gameplay-state context for the controlled entity, animation state, movement blocking, active save slot, interaction target, and physics-debug state during manual testing.
 - Tooling overlay and panel toggles are already bound through the engine-owned input actions.
 - Dear ImGui docking and real in-process native panel rendering are still ahead.
 
@@ -196,7 +220,7 @@ Assistant entry points:
 - `npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
-- Both scripts remove generated outputs, rerun the current deterministic baseline, start `engine_sessiond`, and then launch the active shell workflow.
+- Both scripts remove generated outputs, rerun the current deterministic baseline, auto-detect a usable CMake installation when possible, export `SHADER_FORGE_CMAKE`, start `engine_sessiond`, and then launch the active shell workflow.
 
 ## Current Boundaries And Next Widening Passes
 

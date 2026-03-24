@@ -173,7 +173,7 @@ Recommended model:
 - levels and prefabs are stored as editable text assets
 - the shell and runtime editor surfaces modify those same scene assets directly
 - procedural generators can preview content live and bake it into editable scenes or prefabs
-- `Edit Mode` persists changes; `Play Mode` discards changes unless explicitly applied
+- `Authoring` persists changes; `Review` discards changes unless explicitly applied
 
 This gives the project three equal authoring paths:
 

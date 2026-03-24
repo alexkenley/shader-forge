@@ -39,9 +39,11 @@ struct ToolingRuntimeStateSnapshot {
   std::string animationGraphName;
   std::string animationStateName;
   std::string animationClipName;
+  std::string activeSaveSlotName;
   std::string interactionTargetId;
   std::string interactionEffectName;
   std::string activeTriggeredEffectName;
+  std::size_t saveSlotCount = 0;
   std::size_t physicsBodyCount = 0;
   std::size_t queryBodyCount = 0;
   std::size_t activeOverlapBodyCount = 0;

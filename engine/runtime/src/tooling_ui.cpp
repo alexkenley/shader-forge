@@ -187,36 +187,36 @@ struct ToolingUiSystem::Impl {
     }
 
     panels.push_back(PanelEntry{
-      .name = "runtime_stats",
-      .title = "Runtime Stats",
-      .contextKey = "tool.runtime_stats",
-      .dockArea = ToolDockArea::left,
-      .visible = true,
-      .order = 0,
+      "runtime_stats",
+      "Runtime Stats",
+      "tool.runtime_stats",
+      ToolDockArea::left,
+      true,
+      0,
     });
     panels.push_back(PanelEntry{
-      .name = "input_debug",
-      .title = "Input Debug",
-      .contextKey = "tool.input_debug",
-      .dockArea = ToolDockArea::right,
-      .visible = false,
-      .order = 1,
+      "input_debug",
+      "Input Debug",
+      "tool.input_debug",
+      ToolDockArea::right,
+      false,
+      1,
     });
     panels.push_back(PanelEntry{
-      .name = "log_view",
-      .title = "Log View",
-      .contextKey = "tool.log_view",
-      .dockArea = ToolDockArea::bottom,
-      .visible = true,
-      .order = 2,
+      "log_view",
+      "Log View",
+      "tool.log_view",
+      ToolDockArea::bottom,
+      true,
+      2,
     });
     panels.push_back(PanelEntry{
-      .name = "debug_state",
-      .title = "Debug State",
-      .contextKey = "tool.debug_state",
-      .dockArea = ToolDockArea::right,
-      .visible = true,
-      .order = 3,
+      "debug_state",
+      "Debug State",
+      "tool.debug_state",
+      ToolDockArea::right,
+      true,
+      3,
     });
 
     rebuildIndices();
@@ -507,12 +507,12 @@ std::vector<ToolPanelSnapshot> ToolingUiSystem::snapshotPanels() const {
   snapshots.reserve(impl_->panels.size());
   for (const auto& panel : impl_->panels) {
     snapshots.push_back(ToolPanelSnapshot{
-      .name = panel.name,
-      .title = panel.title,
-      .contextKey = panel.contextKey,
-      .dockArea = panel.dockArea,
-      .visible = panel.visible,
-      .order = panel.order,
+      panel.name,
+      panel.title,
+      panel.contextKey,
+      panel.dockArea,
+      panel.visible,
+      panel.order,
     });
   }
   return snapshots;
@@ -584,6 +584,13 @@ std::string ToolingUiSystem::overlaySummary() const {
     if (!impl_->runtimeState.animationClipName.empty()) {
       summary << " clip=" << impl_->runtimeState.animationClipName;
     }
+  }
+
+  if (!impl_->runtimeState.activeSaveSlotName.empty()) {
+    summary << " save-slot=" << impl_->runtimeState.activeSaveSlotName;
+  }
+  if (impl_->runtimeState.saveSlotCount > 0) {
+    summary << " save-slots=" << impl_->runtimeState.saveSlotCount;
   }
 
   if (!impl_->runtimeState.blockedBodyName.empty()) {

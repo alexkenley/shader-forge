@@ -248,6 +248,10 @@ std::string keyboardCodeFromScancode(SDL_Scancode scancode) {
       return "f9";
     case SDL_SCANCODE_F10:
       return "f10";
+    case SDL_SCANCODE_F11:
+      return "f11";
+    case SDL_SCANCODE_F12:
+      return "f12";
     default:
       return {};
   }

@@ -1,18 +1,24 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
+import { SessionStore } from '../tools/engine-sessiond/lib/session-store.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
 const shellApp = fs.readFileSync(path.join(repoRoot, 'shell', 'engine-shell', 'src', 'App.tsx'), 'utf8');
 const sessiondClient = fs.readFileSync(path.join(repoRoot, 'shell', 'engine-shell', 'src', 'lib', 'sessiond.ts'), 'utf8');
 const sessiondServer = fs.readFileSync(path.join(repoRoot, 'tools', 'engine-sessiond', 'server.mjs'), 'utf8');
 const isWindows = process.platform === 'win32';
+const sessionStateDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shader-forge-viewer-bridge-sessiond-'));
+const sessionStorePath = path.join(sessionStateDir, 'sessions.json');
 
 const service = await startEngineSessiond({
   host: '127.0.0.1',
   port: 0,
+  sessionStore: new SessionStore({ storageFilePath: sessionStorePath }),
   runtimeLaunchFactory: ({ scene, sessionId, workspaceRoot }) => ({
     command: process.execPath,
     args: ['-e', `console.log("viewer-bridge:${scene}:boot:" + process.cwd()); setInterval(() => {}, 1000);`],
@@ -112,7 +118,7 @@ try {
   assert.match(shellApp, /Viewer Workflow/);
   assert.match(shellApp, /External Runtime Window/);
   assert.match(shellApp, /Recent Bridge Activity/);
-  assert.match(shellApp, /Build \+ Play/);
+  assert.match(shellApp, /Build \+ Run/);
   assert.match(shellApp, /Pause/);
   assert.match(shellApp, /Bridge Diagnostics/);
   assert.match(sessiondClient, /EventSource/);
@@ -186,4 +192,5 @@ try {
   console.log('- Verified build completion events reach the viewer bridge lane');
 } finally {
   await service.close();
+  await fsp.rm(sessionStateDir, { recursive: true, force: true });
 }

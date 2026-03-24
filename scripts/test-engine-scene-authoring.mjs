@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
+import { SessionStore } from '../tools/engine-sessiond/lib/session-store.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
 const shellApp = await fs.readFile(path.join(repoRoot, 'shell', 'engine-shell', 'src', 'App.tsx'), 'utf8');
@@ -13,23 +14,28 @@ const sessiondClient = await fs.readFile(path.join(repoRoot, 'shell', 'engine-sh
 const sessiondServer = await fs.readFile(path.join(repoRoot, 'tools', 'engine-sessiond', 'server.mjs'), 'utf8');
 
 const tempProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-scene-authoring-'));
+const sessionStateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-scene-authoring-sessiond-'));
+const sessionStorePath = path.join(sessionStateDir, 'sessions.json');
 await fs.mkdir(path.join(tempProjectRoot, 'content', 'scenes'), { recursive: true });
 await fs.mkdir(path.join(tempProjectRoot, 'content', 'prefabs'), { recursive: true });
 
 const service = await startEngineSessiond({
   host: '127.0.0.1',
   port: 0,
+  sessionStore: new SessionStore({ storageFilePath: sessionStorePath }),
 });
 
 try {
   assert.match(shellApp, /SceneEditorView/);
-  assert.match(sceneEditorView, /Edit Mode/);
-  assert.match(sceneEditorView, /Play Mode/);
+  assert.match(sceneEditorView, /Authoring/);
+  assert.match(sceneEditorView, /Review/);
   assert.match(sceneEditorView, /Save Scene/);
   assert.match(sceneEditorView, /Save Prefab/);
   assert.match(sceneEditorView, /Reload/);
   assert.match(sceneEditorView, /Duplicate Scene/);
   assert.match(sceneEditorView, /World Outliner/);
+  assert.match(sceneEditorView, /Run Scene/);
+  assert.match(sceneEditorView, /Build \+ Run/);
   assert.match(sceneEditorView, /Use As Primary/);
   assert.match(sceneEditorView, /Add Entity/);
   assert.match(sceneEditorView, /Duplicate/);
@@ -137,9 +143,10 @@ try {
 
   console.log('Engine scene authoring smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
-  console.log('- Verified the shell Scene workspace exposes edit/play, save/reload, outliner, inspector, prefab assignment, and prefab component editing surfaces');
+  console.log('- Verified the shell Scene workspace exposes authoring/review, explicit run controls, save/reload, outliner, inspector, prefab assignment, and prefab component editing surfaces');
   console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component assets can be written through engine_sessiond inside a session root');
 } finally {
   await service.close();
+  await fs.rm(sessionStateDir, { recursive: true, force: true });
   await fs.rm(tempProjectRoot, { recursive: true, force: true });
 }

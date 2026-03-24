@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
+  type BuildStatus,
   listFiles,
   readFile,
   writeFile,
@@ -39,10 +40,16 @@ type SceneTreeRow = {
 
 type SceneEditorViewProps = {
   activeSession: EngineSession | null;
+  buildStatus: BuildStatus;
   launchScene: string;
+  nativeRuntimeHint: string;
+  onBuildAndRun: () => void;
   runtimeStatus: RuntimeStatus;
   onLaunchSceneChange: (value: string) => void;
   onBackendStatus: (state: BackendState, message: string) => void;
+  onRestartRuntime: () => void;
+  onRunScene: () => void;
+  onStopRuntime: () => void;
 };
 
 const emptySnapshot: EditorSnapshot = {
@@ -110,7 +117,7 @@ function sortPrefabs(documents: PrefabAssetDocument[]) {
 }
 
 function toSceneStatusLabel(mode: EditorMode) {
-  return mode === 'edit' ? 'Edit Mode' : 'Play Mode';
+  return mode === 'edit' ? 'Authoring' : 'Review';
 }
 
 function formatDisplayNameFromToken(value: string) {
@@ -252,10 +259,16 @@ function Vector3Editor({
 
 export function SceneEditorView({
   activeSession,
+  buildStatus,
   launchScene,
+  nativeRuntimeHint,
+  onBuildAndRun,
   runtimeStatus,
   onLaunchSceneChange,
   onBackendStatus,
+  onRestartRuntime,
+  onRunScene,
+  onStopRuntime,
 }: SceneEditorViewProps) {
   const sceneShellRef = useRef<HTMLDivElement | null>(null);
   const [mode, setMode] = useState<EditorMode>('edit');
@@ -546,8 +559,8 @@ export function SceneEditorView({
       setSceneSelection();
       const message =
         sceneDirty || prefabDirty
-          ? 'Entered Play Mode. Unsaved authoring edits were discarded.'
-          : 'Entered Play Mode. Scene saves are disabled until Edit Mode is restored.';
+          ? 'Entered Review. Unsaved authoring edits were discarded.'
+          : 'Entered Review. Scene saves are disabled until Authoring is restored.';
       setStatusMessage(message);
       onBackendStatus('connected', message);
       return;
@@ -555,8 +568,8 @@ export function SceneEditorView({
 
     setMode('edit');
     const message = sceneSaved
-      ? `Returned to Edit Mode for scene ${sceneSaved.name}.`
-      : 'Returned to Edit Mode.';
+      ? `Returned to Authoring for scene ${sceneSaved.name}.`
+      : 'Returned to Authoring.';
     setStatusMessage(message);
     onBackendStatus('connected', message);
   }
@@ -856,6 +869,12 @@ export function SceneEditorView({
       : selectedNode === 'entity'
         ? 'Placed entity'
         : 'Prefab asset';
+  const runSceneName = sceneDraft?.name || launchScene;
+  const runSceneTitle = sceneDraft?.title || sceneDraft?.name || 'No scene selected';
+  const canRunScene = Boolean(sceneDraft) && buildStatus.state !== 'running' && runtimeStatus.state === 'stopped';
+  const canRestartRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
+  const canStopRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
+  const buildRequiresCmake = /cmake is required/i.test(buildStatus.error || '');
 
   if (!activeSession) {
     return (
@@ -864,12 +883,12 @@ export function SceneEditorView({
           <div className="surface-header">
             <div>
               <div className="surface-eyebrow">Authoring</div>
-              <h2>Scene Editor</h2>
-              <p>Select a session to load text-backed scene and prefab assets.</p>
+              <h2>Scene / Level Editor</h2>
+              <p>Select a workspace to load text-backed scene and prefab assets.</p>
             </div>
           </div>
           <div className="scene-empty-state">
-            `Scene` authoring is session-backed. Create or select a session in the left rail first.
+            `Scene` authoring is workspace-backed. Create or select a workspace in the left rail first.
           </div>
         </section>
         <section className="surface">
@@ -951,17 +970,90 @@ export function SceneEditorView({
                 onClick={() => handleModeChange('edit')}
                 type="button"
               >
-                Edit
+                Author
               </button>
               <button
                 className={`ghost-button ghost-button--sm${mode === 'play' ? ' ghost-button--primary' : ''}`}
                 onClick={() => handleModeChange('play')}
                 type="button"
               >
-                Play
+                Review
               </button>
             </div>
           </div>
+        </div>
+
+        <div className="scene-run-strip">
+          <div className="scene-run-strip__identity">
+            <span className="surface-eyebrow">Test This Scene</span>
+            <strong>{runSceneTitle}</strong>
+            <p>Run the open level in the native runtime against the current workspace root.</p>
+          </div>
+          <div className="scene-run-strip__facts">
+            <div>
+              <span>Workspace</span>
+              <strong>{activeSession.name}</strong>
+            </div>
+            <div>
+              <span>Run scene</span>
+              <strong>{runSceneName}</strong>
+            </div>
+            <div>
+              <span>Runtime</span>
+              <strong>{runtimeStatus.state}</strong>
+            </div>
+          </div>
+          <div className="scene-run-strip__actions">
+            <button
+              className="ghost-button ghost-button--sm ghost-button--primary"
+              disabled={!sceneDraft || buildStatus.state === 'running'}
+              onClick={onBuildAndRun}
+              type="button"
+            >
+              Build + Run
+            </button>
+            <button
+              className="ghost-button ghost-button--sm"
+              disabled={!canRunScene}
+              onClick={onRunScene}
+              type="button"
+            >
+              Run Scene
+            </button>
+            <button
+              className="ghost-button ghost-button--sm"
+              disabled={!canRestartRuntime}
+              onClick={onRestartRuntime}
+              type="button"
+            >
+              Restart Runtime
+            </button>
+            <button
+              className="ghost-button ghost-button--sm"
+              disabled={!canStopRuntime}
+              onClick={onStopRuntime}
+              type="button"
+            >
+              Stop Runtime
+            </button>
+          </div>
+          {buildRequiresCmake ? (
+            <div className="setup-hint setup-hint--scene">
+              <strong>Build + Run needs CMake</strong>
+              <span>
+                The clean-start scripts now auto-detect common installs and export
+                `SHADER_FORGE_CMAKE` when possible. If this still fails, install CMake or add it
+                to PATH. If the runtime binary already exists under `build/runtime/bin`, use `Run
+                Scene` instead.
+              </span>
+            </div>
+          ) : null}
+          {!buildRequiresCmake && nativeRuntimeHint ? (
+            <div className="setup-hint setup-hint--scene">
+              <strong>Native runtime dependencies missing</strong>
+              <span>{nativeRuntimeHint}</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="scene-editor__body" ref={sceneShellRef}>
@@ -1009,8 +1101,8 @@ export function SceneEditorView({
                 <div className="scene-viewport__axes scene-viewport__axes--vertical" />
                 <div className="scene-viewport__summary">
                   <div>
-                    <span>Launch</span>
-                    <strong>{launchScene}</strong>
+                    <span>Run scene</span>
+                    <strong>{runSceneName}</strong>
                   </div>
                   <div>
                     <span>Runtime</span>
@@ -1032,7 +1124,7 @@ export function SceneEditorView({
               <div className="scene-statusbar__message">
                 <strong>{statusMessage}</strong>
                 <span>
-                  `Play` in `Game` or `Preview` launches the native runtime. `F7` reloads authored
+                  Use `Run Scene` above to launch the native runtime window. `F7` reloads authored
                   content there.
                 </span>
               </div>
@@ -1134,7 +1226,7 @@ export function SceneEditorView({
                         <strong>{sceneDraft.title}</strong>
                       </div>
                       <div>
-                        <span>Launch target</span>
+                        <span>Run scene</span>
                         <strong>{sceneDraft.name}</strong>
                       </div>
                       <div>

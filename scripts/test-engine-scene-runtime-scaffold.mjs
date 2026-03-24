@@ -67,6 +67,8 @@ assert.match(runtimeApp, /Physics debug visualization via/);
 assert.match(runtimeApp, /Detected authored runtime content change on disk/);
 assert.match(runtimeApp, /Saved runtime state via/);
 assert.match(runtimeApp, /Loaded runtime state via/);
+assert.match(runtimeApp, /activeQuickSaveSlotName/);
+assert.match(runtimeApp, /available_slots=/);
 assert.match(runtimeApp, /dataFoundation_\.composedSceneSummary/);
 assert.match(sceneAsset, /\[entity\.crate_satellite\]/);
 assert.match(sceneAsset, /parent = "crate_focus"/);

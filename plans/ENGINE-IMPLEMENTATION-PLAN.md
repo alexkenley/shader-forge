@@ -129,7 +129,7 @@ What is already done:
 - The native runtime now projects authored prefab render components into first visible debug-proxy scene rendering in the Vulkan window so scene composition is manually testable before the full mesh/material pipeline lands.
 - The native runtime now has a first authored-content reload lane for manual iteration: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps so external-window testing can follow shell edits without a full restart.
 - The native runtime now resolves effect-capable interaction targets from the current view/crosshair and exposes first triggered-effect feedback plus effect-descriptor-backed logs when the operator presses Enter or left-clicks on a target.
-- The native runtime now has a first engine-owned save lane under `saved/runtime/`: `F8` writes a versioned `quickslot_01.runtime-save.toml`, `F9` reloads it, and the shell/session-root launch path keeps that save data scoped to the active project instead of mixing it with authored content.
+- The native runtime now has a first widened engine-owned save lane under `saved/runtime/`: `F8` writes the active quick slot, `F9` reloads it, `F11`/`F12` cycle `quickslot_01` through `quickslot_03`, and the shell/session-root launch path keeps that save data scoped to the active project instead of mixing it with authored content.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
@@ -156,7 +156,7 @@ Where the build is currently up to:
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
 - Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, preferred player-entity selection from spawn tags, first input-driven controlled-entity state, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, scene-context physics query origins, projected debug-proxy scene rendering, a first active-session-root editor/runtime handoff, a first polling/manual authored-content reload lane, and first view-resolved interaction/effect feedback, but full mesh/material rendering, broader component simulation, game UI, and deeper editor/runtime handoff still remain
-- Phase 6.1 groundwork now exists through an engine-owned runtime save subsystem, deterministic `saved/runtime/*.runtime-save.toml` payloads, `F8`/`F9` quicksave and quickload wiring, and session-root save-path handoff through the shell, CLI, and session backend, but full world-state deltas, multiple user-facing slots, settings/profile persistence, migration/version-upgrade tooling, and gameplay-defined save contracts still remain
+- Phase 6.1 groundwork now exists through an engine-owned runtime save subsystem, deterministic `saved/runtime/*.runtime-save.toml` payloads, `F8`/`F9` quicksave and quickload wiring, `F11`/`F12` active-slot cycling across the first quick-slot set, and session-root save-path handoff through the shell, CLI, and session backend, but full world-state deltas, richer save metadata, settings/profile persistence, migration/version-upgrade tooling, and gameplay-defined save contracts still remain
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -771,14 +771,14 @@ Scope:
 
 Current checkpoint:
 - an engine-owned `SaveSystem` now exists inside the native runtime instead of treating persistence as ad-hoc file writes
-- the first implemented lane writes a versioned `saved/runtime/quickslot_01.runtime-save.toml` payload and reloads it through explicit save/load APIs
+- the current implemented lane writes versioned `saved/runtime/quickslot_01.runtime-save.toml` through `quickslot_03.runtime-save.toml` payloads and reloads them through explicit save/load APIs
 - shell/sessiond runtime launch and `engine run` now forward a save root so runtime persistence stays scoped to the active project/session root
 - the first payload captures active scene name, controlled-entity identity, transform state, animation context, and overlap-trigger state as a deterministic text-backed runtime snapshot
-- `F8` is now the first quicksave binding and `F9` is the first quickload binding in the gameplay runtime context
+- `F8` is now the quicksave binding, `F9` is the quickload binding, and `F11`/`F12` cycle the active runtime save slot in the gameplay runtime context
 
 Still ahead inside this phase:
 - broader world-state serialization beyond the current controlled-entity plus trigger-state snapshot
-- multiple save slots, user-facing metadata, and profile/settings persistence
+- richer user-facing metadata plus profile/settings persistence beyond the new quick-slot set
 - save migration/version-upgrade tooling and explicit gameplay-defined save contracts
 - assistant-facing save inspection/migration workflows beyond the first runtime-owned file format
 

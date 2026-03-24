@@ -52,9 +52,9 @@ The current runtime slice is the first real native bring-up pass:
 - controlled-entity movement now respects a first authored-physics blocking lane by testing horizontal movement against scene physics bodies instead of always moving freely through the composed scene
 - authored `on_overlap` effect triggers can now activate automatically from query-only scene bodies during runtime movement instead of requiring every effect-capable entity to be manually targeted with `ui_accept`
 - movement now also drives a first runtime animation-state lane with authored `idle`/`walk` state selection, active clip context in the window title, and movement-triggered clip-event audio requests
-- the runtime now owns a first save-system lane: `F8` writes a versioned quick-save payload under the configured `saved/runtime/` root, `F9` reloads it, and shell/sessiond launch now scopes that save root to the active project/session workspace
+- the runtime now owns a first widened save-system lane: `F8` writes the current quick-save slot, `F9` reloads it, `F11`/`F12` cycle `quickslot_01` through `quickslot_03`, and shell/sessiond launch still scopes that save root to the active project/session workspace
 - the runtime now also exposes a first projected physics-debug lane for manual testing: authored blocking bodies and query-only trigger bodies can be visualized in the external window, active trigger overlaps are highlighted, and `toggle_physics_debug` is bound to `F10`
-- the native tooling overlay now also surfaces live controlled-entity, movement-speed, animation-state, movement-block, interaction-target, and physics-debug context during manual runtime testing
+- the native tooling overlay now also surfaces live controlled-entity, movement-speed, animation-state, movement-block, active save slot, interaction-target, and physics-debug context during manual runtime testing
 - physics query origins and runtime interaction logs now follow the composed scene entity state instead of staying hard-coded at world zero
 - animation graph and entry-state context now feeds runtime title/log state instead of staying disconnected from execution
 - physics scene-query state is now logged against the authored scene context instead of staying disconnected from execution
@@ -62,7 +62,7 @@ The current runtime slice is the first real native bring-up pass:
 Current boundary:
 
 - the runtime now has first visible composed-scene rendering through projected debug proxies, but not a full mesh/material/shader pipeline yet
-- the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, first projected physics-debug lane, first quick-save/quick-load lane, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, full world-state persistence, or deeper mounted-project/package layering yet
+- the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, first projected physics-debug lane, first multi-slot quick-save/quick-load lane, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, full world-state persistence, or deeper mounted-project/package layering yet
 - Dear ImGui-native panels, real asset-backed geometry submission, and player-facing game UI are still later widening passes
 
 ## Future AI Runtime Boundary
