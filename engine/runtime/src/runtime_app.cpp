@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -62,6 +63,7 @@ std::string runtimeVector3String(const std::array<float, 3>& value) {
 
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 constexpr std::uint32_t kMaxFramesInFlight = 2;
+constexpr std::uint64_t kAuthoredContentPollIntervalNs = 750'000'000ULL;
 
 std::string sdlErrorString() {
   const char* error = SDL_GetError();
@@ -244,6 +246,49 @@ void clearAttachmentRect(VkCommandBuffer commandBuffer, const VkRect2D& rect, co
   clearRect.baseArrayLayer = 0;
   clearRect.layerCount = 1;
   vkCmdClearAttachments(commandBuffer, 1, &attachment, 1, &clearRect);
+}
+
+void foldPathLatestTimestamp(
+  const std::filesystem::path& path,
+  std::optional<std::filesystem::file_time_type>* latestTimestamp) {
+  if (latestTimestamp == nullptr) {
+    return;
+  }
+
+  std::error_code error;
+  const bool exists = std::filesystem::exists(path, error);
+  if (error || !exists) {
+    return;
+  }
+
+  const auto updateTimestamp = [latestTimestamp](const std::filesystem::path& candidatePath) {
+    std::error_code timestampError;
+    const auto timestamp = std::filesystem::last_write_time(candidatePath, timestampError);
+    if (timestampError) {
+      return;
+    }
+
+    if (!latestTimestamp->has_value() || timestamp > latestTimestamp->value()) {
+      *latestTimestamp = timestamp;
+    }
+  };
+
+  updateTimestamp(path);
+
+  const bool isDirectory = std::filesystem::is_directory(path, error);
+  if (error || !isDirectory) {
+    return;
+  }
+
+  std::filesystem::recursive_directory_iterator end;
+  for (std::filesystem::recursive_directory_iterator it(
+         path,
+         std::filesystem::directory_options::skip_permission_denied,
+         error);
+       !error && it != end;
+       it.increment(error)) {
+    updateTimestamp(it->path());
+  }
 }
 
 bool instanceLayerAvailable(const char* layerName) {
@@ -496,6 +541,8 @@ private:
     startTicks_ = SDL_GetTicksNS();
     previousFrameTicks_ = startTicks_;
     nextToolingLogTicks_ = startTicks_ + 2'000'000'000ULL;
+    nextAuthoredContentPollTicks_ = startTicks_ + kAuthoredContentPollIntervalNs;
+    lastObservedAuthoredContentTimestamp_ = authoredContentTimestamp();
     refreshWindowTitle();
   }
 
@@ -552,8 +599,8 @@ private:
     }
   }
 
-  void resolveDataDrivenRuntimeState() {
-    activeSceneName_ = config_.scene;
+  void resolveDataDrivenRuntimeState(std::string_view preferredSceneName = {}) {
+    activeSceneName_ = preferredSceneName.empty() ? config_.scene : std::string(preferredSceneName);
     activeSceneTitle_.clear();
     activePrimaryPrefab_.clear();
     sceneSelectedFromBootstrap_ = false;
@@ -698,6 +745,124 @@ private:
 
     toolingUi_.toggleOverlay();
     bootstrapOverlayApplied_ = true;
+  }
+
+  std::optional<std::filesystem::file_time_type> authoredContentTimestamp() const {
+    std::optional<std::filesystem::file_time_type> latestTimestamp;
+    foldPathLatestTimestamp(config_.contentRoot, &latestTimestamp);
+    foldPathLatestTimestamp(config_.audioRoot, &latestTimestamp);
+    foldPathLatestTimestamp(config_.animationRoot, &latestTimestamp);
+    foldPathLatestTimestamp(config_.physicsRoot, &latestTimestamp);
+    foldPathLatestTimestamp(config_.dataFoundationPath, &latestTimestamp);
+    return latestTimestamp;
+  }
+
+  bool reloadRuntimeContent(std::string_view reason) {
+    AudioSystem nextAudioSystem;
+    AnimationSystem nextAnimationSystem;
+    DataFoundation nextDataFoundation;
+    PhysicsSystem nextPhysicsSystem;
+    std::string error;
+
+    if (!nextAudioSystem.loadFromDisk(AudioConfig{.rootPath = config_.audioRoot}, &error)) {
+      logRuntimeLine("Authored runtime content reload failed while reloading audio: " + error);
+      return false;
+    }
+
+    error.clear();
+    if (!nextAnimationSystem.loadFromDisk(AnimationConfig{.rootPath = config_.animationRoot}, &error)) {
+      logRuntimeLine("Authored runtime content reload failed while reloading animation: " + error);
+      return false;
+    }
+
+    error.clear();
+    if (!nextDataFoundation.loadFromDisk(DataFoundationConfig{
+          .contentRoot = config_.contentRoot,
+          .foundationPath = config_.dataFoundationPath,
+        },
+        &error)) {
+      logRuntimeLine("Authored runtime content reload failed while reloading data foundation: " + error);
+      return false;
+    }
+
+    error.clear();
+    if (!nextPhysicsSystem.loadFromDisk(PhysicsConfig{.rootPath = config_.physicsRoot}, &error)) {
+      logRuntimeLine("Authored runtime content reload failed while reloading physics: " + error);
+      return false;
+    }
+
+    const std::string requestedScene = activeSceneName_.empty() ? config_.scene : activeSceneName_;
+    audioSystem_ = std::move(nextAudioSystem);
+    animationSystem_ = std::move(nextAnimationSystem);
+    dataFoundation_ = std::move(nextDataFoundation);
+    physicsSystem_ = std::move(nextPhysicsSystem);
+
+    resolveDataDrivenRuntimeState(requestedScene);
+    resolveRuntimeSceneComposition();
+    resolveAnimationRuntimeState();
+    applyBootstrapPreferences();
+
+    lastObservedAuthoredContentTimestamp_ = authoredContentTimestamp();
+    authoredContentReloadCount_ += 1;
+
+    const std::string reasonLabel = reason.empty() ? "reload" : std::string(reason);
+    std::ostringstream summary;
+    summary << "Reloaded authored runtime content via " << reasonLabel
+            << ": reloads=" << authoredContentReloadCount_
+            << ", active-scene=" << activeSceneName_
+            << ", entities=" << activeSceneEntityCount_
+            << ", renderables=" << activeSceneRenderableCount_;
+    logRuntimeLine(summary.str());
+
+    if (sceneSelectedFromBootstrap_) {
+      logRuntimeLine("Requested scene was not found after reload. Runtime fell back to the bootstrap default scene.");
+    }
+
+    logRuntimeLine(dataFoundation_.sceneLookupSummary(activeSceneName_));
+    if (activeSceneEntityCount_ > 0) {
+      std::ostringstream sceneRuntimeSummary;
+      sceneRuntimeSummary << "Runtime scene state: entities=" << activeSceneEntityCount_
+                          << ", roots=" << activeSceneRootCount_
+                          << ", prefabs=" << activeScenePrefabCount_;
+      logRuntimeLine(sceneRuntimeSummary.str());
+    }
+    if (activeSceneRenderableCount_ > 0) {
+      std::ostringstream renderSummary;
+      renderSummary << "Runtime scene renderables: proxies=" << activeSceneRenderableCount_
+                    << ", mode=projected_debug_proxies";
+      logRuntimeLine(renderSummary.str());
+    }
+
+    logControlledEntityState(reasonLabel);
+    logInteractionTarget(reasonLabel);
+    logPhysicsQueries(reasonLabel);
+    refreshWindowTitle();
+    return true;
+  }
+
+  void pollAuthoredContentReload(std::uint64_t currentTicks) {
+    if (nextAuthoredContentPollTicks_ != 0 && currentTicks < nextAuthoredContentPollTicks_) {
+      return;
+    }
+
+    nextAuthoredContentPollTicks_ = currentTicks + kAuthoredContentPollIntervalNs;
+    const auto latestTimestamp = authoredContentTimestamp();
+    if (!latestTimestamp.has_value()) {
+      return;
+    }
+
+    if (!lastObservedAuthoredContentTimestamp_.has_value()) {
+      lastObservedAuthoredContentTimestamp_ = latestTimestamp;
+      return;
+    }
+
+    if (latestTimestamp.value() <= lastObservedAuthoredContentTimestamp_.value()) {
+      return;
+    }
+
+    lastObservedAuthoredContentTimestamp_ = latestTimestamp;
+    logRuntimeLine("Detected authored runtime content change on disk. Reloading runtime content.");
+    (void)reloadRuntimeContent("file_change");
   }
 
   void logControlledEntityState(std::string_view reason) {
@@ -1095,7 +1260,7 @@ private:
     logPhysicsQueries("startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
-      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, and F2-F6 for tooling panels.");
+      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, and F7 to reload authored runtime content.");
   }
 
   void triggerAudioEvent(std::string_view eventName, std::string_view reason) {
@@ -1266,6 +1431,9 @@ private:
       if (activeSceneRenderableCount_ > 0) {
         title << " renderables=" << activeSceneRenderableCount_;
       }
+      if (authoredContentReloadCount_ > 0) {
+        title << " reloads=" << authoredContentReloadCount_;
+      }
     }
     if (!activeAnimationGraphName_.empty()) {
       title << " anim=" << activeAnimationGraphName_;
@@ -1389,6 +1557,13 @@ private:
       toggleToolPanel("debug_state", "Debug State panel");
     }
 
+    if (inputSystem_.actionPressed("reload_runtime_content")) {
+      lastUiAction_ = "reload_runtime_content";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      lastObservedAuthoredContentTimestamp_ = authoredContentTimestamp();
+      (void)reloadRuntimeContent("manual_reload");
+    }
+
     if (inputSystem_.actionPressed("ui_accept")) {
       lastUiAction_ = "ui_accept";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
@@ -1471,6 +1646,7 @@ private:
         : static_cast<double>(currentTicks - previousFrameTicks_) / 1'000'000'000.0;
       previousFrameTicks_ = currentTicks;
 
+      pollAuthoredContentReload(currentTicks);
       updateRuntimeSceneState(deltaSeconds);
       updateToolingState(deltaSeconds);
 
@@ -1870,10 +2046,13 @@ private:
   bool hasBootstrapOverlayPreference_ = false;
   bool bootstrapOverlayEnabled_ = true;
   bool bootstrapOverlayApplied_ = false;
+  std::optional<std::filesystem::file_time_type> lastObservedAuthoredContentTimestamp_;
+  std::size_t authoredContentReloadCount_ = 0;
   std::uint64_t uiFlashUntilTicks_ = 0;
   std::uint64_t startTicks_ = 0;
   std::uint64_t previousFrameTicks_ = 0;
   std::uint64_t nextToolingLogTicks_ = 0;
+  std::uint64_t nextAuthoredContentPollTicks_ = 0;
 };
 
 int runNativeRuntime(const RuntimeConfig& config) {

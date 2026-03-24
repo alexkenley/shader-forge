@@ -37,6 +37,11 @@ source = "keyboard"
 code = "f6"
 
 [[binding]]
+action = "reload_runtime_content"
+source = "keyboard"
+code = "f7"
+
+[[binding]]
 action = "move_x"
 source = "keyboard"
 code = "a"

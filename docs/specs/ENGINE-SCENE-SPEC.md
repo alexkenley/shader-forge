@@ -52,12 +52,13 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - named runtime input now drives that composed controlled entity instead of leaving authored transforms entirely passive at startup
 - the shell `Scene` workspace can now open authored scene assets from the active session, inspect linked prefab assets, round-trip deterministic save/reload/duplicate flows, and edit placed-entity hierarchy, transforms, plus first-pass prefab component payloads back to those same files
 - shell play/restart now hand off the active session-root project context to the runtime so authored scene files and runtime manual testing stay aligned
+- the runtime now also supports a first saved-file iteration lane for scene testing: authored content reload can be triggered explicitly with `F7`, and the running runtime also polls for saved content/audio/animation/physics/data changes
 - `engine_sessiond` now provides safe session-root file writes so shell workflows and future assistants can mutate the same scene/prefab assets without relying on hidden editor-only state
 - `engine bake` now stages scene-entity summaries plus prefab component payloads into the cooked outputs and bake report so authored scene structure is visible outside the shell
 
 Current boundary:
 
-- this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, first prefab component payloads, a first runtime composition path, first projected debug-proxy visibility, and first session-root editor/runtime handoff, but not full rendered mesh/material instancing yet
+- this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, first prefab component payloads, a first runtime composition path, first projected debug-proxy visibility, first session-root editor/runtime handoff, and first authored-content reload/manual iteration, but not full rendered mesh/material instancing yet
 - transform gizmos, broader scene/component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
 
 ## Non-Goals

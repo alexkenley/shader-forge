@@ -27,6 +27,10 @@ name = "toggle_debug_state_panel"
 kind = "button"
 
 [[action]]
+name = "reload_runtime_content"
+kind = "button"
+
+[[action]]
 name = "move_x"
 kind = "axis"
 deadzone = 0.12

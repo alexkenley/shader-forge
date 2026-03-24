@@ -1142,7 +1142,7 @@ function renderCenterContent(
             </div>
           </div>
           <ViewportShell
-            footer="Windows native runtime window first. Embedded streaming viewer comes after runtime stabilization."
+            footer="Windows native runtime window first. F7 forces authored-content reload, and the runtime also polls for saved file changes."
             subtitle={`Run target: ${launchScene}`}
             title="Game viewport"
           />
