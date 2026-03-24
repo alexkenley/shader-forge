@@ -179,6 +179,11 @@ struct RuntimeProjectedProxy {
   bool hasAccent = false;
 };
 
+struct RuntimeProjectedBounds {
+  VkRect2D rect{};
+  float depth = 0.0F;
+};
+
 float clampUnit(float value) {
   return std::clamp(value, 0.0F, 1.0F);
 }
@@ -275,6 +280,27 @@ bool overlapsHorizontalCircleSphere(const std::array<float, 3>& center, float ra
   const double deltaZ = static_cast<double>(center[2]) - body.position[2];
   const double combinedRadius = static_cast<double>(radius) + body.radius;
   return deltaX * deltaX + deltaZ * deltaZ < combinedRadius * combinedRadius;
+}
+
+std::array<float, 3> physicsBodyDebugPosition(const PhysicsBodySnapshot& body) {
+  return {
+    static_cast<float>(body.position[0]),
+    static_cast<float>(body.position[1]),
+    static_cast<float>(body.position[2]),
+  };
+}
+
+std::array<float, 3> physicsBodyDebugDimensions(const PhysicsBodySnapshot& body) {
+  if (body.shapeType == "box") {
+    return {
+      std::max(static_cast<float>(body.halfExtents[0] * 2.0), 0.1F),
+      std::max(static_cast<float>(body.halfExtents[1] * 2.0), 0.1F),
+      std::max(static_cast<float>(body.halfExtents[2] * 2.0), 0.1F),
+    };
+  }
+
+  const float diameter = std::max(static_cast<float>(body.radius * 2.0), 0.1F);
+  return {diameter, diameter, diameter};
 }
 
 void clearAttachmentRect(VkCommandBuffer commandBuffer, const VkRect2D& rect, const std::array<float, 4>& color) {
@@ -687,14 +713,26 @@ private:
     activeSceneRootCount_ = 0;
     activeScenePrefabCount_ = 0;
     activeSceneRenderableCount_ = 0;
+    activeScenePhysicsBodyCount_ = 0;
+    activeSceneQueryBodyCount_ = 0;
     activeControlledEntity_ = RuntimeControlledEntityState{};
     activeInteractionTarget_ = RuntimeControlledEntityState{};
     activeMovementBlockedBodyName_.clear();
     activeOverlapTriggeredBodies_.clear();
     activeSceneRenderProxies_.clear();
+    activeScenePhysicsBodies_.clear();
     activeTriggeredInteractionEntityId_.clear();
     activeTriggeredInteractionEffectName_.clear();
     activeTriggeredInteractionUntilTicks_ = 0;
+
+    activeScenePhysicsBodies_ = physicsSystem_.bodiesForScene(activeSceneName_);
+    activeScenePhysicsBodyCount_ = activeScenePhysicsBodies_.size();
+    activeSceneQueryBodyCount_ = static_cast<std::size_t>(std::count_if(
+      activeScenePhysicsBodies_.begin(),
+      activeScenePhysicsBodies_.end(),
+      [](const PhysicsBodySnapshot& body) {
+        return body.layer == "Query_Only";
+      }));
 
     const auto composed = dataFoundation_.composeScene(activeSceneName_);
     if (!composed.has_value() || !composed->valid) {
@@ -1102,6 +1140,9 @@ private:
       renderSummary << "Runtime scene renderables: proxies=" << activeSceneRenderableCount_
                     << ", mode=projected_debug_proxies";
       logRuntimeLine(renderSummary.str());
+    }
+    if (activeScenePhysicsBodyCount_ > 0) {
+      logPhysicsDebugVisualization(reasonLabel);
     }
 
     logControlledEntityState(reasonLabel);
@@ -1535,6 +1576,9 @@ private:
                     << ", mode=projected_debug_proxies";
       logRuntimeLine(renderSummary.str());
     }
+    if (activeScenePhysicsBodyCount_ > 0) {
+      logPhysicsDebugVisualization("startup");
+    }
     logControlledEntityState("startup");
     logInteractionTarget("startup");
     triggerAudioEvent("runtime_boot", "startup");
@@ -1542,7 +1586,7 @@ private:
     logPhysicsQueries("startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
-      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, Enter/left click to trigger the current interaction target, F7 to reload authored runtime content, F8 to quicksave runtime state, and F9 to quickload it.");
+      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, Enter/left click to trigger the current interaction target, F7 to reload authored runtime content, F8 to quicksave runtime state, F9 to quickload it, and F10 to toggle physics debug visualization.");
   }
 
   void triggerAudioEvent(std::string_view eventName, std::string_view reason) {
@@ -1872,6 +1916,32 @@ private:
     SDL_SetWindowTitle(window_, title.str().c_str());
   }
 
+  std::string physicsDebugFocusBodyName() const {
+    if (!activeMovementBlockedBodyName_.empty()) {
+      return activeMovementBlockedBodyName_;
+    }
+    if (activeOverlapTriggeredBodies_.empty()) {
+      return {};
+    }
+
+    return *std::min_element(activeOverlapTriggeredBodies_.begin(), activeOverlapTriggeredBodies_.end());
+  }
+
+  void logPhysicsDebugVisualization(std::string_view reason) {
+    std::ostringstream message;
+    message << "Physics debug visualization via " << reason
+            << ": enabled=" << (physicsDebugEnabled_ ? "true" : "false")
+            << ", bodies=" << activeScenePhysicsBodyCount_
+            << ", query_bodies=" << activeSceneQueryBodyCount_
+            << ", overlap_bodies=" << activeOverlapTriggeredBodies_.size()
+            << ", mode=projected_debug_bodies";
+    const std::string focusBodyName = physicsDebugFocusBodyName();
+    if (!focusBodyName.empty()) {
+      message << ", focus=" << focusBodyName;
+    }
+    logRuntimeLine(message.str());
+  }
+
   bool controlledEntityBlockedAt(
     const std::array<float, 3>& position,
     const std::vector<PhysicsBodySnapshot>& sceneBodies,
@@ -1947,7 +2017,6 @@ private:
     }
 
     const std::string sceneName = activeSceneName_.empty() ? config_.scene : activeSceneName_;
-    const auto sceneBodies = physicsSystem_.bodiesForScene(sceneName);
     const auto overlaps = physicsSystem_.overlapSphereScene(
       sceneName,
       {
@@ -1964,12 +2033,12 @@ private:
       }
 
       const auto bodyIt = std::find_if(
-        sceneBodies.begin(),
-        sceneBodies.end(),
+        activeScenePhysicsBodies_.begin(),
+        activeScenePhysicsBodies_.end(),
         [&overlap](const PhysicsBodySnapshot& body) {
           return body.name == overlap.bodyName;
         });
-      if (bodyIt == sceneBodies.end()) {
+      if (bodyIt == activeScenePhysicsBodies_.end()) {
         continue;
       }
 
@@ -2008,15 +2077,20 @@ private:
       .controlledEntityId = activeControlledEntity_.id,
       .controlledEntityPosition = activeControlledEntity_.valid ? runtimeVector3String(activeControlledEntity_.position) : std::string{},
       .blockedBodyName = activeMovementBlockedBodyName_,
+      .physicsFocusBodyName = physicsDebugFocusBodyName(),
       .animationGraphName = activeAnimationGraphName_,
       .animationStateName = activeAnimationState_,
       .animationClipName = activeAnimationClip_,
       .interactionTargetId = activeInteractionTarget_.id,
       .interactionEffectName = activeInteractionTarget_.effectName,
       .activeTriggeredEffectName = activeTriggeredInteractionEffectName_,
+      .physicsBodyCount = activeScenePhysicsBodyCount_,
+      .queryBodyCount = activeSceneQueryBodyCount_,
+      .activeOverlapBodyCount = activeOverlapTriggeredBodies_.size(),
       .moveSpeed = activeControlledEntityMoveSpeed_,
       .controlledEntityValid = activeControlledEntity_.valid,
       .interactionTargetValid = activeInteractionTarget_.valid,
+      .physicsDebugEnabled = physicsDebugEnabled_,
     });
 
     const std::uint64_t now = SDL_GetTicksNS();
@@ -2054,14 +2128,13 @@ private:
     const float deltaZ =
       ((forwardZ * moveY_) + (rightZ * moveX_)) * kMoveSpeedUnitsPerSecond * static_cast<float>(deltaSeconds);
 
-    const auto sceneBodies = physicsSystem_.bodiesForScene(activeSceneName_.empty() ? config_.scene : activeSceneName_);
     std::string blockingBodyName;
     std::array<float, 3> nextPosition = activeControlledEntity_.position;
 
     if (std::abs(deltaX) > 0.0001F) {
       auto axisCandidate = nextPosition;
       axisCandidate[0] += deltaX;
-      if (!controlledEntityBlockedAt(axisCandidate, sceneBodies, &blockingBodyName)) {
+      if (!controlledEntityBlockedAt(axisCandidate, activeScenePhysicsBodies_, &blockingBodyName)) {
         nextPosition[0] = axisCandidate[0];
       }
     }
@@ -2069,7 +2142,7 @@ private:
     if (std::abs(deltaZ) > 0.0001F) {
       auto axisCandidate = nextPosition;
       axisCandidate[2] += deltaZ;
-      if (!controlledEntityBlockedAt(axisCandidate, sceneBodies, &blockingBodyName)) {
+      if (!controlledEntityBlockedAt(axisCandidate, activeScenePhysicsBodies_, &blockingBodyName)) {
         nextPosition[2] = axisCandidate[2];
       }
     }
@@ -2136,6 +2209,13 @@ private:
       lastUiAction_ = "load_runtime_state";
       uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
       (void)loadRuntimeState("manual_quickload");
+    }
+
+    if (inputSystem_.actionPressed("toggle_physics_debug")) {
+      physicsDebugEnabled_ = !physicsDebugEnabled_;
+      lastUiAction_ = "toggle_physics_debug";
+      uiFlashUntilTicks_ = SDL_GetTicksNS() + 350'000'000ULL;
+      logPhysicsDebugVisualization("toggle_physics_debug");
     }
 
     if (inputSystem_.actionPressed("ui_accept")) {
@@ -2260,14 +2340,9 @@ private:
     return true;
   }
 
-  std::optional<RuntimeProjectedProxy> projectSceneRenderProxy(const RuntimeSceneRenderProxy& proxy, double elapsedSeconds) const {
-    if (proxy.id.empty()) {
-      return std::nullopt;
-    }
-    if (activeControlledEntity_.valid && proxy.id == activeControlledEntity_.id) {
-      return std::nullopt;
-    }
-
+  std::optional<RuntimeProjectedBounds> projectWorldBounds(
+    const std::array<float, 3>& worldPosition,
+    const std::array<float, 3>& dimensions) const {
     const std::array<float, 3> cameraPosition = activeControlledEntity_.valid
       ? activeControlledEntity_.position
       : std::array<float, 3>{0.0F, 1.6F, -4.0F};
@@ -2283,9 +2358,9 @@ private:
     const float sinPitch = std::sin(pitchRadians);
 
     const std::array<float, 3> delta = {
-      proxy.worldPosition[0] - cameraPosition[0],
-      proxy.worldPosition[1] - cameraPosition[1],
-      proxy.worldPosition[2] - cameraPosition[2],
+      worldPosition[0] - cameraPosition[0],
+      worldPosition[1] - cameraPosition[1],
+      worldPosition[2] - cameraPosition[2],
     };
 
     const float localX = delta[0] * cosYaw + delta[2] * -sinYaw;
@@ -2306,8 +2381,8 @@ private:
       return std::nullopt;
     }
 
-    const float proxyWidth = std::max(proxy.dimensions[0], proxy.dimensions[2]);
-    const float proxyHeight = std::max(proxy.dimensions[1], 0.35F);
+    const float proxyWidth = std::max(dimensions[0], dimensions[2]);
+    const float proxyHeight = std::max(dimensions[1], 0.35F);
     const float halfWidthPixels = std::max(
       6.0F,
       0.5F * (proxyWidth / std::max(viewZ, 0.15F)) / tanHalfHorizontal * static_cast<float>(swapchainExtent_.width) * 0.5F);
@@ -2318,20 +2393,41 @@ private:
     const float centerX = (xNdc * 0.5F + 0.5F) * static_cast<float>(swapchainExtent_.width);
     const float centerY = (0.5F - yNdc * 0.5F) * static_cast<float>(swapchainExtent_.height);
 
-    RuntimeProjectedProxy projected;
+    RuntimeProjectedBounds projected;
     projected.depth = viewZ;
-    projected.bodyRect = buildRect(
+    projected.rect = buildRect(
       static_cast<std::int32_t>(std::round(centerX - halfWidthPixels)),
       static_cast<std::int32_t>(std::round(centerY - halfHeightPixels)),
       static_cast<std::uint32_t>(std::max(2.0F, std::round(halfWidthPixels * 2.0F))),
       static_cast<std::uint32_t>(std::max(2.0F, std::round(halfHeightPixels * 2.0F))));
+    if (!clipRectToSwapchain(&projected.rect)) {
+      return std::nullopt;
+    }
+    return projected;
+  }
+
+  std::optional<RuntimeProjectedProxy> projectSceneRenderProxy(const RuntimeSceneRenderProxy& proxy, double elapsedSeconds) const {
+    if (proxy.id.empty()) {
+      return std::nullopt;
+    }
+    if (activeControlledEntity_.valid && proxy.id == activeControlledEntity_.id) {
+      return std::nullopt;
+    }
+
+    const auto projectedBounds = projectWorldBounds(proxy.worldPosition, proxy.dimensions);
+    if (!projectedBounds.has_value()) {
+      return std::nullopt;
+    }
+
+    RuntimeProjectedProxy projected;
+    projected.depth = projectedBounds->depth;
+    projected.bodyRect = projectedBounds->rect;
 
     const bool interactionTarget = activeInteractionTarget_.valid && proxy.id == activeInteractionTarget_.id;
     const bool interactionTriggered =
       !activeTriggeredInteractionEntityId_.empty()
-      && proxy.id == activeTriggeredInteractionEntityId_
-      && SDL_GetTicksNS() <= activeTriggeredInteractionUntilTicks_;
-    const float pulse = 0.55F + 0.45F * static_cast<float>(std::sin(elapsedSeconds * 2.2 + viewZ));
+      && proxy.id == activeTriggeredInteractionEntityId_ && SDL_GetTicksNS() <= activeTriggeredInteractionUntilTicks_;
+    const float pulse = 0.55F + 0.45F * static_cast<float>(std::sin(elapsedSeconds * 2.2 + projected.depth));
     projected.bodyColor = interactionTriggered
       ? std::array<float, 4>{
           clampUnit(0.82F + pulse * 0.14F),
@@ -2355,9 +2451,83 @@ private:
           : std::array<float, 4>{0.20F, 0.30F, 0.38F, 1.0F};
     }
 
-    if (!clipRectToSwapchain(&projected.bodyRect)) {
+    if (projected.hasAccent && !clipRectToSwapchain(&projected.accentRect)) {
+      projected.hasAccent = false;
+    }
+
+    return projected;
+  }
+
+  std::optional<RuntimeProjectedProxy> projectPhysicsDebugBody(const PhysicsBodySnapshot& body, double elapsedSeconds) const {
+    if (!body.valid) {
       return std::nullopt;
     }
+
+    const auto projectedBounds = projectWorldBounds(physicsBodyDebugPosition(body), physicsBodyDebugDimensions(body));
+    if (!projectedBounds.has_value()) {
+      return std::nullopt;
+    }
+
+    const bool queryOnly = body.layer == "Query_Only";
+    const bool overlapTriggered = activeOverlapTriggeredBodies_.contains(body.name);
+    const bool movementBlocked = !activeMovementBlockedBodyName_.empty() && body.name == activeMovementBlockedBodyName_;
+    const float pulse = 0.55F + 0.45F * static_cast<float>(std::sin(elapsedSeconds * 2.6 + projectedBounds->depth));
+
+    RuntimeProjectedProxy projected;
+    projected.depth = projectedBounds->depth;
+    projected.bodyRect = projectedBounds->rect;
+    projected.bodyColor = overlapTriggered
+      ? std::array<float, 4>{
+          clampUnit(0.42F + pulse * 0.20F),
+          clampUnit(0.26F + pulse * 0.18F),
+          clampUnit(0.10F + pulse * 0.10F),
+          1.0F,
+        }
+      : queryOnly
+        ? std::array<float, 4>{
+            clampUnit(0.08F + pulse * 0.06F),
+            clampUnit(0.18F + pulse * 0.10F),
+            clampUnit(0.22F + pulse * 0.08F),
+            1.0F,
+          }
+        : movementBlocked
+          ? std::array<float, 4>{
+              clampUnit(0.28F + pulse * 0.12F),
+              clampUnit(0.11F + pulse * 0.06F),
+              clampUnit(0.10F + pulse * 0.04F),
+              1.0F,
+            }
+          : std::array<float, 4>{0.10F, 0.10F, 0.13F, 1.0F};
+
+    projected.hasAccent = true;
+    const std::int32_t accentInset = overlapTriggered ? 6 : queryOnly ? 5 : 4;
+    projected.accentRect = buildRect(
+      projected.bodyRect.offset.x - accentInset,
+      projected.bodyRect.offset.y - accentInset,
+      projected.bodyRect.extent.width + static_cast<std::uint32_t>(accentInset * 2),
+      projected.bodyRect.extent.height + static_cast<std::uint32_t>(accentInset * 2));
+    projected.accentColor = overlapTriggered
+      ? std::array<float, 4>{
+          clampUnit(0.82F + pulse * 0.12F),
+          clampUnit(0.58F + pulse * 0.18F),
+          clampUnit(0.20F + pulse * 0.14F),
+          1.0F,
+        }
+      : queryOnly
+        ? std::array<float, 4>{
+            clampUnit(0.18F + pulse * 0.10F),
+            clampUnit(0.52F + pulse * 0.12F),
+            clampUnit(0.60F + pulse * 0.10F),
+            1.0F,
+          }
+        : movementBlocked
+          ? std::array<float, 4>{
+              clampUnit(0.68F + pulse * 0.16F),
+              clampUnit(0.26F + pulse * 0.10F),
+              clampUnit(0.20F + pulse * 0.08F),
+              1.0F,
+            }
+          : std::array<float, 4>{0.26F, 0.28F, 0.34F, 1.0F};
     if (projected.hasAccent && !clipRectToSwapchain(&projected.accentRect)) {
       projected.hasAccent = false;
     }
@@ -2385,6 +2555,30 @@ private:
     return projected;
   }
 
+  std::vector<RuntimeProjectedProxy> projectPhysicsDebugBodies(double elapsedSeconds) const {
+    if (!physicsDebugEnabled_) {
+      return {};
+    }
+
+    std::vector<RuntimeProjectedProxy> projected;
+    projected.reserve(activeScenePhysicsBodies_.size());
+
+    for (const auto& body : activeScenePhysicsBodies_) {
+      const auto projectedBody = projectPhysicsDebugBody(body, elapsedSeconds);
+      if (projectedBody.has_value()) {
+        projected.push_back(*projectedBody);
+      }
+    }
+
+    std::sort(
+      projected.begin(),
+      projected.end(),
+      [](const RuntimeProjectedProxy& left, const RuntimeProjectedProxy& right) {
+        return left.depth > right.depth;
+      });
+    return projected;
+  }
+
   void recordSceneProxyPass(VkCommandBuffer commandBuffer, double elapsedSeconds) {
     if (swapchainExtent_.width == 0 || swapchainExtent_.height == 0) {
       return;
@@ -2397,6 +2591,14 @@ private:
     VkRect2D horizonRect = buildRect(0, horizonY, swapchainExtent_.width, 2);
     if (clipRectToSwapchain(&horizonRect)) {
       clearAttachmentRect(commandBuffer, horizonRect, {0.18F, 0.20F, 0.24F, 1.0F});
+    }
+
+    const auto projectedPhysicsBodies = projectPhysicsDebugBodies(elapsedSeconds);
+    for (const auto& body : projectedPhysicsBodies) {
+      if (body.hasAccent) {
+        clearAttachmentRect(commandBuffer, body.accentRect, body.accentColor);
+      }
+      clearAttachmentRect(commandBuffer, body.bodyRect, body.bodyColor);
     }
 
     const auto projectedProxies = projectSceneRenderProxies(elapsedSeconds);
@@ -2632,6 +2834,7 @@ private:
   bool framebufferDirty_ = false;
   bool runtimeExitRequested_ = false;
   bool inputDebugEnabled_ = false;
+  bool physicsDebugEnabled_ = true;
   float moveX_ = 0.0F;
   float moveY_ = 0.0F;
   float lookX_ = 0.0F;
@@ -2643,6 +2846,8 @@ private:
   std::size_t activeSceneRootCount_ = 0;
   std::size_t activeScenePrefabCount_ = 0;
   std::size_t activeSceneRenderableCount_ = 0;
+  std::size_t activeScenePhysicsBodyCount_ = 0;
+  std::size_t activeSceneQueryBodyCount_ = 0;
   std::string activeAnimationGraphName_;
   std::string activeAnimationEntryState_;
   std::string activeAnimationEntryClip_;
@@ -2655,6 +2860,7 @@ private:
   std::string activeMovementBlockedBodyName_;
   std::unordered_set<std::string> activeOverlapTriggeredBodies_;
   std::vector<RuntimeSceneRenderProxy> activeSceneRenderProxies_;
+  std::vector<PhysicsBodySnapshot> activeScenePhysicsBodies_;
   std::string activeTriggeredInteractionEntityId_;
   std::string activeTriggeredInteractionEffectName_;
   std::string lastUiAction_;

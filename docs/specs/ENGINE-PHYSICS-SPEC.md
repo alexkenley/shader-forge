@@ -61,11 +61,12 @@ The current Phase 5.74 slice now exists as a first engine-owned physics foundati
 - collision-layer relationships, material references, motion types, and primitive-body shape settings are validated at runtime rather than left as implied future structure
 - deterministic raycast and sphere-overlap queries now exist through engine-owned physics APIs over authored primitive bodies
 - runtime startup now logs layer/body summaries plus deterministic query results for the active scene
+- the native runtime now also projects a first physics-debug visualization lane for authored bodies, with distinct query-only/blocking colors plus overlap/block highlights for manual testing
 - `engine run` now forwards `--physics-root`
 - `engine bake` now scans the physics root and stages cooked layer, material, and body metadata under `build/cooked/physics/`
 - deterministic harness coverage now exists for the authored physics assets, runtime integration hooks, and staged physics cook lane
 
-This is still a widening slice, not the final physics runtime. There is not yet a Jolt-backed simulation step, sweeps, joints, character movement, ragdoll/animation handoff, or native physics debug draw.
+This is still a widening slice, not the final physics runtime. There is not yet a Jolt-backed simulation step, sweeps, joints, character movement, ragdoll/animation handoff, or richer native physics gizmo/capture tooling.
 
 ## Non-Goals
 

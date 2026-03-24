@@ -103,9 +103,9 @@ Current implementation status:
 - Phase 5.85 has now started through an explicit Unreal offline fallback lane with raw-project detection, lower-confidence migration-lane reporting, Blueprint package-name manifests, and dedicated fixture coverage.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph plus named-state resolution, and staged cooked animation metadata.
-- Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
+- Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, first projected physics debug visualization, and staged cooked physics metadata.
 - Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
-- Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, input-driven controlled-entity state, first projected debug-proxy rendering for authored render components in the native runtime, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, active-session-root runtime handoff from the shell/session backend, a first authored-content reload lane for manual iteration, and first view-resolved interaction/effect feedback.
+- Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, input-driven controlled-entity state, first projected debug-proxy rendering for authored render components in the native runtime, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, first projected physics-body debug visualization, active-session-root runtime handoff from the shell/session backend, a first authored-content reload lane for manual iteration, and first view-resolved interaction/effect feedback.
 - Phase 6.1 has now started through a first runtime save-system foundation with versioned quick-slot payloads, session-root save paths, engine-owned save/load APIs, and explicit separation between authored assets and runtime persistence.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
@@ -136,7 +136,7 @@ What is already done:
 - Phase 5.85 has now started through `engine migrate unreal` reporting an explicit `unreal_offline_fallback` lane, lower conversion confidence, heuristic Blueprint package manifests from `.uasset` names, and a dedicated `fixtures/migration/unreal-offline-minimal` lane.
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
 - Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
-- Phase 5.74 has now started through `physics/layers.toml`, `physics/materials/*.physics-material.toml`, `physics/bodies/*.physics-body.toml`, native physics-system validation/query hooks, and staged cooked physics outputs under `build/cooked/physics/`.
+- Phase 5.74 has now started through `physics/layers.toml`, `physics/materials/*.physics-material.toml`, `physics/bodies/*.physics-body.toml`, native physics-system validation/query hooks, first projected physics debug visualization, and staged cooked physics outputs under `build/cooked/physics/`.
 - Deterministic harnesses exist for the shell, session backend, viewer bridge, scene authoring, scene runtime scaffold, runtime scaffold, save-system scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, physics scaffold, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
@@ -548,7 +548,7 @@ Implemented first slice:
 
 - `physics/layers.toml`, `physics/materials/default_surface.physics-material.toml`, `physics/materials/crate_surface.physics-material.toml`, `physics/bodies/sandbox_floor.physics-body.toml`, `physics/bodies/debug_crate.physics-body.toml`, and `physics/bodies/debug_trigger.physics-body.toml`
 - native `PhysicsSystem` loading, validation, deterministic raycast/overlap queries, and summary surfaces in `engine/runtime/src/physics_system.cpp`
-- runtime initialization plus startup and `ui_back` physics query logging in `engine/runtime/src/runtime_app.cpp`
+- runtime initialization plus startup and `ui_back` physics query logging, first projected physics-debug visualization, and `F10` physics-debug toggling in `engine/runtime/src/runtime_app.cpp`
 - `engine run` forwarding of `--physics-root`
 - `engine bake` scanning plus staged cooked physics output under `build/cooked/physics/`
 - deterministic `scripts/test-engine-physics-scaffold.mjs` coverage plus widened runtime and asset-pipeline harnesses
@@ -738,7 +738,8 @@ Current checkpoint now implemented:
 - controlled-entity movement now respects a first authored-physics blocking lane by testing movement against scene physics bodies and surfacing the blocking body in logs/window state
 - overlap-triggered effect entities can now activate automatically from query-only scene bodies during runtime movement instead of requiring every authored effect to be manually targeted with `ui_accept`
 - movement now also drives a first runtime animation-state lane: the authored graph can resolve named states such as `idle` and `walk`, and walk clip `audio_event` hooks now fire during movement-driven playback
-- the native tooling overlay now also surfaces live controlled-entity, movement-speed, animation-state, movement-block, and interaction-target context during manual runtime testing instead of leaving that state only in logs and the window title
+- the native runtime now also exposes a first projected physics-debug lane for manual testing: authored blocking bodies and query-only trigger bodies can be visualized in the external window, active trigger overlaps are highlighted, and `F10` toggles that view without restarting the runtime
+- the native tooling overlay now also surfaces live controlled-entity, movement-speed, animation-state, movement-block, interaction-target, and physics-debug state during manual runtime testing instead of leaving that state only in logs and the window title
 - runtime startup logs and window state now surface composed-scene counts, preferred player entity context, and first interaction-target effect context
 - physics query origins now follow the controlled entity position instead of staying hard-coded at world zero
 - deterministic `scripts/test-engine-scene-runtime-scaffold.mjs` coverage now exists for this Phase 6 slice

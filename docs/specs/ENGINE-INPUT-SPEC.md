@@ -56,7 +56,7 @@ The current first slice in the repo now includes:
 - a native `engine_input` loader and named action query layer inside `engine_runtime`
 - SDL3 keyboard, mouse, and gamepad translation into engine-owned button and axis actions
 - gameplay and UI contexts loaded at runtime rather than hardcoded raw-event checks in the render loop
-- runtime-side consumption of named actions such as `runtime_exit`, `reload_runtime_content`, `save_runtime_state`, `load_runtime_state`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, including the current `F7` authored-content reload lane, the `F8` quick-save lane, the `F9` quick-load lane, and `ui_accept` interaction triggering
+- runtime-side consumption of named actions such as `runtime_exit`, `reload_runtime_content`, `save_runtime_state`, `load_runtime_state`, `toggle_physics_debug`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, including the current `F7` authored-content reload lane, the `F8` quick-save lane, the `F9` quick-load lane, the `F10` physics-debug toggle lane, and `ui_accept` interaction triggering
 
 ## Non-Goals
 

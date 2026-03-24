@@ -39,6 +39,10 @@ name = "load_runtime_state"
 kind = "button"
 
 [[action]]
+name = "toggle_physics_debug"
+kind = "button"
+
+[[action]]
 name = "move_x"
 kind = "axis"
 deadzone = 0.12

@@ -107,6 +107,7 @@ Assistant entry points:
 - The native runtime now also has a first authored-content iteration lane: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps to pick up shell edits without a full restart.
 - The native runtime now resolves effect-capable interaction targets from the current view/crosshair, and `ui_accept` input such as Enter or left-click triggers first visible interaction feedback plus effect-descriptor-backed logs.
 - The native runtime now also has a first save-system lane: `F8` writes `saved/runtime/quickslot_01.runtime-save.toml`, `F9` reloads it, and the save path follows the active session/project root instead of mixing runtime persistence into authored content roots.
+- The native runtime now also has a first projected physics-debug lane: authored blocking bodies and query-only trigger bodies can be visualized in the external window, overlap-triggered bodies are highlighted, and `F10` toggles that view during manual testing.
 - The native runtime still renders in an external window.
 - The browser shell remains the primary workspace.
 - Embedded viewer transport and screenshot capture are still deferred.
@@ -143,9 +144,10 @@ Assistant entry points:
 - The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.
 - Runtime startup resolves a default animation graph, logs graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio event API.
 - Movement now drives a first authored animation-state lane in runtime: `idle` and `walk` can be resolved by name from the current graph, the active state/clip is surfaced in window state, and walk clip `audio_event` hooks now fire during movement playback.
-- The native tooling overlay now also surfaces live player id/position, movement speed, active animation state/clip, blocking body, current interaction target, and active triggered effect so manual runtime testing is not dependent on log scanning alone.
+- The native tooling overlay now also surfaces live player id/position, movement speed, active animation state/clip, blocking body, current interaction target, active triggered effect, and physics-debug state so manual runtime testing is not dependent on log scanning alone.
 - The runtime now loads authored physics layers, materials, and primitive bodies through `PhysicsSystem`.
 - Runtime startup logs physics layer/body summaries and runs deterministic raycast plus overlap queries against the active scene.
+- The current runtime slice can now project first physics-debug body visualization for blocking and query-only bodies, but it is still a debug overlay rather than final in-engine physics gizmos.
 - `engine bake` now emits staged cooked outputs into `build/cooked/`, writes generated-mesh preview payloads for `procgeo` assets, stages cooked audio metadata under `build/cooked/audio/`, stages cooked animation metadata under `build/cooked/animation/`, and stages cooked physics metadata under `build/cooked/physics/`.
 - There is not yet a final FlatBuffers writer, SQLite asset index, or Effekseer runtime integration.
 
@@ -176,11 +178,11 @@ Assistant entry points:
 
 - `input/actions.toml` plus `input/contexts/*.input.toml` define the current action and context maps.
 - Keyboard, mouse, and gamepad input are routed through engine-owned named actions and axes.
-- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `save_runtime_state`, `load_runtime_state`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, with `F7` active for authored-content reload plus `F8` and `F9` active for quick-save and quick-load.
+- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `save_runtime_state`, `load_runtime_state`, `toggle_physics_debug`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, with `F7` active for authored-content reload plus `F8`, `F9`, and `F10` active for quick-save, quick-load, and physics-debug toggling.
 - The native tooling substrate currently has a named panel registry.
 - Tooling layouts are loaded from text and session layouts can be saved back to disk.
 - The current panel set covers runtime stats, input debug, log view, and debug state.
-- The overlay summary now also carries first live gameplay-state context for the controlled entity, animation state, movement blocking, and interaction target during manual testing.
+- The overlay summary now also carries first live gameplay-state context for the controlled entity, animation state, movement blocking, interaction target, and physics-debug state during manual testing.
 - Tooling overlay and panel toggles are already bound through the engine-owned input actions.
 - Dear ImGui docking and real in-process native panel rendering are still ahead.
 
@@ -217,6 +219,6 @@ Assistant entry points:
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
-- Physics still needs the real backend integration, sweeps, joints, character support, and debug draw on top of the new authored query-definition lane.
+- Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

@@ -590,6 +590,20 @@ std::string ToolingUiSystem::overlaySummary() const {
     summary << " blocked=" << impl_->runtimeState.blockedBodyName;
   }
 
+  summary << " physics-debug=" << (impl_->runtimeState.physicsDebugEnabled ? "on" : "off");
+  if (impl_->runtimeState.physicsBodyCount > 0) {
+    summary << " physics-bodies=" << impl_->runtimeState.physicsBodyCount;
+  }
+  if (impl_->runtimeState.queryBodyCount > 0) {
+    summary << " query-bodies=" << impl_->runtimeState.queryBodyCount;
+  }
+  if (impl_->runtimeState.activeOverlapBodyCount > 0) {
+    summary << " overlap-bodies=" << impl_->runtimeState.activeOverlapBodyCount;
+  }
+  if (!impl_->runtimeState.physicsFocusBodyName.empty()) {
+    summary << " physics-focus=" << impl_->runtimeState.physicsFocusBodyName;
+  }
+
   if (impl_->runtimeState.interactionTargetValid) {
     summary << " target=" << impl_->runtimeState.interactionTargetId;
     if (!impl_->runtimeState.interactionEffectName.empty()) {

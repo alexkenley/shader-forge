@@ -35,15 +35,20 @@ struct ToolingRuntimeStateSnapshot {
   std::string controlledEntityId;
   std::string controlledEntityPosition;
   std::string blockedBodyName;
+  std::string physicsFocusBodyName;
   std::string animationGraphName;
   std::string animationStateName;
   std::string animationClipName;
   std::string interactionTargetId;
   std::string interactionEffectName;
   std::string activeTriggeredEffectName;
+  std::size_t physicsBodyCount = 0;
+  std::size_t queryBodyCount = 0;
+  std::size_t activeOverlapBodyCount = 0;
   float moveSpeed = 0.0F;
   bool controlledEntityValid = false;
   bool interactionTargetValid = false;
+  bool physicsDebugEnabled = false;
 };
 
 class ToolingUiSystem {
