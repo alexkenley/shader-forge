@@ -46,6 +46,8 @@ The current runtime slice is the first real native bring-up pass:
 - named `move_*` and `look_*` actions now drive that controlled entity position and orientation at runtime
 - the runtime now exposes a first authored-content reload lane for manual iteration: `reload_runtime_content` is bound to `F7`, and content/audio/animation/physics/data changes are also detected through a simple saved-file polling pass
 - authored-content reload now stages replacement audio, animation, data-foundation, and physics state before swap-in so broken edits do not destroy the previous live runtime state
+- the runtime now resolves effect-capable interaction targets from the current view/crosshair instead of pinning interaction to the first authored effect entity
+- `ui_accept` can now trigger first effect-descriptor-backed runtime feedback and logs for the current interaction target, with visible debug-proxy feedback in the external window
 - physics query origins and runtime interaction logs now follow the composed scene entity state instead of staying hard-coded at world zero
 - animation graph and entry-state context now feeds runtime title/log state instead of staying disconnected from execution
 - physics scene-query state is now logged against the authored scene context instead of staying disconnected from execution
@@ -53,7 +55,7 @@ The current runtime slice is the first real native bring-up pass:
 Current boundary:
 
 - the runtime now has first visible composed-scene rendering through projected debug proxies, but not a full mesh/material/shader pipeline yet
-- the runtime now has a first shell-to-runtime project-root handoff plus first polling/manual authored-content reload for manual testing, but not shader reload, watcher-backed hot reload, or deeper mounted-project/package layering yet
+- the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, or deeper mounted-project/package layering yet
 - Dear ImGui-native panels, real asset-backed geometry submission, and player-facing game UI are still later widening passes
 
 ## Future AI Runtime Boundary

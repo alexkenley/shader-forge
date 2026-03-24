@@ -1142,7 +1142,7 @@ function renderCenterContent(
             </div>
           </div>
           <ViewportShell
-            footer="Windows native runtime window first. F7 forces authored-content reload, and the runtime also polls for saved file changes."
+            footer="Windows native runtime window first. Aim at effect-capable proxies and press Enter or click to trigger them; F7 reloads authored content."
             subtitle={`Run target: ${launchScene}`}
             title="Game viewport"
           />

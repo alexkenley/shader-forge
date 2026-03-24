@@ -59,6 +59,7 @@ assert.match(foundationHeader, /composedSceneSummary/);
 assert.match(foundationHeader, /relationshipSummary/);
 assert.match(foundationHeader, /runtimeBootstrap/);
 assert.match(foundationHeader, /snapshotProcgeoSources/);
+assert.match(foundationHeader, /effectDescriptor/);
 assert.match(foundationHeader, /procgeoSource/);
 assert.match(foundationSource, /Data foundation: source=/);
 assert.match(foundationSource, /", cooked="/);

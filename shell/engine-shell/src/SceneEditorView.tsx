@@ -937,8 +937,9 @@ export function SceneEditorView({
               Transform gizmos and live viewport manipulation are still ahead. This slice makes the
               `Scene` workspace author real placed-entity and transform data now. Play and Restart
               now launch the native runtime against the active session root so these same authored
-              files drive manual runtime testing, and the runtime can now poll for saved authored
-              content changes or force a reload with `F7` in the external window.
+              files drive manual runtime testing, the runtime can now poll for saved authored
+              content changes or force a reload with `F7`, and effect-capable proxies can now be
+              aimed at and triggered from the external window with Enter or left click.
             </div>
           </article>
 

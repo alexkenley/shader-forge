@@ -102,6 +102,7 @@ Assistant entry points:
 - The shell tracks runtime state, build state, bridge activity, and recent log tails in `Game` and `Preview`.
 - The native runtime now projects authored prefab render components into visible debug-proxy scene cards in the external Vulkan window, so the active scene is no longer only a clear-color loop during manual testing.
 - The native runtime now also has a first authored-content iteration lane: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps to pick up shell edits without a full restart.
+- The native runtime now resolves effect-capable interaction targets from the current view/crosshair, and `ui_accept` input such as Enter or left-click triggers first visible interaction feedback plus effect-descriptor-backed logs.
 - The native runtime still renders in an external window.
 - The browser shell remains the primary workspace.
 - Embedded viewer transport and screenshot capture are still deferred.
@@ -127,6 +128,7 @@ Assistant entry points:
 - The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.
 - Shell play/restart now forward the active session root into runtime launch so the external runtime reads the same authored scene files the shell edits.
 - The running runtime now follows those authored edits through a first polling/manual reload lane rather than requiring a full process restart for every save.
+- Effect-capable proxies in the running scene can now be aimed at with the crosshair and triggered through `ui_accept`, which surfaces first runtime feedback for authored `[component.effect]` data instead of leaving it as static catalog metadata.
 - `Play Mode` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Edit Mode` is restored.
 - The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
@@ -164,7 +166,7 @@ Assistant entry points:
 
 - `input/actions.toml` plus `input/contexts/*.input.toml` define the current action and context maps.
 - Keyboard, mouse, and gamepad input are routed through engine-owned named actions and axes.
-- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`.
+- The runtime currently consumes actions such as `runtime_exit`, `reload_runtime_content`, `move_x`, `move_y`, `look_x`, `look_y`, `ui_accept`, and `ui_back`, with `F7` now active for authored-content reload.
 - The native tooling substrate currently has a named panel registry.
 - Tooling layouts are loaded from text and session layouts can be saved back to disk.
 - The current panel set covers runtime stats, input debug, log view, and debug state.

@@ -34,6 +34,7 @@ assert.match(inputSource, /mouse_motion/);
 assert.match(inputSource, /gamepad_axis/);
 assert.match(inputSource, /SDL_EVENT_GAMEPAD_AXIS_MOTION/);
 assert.match(inputSource, /SDL_EVENT_MOUSE_MOTION/);
+assert.match(inputSource, /SDL_SCANCODE_F7/);
 assert.match(inputSource, /bindingSummary/);
 assert.match(runtimeApp, /InputSystem inputSystem_/);
 assert.match(runtimeApp, /actionPressed\("runtime_exit"\)/);

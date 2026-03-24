@@ -154,10 +154,13 @@ struct RuntimeControlledEntityState {
 struct RuntimeSceneRenderProxy {
   std::string id;
   std::string displayName;
+  std::string prefabName;
+  std::string spawnTag;
   std::string procgeoName;
   std::string procgeoGenerator;
   std::string materialHint;
   std::string effectName;
+  std::string effectTrigger;
   std::array<float, 3> worldPosition{0.0F, 0.0F, 0.0F};
   std::array<float, 3> worldScale{1.0F, 1.0F, 1.0F};
   std::array<float, 3> dimensions{1.0F, 1.0F, 1.0F};
@@ -226,6 +229,16 @@ VkRect2D buildRect(std::int32_t offsetX, std::int32_t offsetY, std::uint32_t wid
   rect.offset = {offsetX, offsetY};
   rect.extent = {width, height};
   return rect;
+}
+
+float pointDistanceToRect(float x, float y, const VkRect2D& rect) {
+  const float minX = static_cast<float>(rect.offset.x);
+  const float minY = static_cast<float>(rect.offset.y);
+  const float maxX = minX + static_cast<float>(rect.extent.width);
+  const float maxY = minY + static_cast<float>(rect.extent.height);
+  const float deltaX = std::max(std::max(minX - x, 0.0F), x - maxX);
+  const float deltaY = std::max(std::max(minY - y, 0.0F), y - maxY);
+  return std::sqrt(deltaX * deltaX + deltaY * deltaY);
 }
 
 void clearAttachmentRect(VkCommandBuffer commandBuffer, const VkRect2D& rect, const std::array<float, 4>& color) {
@@ -543,6 +556,7 @@ private:
     nextToolingLogTicks_ = startTicks_ + 2'000'000'000ULL;
     nextAuthoredContentPollTicks_ = startTicks_ + kAuthoredContentPollIntervalNs;
     lastObservedAuthoredContentTimestamp_ = authoredContentTimestamp();
+    updateInteractionTargetFromView();
     refreshWindowTitle();
   }
 
@@ -632,6 +646,9 @@ private:
     activeControlledEntity_ = RuntimeControlledEntityState{};
     activeInteractionTarget_ = RuntimeControlledEntityState{};
     activeSceneRenderProxies_.clear();
+    activeTriggeredInteractionEntityId_.clear();
+    activeTriggeredInteractionEffectName_.clear();
+    activeTriggeredInteractionUntilTicks_ = 0;
 
     const auto composed = dataFoundation_.composeScene(activeSceneName_);
     if (!composed.has_value() || !composed->valid) {
@@ -643,8 +660,6 @@ private:
     activeScenePrefabCount_ = composed->prefabNames.size();
 
     const ComposedSceneEntitySnapshot* preferredEntity = nullptr;
-    const ComposedSceneEntitySnapshot* interactionTarget = nullptr;
-
     if (!composed->preferredPlayerEntity.empty()) {
       const auto playerIt = std::find_if(
         composed->entities.begin(),
@@ -659,12 +674,6 @@ private:
 
     if (preferredEntity == nullptr && !composed->entities.empty()) {
       preferredEntity = &composed->entities.front();
-    }
-
-    for (const auto& entity : composed->entities) {
-      if (interactionTarget == nullptr && entity.hasEffectComponent) {
-        interactionTarget = &entity;
-      }
     }
 
     auto applyEntityState = [](const ComposedSceneEntitySnapshot& source, RuntimeControlledEntityState* target) {
@@ -682,9 +691,6 @@ private:
     if (preferredEntity != nullptr) {
       applyEntityState(*preferredEntity, &activeControlledEntity_);
     }
-    if (interactionTarget != nullptr) {
-      applyEntityState(*interactionTarget, &activeInteractionTarget_);
-    }
 
     for (const auto& entity : composed->entities) {
       if (!entity.hasRenderComponent || entity.renderProcgeo.empty()) {
@@ -699,10 +705,13 @@ private:
       RuntimeSceneRenderProxy proxy;
       proxy.id = entity.id;
       proxy.displayName = entity.displayName;
+      proxy.prefabName = entity.prefabName;
+      proxy.spawnTag = entity.spawnTag;
       proxy.procgeoName = entity.renderProcgeo;
       proxy.procgeoGenerator = procgeo->generator;
       proxy.materialHint = !entity.renderMaterialHint.empty() ? entity.renderMaterialHint : procgeo->materialHint;
       proxy.effectName = entity.effectName;
+      proxy.effectTrigger = entity.effectTrigger;
       proxy.worldPosition = entity.worldPosition;
       proxy.worldScale = entity.worldScale;
       proxy.dimensions = {
@@ -745,6 +754,101 @@ private:
 
     toolingUi_.toggleOverlay();
     bootstrapOverlayApplied_ = true;
+  }
+
+  void setInteractionTargetFromProxy(const RuntimeSceneRenderProxy& proxy) {
+    activeInteractionTarget_.id = proxy.id;
+    activeInteractionTarget_.displayName = proxy.displayName;
+    activeInteractionTarget_.prefabName = proxy.prefabName;
+    activeInteractionTarget_.spawnTag = proxy.spawnTag;
+    activeInteractionTarget_.effectName = proxy.effectName;
+    activeInteractionTarget_.effectTrigger = proxy.effectTrigger;
+    activeInteractionTarget_.position = proxy.worldPosition;
+    activeInteractionTarget_.rotation = {0.0F, 0.0F, 0.0F};
+    activeInteractionTarget_.valid = true;
+  }
+
+  void updateInteractionTargetFromView() {
+    activeInteractionTarget_ = RuntimeControlledEntityState{};
+    if (swapchainExtent_.width == 0 || swapchainExtent_.height == 0) {
+      return;
+    }
+
+    const float centerX = static_cast<float>(swapchainExtent_.width) * 0.5F;
+    const float centerY = static_cast<float>(swapchainExtent_.height) * 0.5F;
+    const RuntimeSceneRenderProxy* bestProxy = nullptr;
+    float bestScore = std::numeric_limits<float>::max();
+
+    for (const auto& proxy : activeSceneRenderProxies_) {
+      if (!proxy.hasEffectComponent || proxy.effectName.empty()) {
+        continue;
+      }
+
+      const auto projectedProxy = projectSceneRenderProxy(proxy, 0.0);
+      if (!projectedProxy.has_value()) {
+        continue;
+      }
+
+      const VkRect2D& focusRect = projectedProxy->hasAccent ? projectedProxy->accentRect : projectedProxy->bodyRect;
+      const float aimDistance = pointDistanceToRect(centerX, centerY, focusRect);
+      const float focusThreshold = std::max(
+        18.0F,
+        std::min(
+          static_cast<float>(focusRect.extent.width),
+          static_cast<float>(focusRect.extent.height)) * 0.35F);
+      if (aimDistance > focusThreshold) {
+        continue;
+      }
+
+      const float score = aimDistance + projectedProxy->depth * 6.0F;
+      if (score < bestScore) {
+        bestScore = score;
+        bestProxy = &proxy;
+      }
+    }
+
+    if (bestProxy != nullptr) {
+      setInteractionTargetFromProxy(*bestProxy);
+    }
+  }
+
+  void triggerSceneInteraction(std::string_view reason) {
+    if (!activeInteractionTarget_.valid || activeInteractionTarget_.effectName.empty()) {
+      logRuntimeLine("Scene interaction request via " + std::string(reason) + ": no active effect target.");
+      return;
+    }
+
+    activeTriggeredInteractionEntityId_ = activeInteractionTarget_.id;
+    activeTriggeredInteractionEffectName_ = activeInteractionTarget_.effectName;
+    activeTriggeredInteractionUntilTicks_ = SDL_GetTicksNS() + 650'000'000ULL;
+
+    const auto effectDescriptor = dataFoundation_.effectDescriptor(activeInteractionTarget_.effectName);
+    std::ostringstream message;
+    message << "Scene effect " << activeInteractionTarget_.effectName
+            << " triggered via " << reason
+            << ": entity=" << activeInteractionTarget_.id;
+    if (!activeInteractionTarget_.prefabName.empty()) {
+      message << ", prefab=" << activeInteractionTarget_.prefabName;
+    }
+    if (!activeInteractionTarget_.effectTrigger.empty()) {
+      message << ", scene_trigger=" << activeInteractionTarget_.effectTrigger;
+    }
+    message << ", position=(" << runtimeVector3String(activeInteractionTarget_.position) << ')';
+
+    if (effectDescriptor.has_value()) {
+      if (!effectDescriptor->category.empty()) {
+        message << ", category=" << effectDescriptor->category;
+      }
+      if (!effectDescriptor->runtimeModel.empty()) {
+        message << ", runtime_model=" << effectDescriptor->runtimeModel;
+      }
+      if (!effectDescriptor->trigger.empty()) {
+        message << ", authored_trigger=" << effectDescriptor->trigger;
+      }
+    }
+
+    logRuntimeLine(message.str());
+    refreshWindowTitle();
   }
 
   std::optional<std::filesystem::file_time_type> authoredContentTimestamp() const {
@@ -801,6 +905,7 @@ private:
     resolveRuntimeSceneComposition();
     resolveAnimationRuntimeState();
     applyBootstrapPreferences();
+    updateInteractionTargetFromView();
 
     lastObservedAuthoredContentTimestamp_ = authoredContentTimestamp();
     authoredContentReloadCount_ += 1;
@@ -1260,7 +1365,7 @@ private:
     logPhysicsQueries("startup");
     logSwapchain("Swapchain ready");
     logRuntimeLine(
-      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, and F7 to reload authored runtime content.");
+      "Native runtime window is live. Press Escape to exit, F1 for input diagnostics, F2-F6 for tooling panels, Enter/left click to trigger the current interaction target, and F7 to reload authored runtime content.");
   }
 
   void triggerAudioEvent(std::string_view eventName, std::string_view reason) {
@@ -1415,6 +1520,7 @@ private:
       return;
     }
 
+    const std::uint64_t now = SDL_GetTicksNS();
     std::ostringstream title;
     title << config_.title;
     if (!activeSceneName_.empty()) {
@@ -1445,6 +1551,12 @@ private:
       title << " | player=" << activeControlledEntity_.id
             << " pos=(" << runtimeVector3String(activeControlledEntity_.position) << ')';
     }
+    if (activeInteractionTarget_.valid && !activeInteractionTarget_.effectName.empty()) {
+      title << " target=" << activeInteractionTarget_.id;
+    }
+    if (!activeTriggeredInteractionEffectName_.empty() && now <= activeTriggeredInteractionUntilTicks_) {
+      title << " fx=" << activeTriggeredInteractionEffectName_;
+    }
 
     if (toolingUi_.overlayVisible()) {
       title << " | " << toolingUi_.overlaySummary();
@@ -1452,7 +1564,6 @@ private:
       return;
     }
 
-    const std::uint64_t now = SDL_GetTicksNS();
     if (!lastUiAction_.empty() && now > uiFlashUntilTicks_ + 1'500'000'000ULL) {
       lastUiAction_.clear();
     }
@@ -1570,6 +1681,7 @@ private:
       logRuntimeLine("ui_accept action triggered.");
       logControlledEntityState("ui_accept");
       logInteractionTarget("ui_accept");
+      triggerSceneInteraction("ui_accept");
       triggerAudioEvent("ui_accept", "ui_accept");
     }
 
@@ -1648,6 +1760,7 @@ private:
 
       pollAuthoredContentReload(currentTicks);
       updateRuntimeSceneState(deltaSeconds);
+      updateInteractionTargetFromView();
       updateToolingState(deltaSeconds);
 
       const std::uint64_t elapsedTicks = currentTicks - startTicks_;
@@ -1749,19 +1862,32 @@ private:
       static_cast<std::uint32_t>(std::max(2.0F, std::round(halfHeightPixels * 2.0F))));
 
     const bool interactionTarget = activeInteractionTarget_.valid && proxy.id == activeInteractionTarget_.id;
+    const bool interactionTriggered =
+      !activeTriggeredInteractionEntityId_.empty()
+      && proxy.id == activeTriggeredInteractionEntityId_
+      && SDL_GetTicksNS() <= activeTriggeredInteractionUntilTicks_;
     const float pulse = 0.55F + 0.45F * static_cast<float>(std::sin(elapsedSeconds * 2.2 + viewZ));
-    projected.bodyColor = debugProxyColor(proxy, interactionTarget, pulse);
+    projected.bodyColor = interactionTriggered
+      ? std::array<float, 4>{
+          clampUnit(0.82F + pulse * 0.14F),
+          clampUnit(0.46F + pulse * 0.16F),
+          clampUnit(0.18F + pulse * 0.12F),
+          1.0F,
+        }
+      : debugProxyColor(proxy, interactionTarget, pulse);
 
-    if (interactionTarget || proxy.hasEffectComponent) {
+    if (interactionTarget || proxy.hasEffectComponent || interactionTriggered) {
       projected.hasAccent = true;
       projected.accentRect = buildRect(
         projected.bodyRect.offset.x - 4,
         projected.bodyRect.offset.y - 4,
         projected.bodyRect.extent.width + 8,
         projected.bodyRect.extent.height + 8);
-      projected.accentColor = interactionTarget
-        ? std::array<float, 4>{clampUnit(0.18F + pulse * 0.28F), clampUnit(0.58F + pulse * 0.22F), clampUnit(0.70F + pulse * 0.18F), 1.0F}
-        : std::array<float, 4>{0.20F, 0.30F, 0.38F, 1.0F};
+      projected.accentColor = interactionTriggered
+        ? std::array<float, 4>{clampUnit(0.92F + pulse * 0.06F), clampUnit(0.72F + pulse * 0.08F), clampUnit(0.28F + pulse * 0.12F), 1.0F}
+        : interactionTarget
+          ? std::array<float, 4>{clampUnit(0.18F + pulse * 0.28F), clampUnit(0.58F + pulse * 0.22F), clampUnit(0.70F + pulse * 0.18F), 1.0F}
+          : std::array<float, 4>{0.20F, 0.30F, 0.38F, 1.0F};
     }
 
     if (!clipRectToSwapchain(&projected.bodyRect)) {
@@ -1816,13 +1942,29 @@ private:
       clearAttachmentRect(commandBuffer, proxy.bodyRect, proxy.bodyColor);
     }
 
+    const bool interactionTargetLocked = activeInteractionTarget_.valid && !activeInteractionTarget_.effectName.empty();
+    const bool interactionTriggered = SDL_GetTicksNS() <= activeTriggeredInteractionUntilTicks_ && !activeTriggeredInteractionEntityId_.empty();
     const float crosshairPulse = SDL_GetTicksNS() <= uiFlashUntilTicks_ ? 1.0F : 0.0F;
-    const std::array<float, 4> crosshairColor = {
-      clampUnit(0.76F + crosshairPulse * 0.18F),
-      clampUnit(0.78F + crosshairPulse * 0.12F),
-      clampUnit(0.72F + crosshairPulse * 0.18F),
-      1.0F,
-    };
+    const std::array<float, 4> crosshairColor = interactionTriggered
+      ? std::array<float, 4>{
+          clampUnit(0.94F + crosshairPulse * 0.04F),
+          clampUnit(0.72F + crosshairPulse * 0.12F),
+          clampUnit(0.24F + crosshairPulse * 0.16F),
+          1.0F,
+        }
+      : interactionTargetLocked
+        ? std::array<float, 4>{
+            clampUnit(0.38F + crosshairPulse * 0.14F),
+            clampUnit(0.78F + crosshairPulse * 0.12F),
+            clampUnit(0.84F + crosshairPulse * 0.10F),
+            1.0F,
+          }
+        : std::array<float, 4>{
+            clampUnit(0.76F + crosshairPulse * 0.18F),
+            clampUnit(0.78F + crosshairPulse * 0.12F),
+            clampUnit(0.72F + crosshairPulse * 0.18F),
+            1.0F,
+          };
     const std::int32_t centerX = static_cast<std::int32_t>(swapchainExtent_.width / 2);
     const std::int32_t centerY = static_cast<std::int32_t>(swapchainExtent_.height / 2);
     VkRect2D horizontal = buildRect(centerX - 9, centerY - 1, 18, 2);
@@ -2041,6 +2183,8 @@ private:
   RuntimeControlledEntityState activeControlledEntity_;
   RuntimeControlledEntityState activeInteractionTarget_;
   std::vector<RuntimeSceneRenderProxy> activeSceneRenderProxies_;
+  std::string activeTriggeredInteractionEntityId_;
+  std::string activeTriggeredInteractionEffectName_;
   std::string lastUiAction_;
   bool sceneSelectedFromBootstrap_ = false;
   bool hasBootstrapOverlayPreference_ = false;
@@ -2048,6 +2192,7 @@ private:
   bool bootstrapOverlayApplied_ = false;
   std::optional<std::filesystem::file_time_type> lastObservedAuthoredContentTimestamp_;
   std::size_t authoredContentReloadCount_ = 0;
+  std::uint64_t activeTriggeredInteractionUntilTicks_ = 0;
   std::uint64_t uiFlashUntilTicks_ = 0;
   std::uint64_t startTicks_ = 0;
   std::uint64_t previousFrameTicks_ = 0;

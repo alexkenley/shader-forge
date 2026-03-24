@@ -163,6 +163,7 @@ public:
 
   std::vector<DataAssetSnapshot> snapshotAssets() const;
   std::vector<EffectDescriptorSnapshot> snapshotEffects() const;
+  std::optional<EffectDescriptorSnapshot> effectDescriptor(std::string_view effectName) const;
   std::vector<ProcgeoSourceSnapshot> snapshotProcgeoSources() const;
   std::optional<ProcgeoSourceSnapshot> procgeoSource(std::string_view procgeoName) const;
   std::optional<SceneSourceSnapshot> sceneSource(std::string_view sceneName) const;

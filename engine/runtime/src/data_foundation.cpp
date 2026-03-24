@@ -1073,6 +1073,16 @@ std::vector<EffectDescriptorSnapshot> DataFoundation::snapshotEffects() const {
   return impl_->effects;
 }
 
+std::optional<EffectDescriptorSnapshot> DataFoundation::effectDescriptor(std::string_view effectName) const {
+  const std::string normalized = normalizeToken(std::string(effectName));
+  for (const auto& effect : impl_->effects) {
+    if (effect.name == normalized) {
+      return effect;
+    }
+  }
+  return std::nullopt;
+}
+
 std::vector<ProcgeoSourceSnapshot> DataFoundation::snapshotProcgeoSources() const {
   return impl_->procgeoSources;
 }
