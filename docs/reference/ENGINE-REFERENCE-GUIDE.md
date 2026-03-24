@@ -61,6 +61,7 @@ Assistant entry points:
 ### Sessions, Files, And Source Control
 
 - `engine_sessiond` currently provides session create/list/get/update/delete.
+- Session records now persist across `engine_sessiond` restarts and stay available until deleted.
 - Safe file list, file read, and file write APIs are now available inside the active session root.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Host filesystem directory listing is already used by the workspace-root picker.
@@ -189,7 +190,7 @@ Assistant entry points:
 
 ### What Exists Now
 
-- A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
+- A React/Vite shell workspace with persistent backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
 - A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy, transform editing, first prefab component payload editing, and active-session-root runtime handoff.
 - A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, first composed scene-runtime hooks, and session-root launch alignment from the shell/session backend.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.

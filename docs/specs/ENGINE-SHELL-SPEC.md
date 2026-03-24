@@ -68,7 +68,7 @@ Bottom panel:
 - native runtime window outside the browser
 - terminal-first workflow
 - Windows clean-start path through a PowerShell launcher that delegates into WSL
-- backend-owned sessions once `engine_sessiond` exists
+- persistent backend-owned sessions once `engine_sessiond` exists
 - text and code as the source of truth
 - `Scene` workflows should edit persistent text-backed scene and prefab assets rather than opaque editor state
 

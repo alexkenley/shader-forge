@@ -208,7 +208,7 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'DELETE' && pathname.startsWith('/api/sessions/')) {
         const sessionId = pathname.slice('/api/sessions/'.length);
-        const result = sessionStore.deleteSession(sessionId);
+        const result = await sessionStore.deleteSession(sessionId);
         writeJson(response, 200, result);
         return;
       }
@@ -413,6 +413,9 @@ export async function startEngineSessiond({
     },
     launchFactory: buildLaunchFactory,
   });
+  if (typeof sessionStore.loadSessions === 'function') {
+    await sessionStore.loadSessions();
+  }
   const server = http.createServer(createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, eventHub }));
 
   await new Promise((resolve, reject) => {

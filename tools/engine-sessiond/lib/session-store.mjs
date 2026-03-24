@@ -1,7 +1,10 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getPlatformInfo } from './host-fs-service.mjs';
+
+const sessionStoreVersion = 1;
 
 function normalizeDisplayPath(rootPath, targetPath) {
   const relativePath = path.relative(rootPath, targetPath);
@@ -11,8 +14,85 @@ function normalizeDisplayPath(rootPath, targetPath) {
   return relativePath.split(path.sep).join('/');
 }
 
+function defaultSessionStorePath() {
+  const overrideDir = process.env.SHADER_FORGE_SESSIOND_DATA_DIR?.trim();
+  const dataDir = overrideDir
+    ? path.resolve(overrideDir)
+    : path.join(os.homedir(), '.shader-forge', 'engine-sessiond');
+  return path.join(dataDir, 'sessions.json');
+}
+
+function normalizePersistedSession(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+
+  const {
+    id = '',
+    name = '',
+    rootPath = '',
+    createdAt = '',
+    updatedAt = '',
+  } = record;
+
+  if (
+    typeof id !== 'string'
+    || typeof name !== 'string'
+    || typeof rootPath !== 'string'
+    || typeof createdAt !== 'string'
+    || typeof updatedAt !== 'string'
+    || !id.trim()
+    || !rootPath.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    id: id.trim(),
+    name,
+    rootPath: path.resolve(rootPath),
+    createdAt,
+    updatedAt,
+  };
+}
+
 export class SessionStore {
   #sessions = new Map();
+  #storageFilePath;
+
+  constructor({ storageFilePath = defaultSessionStorePath() } = {}) {
+    this.#storageFilePath = path.resolve(storageFilePath);
+  }
+
+  async loadSessions() {
+    let rawPayload = '';
+    try {
+      rawPayload = await fs.readFile(this.#storageFilePath, 'utf8');
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        this.#sessions.clear();
+        return this.listSessions();
+      }
+      throw error;
+    }
+
+    const parsed = rawPayload.trim() ? JSON.parse(rawPayload) : {};
+    const records = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.sessions)
+        ? parsed.sessions
+        : [];
+    const restored = new Map();
+    for (const record of records) {
+      const normalized = normalizePersistedSession(record);
+      if (normalized) {
+        restored.set(normalized.id, normalized);
+      }
+    }
+
+    this.#sessions = restored;
+    return this.listSessions();
+  }
 
   async createSession({ name = '', rootPath } = {}) {
     if (!rootPath) {
@@ -30,7 +110,9 @@ export class SessionStore {
       updatedAt: timestamp,
     };
 
-    this.#sessions.set(session.id, session);
+    await this.#commitSessionMutation(() => {
+      this.#sessions.set(session.id, session);
+    });
     return structuredClone(session);
   }
 
@@ -55,13 +137,17 @@ export class SessionStore {
       rootPath: nextRootPath,
       updatedAt: timestamp,
     };
-    this.#sessions.set(sessionId, updated);
+    await this.#commitSessionMutation(() => {
+      this.#sessions.set(sessionId, updated);
+    });
     return structuredClone(updated);
   }
 
-  deleteSession(sessionId) {
+  async deleteSession(sessionId) {
     this.#requireSession(sessionId);
-    this.#sessions.delete(sessionId);
+    await this.#commitSessionMutation(() => {
+      this.#sessions.delete(sessionId);
+    });
     return { ok: true };
   }
 
@@ -171,5 +257,31 @@ export class SessionStore {
       throw new Error(`Path escapes session root: ${relativePath}`);
     }
     return resolvedPath;
+  }
+
+  async #commitSessionMutation(applyMutation) {
+    const previousSessions = new Map(this.#sessions);
+    applyMutation();
+    try {
+      await this.#persistSessions();
+    } catch (error) {
+      this.#sessions = previousSessions;
+      throw error;
+    }
+  }
+
+  async #persistSessions() {
+    const payload = JSON.stringify(
+      {
+        version: sessionStoreVersion,
+        sessions: this.listSessions(),
+      },
+      null,
+      2,
+    ) + '\n';
+    await fs.mkdir(path.dirname(this.#storageFilePath), { recursive: true });
+    const tempPath = `${this.#storageFilePath}.${process.pid}.${randomUUID()}.tmp`;
+    await fs.writeFile(tempPath, payload, 'utf8');
+    await fs.rename(tempPath, this.#storageFilePath);
   }
 }

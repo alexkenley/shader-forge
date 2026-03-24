@@ -4,20 +4,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
+import { SessionStore } from '../tools/engine-sessiond/lib/session-store.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
-const service = await startEngineSessiond({
-  host: '127.0.0.1',
-  port: 0,
-  runtimeLaunchFactory: ({ scene, sessionId, workspaceRoot }) => ({
+const sessionStateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-sessiond-state-'));
+const sessionStorePath = path.join(sessionStateDir, 'sessions.json');
+
+function runtimeLaunchFactory({ scene, sessionId, workspaceRoot }) {
+  return {
     command: process.execPath,
     args: ['-e', `console.log("runtime:${scene}:boot:" + process.cwd()); setInterval(() => {}, 1000);`],
     cwd: workspaceRoot || repoRoot,
     displayPath: 'test-runtime',
     sessionId: sessionId || null,
     workspaceRoot: workspaceRoot || repoRoot,
-  }),
-  buildLaunchFactory: ({ target, config, buildDir }) => ({
+  };
+}
+
+function buildLaunchFactory({ target, config, buildDir }) {
+  return {
     target,
     config,
     buildDir: buildDir || path.join(repoRoot, 'build', 'runtime'),
@@ -32,8 +37,20 @@ const service = await startEngineSessiond({
         cwd: repoRoot,
       },
     ],
-  }),
-});
+  };
+}
+
+async function startService() {
+  return startEngineSessiond({
+    host: '127.0.0.1',
+    port: 0,
+    sessionStore: new SessionStore({ storageFilePath: sessionStorePath }),
+    runtimeLaunchFactory,
+    buildLaunchFactory,
+  });
+}
+
+let service = await startService();
 
 async function waitForSseEvent(streamUrl, predicate, timeoutMs = 8000) {
   const controller = new AbortController();
@@ -133,6 +150,19 @@ try {
     { name: 'repo-root-renamed' },
   );
   assert.equal(updatedSessionPayload.session.name, 'repo-root-renamed');
+
+  const persistedSessionStore = JSON.parse(await fs.readFile(sessionStorePath, 'utf8'));
+  assert.equal(persistedSessionStore.version, 1);
+  assert.equal(Array.isArray(persistedSessionStore.sessions), true);
+  assert.equal(persistedSessionStore.sessions[0].id, createPayload.session.id);
+
+  await service.close();
+  service = await startService();
+
+  const persistedListPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`);
+  assert.equal(persistedListPayload.sessions.length, 1);
+  assert.equal(persistedListPayload.sessions[0].id, createPayload.session.id);
+  assert.equal(persistedListPayload.sessions[0].name, 'repo-root-renamed');
 
   const fileListPayload = await requestJsonNoAuth(
     `${service.baseUrl}/api/files/list?sessionId=${encodeURIComponent(createPayload.session.id)}&path=${encodeURIComponent('.')}`,
@@ -316,14 +346,27 @@ try {
   assert.equal(buildStatusPayload.state, 'succeeded');
   assert.equal(buildStatusPayload.target, 'runtime');
 
+  const deletePayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${createPayload.session.id}`,
+    'DELETE',
+  );
+  assert.equal(deletePayload.ok, true);
+
+  await service.close();
+  service = await startService();
+
+  const emptyListPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`);
+  assert.equal(emptyListPayload.sessions.some((session) => session.id === createPayload.session.id), false);
+
   console.log('Engine sessiond smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
-  console.log(`- Created session for ${path.basename(repoRoot)}`);
-  console.log('- Verified CORS preflight plus session create/update/delete and safe file/host-fs listing APIs');
+  console.log(`- Created session for ${path.basename(repoRoot)} and restored it after restarting engine_sessiond`);
+  console.log('- Verified CORS preflight plus persistent session create/update/delete and safe file/host-fs listing APIs');
   console.log('- Verified git status and git-init APIs against real session roots');
   console.log('- Verified PTY terminal open/input/stream/close flow');
   console.log(`- Verified runtime start/status/log/${isWindows ? 'stop' : 'pause/resume/stop'} lifecycle`);
   console.log('- Verified runtime build start/log/completion lifecycle');
 } finally {
   await service.close();
+  await fs.rm(sessionStateDir, { recursive: true, force: true });
 }
