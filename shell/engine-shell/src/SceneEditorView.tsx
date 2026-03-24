@@ -935,7 +935,9 @@ export function SceneEditorView({
             </div>
             <div className="scene-note">
               Transform gizmos and live viewport manipulation are still ahead. This slice makes the
-              `Scene` workspace author real placed-entity and transform data now.
+              `Scene` workspace author real placed-entity and transform data now. Play and Restart
+              now launch the native runtime against the active session root so these same authored
+              files drive manual runtime testing.
             </div>
           </article>
 

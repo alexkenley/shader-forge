@@ -46,7 +46,8 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - UTF-8 file writes inside the active session root, with parent-directory creation for authored asset workflows
 - directory listing with stable relative paths and timestamps
 - JSON HTTP API suitable for local shell integration and harness use
-- runtime status now includes `running`, `paused`, and `stopped` states
+- runtime start/restart can now resolve the active session root and launch the native runtime against that project context instead of only a repo-default root
+- runtime status now includes `running`, `paused`, and `stopped` states plus the active session/workspace root when the runtime was started from a shell session
 - pause/resume is exposed on hosts where process-signal control is available
 - `/health` reports runtime pause/resume capabilities truthfully for the current host
 

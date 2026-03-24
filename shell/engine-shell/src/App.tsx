@@ -58,6 +58,8 @@ const legacyWorkspaceSrc = 'web/index.html#/code';
 const stoppedRuntimeStatus: RuntimeStatus = {
   state: 'stopped',
   scene: null,
+  sessionId: null,
+  workspaceRoot: null,
   pid: null,
   startedAt: null,
   pausedAt: null,
@@ -411,6 +413,7 @@ function ViewportShell({
 
 function renderRightPanel(
   activeTab: RightTab,
+  activeSession: EngineSession | null,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
   launchScene: string,
@@ -598,6 +601,10 @@ function renderRightPanel(
           <div>
             <dt>Scene</dt>
             <dd>{runtimeStatus.scene || launchScene}</dd>
+          </div>
+          <div>
+            <dt>Workspace</dt>
+            <dd>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</dd>
           </div>
           <div>
             <dt>Process</dt>
@@ -1151,6 +1158,10 @@ function renderCenterContent(
               <strong>{runtimeStatus.scene || launchScene}</strong>
             </article>
             <article className="mini-card">
+              <span>Workspace</span>
+              <strong>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</strong>
+            </article>
+            <article className="mini-card">
               <span>Process</span>
               <strong>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</strong>
             </article>
@@ -1246,6 +1257,11 @@ function renderCenterContent(
             <p>{runtimeStatus.scene || launchScene}</p>
           </article>
           <article className="preview-card">
+            <span>Workspace</span>
+            <strong>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</strong>
+            <p>{runtimeStatus.sessionId || 'repo-default launch context'}</p>
+          </article>
+          <article className="preview-card">
             <span>Build</span>
             <strong>{buildStateLabel(buildStatus.state)}</strong>
             <p>{buildStatus.config || buildConfig}</p>
@@ -1283,6 +1299,10 @@ function renderCenterContent(
               <div>
                 <dt>Scene</dt>
                 <dd>{runtimeStatus.scene || launchScene}</dd>
+              </div>
+              <div>
+                <dt>Workspace</dt>
+                <dd>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</dd>
               </div>
               <div>
                 <dt>Executable</dt>
@@ -1704,36 +1724,36 @@ export default function App() {
       return;
     }
 
-      if (buildStatus.state === 'succeeded') {
-        setPendingRunAfterBuild(false);
-        if (runtimeStatus.state === 'running' || runtimeStatus.state === 'paused') {
-          void restartRuntime(launchScene)
-            .then((nextStatus) => {
-              setRuntimeStatus(nextStatus);
-              recordViewerBridgeEvent({
-                title: 'Runtime restarted after build',
-                detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
-                at: new Date().toISOString(),
-                tone: runtimeStateTone(nextStatus.state),
-              });
-              setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested after build\n`));
-              setActiveBottomTab('Logs');
-            })
-            .catch((error) => {
-              recordViewerBridgeEvent({
-                title: 'Restart after build failed',
-                detail: error instanceof Error ? error.message : String(error),
-                at: new Date().toISOString(),
-                tone: 'error',
-              });
-              setRuntimeLog((current) =>
-                trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
-              );
+    if (buildStatus.state === 'succeeded') {
+      setPendingRunAfterBuild(false);
+      if (runtimeStatus.state === 'running' || runtimeStatus.state === 'paused') {
+        void restartRuntime(launchScene, activeSessionId || undefined)
+          .then((nextStatus) => {
+            setRuntimeStatus(nextStatus);
+            recordViewerBridgeEvent({
+              title: 'Runtime restarted after build',
+              detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+              at: new Date().toISOString(),
+              tone: runtimeStateTone(nextStatus.state),
             });
+            setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested after build\n`));
+            setActiveBottomTab('Logs');
+          })
+          .catch((error) => {
+            recordViewerBridgeEvent({
+              title: 'Restart after build failed',
+              detail: error instanceof Error ? error.message : String(error),
+              at: new Date().toISOString(),
+              tone: 'error',
+            });
+            setRuntimeLog((current) =>
+              trimTerminalOutput(`${current}[runtime] ${error instanceof Error ? error.message : String(error)}\n`),
+            );
+          });
         return;
       }
 
-      void startRuntime(launchScene)
+      void startRuntime(launchScene, activeSessionId || undefined)
         .then((nextStatus) => {
           setRuntimeStatus(nextStatus);
           recordViewerBridgeEvent({
@@ -1762,7 +1782,7 @@ export default function App() {
     if (buildStatus.state === 'failed' || buildStatus.state === 'stopped') {
       setPendingRunAfterBuild(false);
     }
-  }, [buildStatus.state, launchScene, pendingRunAfterBuild, runtimeStatus.state]);
+  }, [activeSessionId, buildStatus.state, launchScene, pendingRunAfterBuild, runtimeStatus.state]);
 
   useEffect(() => {
     for (const tab of terminalTabs) {
@@ -2080,7 +2100,7 @@ export default function App() {
 
   async function handleStartRuntime() {
     try {
-      const nextStatus = await startRuntime(launchScene);
+      const nextStatus = await startRuntime(launchScene, activeSessionId || undefined);
       setRuntimeStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Runtime started',
@@ -2180,7 +2200,7 @@ export default function App() {
 
   async function handleRestartRuntime() {
     try {
-      const nextStatus = await restartRuntime(launchScene);
+      const nextStatus = await restartRuntime(launchScene, activeSessionId || undefined);
       setRuntimeStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Runtime restarted',
@@ -2677,6 +2697,7 @@ export default function App() {
           ) : null}
           {renderRightPanel(
             activeRightTab,
+            activeSession,
             runtimeStatus,
             buildStatus,
             launchScene,

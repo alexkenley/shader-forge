@@ -62,6 +62,7 @@ Assistant entry points:
 
 - `engine_sessiond` currently provides session create/list/get/update/delete.
 - Safe file list, file read, and file write APIs are now available inside the active session root.
+- Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Host filesystem directory listing is already used by the workspace-root picker.
 - Git status and repository initialization are already used by the `Source Control` rail.
 - PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces.
@@ -97,8 +98,9 @@ Assistant entry points:
 
 - The native runtime has Vulkan instance, surface, device, swapchain, render pass, framebuffer, submit, and present bring-up.
 - Resize-aware swapchain recreation is already implemented.
-- Runtime build, play, stop, restart, pause, and resume are already controlled from the shell.
+- Runtime build, play, stop, restart, pause, and resume are already controlled from the shell, and shell-driven play/restart now follow the active session root.
 - The shell tracks runtime state, build state, bridge activity, and recent log tails in `Game` and `Preview`.
+- The native runtime now projects authored prefab render components into visible debug-proxy scene cards in the external Vulkan window, so the active scene is no longer only a clear-color loop during manual testing.
 - The native runtime still renders in an external window.
 - The browser shell remains the primary workspace.
 - Embedded viewer transport and screenshot capture are still deferred.
@@ -117,10 +119,12 @@ Assistant entry points:
 - The runtime validates the content roots through `DataFoundation` before startup continues.
 - Scene-to-prefab relationships are validated across the catalog.
 - The runtime can now compose authored scene entities plus prefab payloads into a first runtime scene snapshot with resolved hierarchy-derived world transforms.
+- The runtime can now look up authored procgeo dimensions and use them to size projected debug proxies for prefab render components in the scene viewer.
 - `runtime_bootstrap.data.toml` can now provide a default scene and tooling overlay preference.
 - The runtime window title and startup logs now include active scene and primary prefab context from the authored assets.
 - The runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`, and `move_*` plus `look_*` input now drives that entity state.
 - The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.
+- Shell play/restart now forward the active session root into runtime launch so the external runtime reads the same authored scene files the shell edits.
 - `Play Mode` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Edit Mode` is restored.
 - The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.
 - Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.
@@ -182,8 +186,8 @@ Assistant entry points:
 ### What Exists Now
 
 - A React/Vite shell workspace with backend-owned sessions, file preview, source control, terminal tabs, and runtime control.
-- A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy, transform editing, and first prefab component payload editing.
-- A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, and first composed scene-runtime hooks.
+- A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy, transform editing, first prefab component payload editing, and active-session-root runtime handoff.
+- A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, first composed scene-runtime hooks, and session-root launch alignment from the shell/session backend.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
@@ -193,7 +197,7 @@ Assistant entry points:
 
 - The shell still needs deeper UX and more app-native surfaces beyond the preserved code bridge.
 - Scene authoring still needs transform gizmos, deeper scene/component payload authoring, and bake-back flows beyond the current text-backed entity plus prefab-component slice.
-- The runtime still needs richer rendering, visible prefab/component instancing, broader scene simulation, and broader native verification.
+- The runtime still needs a full mesh/material rendering path, richer prefab/component instancing beyond the current projected debug proxies, broader scene simulation, and broader native verification.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.

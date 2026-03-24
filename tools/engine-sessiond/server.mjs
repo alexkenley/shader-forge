@@ -100,6 +100,20 @@ function resolveTerminalCwd({ sessionStore, sessionId, cwd }) {
   return path.resolve(cwd || process.cwd());
 }
 
+function resolveRuntimeLaunchContext(sessionStore, sessionId) {
+  if (!sessionId) {
+    return {
+      sessionId: '',
+      workspaceRoot: '',
+    };
+  }
+
+  return {
+    sessionId,
+    workspaceRoot: sessionStore.resolveSessionPath(sessionId, '.'),
+  };
+}
+
 function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, eventHub }) {
   return async function route(request, response) {
     if (!request.url) {
@@ -251,8 +265,12 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/runtime/start') {
         const body = await readJsonBody(request);
+        const runtimeSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeSessionId);
         const status = runtimeStore.startRuntime({
           scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
+          sessionId: launchContext.sessionId,
+          workspaceRoot: launchContext.workspaceRoot,
         });
         writeJson(response, 200, status);
         return;
@@ -303,8 +321,12 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/runtime/restart') {
         const body = await readJsonBody(request);
+        const runtimeSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeSessionId);
         const status = await runtimeStore.restartRuntime({
           scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
+          sessionId: launchContext.sessionId,
+          workspaceRoot: launchContext.workspaceRoot,
         });
         writeJson(response, 200, status);
         return;

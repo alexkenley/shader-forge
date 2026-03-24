@@ -14,16 +14,69 @@ const defaultBinaryPath = path.join(
 );
 const pauseSupported = process.platform !== 'win32';
 
-function defaultLaunchFactory({ scene }) {
+function resolveWorkspaceRoot(workspaceRoot) {
+  if (typeof workspaceRoot === 'string' && workspaceRoot.trim()) {
+    return path.resolve(workspaceRoot);
+  }
+  return repoRoot;
+}
+
+function defaultLaunchFactory({ scene, sessionId = '', workspaceRoot }) {
   if (!fs.existsSync(defaultBinaryPath)) {
     throw new Error(`Runtime binary was not found at ${defaultBinaryPath}. Build it first with \`engine build\`.`);
   }
 
+  const resolvedWorkspaceRoot = resolveWorkspaceRoot(workspaceRoot);
+  const inputRoot = path.join(resolvedWorkspaceRoot, 'input');
+  const contentRoot = path.join(resolvedWorkspaceRoot, 'content');
+  const audioRoot = path.join(resolvedWorkspaceRoot, 'audio');
+  const animationRoot = path.join(resolvedWorkspaceRoot, 'animation');
+  const physicsRoot = path.join(resolvedWorkspaceRoot, 'physics');
+  const dataFoundationPath = path.join(
+    resolvedWorkspaceRoot,
+    'data',
+    'foundation',
+    'engine-data-layout.toml',
+  );
+  const toolingLayoutPath = path.join(
+    resolvedWorkspaceRoot,
+    'tooling',
+    'layouts',
+    'default.tooling-layout.toml',
+  );
+  const toolingSessionLayoutPath = path.join(
+    resolvedWorkspaceRoot,
+    'tooling',
+    'layouts',
+    'runtime-session.tooling-layout.toml',
+  );
+
   return {
     command: defaultBinaryPath,
-    args: ['--scene', scene],
-    cwd: repoRoot,
+    args: [
+      '--scene',
+      scene,
+      '--input-root',
+      inputRoot,
+      '--content-root',
+      contentRoot,
+      '--audio-root',
+      audioRoot,
+      '--animation-root',
+      animationRoot,
+      '--physics-root',
+      physicsRoot,
+      '--data-foundation',
+      dataFoundationPath,
+      '--tooling-layout',
+      toolingLayoutPath,
+      '--tooling-layout-save',
+      toolingSessionLayoutPath,
+    ],
+    cwd: resolvedWorkspaceRoot,
     displayPath: defaultBinaryPath,
+    sessionId: sessionId || null,
+    workspaceRoot: resolvedWorkspaceRoot,
   };
 }
 
@@ -46,6 +99,8 @@ export class RuntimeStore {
       return {
         state: 'stopped',
         scene: null,
+        sessionId: null,
+        workspaceRoot: null,
         pid: null,
         startedAt: null,
         pausedAt: null,
@@ -57,6 +112,8 @@ export class RuntimeStore {
     return {
       state: this.#record.paused ? 'paused' : 'running',
       scene: this.#record.scene,
+      sessionId: this.#record.sessionId,
+      workspaceRoot: this.#record.workspaceRoot,
       pid: this.#record.child.pid ?? null,
       startedAt: this.#record.startedAt,
       pausedAt: this.#record.pausedAt,
@@ -65,12 +122,19 @@ export class RuntimeStore {
     };
   }
 
-  startRuntime({ scene = 'sandbox' } = {}) {
+  startRuntime({ scene = 'sandbox', sessionId = '', workspaceRoot = '' } = {}) {
     if (this.#record) {
       throw new Error('Runtime is already running. Stop or restart it first.');
     }
 
-    const launch = this.#launchFactory({ scene });
+    const resolvedWorkspaceRoot = typeof workspaceRoot === 'string' && workspaceRoot.trim()
+      ? path.resolve(workspaceRoot)
+      : null;
+    const launch = this.#launchFactory({
+      scene,
+      sessionId,
+      workspaceRoot: resolvedWorkspaceRoot || undefined,
+    });
     const child = spawn(launch.command, launch.args || [], {
       cwd: launch.cwd || repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -83,6 +147,8 @@ export class RuntimeStore {
     const record = {
       child,
       scene,
+      sessionId: launch.sessionId ?? (sessionId || null),
+      workspaceRoot: launch.workspaceRoot || resolvedWorkspaceRoot,
       startedAt: new Date().toISOString(),
       paused: false,
       pausedAt: null,
@@ -96,6 +162,8 @@ export class RuntimeStore {
         this.#record = null;
         this.#emitEvent('runtime.exit', {
           scene,
+          sessionId: previous?.sessionId || record.sessionId,
+          workspaceRoot: previous?.workspaceRoot || record.workspaceRoot,
           exitCode,
           signal,
           executablePath: previous?.displayPath || record.displayPath,
@@ -186,11 +254,11 @@ export class RuntimeStore {
     return this.status();
   }
 
-  async restartRuntime({ scene = 'sandbox' } = {}) {
+  async restartRuntime({ scene = 'sandbox', sessionId = '', workspaceRoot = '' } = {}) {
     if (this.#record) {
       await this.stopRuntime();
     }
-    return this.startRuntime({ scene });
+    return this.startRuntime({ scene, sessionId, workspaceRoot });
   }
 
   async close() {

@@ -36,15 +36,23 @@ The current runtime slice is the first real native bring-up pass:
 - engine-owned data foundation loading from `data/foundation/engine-data-layout.toml` plus scene/prefab/data/effect/procgeo source catalog validation under `content/`
 - runtime startup logs now expose the current data/cook decisions and scene-source lookup path for the selected runtime scene
 - runtime startup can now resolve the active scene and initial tooling-overlay preference from `runtime_bootstrap.data.toml`
+- shell/sessiond launch now passes the active session project root into runtime startup so input/content/audio/animation/physics/data/tooling paths follow the selected workspace during manual testing
 - scene metadata such as title and primary prefab now feeds runtime title/log state instead of staying disconnected from execution
 - authored scene-entity hierarchy and transform summaries now feed runtime startup logs instead of staying disconnected from execution
 - referenced prefab component payload summaries now feed runtime startup logs instead of staying disconnected from execution
 - authored scenes and prefabs can now compose into a first runtime scene snapshot with resolved hierarchy-derived world transforms
+- authored prefab render components now also drive a first projected debug-proxy scene pass in the Vulkan window so operators can see the composed scene while the full shader/material pipeline is still ahead
 - the runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`
 - named `move_*` and `look_*` actions now drive that controlled entity position and orientation at runtime
 - physics query origins and runtime interaction logs now follow the composed scene entity state instead of staying hard-coded at world zero
 - animation graph and entry-state context now feeds runtime title/log state instead of staying disconnected from execution
 - physics scene-query state is now logged against the authored scene context instead of staying disconnected from execution
+
+Current boundary:
+
+- the runtime now has first visible composed-scene rendering through projected debug proxies, but not a full mesh/material/shader pipeline yet
+- the runtime now has a first shell-to-runtime project-root handoff for manual testing, but not hot reload or deeper mounted-project/package layering yet
+- Dear ImGui-native panels, real asset-backed geometry submission, and player-facing game UI are still later widening passes
 
 ## Future AI Runtime Boundary
 

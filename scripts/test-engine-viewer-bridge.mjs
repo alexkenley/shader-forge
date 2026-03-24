@@ -13,11 +13,13 @@ const isWindows = process.platform === 'win32';
 const service = await startEngineSessiond({
   host: '127.0.0.1',
   port: 0,
-  runtimeLaunchFactory: ({ scene }) => ({
+  runtimeLaunchFactory: ({ scene, sessionId, workspaceRoot }) => ({
     command: process.execPath,
-    args: ['-e', `console.log("viewer-bridge:${scene}:boot"); setInterval(() => {}, 1000);`],
-    cwd: repoRoot,
+    args: ['-e', `console.log("viewer-bridge:${scene}:boot:" + process.cwd()); setInterval(() => {}, 1000);`],
+    cwd: workspaceRoot || repoRoot,
     displayPath: 'test-runtime',
+    sessionId: sessionId || null,
+    workspaceRoot: workspaceRoot || repoRoot,
   }),
   buildLaunchFactory: ({ target, config, buildDir }) => ({
     target,
@@ -118,9 +120,15 @@ try {
   assert.match(sessiondClient, /resumeRuntime/);
   assert.match(sessiondClient, /runtime\.status/);
   assert.match(sessiondClient, /build\.completed/);
+  assert.match(sessiondClient, /sessionId/);
   assert.match(sessiondServer, /\/api\/runtime\/pause/);
   assert.match(sessiondServer, /\/api\/runtime\/resume/);
   assert.match(sessiondServer, /\/api\/events/);
+
+  const sessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
+    name: 'viewer-bridge-repo',
+    rootPath: repoRoot,
+  });
 
   const runtimeLogPromise = waitForSseEvent(
     `${service.baseUrl}/api/events`,
@@ -130,12 +138,16 @@ try {
   );
   const runtimeStartPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/start`, 'POST', {
     scene: 'viewer-bridge',
+    sessionId: sessionPayload.session.id,
   });
   assert.equal(runtimeStartPayload.state, 'running');
   assert.equal(runtimeStartPayload.scene, 'viewer-bridge');
+  assert.equal(runtimeStartPayload.sessionId, sessionPayload.session.id);
+  assert.equal(runtimeStartPayload.workspaceRoot, repoRoot);
   const runtimeLogEvent = await runtimeLogPromise;
   assert.equal(runtimeLogEvent.type, 'runtime.log');
   assert.match(runtimeLogEvent.data.data, /viewer-bridge:viewer-bridge:boot/);
+  assert.ok(runtimeLogEvent.data.data.includes(repoRoot));
 
   if (!isWindows) {
     const runtimePausePayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/pause`, 'POST', {});

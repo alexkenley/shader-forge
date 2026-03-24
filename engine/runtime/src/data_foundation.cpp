@@ -94,6 +94,15 @@ bool parseIntValue(const std::string& rawValue, int* result) {
   }
 }
 
+bool parseFloatValue(const std::string& rawValue, float* result) {
+  try {
+    *result = std::stof(parseStringValue(rawValue));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 bool parseVector3Value(const std::string& rawValue, std::array<float, 3>* result) {
   std::istringstream parts(parseStringValue(rawValue));
   std::string token;
@@ -263,6 +272,11 @@ struct ParsedAssetFields {
   std::string generator;
   std::string bakeOutput;
   std::string materialHint;
+  float width = 1.0F;
+  float height = 1.0F;
+  float depth = 1.0F;
+  int rows = 1;
+  int columns = 1;
   PrefabRenderComponentFields renderComponent;
   PrefabEffectComponentFields effectComponent;
   std::vector<SceneEntityFields> sceneEntities;
@@ -503,6 +517,41 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
       asset->bakeOutput = normalizeToken(parsedValue);
     } else if (key == "material_hint") {
       asset->materialHint = normalizeToken(parsedValue);
+    } else if (key == "width") {
+      if (!parseFloatValue(value, &asset->width)) {
+        if (errorMessage) {
+          *errorMessage = "Invalid width in " + path.string();
+        }
+        return false;
+      }
+    } else if (key == "height") {
+      if (!parseFloatValue(value, &asset->height)) {
+        if (errorMessage) {
+          *errorMessage = "Invalid height in " + path.string();
+        }
+        return false;
+      }
+    } else if (key == "depth") {
+      if (!parseFloatValue(value, &asset->depth)) {
+        if (errorMessage) {
+          *errorMessage = "Invalid depth in " + path.string();
+        }
+        return false;
+      }
+    } else if (key == "rows") {
+      if (!parseIntValue(value, &asset->rows)) {
+        if (errorMessage) {
+          *errorMessage = "Invalid rows in " + path.string();
+        }
+        return false;
+      }
+    } else if (key == "columns") {
+      if (!parseIntValue(value, &asset->columns)) {
+        if (errorMessage) {
+          *errorMessage = "Invalid columns in " + path.string();
+        }
+        return false;
+      }
     }
   }
 
@@ -584,6 +633,12 @@ std::optional<std::string> validateAsset(
     }
     if (asset.bakeOutput != "generated_mesh") {
       return "bake_output must be 'generated_mesh'";
+    }
+    if (asset.width <= 0.0F || asset.height <= 0.0F || asset.depth <= 0.0F) {
+      return "width, height, and depth must be positive";
+    }
+    if (asset.generator == "plane_grid" && (asset.rows < 1 || asset.columns < 1)) {
+      return "plane_grid requires rows and columns >= 1";
     }
   }
 
@@ -772,6 +827,11 @@ struct DataFoundation::Impl {
         .generator = parsed.generator,
         .bakeOutput = parsed.bakeOutput,
         .materialHint = parsed.materialHint,
+        .width = parsed.width,
+        .height = parsed.height,
+        .depth = parsed.depth,
+        .rows = parsed.rows,
+        .columns = parsed.columns,
         .sourcePath = path,
         .cookedPath = asset.cookedPath,
         .valid = asset.valid,
@@ -1015,6 +1075,16 @@ std::vector<EffectDescriptorSnapshot> DataFoundation::snapshotEffects() const {
 
 std::vector<ProcgeoSourceSnapshot> DataFoundation::snapshotProcgeoSources() const {
   return impl_->procgeoSources;
+}
+
+std::optional<ProcgeoSourceSnapshot> DataFoundation::procgeoSource(std::string_view procgeoName) const {
+  const std::string normalized = normalizeToken(std::string(procgeoName));
+  for (const auto& procgeo : impl_->procgeoSources) {
+    if (procgeo.name == normalized) {
+      return procgeo;
+    }
+  }
+  return std::nullopt;
 }
 
 std::optional<SceneSourceSnapshot> DataFoundation::sceneSource(std::string_view sceneName) const {

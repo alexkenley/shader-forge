@@ -15,9 +15,11 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -146,6 +148,103 @@ struct RuntimeControlledEntityState {
   std::array<float, 3> rotation{0.0F, 0.0F, 0.0F};
   bool valid = false;
 };
+
+struct RuntimeSceneRenderProxy {
+  std::string id;
+  std::string displayName;
+  std::string procgeoName;
+  std::string procgeoGenerator;
+  std::string materialHint;
+  std::string effectName;
+  std::array<float, 3> worldPosition{0.0F, 0.0F, 0.0F};
+  std::array<float, 3> worldScale{1.0F, 1.0F, 1.0F};
+  std::array<float, 3> dimensions{1.0F, 1.0F, 1.0F};
+  bool hasEffectComponent = false;
+};
+
+struct RuntimeProjectedProxy {
+  VkRect2D bodyRect{};
+  VkRect2D accentRect{};
+  std::array<float, 4> bodyColor{0.0F, 0.0F, 0.0F, 1.0F};
+  std::array<float, 4> accentColor{0.0F, 0.0F, 0.0F, 1.0F};
+  float depth = 0.0F;
+  bool hasAccent = false;
+};
+
+float clampUnit(float value) {
+  return std::clamp(value, 0.0F, 1.0F);
+}
+
+std::uint32_t fnv1a(std::string_view value) {
+  std::uint32_t hash = 2166136261u;
+  for (const unsigned char character : value) {
+    hash ^= character;
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+std::array<float, 4> hashedDebugColor(std::string_view seed, float brightness = 1.0F) {
+  const std::uint32_t hash = fnv1a(seed);
+  const float red = 0.28F + static_cast<float>((hash >> 0) & 0xffu) / 255.0F * 0.52F;
+  const float green = 0.24F + static_cast<float>((hash >> 8) & 0xffu) / 255.0F * 0.52F;
+  const float blue = 0.26F + static_cast<float>((hash >> 16) & 0xffu) / 255.0F * 0.52F;
+  return {
+    clampUnit(red * brightness),
+    clampUnit(green * brightness),
+    clampUnit(blue * brightness),
+    1.0F,
+  };
+}
+
+std::array<float, 4> debugProxyColor(const RuntimeSceneRenderProxy& proxy, bool interactionTarget, float pulse) {
+  if (proxy.materialHint == "debug_crate" || proxy.procgeoName == "debug_crate") {
+    return {
+      clampUnit(0.58F + pulse * 0.08F),
+      clampUnit(0.33F + pulse * 0.04F),
+      clampUnit(0.16F + pulse * 0.03F),
+      1.0F,
+    };
+  }
+
+  if (interactionTarget) {
+    return {
+      clampUnit(0.22F + pulse * 0.16F),
+      clampUnit(0.56F + pulse * 0.18F),
+      clampUnit(0.62F + pulse * 0.16F),
+      1.0F,
+    };
+  }
+
+  return hashedDebugColor(!proxy.materialHint.empty() ? proxy.materialHint : proxy.procgeoName, 1.0F);
+}
+
+VkRect2D buildRect(std::int32_t offsetX, std::int32_t offsetY, std::uint32_t width, std::uint32_t height) {
+  VkRect2D rect{};
+  rect.offset = {offsetX, offsetY};
+  rect.extent = {width, height};
+  return rect;
+}
+
+void clearAttachmentRect(VkCommandBuffer commandBuffer, const VkRect2D& rect, const std::array<float, 4>& color) {
+  if (rect.extent.width == 0 || rect.extent.height == 0) {
+    return;
+  }
+
+  VkClearAttachment attachment{};
+  attachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  attachment.colorAttachment = 0;
+  attachment.clearValue.color.float32[0] = color[0];
+  attachment.clearValue.color.float32[1] = color[1];
+  attachment.clearValue.color.float32[2] = color[2];
+  attachment.clearValue.color.float32[3] = color[3];
+
+  VkClearRect clearRect{};
+  clearRect.rect = rect;
+  clearRect.baseArrayLayer = 0;
+  clearRect.layerCount = 1;
+  vkCmdClearAttachments(commandBuffer, 1, &attachment, 1, &clearRect);
+}
 
 bool instanceLayerAvailable(const char* layerName) {
   std::uint32_t layerCount = 0;
@@ -482,8 +581,10 @@ private:
     activeSceneEntityCount_ = 0;
     activeSceneRootCount_ = 0;
     activeScenePrefabCount_ = 0;
+    activeSceneRenderableCount_ = 0;
     activeControlledEntity_ = RuntimeControlledEntityState{};
     activeInteractionTarget_ = RuntimeControlledEntityState{};
+    activeSceneRenderProxies_.clear();
 
     const auto composed = dataFoundation_.composeScene(activeSceneName_);
     if (!composed.has_value() || !composed->valid) {
@@ -537,6 +638,36 @@ private:
     if (interactionTarget != nullptr) {
       applyEntityState(*interactionTarget, &activeInteractionTarget_);
     }
+
+    for (const auto& entity : composed->entities) {
+      if (!entity.hasRenderComponent || entity.renderProcgeo.empty()) {
+        continue;
+      }
+
+      const auto procgeo = dataFoundation_.procgeoSource(entity.renderProcgeo);
+      if (!procgeo.has_value() || !procgeo->valid) {
+        continue;
+      }
+
+      RuntimeSceneRenderProxy proxy;
+      proxy.id = entity.id;
+      proxy.displayName = entity.displayName;
+      proxy.procgeoName = entity.renderProcgeo;
+      proxy.procgeoGenerator = procgeo->generator;
+      proxy.materialHint = !entity.renderMaterialHint.empty() ? entity.renderMaterialHint : procgeo->materialHint;
+      proxy.effectName = entity.effectName;
+      proxy.worldPosition = entity.worldPosition;
+      proxy.worldScale = entity.worldScale;
+      proxy.dimensions = {
+        std::max(procgeo->width * std::abs(entity.worldScale[0]), 0.1F),
+        std::max(procgeo->height * std::abs(entity.worldScale[1]), 0.1F),
+        std::max(procgeo->depth * std::abs(entity.worldScale[2]), 0.1F),
+      };
+      proxy.hasEffectComponent = entity.hasEffectComponent;
+      activeSceneRenderProxies_.push_back(std::move(proxy));
+    }
+
+    activeSceneRenderableCount_ = activeSceneRenderProxies_.size();
   }
 
   void resolveAnimationRuntimeState() {
@@ -951,6 +1082,12 @@ private:
                           << ", prefabs=" << activeScenePrefabCount_;
       logRuntimeLine(sceneRuntimeSummary.str());
     }
+    if (activeSceneRenderableCount_ > 0) {
+      std::ostringstream renderSummary;
+      renderSummary << "Runtime scene renderables: proxies=" << activeSceneRenderableCount_
+                    << ", mode=projected_debug_proxies";
+      logRuntimeLine(renderSummary.str());
+    }
     logControlledEntityState("startup");
     logInteractionTarget("startup");
     triggerAudioEvent("runtime_boot", "startup");
@@ -1125,6 +1262,9 @@ private:
       }
       if (activeSceneEntityCount_ > 0) {
         title << " entities=" << activeSceneEntityCount_;
+      }
+      if (activeSceneRenderableCount_ > 0) {
+        title << " renderables=" << activeSceneRenderableCount_;
       }
     }
     if (!activeAnimationGraphName_.empty()) {
@@ -1340,6 +1480,185 @@ private:
     }
   }
 
+  bool clipRectToSwapchain(VkRect2D* rect) const {
+    if (rect == nullptr || swapchainExtent_.width == 0 || swapchainExtent_.height == 0) {
+      return false;
+    }
+
+    const std::int32_t minX = std::max(rect->offset.x, 0);
+    const std::int32_t minY = std::max(rect->offset.y, 0);
+    const std::int32_t maxX = std::min(
+      rect->offset.x + static_cast<std::int32_t>(rect->extent.width),
+      static_cast<std::int32_t>(swapchainExtent_.width));
+    const std::int32_t maxY = std::min(
+      rect->offset.y + static_cast<std::int32_t>(rect->extent.height),
+      static_cast<std::int32_t>(swapchainExtent_.height));
+
+    if (maxX <= minX || maxY <= minY) {
+      return false;
+    }
+
+    rect->offset = {minX, minY};
+    rect->extent = {
+      static_cast<std::uint32_t>(maxX - minX),
+      static_cast<std::uint32_t>(maxY - minY),
+    };
+    return true;
+  }
+
+  std::optional<RuntimeProjectedProxy> projectSceneRenderProxy(const RuntimeSceneRenderProxy& proxy, double elapsedSeconds) const {
+    if (proxy.id.empty()) {
+      return std::nullopt;
+    }
+    if (activeControlledEntity_.valid && proxy.id == activeControlledEntity_.id) {
+      return std::nullopt;
+    }
+
+    const std::array<float, 3> cameraPosition = activeControlledEntity_.valid
+      ? activeControlledEntity_.position
+      : std::array<float, 3>{0.0F, 1.6F, -4.0F};
+    const std::array<float, 3> cameraRotation = activeControlledEntity_.valid
+      ? activeControlledEntity_.rotation
+      : std::array<float, 3>{0.0F, 0.0F, 0.0F};
+
+    const float yawRadians = cameraRotation[1] * (3.1415926535F / 180.0F);
+    const float pitchRadians = cameraRotation[0] * (3.1415926535F / 180.0F);
+    const float cosYaw = std::cos(yawRadians);
+    const float sinYaw = std::sin(yawRadians);
+    const float cosPitch = std::cos(pitchRadians);
+    const float sinPitch = std::sin(pitchRadians);
+
+    const std::array<float, 3> delta = {
+      proxy.worldPosition[0] - cameraPosition[0],
+      proxy.worldPosition[1] - cameraPosition[1],
+      proxy.worldPosition[2] - cameraPosition[2],
+    };
+
+    const float localX = delta[0] * cosYaw + delta[2] * -sinYaw;
+    const float localY = delta[1];
+    const float localZ = delta[0] * sinYaw + delta[2] * cosYaw;
+    const float viewY = localY * cosPitch + localZ * sinPitch;
+    const float viewZ = -localY * sinPitch + localZ * cosPitch;
+    if (viewZ <= 0.15F) {
+      return std::nullopt;
+    }
+
+    const float aspect = static_cast<float>(swapchainExtent_.width) / static_cast<float>(swapchainExtent_.height);
+    const float tanHalfVertical = std::tan(70.0F * (3.1415926535F / 180.0F) * 0.5F);
+    const float tanHalfHorizontal = tanHalfVertical * aspect;
+    const float xNdc = localX / (viewZ * tanHalfHorizontal);
+    const float yNdc = viewY / (viewZ * tanHalfVertical);
+    if (xNdc < -1.35F || xNdc > 1.35F || yNdc < -1.35F || yNdc > 1.35F) {
+      return std::nullopt;
+    }
+
+    const float proxyWidth = std::max(proxy.dimensions[0], proxy.dimensions[2]);
+    const float proxyHeight = std::max(proxy.dimensions[1], 0.35F);
+    const float halfWidthPixels = std::max(
+      6.0F,
+      0.5F * (proxyWidth / std::max(viewZ, 0.15F)) / tanHalfHorizontal * static_cast<float>(swapchainExtent_.width) * 0.5F);
+    const float halfHeightPixels = std::max(
+      8.0F,
+      0.5F * (proxyHeight / std::max(viewZ, 0.15F)) / tanHalfVertical * static_cast<float>(swapchainExtent_.height) * 0.5F);
+
+    const float centerX = (xNdc * 0.5F + 0.5F) * static_cast<float>(swapchainExtent_.width);
+    const float centerY = (0.5F - yNdc * 0.5F) * static_cast<float>(swapchainExtent_.height);
+
+    RuntimeProjectedProxy projected;
+    projected.depth = viewZ;
+    projected.bodyRect = buildRect(
+      static_cast<std::int32_t>(std::round(centerX - halfWidthPixels)),
+      static_cast<std::int32_t>(std::round(centerY - halfHeightPixels)),
+      static_cast<std::uint32_t>(std::max(2.0F, std::round(halfWidthPixels * 2.0F))),
+      static_cast<std::uint32_t>(std::max(2.0F, std::round(halfHeightPixels * 2.0F))));
+
+    const bool interactionTarget = activeInteractionTarget_.valid && proxy.id == activeInteractionTarget_.id;
+    const float pulse = 0.55F + 0.45F * static_cast<float>(std::sin(elapsedSeconds * 2.2 + viewZ));
+    projected.bodyColor = debugProxyColor(proxy, interactionTarget, pulse);
+
+    if (interactionTarget || proxy.hasEffectComponent) {
+      projected.hasAccent = true;
+      projected.accentRect = buildRect(
+        projected.bodyRect.offset.x - 4,
+        projected.bodyRect.offset.y - 4,
+        projected.bodyRect.extent.width + 8,
+        projected.bodyRect.extent.height + 8);
+      projected.accentColor = interactionTarget
+        ? std::array<float, 4>{clampUnit(0.18F + pulse * 0.28F), clampUnit(0.58F + pulse * 0.22F), clampUnit(0.70F + pulse * 0.18F), 1.0F}
+        : std::array<float, 4>{0.20F, 0.30F, 0.38F, 1.0F};
+    }
+
+    if (!clipRectToSwapchain(&projected.bodyRect)) {
+      return std::nullopt;
+    }
+    if (projected.hasAccent && !clipRectToSwapchain(&projected.accentRect)) {
+      projected.hasAccent = false;
+    }
+
+    return projected;
+  }
+
+  std::vector<RuntimeProjectedProxy> projectSceneRenderProxies(double elapsedSeconds) const {
+    std::vector<RuntimeProjectedProxy> projected;
+    projected.reserve(activeSceneRenderProxies_.size());
+
+    for (const auto& proxy : activeSceneRenderProxies_) {
+      const auto projectedProxy = projectSceneRenderProxy(proxy, elapsedSeconds);
+      if (projectedProxy.has_value()) {
+        projected.push_back(*projectedProxy);
+      }
+    }
+
+    std::sort(
+      projected.begin(),
+      projected.end(),
+      [](const RuntimeProjectedProxy& left, const RuntimeProjectedProxy& right) {
+        return left.depth > right.depth;
+      });
+    return projected;
+  }
+
+  void recordSceneProxyPass(VkCommandBuffer commandBuffer, double elapsedSeconds) {
+    if (swapchainExtent_.width == 0 || swapchainExtent_.height == 0) {
+      return;
+    }
+
+    const float cameraPitch = activeControlledEntity_.valid ? activeControlledEntity_.rotation[0] : 0.0F;
+    const float horizonShift = std::clamp(cameraPitch / 90.0F, -0.3F, 0.3F);
+    const std::int32_t horizonY = static_cast<std::int32_t>(
+      std::round((0.54F + horizonShift * 0.18F) * static_cast<float>(swapchainExtent_.height)));
+    VkRect2D horizonRect = buildRect(0, horizonY, swapchainExtent_.width, 2);
+    if (clipRectToSwapchain(&horizonRect)) {
+      clearAttachmentRect(commandBuffer, horizonRect, {0.18F, 0.20F, 0.24F, 1.0F});
+    }
+
+    const auto projectedProxies = projectSceneRenderProxies(elapsedSeconds);
+    for (const auto& proxy : projectedProxies) {
+      if (proxy.hasAccent) {
+        clearAttachmentRect(commandBuffer, proxy.accentRect, proxy.accentColor);
+      }
+      clearAttachmentRect(commandBuffer, proxy.bodyRect, proxy.bodyColor);
+    }
+
+    const float crosshairPulse = SDL_GetTicksNS() <= uiFlashUntilTicks_ ? 1.0F : 0.0F;
+    const std::array<float, 4> crosshairColor = {
+      clampUnit(0.76F + crosshairPulse * 0.18F),
+      clampUnit(0.78F + crosshairPulse * 0.12F),
+      clampUnit(0.72F + crosshairPulse * 0.18F),
+      1.0F,
+    };
+    const std::int32_t centerX = static_cast<std::int32_t>(swapchainExtent_.width / 2);
+    const std::int32_t centerY = static_cast<std::int32_t>(swapchainExtent_.height / 2);
+    VkRect2D horizontal = buildRect(centerX - 9, centerY - 1, 18, 2);
+    VkRect2D vertical = buildRect(centerX - 1, centerY - 9, 2, 18);
+    if (clipRectToSwapchain(&horizontal)) {
+      clearAttachmentRect(commandBuffer, horizontal, crosshairColor);
+    }
+    if (clipRectToSwapchain(&vertical)) {
+      clearAttachmentRect(commandBuffer, vertical, crosshairColor);
+    }
+  }
+
   void drawFrame(double elapsedSeconds) {
     FrameSync& frame = frames_[currentFrame_];
 
@@ -1421,6 +1740,7 @@ private:
     renderPassInfo.pClearValues = &clearValue;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    recordSceneProxyPass(commandBuffer, elapsedSeconds);
     vkCmdEndRenderPass(commandBuffer);
 
     throwVkIfFailed(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
@@ -1538,11 +1858,13 @@ private:
   std::size_t activeSceneEntityCount_ = 0;
   std::size_t activeSceneRootCount_ = 0;
   std::size_t activeScenePrefabCount_ = 0;
+  std::size_t activeSceneRenderableCount_ = 0;
   std::string activeAnimationGraphName_;
   std::string activeAnimationEntryState_;
   std::string activeAnimationEntryClip_;
   RuntimeControlledEntityState activeControlledEntity_;
   RuntimeControlledEntityState activeInteractionTarget_;
+  std::vector<RuntimeSceneRenderProxy> activeSceneRenderProxies_;
   std::string lastUiAction_;
   bool sceneSelectedFromBootstrap_ = false;
   bool hasBootstrapOverlayPreference_ = false;

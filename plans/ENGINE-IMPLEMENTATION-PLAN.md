@@ -103,7 +103,7 @@ Current implementation status:
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph resolution, and staged cooked animation metadata.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, and staged cooked physics metadata.
 - Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
-- Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, and input-driven controlled-entity state in the native runtime.
+- Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, input-driven controlled-entity state, first projected debug-proxy rendering for authored render components in the native runtime, and active-session-root runtime handoff from the shell/session backend.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -117,11 +117,13 @@ What is already done:
 - The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, runtime build/run/pause/log controls, external-window viewer workflow diagnostics, and text-backed scene/prefab authoring saves.
 - The shell now has a first in-app reference guide foundation backed by repo-native markdown plus structured guide content so operators, terminal assistants, and future native assistants can search the same current workflow/reference surface.
 - The shell `Scene` workspace now loads current scene and prefab assets from the active session, supports deterministic save/reload/duplicate flows, and exposes the first real outliner/details/assets authoring lane with placed-entity create/duplicate/delete, transform editing, prefab component payload editing, and discard-by-default play mode separation.
+- Shell runtime play/restart now carry the active session root into the native runtime launch so authored scene files and external-window manual testing stay pointed at the same project data.
 - The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
 - The native runtime now loads `input/actions.toml` plus `input/contexts/*.input.toml` and routes SDL keyboard, mouse, and gamepad input through named engine actions.
 - The native runtime now loads a text-backed tooling layout, exposes a named tool registry, and saves a session tooling layout snapshot for later native panel persistence.
 - The native runtime now loads a data-foundation manifest, validates text-backed content roots under `content/`, resolves the selected runtime scene against `.scene.toml` source assets, and applies bootstrap scene/overlay defaults.
 - The native runtime now composes authored scene entities plus prefab payloads into a first runtime world snapshot, resolves hierarchy-derived world transforms, selects a preferred player/control entity from authored spawn tags, and drives that entity from the named input actions.
+- The native runtime now projects authored prefab render components into first visible debug-proxy scene rendering in the Vulkan window so scene composition is manually testable before the full mesh/material pipeline lands.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
@@ -147,7 +149,7 @@ Where the build is currently up to:
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph resolution and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
-- Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, preferred player-entity selection from spawn tags, first input-driven controlled-entity state, and scene-context physics query origins, but real rendered scene content, broader component simulation, materials/shaders, game UI, and full editor/runtime handoff still remain
+- Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, preferred player-entity selection from spawn tags, first input-driven controlled-entity state, scene-context physics query origins, projected debug-proxy scene rendering, and a first active-session-root editor/runtime handoff, but full mesh/material rendering, broader component simulation, game UI, and deeper editor/runtime handoff still remain
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -709,15 +711,17 @@ Current checkpoint now implemented:
 - hierarchy-derived world transforms are now resolved from authored parent chains, with parent-cycle validation added to the scene catalog pass
 - the native runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`
 - named `move_*` and `look_*` actions now drive that controlled entity at runtime instead of only tinting the clear-color loop
+- authored prefab render components now drive projected debug-proxy rendering in the Vulkan window so the active scene is visible during manual runtime testing without waiting for the full shader/material pipeline
+- shell/runtime handoff now passes the active session root into runtime start/restart so the authored project files selected in the shell are the same files the runtime loads during manual testing
 - runtime startup logs and window state now surface composed-scene counts, preferred player entity context, and first interaction-target effect context
 - physics query origins now follow the controlled entity position instead of staying hard-coded at world zero
 - deterministic `scripts/test-engine-scene-runtime-scaffold.mjs` coverage now exists for this Phase 6 slice
 
 Still ahead inside this phase:
-- actual scene rendering, material/shader binding, and visible prefab/component instancing
+- full mesh-based scene rendering, material/shader binding, and richer visible prefab/component instancing beyond the current projected debug-proxy slice
 - broader runtime component simulation beyond the current controlled-entity transform loop
 - player-facing game UI via RmlUi
-- tighter editor/runtime handoff, hot reload, and mounted project/package layering
+- deeper editor/runtime handoff, hot reload, and mounted project/package layering
 - enough real runtime content to stand up the first small example project end to end
 
 Reference inputs:

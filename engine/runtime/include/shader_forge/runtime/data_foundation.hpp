@@ -134,6 +134,11 @@ struct ProcgeoSourceSnapshot {
   std::string generator;
   std::string bakeOutput;
   std::string materialHint;
+  float width = 1.0F;
+  float height = 1.0F;
+  float depth = 1.0F;
+  int rows = 1;
+  int columns = 1;
   std::filesystem::path sourcePath;
   std::filesystem::path cookedPath;
   bool valid = false;
@@ -159,6 +164,7 @@ public:
   std::vector<DataAssetSnapshot> snapshotAssets() const;
   std::vector<EffectDescriptorSnapshot> snapshotEffects() const;
   std::vector<ProcgeoSourceSnapshot> snapshotProcgeoSources() const;
+  std::optional<ProcgeoSourceSnapshot> procgeoSource(std::string_view procgeoName) const;
   std::optional<SceneSourceSnapshot> sceneSource(std::string_view sceneName) const;
   std::optional<PrefabSourceSnapshot> prefabSource(std::string_view prefabName) const;
   std::optional<ComposedSceneSnapshot> composeScene(std::string_view sceneName) const;

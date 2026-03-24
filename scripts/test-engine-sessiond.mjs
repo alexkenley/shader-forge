@@ -9,11 +9,13 @@ const repoRoot = repoRootFromScript(import.meta.url);
 const service = await startEngineSessiond({
   host: '127.0.0.1',
   port: 0,
-  runtimeLaunchFactory: ({ scene }) => ({
+  runtimeLaunchFactory: ({ scene, sessionId, workspaceRoot }) => ({
     command: process.execPath,
-    args: ['-e', `console.log("runtime:${scene}:boot"); setInterval(() => {}, 1000);`],
-    cwd: repoRoot,
+    args: ['-e', `console.log("runtime:${scene}:boot:" + process.cwd()); setInterval(() => {}, 1000);`],
+    cwd: workspaceRoot || repoRoot,
     displayPath: 'test-runtime',
+    sessionId: sessionId || null,
+    workspaceRoot: workspaceRoot || repoRoot,
   }),
   buildLaunchFactory: ({ target, config, buildDir }) => ({
     target,
@@ -199,6 +201,12 @@ try {
   );
   assert.equal(tempDeletePayload.ok, true);
 
+  const runtimeProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-runtime-'));
+  const runtimeSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
+    name: 'runtime-project',
+    rootPath: runtimeProjectRoot,
+  });
+
   const outputEventPromise = waitForSseEvent(
     `${service.baseUrl}/api/events`,
     (event) => event.type === 'terminal.output' && String(event.data?.data || '').includes('__SF_TERM_OK__'),
@@ -242,9 +250,12 @@ try {
 
   const runtimeStartPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/start`, 'POST', {
     scene: 'sandbox',
+    sessionId: runtimeSessionPayload.session.id,
   });
   assert.equal(runtimeStartPayload.state, 'running');
   assert.equal(runtimeStartPayload.scene, 'sandbox');
+  assert.equal(runtimeStartPayload.sessionId, runtimeSessionPayload.session.id);
+  assert.equal(runtimeStartPayload.workspaceRoot, runtimeProjectRoot);
   assert.equal(runtimeStartPayload.executablePath, 'test-runtime');
   assert.equal(runtimeStartPayload.pausedAt, null);
   assert.equal(runtimeStartPayload.supportsPause, !isWindows);
@@ -252,11 +263,14 @@ try {
   const runtimeStatusPayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/status`);
   assert.equal(runtimeStatusPayload.state, 'running');
   assert.equal(runtimeStatusPayload.scene, 'sandbox');
+  assert.equal(runtimeStatusPayload.sessionId, runtimeSessionPayload.session.id);
+  assert.equal(runtimeStatusPayload.workspaceRoot, runtimeProjectRoot);
   assert.equal(runtimeStatusPayload.supportsPause, !isWindows);
 
   const runtimeLogEvent = await runtimeLogPromise;
   assert.equal(runtimeLogEvent.type, 'runtime.log');
   assert.match(runtimeLogEvent.data.data, /runtime:sandbox:boot/);
+  assert.ok(runtimeLogEvent.data.data.includes(runtimeProjectRoot));
 
   if (!isWindows) {
     const runtimePausePayload = await requestJsonNoAuth(`${service.baseUrl}/api/runtime/pause`, 'POST', {});

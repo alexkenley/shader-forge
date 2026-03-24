@@ -75,6 +75,8 @@ export type SessionTerminalOpen = {
 export type RuntimeStatus = {
   state: 'stopped' | 'running' | 'paused';
   scene: string | null;
+  sessionId: string | null;
+  workspaceRoot: string | null;
   pid: number | null;
   startedAt: string | null;
   pausedAt: string | null;
@@ -121,6 +123,8 @@ export type SessiondTerminalEvent =
       type: 'runtime.exit';
       data: {
         scene: string;
+        sessionId: string | null;
+        workspaceRoot: string | null;
         exitCode: number | null;
         signal: number | null;
         executablePath: string;
@@ -312,10 +316,13 @@ export async function fetchRuntimeStatus() {
   return requestJson<RuntimeStatus>('/api/runtime/status');
 }
 
-export async function startRuntime(scene = 'sandbox') {
+export async function startRuntime(scene = 'sandbox', sessionId?: string) {
   return requestJson<RuntimeStatus>('/api/runtime/start', {
     method: 'POST',
-    body: JSON.stringify({ scene }),
+    body: JSON.stringify({
+      scene,
+      ...(sessionId ? { sessionId } : {}),
+    }),
   });
 }
 
@@ -340,10 +347,13 @@ export async function resumeRuntime() {
   });
 }
 
-export async function restartRuntime(scene = 'sandbox') {
+export async function restartRuntime(scene = 'sandbox', sessionId?: string) {
   return requestJson<RuntimeStatus>('/api/runtime/restart', {
     method: 'POST',
-    body: JSON.stringify({ scene }),
+    body: JSON.stringify({
+      scene,
+      ...(sessionId ? { sessionId } : {}),
+    }),
   });
 }
 
