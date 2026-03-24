@@ -27,13 +27,13 @@ try {
   assert.match(sceneEditorView, /Play Mode/);
   assert.match(sceneEditorView, /Save Scene/);
   assert.match(sceneEditorView, /Save Prefab/);
-  assert.match(sceneEditorView, /Reload From Disk/);
+  assert.match(sceneEditorView, /Reload/);
   assert.match(sceneEditorView, /Duplicate Scene/);
-  assert.match(sceneEditorView, /World outliner/);
+  assert.match(sceneEditorView, /World Outliner/);
   assert.match(sceneEditorView, /Use As Primary/);
   assert.match(sceneEditorView, /Add Entity/);
-  assert.match(sceneEditorView, /Duplicate Entity/);
-  assert.match(sceneEditorView, /Delete Entity/);
+  assert.match(sceneEditorView, /Duplicate/);
+  assert.match(sceneEditorView, /Delete/);
   assert.match(sceneEditorView, /Add To Scene/);
   assert.match(sceneEditorView, /Position/);
   assert.match(sceneEditorView, /Rotation/);
@@ -137,7 +137,7 @@ try {
 
   console.log('Engine scene authoring smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
-  console.log('- Verified the shell Scene workspace exposes edit/play, save/reload, outliner, details, prefab assignment, and prefab component editing surfaces');
+  console.log('- Verified the shell Scene workspace exposes edit/play, save/reload, outliner, inspector, prefab assignment, and prefab component editing surfaces');
   console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component assets can be written through engine_sessiond inside a session root');
 } finally {
   await service.close();

@@ -35,32 +35,37 @@ Left rail:
 - `Sessions`
 - `Explorer`
 - `Source Control`
-- `World`
-- `Search`
 
 Center dock:
 
-- `Code`
-- `Game`
 - `Scene`
+- `Game`
 - `Preview`
+- `Code`
 - `Guide`
 
 Right panel:
 
-- `Details`
-- `Assets`
-- `Inspector`
-- `Build`
-- `Run`
-- `Profiler`
+- context-aware runtime/workspace tools for non-`Scene` tabs
+- current implemented tabs: `Runtime`, `Build`, `Workspace`
 
 Bottom panel:
 
 - `Terminal`
 - `Logs`
 - `Output`
-- `Console`
+
+## Workspace Layout Architecture
+
+The shell layout should follow these rules:
+
+- keep authoring, runtime, and utility surfaces separated instead of mixing them into one generic side column
+- make the primary viewport the largest surface in `Scene`, `Game`, and `Preview`
+- keep lightweight state such as dirty status, mode, and launch/runtime state in compact bars or chips instead of large summary cards
+- keep terminals, logs, and other utility surfaces in the bottom dock rather than letting them compete with the main workspace
+- put world hierarchy, selection inspection, and asset placement adjacent to the scene viewport, following familiar level-editor patterns from tools like Unreal, Unity, and Godot without copying any one layout blindly
+- keep runtime launch/build controls grouped with `Game`, `Preview`, and runtime-facing side panels rather than leaving them visible during pure scene authoring
+- prefer resizable editor sidebars and docks where screen-real-estate tradeoffs matter
 
 ## Core Behavior
 
@@ -83,7 +88,8 @@ Current implemented bridge surfaces:
 - runtime build, play, stop, restart, and pause/resume controls in the shell chrome and runtime-facing panels, with play/restart now launching against the active session root
 - runtime and build logs routed into shell bottom-dock surfaces, with the bottom dock now supporting vertical resize plus explicit collapse/restore/maximize controls
 - `Game` and `Preview` tabs that track external-runtime bridge state, recent runtime/build activity, and shell-side viewer workflow diagnostics
-- a real `Scene` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side edit/play separation, placed-entity hierarchy plus transform editing, first prefab component payload editing, outliner/details/assets surfaces, writes deterministic save/reload/duplicate flows back through `engine_sessiond`, and now explicitly guides operators toward the active-session-root plus runtime-reload and interaction-testing lane
+- a real `Scene` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side edit/play separation, placed-entity hierarchy plus transform editing, first prefab component payload editing, writes deterministic save/reload/duplicate flows back through `engine_sessiond`, and now uses a viewport-first level-editor layout with an adjacent resizable `Scenes`/`Outliner`/`Inspector`/`Assets` tool stack plus a compact bottom status bar
+- the global right panel is now reserved for runtime/build/workspace tools on non-`Scene` tabs so scene authoring is not visually mixed with unrelated run/build controls
 - an in-app `Guide` tab backed by repo-native markdown and structured guide content so shell users, terminal assistants, and future native assistants can resolve the same operator wiki from the workspace
 
 The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.

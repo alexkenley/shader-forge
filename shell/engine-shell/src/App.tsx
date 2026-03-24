@@ -43,8 +43,8 @@ import {
 import { engineReferenceGuide } from './reference-guide';
 
 const leftTabs = ['Sessions', 'Explorer', 'Source Control'] as const;
-const centerTabs = ['Code', 'Game', 'Scene', 'Preview', 'Guide'] as const;
-const rightTabs = ['Details', 'Build', 'Run'] as const;
+const centerTabs = ['Scene', 'Game', 'Preview', 'Code', 'Guide'] as const;
+const rightTabs = ['Runtime', 'Build', 'Workspace'] as const;
 const bottomTabs = ['Terminal', 'Logs', 'Output'] as const;
 const layoutModes = ['Code Focus', 'Code + Game', 'Triptych'] as const;
 const menuItems = ['File', 'Edit', 'View', 'Build', 'Tools', 'Window', 'Help'] as const;
@@ -447,60 +447,62 @@ function renderRightPanel(
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
 ) {
-  if (activeTab === 'Details') {
+  if (activeTab === 'Workspace') {
     return (
       <div className="stack">
         <section className="card compact-card">
           <div className="section-titlebar">
-            <h3>Details</h3>
-            <span>Actor</span>
+            <h3>Workspace</h3>
+            <span>{activeSession ? 'Session-backed' : 'No session'}</span>
           </div>
-          <dl className="property-grid">
+          <dl className="fact-list">
             <div>
-              <dt>Name</dt>
-              <dd>BP_CitadelGate</dd>
+              <dt>Session</dt>
+              <dd>{activeSession?.name || 'none selected'}</dd>
             </div>
             <div>
-              <dt>Label</dt>
-              <dd>Castle Gate A</dd>
+              <dt>Root</dt>
+              <dd>{activeSession?.rootPath || 'Select a session from the left rail'}</dd>
             </div>
             <div>
-              <dt>Transform</dt>
-              <dd>1240, -330, 64</dd>
+              <dt>Launch scene</dt>
+              <dd>{launchScene}</dd>
             </div>
             <div>
-              <dt>Mobility</dt>
-              <dd>Static</dd>
+              <dt>Runtime scene</dt>
+              <dd>{runtimeStatus.scene || launchScene}</dd>
             </div>
             <div>
-              <dt>Layer</dt>
-              <dd>Gameplay.Blockout</dd>
+              <dt>Runtime root</dt>
+              <dd>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</dd>
+            </div>
+            <div>
+              <dt>Runtime state</dt>
+              <dd>{runtimeStateLabel(runtimeStatus.state)}</dd>
+            </div>
+            <div>
+              <dt>Build state</dt>
+              <dd>{buildStateLabel(buildStatus.state)}</dd>
+            </div>
+            <div>
+              <dt>Build dir</dt>
+              <dd>{buildStatus.buildDir || buildDir}</dd>
+            </div>
+            <div>
+              <dt>Config</dt>
+              <dd>{buildStatus.config || buildConfig}</dd>
             </div>
           </dl>
         </section>
         <section className="card compact-card">
           <div className="section-titlebar">
-            <h3>Components</h3>
-            <span>4 items</span>
+            <h3>Layout Rules</h3>
+            <span>Current shell</span>
           </div>
-          <dl className="property-grid">
-            <div>
-              <dt>StaticMesh</dt>
-              <dd>SM_Gate_A</dd>
-            </div>
-            <div>
-              <dt>Collision</dt>
-              <dd>BlockAll</dd>
-            </div>
-            <div>
-              <dt>Gameplay Tag</dt>
-              <dd>Encounter.Entry</dd>
-            </div>
-            <div>
-              <dt>Blueprint</dt>
-              <dd>BP_CitadelGate</dd>
-            </div>
-          </dl>
+          <p className="panel-copy">
+            `Scene` is for level authoring. `Game` and `Preview` are for runtime launch and
+            inspection. The bottom dock is for terminals, logs, and utility output.
+          </p>
         </section>
       </div>
     );
@@ -1418,7 +1420,7 @@ function renderCenterContent(
 export default function App() {
   const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('Sessions');
   const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Scene');
-  const [activeRightTab, setActiveRightTab] = useState<RightTab>('Details');
+  const [activeRightTab, setActiveRightTab] = useState<RightTab>('Runtime');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
   const [bottomPaneHeight, setBottomPaneHeight] = useState(() => clampBottomPaneHeight(DEFAULT_BOTTOM_PANE_HEIGHT));
   const [bottomPaneCollapsed, setBottomPaneCollapsed] = useState(false);
@@ -2414,6 +2416,8 @@ export default function App() {
   const bottomPaneMaxHeight = maxBottomPaneHeight();
   const bottomPaneVisibleHeight = bottomPaneCollapsed ? COLLAPSED_BOTTOM_PANE_HEIGHT : bottomPaneHeight;
 
+  const showSidePane = activeCenterTab !== 'Scene';
+
   return (
     <div className="shell-app">
       <header className="chrome-bar chrome-bar--menu">
@@ -2465,7 +2469,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="shell-grid">
+      <main className={`shell-grid${showSidePane ? '' : ' shell-grid--scene-mode'}`}>
         <aside className="pane rail-pane">
           <nav className="rail-tabs">
             {leftTabs.map((tab) => (
@@ -2737,7 +2741,7 @@ export default function App() {
             <div className="toolbar-rack__spacer" />
             {activeCenterTab === 'Guide' ? (
               <div className="guide-toolbar-meta">Searchable in-app wiki backed by repo-native markdown and structured assistant guide files.</div>
-            ) : (
+            ) : activeCenterTab === 'Code' ? (
               <div className="tab-row tab-row--tight">
                 {layoutModes.map((mode) => (
                   <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
@@ -2745,6 +2749,10 @@ export default function App() {
                   </TabButton>
                 ))}
               </div>
+            ) : activeCenterTab === 'Scene' ? (
+              <div className="guide-toolbar-meta">Level editor workspace: keep the viewport primary, with outliner, inspector, and assets grouped beside it.</div>
+            ) : (
+              <div className="guide-toolbar-meta">Runtime controls and build operations are grouped with `Game`, `Preview`, and the right-side runtime tools.</div>
             )}
           </div>
 
@@ -2774,42 +2782,44 @@ export default function App() {
           )}
         </section>
 
-        <aside className="pane side-pane">
-          <div className="tab-row tab-row--side">
-            {rightTabs.map((tab) => (
-              <TabButton active={activeRightTab === tab} key={tab} onClick={() => setActiveRightTab(tab)}>
-                {tab}
-              </TabButton>
-            ))}
-          </div>
-          {activeSession ? (
-            <div className="active-session-bar">
-              <strong>{activeSession.name}</strong>
-              <span>{activeSession.rootPath}</span>
+        {showSidePane ? (
+          <aside className="pane side-pane">
+            <div className="tab-row tab-row--side">
+              {rightTabs.map((tab) => (
+                <TabButton active={activeRightTab === tab} key={tab} onClick={() => setActiveRightTab(tab)}>
+                  {tab}
+                </TabButton>
+              ))}
             </div>
-          ) : null}
-          {renderRightPanel(
-            activeRightTab,
-            activeSession,
-            runtimeStatus,
-            buildStatus,
-            launchScene,
-            buildConfig,
-            buildDir,
-            pendingRunAfterBuild,
-            setLaunchScene,
-            setBuildConfig,
-            setBuildDir,
-            handleStartRuntimeBuild,
-            handleBuildAndPlay,
-            handleStopBuild,
-            handleStartRuntime,
-            handleStopRuntime,
-            handleRestartRuntime,
-            handlePauseRuntime,
-            handleResumeRuntime,
-          )}
-        </aside>
+            {activeSession ? (
+              <div className="active-session-bar">
+                <strong>{activeSession.name}</strong>
+                <span>{activeSession.rootPath}</span>
+              </div>
+            ) : null}
+            {renderRightPanel(
+              activeRightTab,
+              activeSession,
+              runtimeStatus,
+              buildStatus,
+              launchScene,
+              buildConfig,
+              buildDir,
+              pendingRunAfterBuild,
+              setLaunchScene,
+              setBuildConfig,
+              setBuildDir,
+              handleStartRuntimeBuild,
+              handleBuildAndPlay,
+              handleStopBuild,
+              handleStartRuntime,
+              handleStopRuntime,
+              handleRestartRuntime,
+              handlePauseRuntime,
+              handleResumeRuntime,
+            )}
+          </aside>
+        ) : null}
       </main>
 
       <section

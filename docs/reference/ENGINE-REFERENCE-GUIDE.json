@@ -69,7 +69,7 @@
         {
           "id": "shell-workspace",
           "title": "Shell Workspace Overview",
-          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, scene authoring, and the preserved code bridge.",
+          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, scene authoring, and the preserved code bridge, with a clearer separation between authoring, runtime, and utility surfaces.",
           "keywords": ["shell", "workspace", "tabs", "rails", "layout"],
           "references": [
             "shell/engine-shell/src/App.tsx",
@@ -85,8 +85,8 @@
               "keywords": ["left rail", "center dock", "right panel", "bottom dock"],
               "items": [
                 "The left rail currently exposes `Sessions`, `Explorer`, and `Source Control`.",
-                "The center dock currently exposes `Code`, `Game`, `Scene`, `Preview`, and `Guide`.",
-                "The right panel currently exposes `Details`, `Build`, and `Run`.",
+                "The center dock currently exposes `Scene`, `Game`, `Preview`, `Code`, and `Guide`.",
+                "The right panel currently exposes `Runtime`, `Build`, and `Workspace` for non-`Scene` tabs, and it is intentionally hidden during `Scene` authoring so the editor can use that space directly.",
                 "The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.",
                 "The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace."
               ]
@@ -96,8 +96,8 @@
               "keywords": ["monaco", "preview", "scene", "guide"],
               "items": [
                 "Use `Code` when you need the preserved Monaco bridge and repo workspace context.",
-                "Use `Game` and `Preview` when you are driving the external native runtime window from the shell.",
-                "Use `Scene` for repo-backed scene and prefab authoring with edit/play separation, save/reload/duplicate commands, placed-entity hierarchy plus transform editing, first prefab component payload editing, a world outliner, details editing, and prefab assignment over the real text assets.",
+                "Use `Game` and `Preview` when you are driving the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.",
+                "Use `Scene` for repo-backed scene and prefab authoring with a viewport-first layout, edit/play separation, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.",
                 "Use `Guide` for the in-app wiki and repo source references."
               ],
               "note": "The shell is still the primary workspace even though the native SDL3/Vulkan runtime renders in an external window."

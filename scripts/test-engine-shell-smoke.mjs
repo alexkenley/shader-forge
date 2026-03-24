@@ -71,11 +71,11 @@ try {
   assert.match(sceneEditorView, /Duplicate Scene/);
   assert.match(sceneEditorView, /Scene = Level/);
   assert.match(sceneEditorView, /Create or open a scene to start authoring\./);
-  assert.match(sceneEditorView, /World outliner/);
+  assert.match(sceneEditorView, /World Outliner/);
   assert.match(sceneEditorView, /Use As Primary/);
   assert.match(sceneEditorView, /Add Entity/);
-  assert.match(sceneEditorView, /Duplicate Entity/);
-  assert.match(sceneEditorView, /Delete Entity/);
+  assert.match(sceneEditorView, /Duplicate/);
+  assert.match(sceneEditorView, /Delete/);
   assert.match(sceneEditorView, /Add To Scene/);
   assert.match(sceneEditorView, /Position/);
   assert.match(sceneEditorView, /Rotation/);

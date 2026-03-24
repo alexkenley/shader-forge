@@ -48,13 +48,13 @@ Assistant entry points:
 ### Shell Workspace Overview
 
 - The left rail currently exposes `Sessions`, `Explorer`, and `Source Control`.
-- The center dock currently exposes `Code`, `Game`, `Scene`, `Preview`, and `Guide`.
-- The right panel currently exposes `Details`, `Build`, and `Run`.
+- The center dock currently exposes `Scene`, `Game`, `Preview`, `Code`, and `Guide`.
+- The right panel currently exposes `Runtime`, `Build`, and `Workspace` for non-`Scene` tabs, and it is intentionally hidden during `Scene` authoring so the editor can use that space directly.
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
 - The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
-- Use `Game` and `Preview` to drive the external native runtime window from the shell.
-- Use `Scene` for repo-backed scene/prefab authoring with edit/play separation, save/reload/duplicate commands, a world outliner, details editing, and prefab assignment over the real text assets.
+- Use `Game` and `Preview` to drive the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.
+- Use `Scene` for repo-backed scene/prefab authoring with a viewport-first layout, edit/play separation, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.
 - Use `Guide` for the in-app wiki and repo source references.
 
 ## Session Backend And CLI

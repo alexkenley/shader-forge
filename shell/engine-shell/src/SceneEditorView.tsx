@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   listFiles,
   readFile,
@@ -27,6 +27,7 @@ import {
 type BackendState = 'connected' | 'offline';
 type EditorMode = 'edit' | 'play';
 type SelectionNode = 'scene' | 'prefab' | 'entity';
+type SceneSidebarTab = 'scenes' | 'outliner' | 'inspector' | 'assets';
 type EditorSnapshot = {
   scene: SceneAssetDocument | null;
   prefab: PrefabAssetDocument | null;
@@ -48,6 +49,13 @@ const emptySnapshot: EditorSnapshot = {
   scene: null,
   prefab: null,
 };
+const DEFAULT_SCENE_SIDEBAR_WIDTH = 380;
+const MIN_SCENE_SIDEBAR_WIDTH = 300;
+const MAX_SCENE_SIDEBAR_WIDTH = 540;
+
+function clampSceneSidebarWidth(value: number) {
+  return Math.max(MIN_SCENE_SIDEBAR_WIDTH, Math.min(MAX_SCENE_SIDEBAR_WIDTH, Math.round(value)));
+}
 
 function cloneSceneEntity(entity: SceneEntityDocument): SceneEntityDocument {
   return {
@@ -249,6 +257,7 @@ export function SceneEditorView({
   onLaunchSceneChange,
   onBackendStatus,
 }: SceneEditorViewProps) {
+  const sceneShellRef = useRef<HTMLDivElement | null>(null);
   const [mode, setMode] = useState<EditorMode>('edit');
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Select a session to load scene authoring assets.');
@@ -263,6 +272,9 @@ export function SceneEditorView({
   const [historyIndex, setHistoryIndex] = useState(0);
   const [newSceneName, setNewSceneName] = useState('');
   const [duplicateSceneName, setDuplicateSceneName] = useState('');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SceneSidebarTab>('outliner');
+  const [sceneSidebarWidth, setSceneSidebarWidth] = useState(DEFAULT_SCENE_SIDEBAR_WIDTH);
+  const [sceneSidebarResizing, setSceneSidebarResizing] = useState(false);
 
   const currentSnapshot = history[historyIndex] || emptySnapshot;
   const sceneDraft = currentSnapshot.scene;
@@ -298,6 +310,44 @@ export function SceneEditorView({
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex + 1 < history.length;
 
+  useEffect(() => {
+    if (!sceneSidebarResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      event.preventDefault();
+      const shellBounds = sceneShellRef.current?.getBoundingClientRect();
+      const nextWidth = shellBounds ? shellBounds.right - event.clientX : window.innerWidth - event.clientX;
+      setSceneSidebarWidth(clampSceneSidebarWidth(nextWidth));
+    };
+
+    const stopResize = () => {
+      setSceneSidebarResizing(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [sceneSidebarResizing]);
+
+  useEffect(() => {
+    if (!sceneDraft) {
+      setActiveSidebarTab('scenes');
+    }
+  }, [sceneDraft]);
+
   function resetDrafts(nextScene: SceneAssetDocument | null, nextPrefab: PrefabAssetDocument | null) {
     setHistory([
       {
@@ -331,11 +381,21 @@ export function SceneEditorView({
   function setSceneSelection() {
     setSelectedNode('scene');
     setSelectedEntityId('');
+    setActiveSidebarTab('inspector');
   }
 
   function setEntitySelection(entityId: string) {
     setSelectedNode('entity');
     setSelectedEntityId(entityId);
+    setActiveSidebarTab('inspector');
+  }
+
+  function handleSceneSidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    setSceneSidebarResizing(true);
   }
 
   function openSceneDocument(
@@ -522,6 +582,7 @@ export function SceneEditorView({
     });
     setPrefabSaved(document);
     setSelectedNode('prefab');
+    setActiveSidebarTab('inspector');
     setStatusMessage(`Inspecting prefab ${document.name}.`);
   }
 
@@ -783,6 +844,19 @@ export function SceneEditorView({
     setStatusMessage('Redid the last scene authoring change.');
   }
 
+  const dirtyStateLabel = sceneDirty || prefabDirty ? 'Unsaved' : 'Clean';
+  const dirtyStateDetail = sceneDirty
+    ? 'Scene draft differs from disk.'
+    : prefabDirty
+      ? 'Prefab draft differs from disk.'
+      : 'Draft matches the last disk load or save.';
+  const selectionInspectorLabel =
+    selectedNode === 'scene'
+      ? 'Scene asset'
+      : selectedNode === 'entity'
+        ? 'Placed entity'
+        : 'Prefab asset';
+
   if (!activeSession) {
     return (
       <div className="workspace-layout workspace-layout--scene">
@@ -809,760 +883,789 @@ export function SceneEditorView({
   }
 
   return (
-    <div className="workspace-layout workspace-layout--scene">
-      <section className="surface">
-        <div className="surface-header">
-          <div>
-            <div className="surface-eyebrow">Authoring</div>
-            <h2>Scene Editor</h2>
+    <div className="workspace-layout workspace-layout--scene-editor">
+      <section className="surface scene-workspace">
+        <div className="scene-editor__topbar">
+          <div className="scene-editor__identity">
+            <div className="surface-eyebrow">Level Editor</div>
+            <h2>{sceneDraft?.title || sceneDraft?.name || 'Scene Editor'}</h2>
             <p>
-              Repo-backed `content/scenes/*.scene.toml` and `content/prefabs/*.prefab.toml`
-              authoring with placed entities, transform fields, and deterministic save/reload flows.
+              Viewport-first scene authoring with a world outliner, selection inspector, and prefab
+              asset browser beside it.
             </p>
           </div>
-          <div className="inline-actions">
-            <button
-              className={`ghost-button ghost-button--sm${mode === 'edit' ? ' ghost-button--primary' : ''}`}
-              onClick={() => handleModeChange('edit')}
-              type="button"
-            >
-              Edit Mode
-            </button>
-            <button
-              className={`ghost-button ghost-button--sm${mode === 'play' ? ' ghost-button--primary' : ''}`}
-              onClick={() => handleModeChange('play')}
-              type="button"
-            >
-              Play Mode
-            </button>
-          </div>
-        </div>
-
-        <div className="scene-toolbar">
-          <div className="scene-toolbar__group">
-            <button
-              className="ghost-button ghost-button--sm ghost-button--primary"
-              disabled={!sceneDraft || !sceneDirty || busy || !canEdit}
-              onClick={() => void handleSaveScene()}
-              type="button"
-            >
-              Save Scene
-            </button>
-            <button
-              className="ghost-button ghost-button--sm"
-              disabled={!prefabDraft || !prefabDirty || busy || !canEdit}
-              onClick={() => void handleSavePrefab()}
-              type="button"
-            >
-              Save Prefab
-            </button>
-            <button
-              className="ghost-button ghost-button--sm"
-              disabled={busy || (!sceneDirty && !prefabDirty)}
-              onClick={handleRevertDrafts}
-              type="button"
-            >
-              Revert Drafts
-            </button>
-            <button
-              className="ghost-button ghost-button--sm"
-              disabled={busy}
-              onClick={() => void reloadFromDisk()}
-              type="button"
-            >
-              Reload From Disk
-            </button>
-          </div>
-          <div className="scene-toolbar__group">
-            <button
-              className="ghost-button ghost-button--sm"
-              disabled={!canUndo || busy || !canEdit}
-              onClick={handleUndo}
-              type="button"
-            >
-              Undo
-            </button>
-            <button
-              className="ghost-button ghost-button--sm"
-              disabled={!canRedo || busy || !canEdit}
-              onClick={handleRedo}
-              type="button"
-            >
-              Redo
-            </button>
-          </div>
-        </div>
-
-        <div className="scene-authoring-grid">
-          <article className="scene-card scene-card--viewport">
-            <div className="scene-card__header">
-              <div>
-                <span>Scene viewer</span>
-                <strong>{sceneDraft?.title || sceneDraft?.name || 'No scene selected'}</strong>
-              </div>
-              <div className="scene-status-pills">
-                <span className={`scene-status-pill scene-status-pill--${mode}`}>
-                  {toSceneStatusLabel(mode)}
-                </span>
-                <span className="scene-status-pill">{busy ? 'Syncing' : 'Ready'}</span>
-              </div>
-            </div>
-            <div className="scene-viewport">
-              <div className="scene-viewport__label">
-                <strong>{sceneDraft?.name || 'no-scene'}</strong>
-                <span>{sceneDraft?.path || 'content/scenes/*.scene.toml'}</span>
-              </div>
-              <div className="scene-viewport__focus">
-                {sceneDraft ? (
-                  <>
-                    <span className="scene-viewport__eyebrow">Proxy viewer</span>
-                    <strong>{sceneDraft.title}</strong>
-                    <p>
-                      In-shell preview of the authored level/world structure. Use `Play` to inspect
-                      the native runtime window with the same session content.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <span className="scene-viewport__eyebrow">Scene = Level</span>
-                    <strong>Create or open a scene to start authoring.</strong>
-                    <p>
-                      A scene is the level/world instance. Prefabs are reusable assets you place
-                      into that scene.
-                    </p>
-                  </>
-                )}
-              </div>
-              <div className="scene-viewport__axes scene-viewport__axes--horizontal" />
-              <div className="scene-viewport__axes scene-viewport__axes--vertical" />
-              <div className="scene-viewport__summary">
-                <div>
-                  <span>Launch target</span>
-                  <strong>{launchScene}</strong>
-                </div>
-                <div>
-                  <span>Runtime</span>
-                  <strong>{runtimeStatus.state}</strong>
-                </div>
-                <div>
-                  <span>Entities</span>
-                  <strong>{sceneDraft?.entities.length || 0}</strong>
-                </div>
-                <div>
-                  <span>Primary prefab</span>
-                  <strong>{sceneDraft?.primaryPrefab || 'unassigned'}</strong>
-                </div>
-              </div>
-            </div>
-            <div className="scene-note">
-              Transform gizmos and live viewport manipulation are still ahead. This slice makes the
-              `Scene` workspace author real placed-entity and transform data now. The in-shell
-              viewer is a proxy for quick inspection; `Play` and `Restart` launch the native
-              runtime against the active session root so these same authored files drive manual
-              runtime testing. The runtime can poll for saved authored content changes or force a
-              reload with `F7`, and effect-capable proxies can now be aimed at and triggered from
-              the external window with Enter or left click.
-            </div>
-          </article>
-
-          <article className="scene-card">
-            <div className="scene-card__header">
-              <div>
-                <span>Scenes</span>
-                <strong>{sceneDocuments.length ? `${sceneDocuments.length} scene files` : 'No scenes yet'}</strong>
-              </div>
-              <span>{sceneDraft?.path || activeSession.rootPath}</span>
-            </div>
-            {sceneDraft ? (
-              <div className="scene-selection-summary">
-                <div>
-                  <span>Active scene</span>
-                  <strong>{sceneDraft.title}</strong>
-                </div>
-                <div>
-                  <span>Launch target</span>
-                  <strong>{sceneDraft.name}</strong>
-                </div>
-                <div>
-                  <span>Primary prefab</span>
-                  <strong>{sceneDraft.primaryPrefab || 'unassigned'}</strong>
-                </div>
-                <div>
-                  <span>Entities</span>
-                  <strong>{sceneDraft.entities.length}</strong>
-                </div>
-              </div>
-            ) : (
-              <div className="scene-selection-summary scene-selection-summary--empty">
-                <div>
-                  <span>Scene authoring</span>
-                  <strong>Start with a level/world scene asset.</strong>
-                </div>
-                <p>Create a scene, then open it and place prefabs into the world outliner.</p>
-              </div>
-            )}
-            <div className="scene-list">
-              {sceneDocuments.length ? (
-                sceneDocuments.map((document) => (
-                  <button
-                    className={`scene-list__item${selectedScenePath === document.path ? ' is-active' : ''}`}
-                    key={document.path}
-                    onClick={() => openSceneDocument(document, prefabDocuments, mode)}
-                    type="button"
-                  >
-                    <strong>{document.title}</strong>
-                    <span>{document.name}</span>
-                    <em>{document.path}</em>
-                  </button>
-                ))
-              ) : (
-                <div className="scene-empty-state scene-empty-state--compact">
-                  Create the first scene asset below.
-                </div>
-              )}
-            </div>
-
-            <div className="scene-form-block">
-              <label className="form-field">
-                <span>New scene name</span>
-                <input
-                  autoComplete="off"
-                  disabled={!canEdit || busy}
-                  onChange={(event) => setNewSceneName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      void handleCreateScene();
-                    }
-                  }}
-                  placeholder="prototype_arena"
-                  spellCheck={false}
-                  type="text"
-                  value={newSceneName}
-                />
-              </label>
-              <p className="scene-form-help">
-                A scene is the authored level/world instance saved under `content/scenes`.
-              </p>
+          <div className="scene-editor__toolbar-groups">
+            <div className="scene-toolbar__group">
               <button
                 className="ghost-button ghost-button--sm ghost-button--primary"
-                disabled={!canEdit || busy}
-                onClick={() => void handleCreateScene()}
+                disabled={!sceneDraft || !sceneDirty || busy || !canEdit}
+                onClick={() => void handleSaveScene()}
                 type="button"
               >
-                Create Scene
+                Save Scene
               </button>
-            </div>
-
-            <div className="scene-form-block">
-              <label className="form-field">
-                <span>Duplicate active scene as</span>
-                <input
-                  autoComplete="off"
-                  disabled={!sceneDraft || !canEdit || busy}
-                  onChange={(event) => setDuplicateSceneName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      void handleDuplicateScene();
-                    }
-                  }}
-                  placeholder="sandbox_copy"
-                  spellCheck={false}
-                  type="text"
-                  value={duplicateSceneName}
-                />
-              </label>
-              <p className="scene-form-help">
-                Copies the active scene asset and its current authored entity layout.
-              </p>
               <button
                 className="ghost-button ghost-button--sm"
-                disabled={!sceneDraft || !canEdit || busy}
-                onClick={() => void handleDuplicateScene()}
+                disabled={!prefabDraft || !prefabDirty || busy || !canEdit}
+                onClick={() => void handleSavePrefab()}
                 type="button"
               >
-                Duplicate Scene
+                Save Prefab
+              </button>
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={busy || (!sceneDirty && !prefabDirty)}
+                onClick={handleRevertDrafts}
+                type="button"
+              >
+                Revert
+              </button>
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={busy}
+                onClick={() => void reloadFromDisk()}
+                type="button"
+              >
+                Reload
               </button>
             </div>
-          </article>
-        </div>
-
-        <div className="scene-metric-grid">
-          <article className="mini-card">
-            <span>Mode</span>
-            <strong>{toSceneStatusLabel(mode)}</strong>
-            <p>{mode === 'edit' ? 'Persistent authoring writes are enabled.' : 'Discard-only runtime preview stance.'}</p>
-          </article>
-          <article className="mini-card">
-            <span>Dirty state</span>
-            <strong>{sceneDirty || prefabDirty ? 'Unsaved changes' : 'Clean'}</strong>
-            <p>{sceneDirty ? 'Scene draft differs from disk.' : prefabDirty ? 'Prefab draft differs from disk.' : 'Draft matches the last disk load or save.'}</p>
-          </article>
-          <article className="mini-card">
-            <span>Entities</span>
-            <strong>{sceneDraft?.entities.length || 0}</strong>
-            <p>{rootEntityCount} root entities are currently authored in the active scene.</p>
-          </article>
-          <article className="mini-card">
-            <span>Prefab files</span>
-            <strong>{prefabDocuments.length}</strong>
-            <p>`content/prefabs/*.prefab.toml` is the current placement catalog.</p>
-          </article>
-        </div>
-      </section>
-
-      <section className="surface">
-        <div className="surface-header">
-          <div>
-            <div className="surface-eyebrow">Level Tools</div>
-            <h2>Outliner, Details, And Assets</h2>
-            <p>Shell-side level authoring now round-trips scene metadata, placed entities, hierarchy, transforms, and first-pass prefab component payloads through the same text assets the runtime and bake lane read.</p>
+            <div className="scene-toolbar__group">
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={!canUndo || busy || !canEdit}
+                onClick={handleUndo}
+                type="button"
+              >
+                Undo
+              </button>
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={!canRedo || busy || !canEdit}
+                onClick={handleRedo}
+                type="button"
+              >
+                Redo
+              </button>
+              <button
+                className={`ghost-button ghost-button--sm${mode === 'edit' ? ' ghost-button--primary' : ''}`}
+                onClick={() => handleModeChange('edit')}
+                type="button"
+              >
+                Edit
+              </button>
+              <button
+                className={`ghost-button ghost-button--sm${mode === 'play' ? ' ghost-button--primary' : ''}`}
+                onClick={() => handleModeChange('play')}
+                type="button"
+              >
+                Play
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="scene-side-grid">
-          <article className="scene-card">
-            <div className="scene-card__header">
-              <div>
-                <span>World outliner</span>
-                <strong>{sceneDraft?.name || 'No scene selected'}</strong>
+        <div className="scene-editor__body" ref={sceneShellRef}>
+          <div className="scene-editor__canvas-column">
+            <article className="scene-card scene-card--viewport scene-card--viewport-expanded">
+              <div className="scene-card__header">
+                <div>
+                  <span>Viewport</span>
+                  <strong>{sceneDraft?.title || sceneDraft?.name || 'No scene selected'}</strong>
+                </div>
+                <div className="scene-status-pills">
+                  <span className={`scene-status-pill scene-status-pill--${mode}`}>
+                    {toSceneStatusLabel(mode)}
+                  </span>
+                  <span className="scene-status-pill">{busy ? 'Syncing' : dirtyStateLabel}</span>
+                </div>
               </div>
-              <span>{selectedNode}</span>
+              <div className="scene-viewport">
+                <div className="scene-viewport__label">
+                  <strong>{sceneDraft?.name || 'no-scene'}</strong>
+                  <span>{sceneDraft?.path || 'content/scenes/*.scene.toml'}</span>
+                </div>
+                <div className="scene-viewport__focus">
+                  {sceneDraft ? (
+                    <>
+                      <span className="scene-viewport__eyebrow">Proxy viewer</span>
+                      <strong>{sceneDraft.title}</strong>
+                      <p>
+                        Scene equals level/world. Use the adjacent level tools to manage actors,
+                        selection, transforms, and placed prefabs.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <span className="scene-viewport__eyebrow">Scene = Level</span>
+                      <strong>Create or open a scene to start authoring.</strong>
+                      <p>
+                        Prefabs are reusable assets. Scenes place those prefabs into the level or
+                        world instance.
+                      </p>
+                    </>
+                  )}
+                </div>
+                <div className="scene-viewport__axes scene-viewport__axes--horizontal" />
+                <div className="scene-viewport__axes scene-viewport__axes--vertical" />
+                <div className="scene-viewport__summary">
+                  <div>
+                    <span>Launch</span>
+                    <strong>{launchScene}</strong>
+                  </div>
+                  <div>
+                    <span>Runtime</span>
+                    <strong>{runtimeStatus.state}</strong>
+                  </div>
+                  <div>
+                    <span>Entities</span>
+                    <strong>{sceneDraft?.entities.length || 0}</strong>
+                  </div>
+                  <div>
+                    <span>Primary prefab</span>
+                    <strong>{sceneDraft?.primaryPrefab || 'unassigned'}</strong>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <div className="scene-statusbar">
+              <div className="scene-statusbar__message">
+                <strong>{statusMessage}</strong>
+                <span>
+                  `Play` in `Game` or `Preview` launches the native runtime. `F7` reloads authored
+                  content there.
+                </span>
+              </div>
+              <div className="scene-statusbar__tokens">
+                <span className="scene-status-token">
+                  <span>Mode</span>
+                  <strong>{toSceneStatusLabel(mode)}</strong>
+                </span>
+                <span className="scene-status-token">
+                  <span>Dirty</span>
+                  <strong>{dirtyStateLabel}</strong>
+                </span>
+                <span className="scene-status-token">
+                  <span>Entities</span>
+                  <strong>{sceneDraft?.entities.length || 0}</strong>
+                </span>
+                <span className="scene-status-token">
+                  <span>Roots</span>
+                  <strong>{rootEntityCount}</strong>
+                </span>
+                <span className="scene-status-token">
+                  <span>Runtime</span>
+                  <strong>{runtimeStatus.state}</strong>
+                </span>
+                <span className="scene-status-token">
+                  <span>Workspace</span>
+                  <strong>{activeSession.name}</strong>
+                </span>
+              </div>
             </div>
-            <div className="scene-outliner-actions">
+          </div>
+
+          <div
+            aria-label="Resize level tools panel"
+            className={`scene-editor__resize-handle${sceneSidebarResizing ? ' is-resizing' : ''}`}
+            onPointerDown={handleSceneSidebarResizeStart}
+            role="separator"
+          />
+
+          <aside
+            className="scene-editor__sidebar"
+            style={{ width: `${sceneSidebarWidth}px` }}
+          >
+            <div className="scene-editor__sidebar-header">
+              <div>
+                <div className="surface-eyebrow">Level Tools</div>
+                <h2>World Outliner And Inspector</h2>
+                <p>
+                  Actors/entities, selection details, scene assets, and prefab placement all live
+                  in this adjacent tool stack.
+                </p>
+              </div>
+            </div>
+            <div className="tab-row tab-row--scene-sidebar">
               <button
-                className="ghost-button ghost-button--sm"
-                disabled={!sceneDraft || !canEdit || busy || !prefabDocuments.length}
-                onClick={() => instantiatePrefab(scenePrimaryPrefab || prefabDocuments[0])}
+                className={`pill-button${activeSidebarTab === 'scenes' ? ' is-active' : ''}`}
+                onClick={() => setActiveSidebarTab('scenes')}
                 type="button"
               >
-                Add Entity
+                Scenes
               </button>
               <button
-                className="ghost-button ghost-button--sm"
-                disabled={!selectedEntity || !canEdit || busy}
-                onClick={duplicateSelectedEntity}
+                className={`pill-button${activeSidebarTab === 'outliner' ? ' is-active' : ''}`}
+                onClick={() => setActiveSidebarTab('outliner')}
                 type="button"
               >
-                Duplicate Entity
+                Outliner
               </button>
               <button
-                className="ghost-button ghost-button--sm"
-                disabled={!selectedEntity || !canEdit || busy}
-                onClick={deleteSelectedEntity}
+                className={`pill-button${activeSidebarTab === 'inspector' ? ' is-active' : ''}`}
+                onClick={() => setActiveSidebarTab('inspector')}
                 type="button"
               >
-                Delete Entity
+                Inspector
+              </button>
+              <button
+                className={`pill-button${activeSidebarTab === 'assets' ? ' is-active' : ''}`}
+                onClick={() => setActiveSidebarTab('assets')}
+                type="button"
+              >
+                Assets
               </button>
             </div>
-            {sceneDraft ? (
-              <div className="scene-tree">
-                <button
-                  className={`scene-tree__node${selectedNode === 'scene' ? ' is-active' : ''}`}
-                  onClick={setSceneSelection}
-                  type="button"
-                >
-                  <strong>{sceneDraft.title}</strong>
-                  <span>{sceneDraft.path}</span>
-                </button>
-                {sceneTreeRows.map((row) => (
-                  <button
-                    className={`scene-tree__node${selectedNode === 'entity' && selectedEntityId === row.entity.id ? ' is-active' : ''}`}
-                    key={row.entity.id}
-                    onClick={() => setEntitySelection(row.entity.id)}
-                    style={{ paddingLeft: `${10 + row.depth * 18}px` }}
-                    type="button"
-                  >
-                    <strong>{row.entity.displayName}</strong>
-                    <span>{row.entity.id} · prefab {row.entity.sourcePrefab}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="scene-empty-state scene-empty-state--compact">
-                Open a scene to inspect its authored entity hierarchy.
-              </div>
-            )}
-          </article>
 
-          <article className="scene-card">
-            <div className="scene-card__header">
-              <div>
-                <span>Details</span>
-                <strong>
-                  {selectedNode === 'scene'
-                    ? 'Scene asset'
-                    : selectedNode === 'entity'
-                      ? 'Placed entity'
-                      : 'Prefab asset'}
-                </strong>
-              </div>
-              <span>
-                {selectedNode === 'scene'
-                  ? sceneDraft?.path || 'none'
-                  : selectedNode === 'entity'
-                    ? selectedEntity?.id || 'none'
-                    : prefabDraft?.path || 'none'}
-              </span>
-            </div>
+            <div className="scene-editor__sidebar-body">
+              {activeSidebarTab === 'scenes' ? (
+                <div className="scene-sidebar-panel">
+                  <div className="scene-sidebar-panel__header">
+                    <div>
+                      <span>Scene Files</span>
+                      <strong>{sceneDocuments.length ? `${sceneDocuments.length} scene files` : 'No scenes yet'}</strong>
+                    </div>
+                    <span>{sceneDraft?.path || activeSession.rootPath}</span>
+                  </div>
+                  {sceneDraft ? (
+                    <div className="scene-selection-summary">
+                      <div>
+                        <span>Active scene</span>
+                        <strong>{sceneDraft.title}</strong>
+                      </div>
+                      <div>
+                        <span>Launch target</span>
+                        <strong>{sceneDraft.name}</strong>
+                      </div>
+                      <div>
+                        <span>Primary prefab</span>
+                        <strong>{sceneDraft.primaryPrefab || 'unassigned'}</strong>
+                      </div>
+                      <div>
+                        <span>Entities</span>
+                        <strong>{sceneDraft.entities.length}</strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="scene-selection-summary scene-selection-summary--empty">
+                      <div>
+                        <span>Scene authoring</span>
+                        <strong>Start with a level/world scene asset.</strong>
+                      </div>
+                      <p>Create a scene, then place prefabs and actors into it.</p>
+                    </div>
+                  )}
+                  <div className="scene-list">
+                    {sceneDocuments.length ? (
+                      sceneDocuments.map((document) => (
+                        <button
+                          className={`scene-list__item${selectedScenePath === document.path ? ' is-active' : ''}`}
+                          key={document.path}
+                          onClick={() => openSceneDocument(document, prefabDocuments, mode)}
+                          type="button"
+                        >
+                          <strong>{document.title}</strong>
+                          <span>{document.name}</span>
+                          <em>{document.path}</em>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="scene-empty-state scene-empty-state--compact">
+                        Create the first scene asset below.
+                      </div>
+                    )}
+                  </div>
 
-            {selectedNode === 'scene' && sceneDraft ? (
-              <div className="scene-details">
-                <label className="form-field">
-                  <span>Scene name</span>
-                  <input disabled type="text" value={sceneDraft.name} />
-                </label>
-                <label className="form-field">
-                  <span>Scene title</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updateSceneDraft({
-                        ...sceneDraft,
-                        title: event.target.value,
-                      })
-                    }
-                    type="text"
-                    value={sceneDraft.title}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Primary prefab</span>
-                  <select
-                    disabled={!canEdit || busy || !prefabDocuments.length}
-                    onChange={(event) => {
-                      updateSceneDraft({
-                        ...sceneDraft,
-                        primaryPrefab: event.target.value,
-                      });
-                    }}
-                    value={sceneDraft.primaryPrefab}
-                  >
-                    {prefabDocuments.length ? null : <option value="">No prefabs available</option>}
-                    {prefabDocuments.map((document) => (
-                      <option key={document.path} value={document.name}>
-                        {document.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <dl className="fact-list">
-                  <div>
-                    <dt>Entities</dt>
-                    <dd>{sceneDraft.entities.length}</dd>
-                  </div>
-                  <div>
-                    <dt>Schema</dt>
-                    <dd>{sceneDraft.schema}</dd>
-                  </div>
-                  <div>
-                    <dt>Runtime</dt>
-                    <dd>{sceneDraft.runtimeFormat}</dd>
-                  </div>
-                  <div>
-                    <dt>Modified</dt>
-                    <dd>{sceneSaved?.modifiedAt || 'not saved yet'}</dd>
-                  </div>
-                </dl>
-              </div>
-            ) : null}
-
-            {selectedNode === 'entity' && selectedEntity && sceneDraft ? (
-              <div className="scene-details">
-                <label className="form-field">
-                  <span>Entity id</span>
-                  <input disabled type="text" value={selectedEntity.id} />
-                </label>
-                <label className="form-field">
-                  <span>Display name</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updateSelectedEntity((entity) => ({
-                        ...entity,
-                        displayName: event.target.value,
-                      }))
-                    }
-                    type="text"
-                    value={selectedEntity.displayName}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Source prefab</span>
-                  <select
-                    disabled={!canEdit || busy || !prefabDocuments.length}
-                    onChange={(event) =>
-                      updateSelectedEntity((entity) => ({
-                        ...entity,
-                        sourcePrefab: event.target.value,
-                      }))
-                    }
-                    value={selectedEntity.sourcePrefab}
-                  >
-                    {prefabDocuments.map((document) => (
-                      <option key={document.path} value={document.name}>
-                        {document.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="form-field">
-                  <span>Parent</span>
-                  <select
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updateSelectedEntity((entity) => ({
-                        ...entity,
-                        parent: event.target.value,
-                      }))
-                    }
-                    value={selectedEntity.parent}
-                  >
-                    <option value="">Scene Root</option>
-                    {sceneDraft.entities
-                      .filter((entity) => entity.id !== selectedEntity.id)
-                      .map((entity) => (
-                        <option key={entity.id} value={entity.id}>
-                          {entity.displayName}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <Vector3Editor
-                  disabled={!canEdit || busy}
-                  label="Position"
-                  onChange={(value) =>
-                    updateSelectedEntity((entity) => ({
-                      ...entity,
-                      position: value,
-                    }))
-                  }
-                  value={selectedEntity.position}
-                />
-                <Vector3Editor
-                  disabled={!canEdit || busy}
-                  label="Rotation"
-                  onChange={(value) =>
-                    updateSelectedEntity((entity) => ({
-                      ...entity,
-                      rotation: value,
-                    }))
-                  }
-                  value={selectedEntity.rotation}
-                />
-                <Vector3Editor
-                  disabled={!canEdit || busy}
-                  label="Scale"
-                  onChange={(value) =>
-                    updateSelectedEntity((entity) => ({
-                      ...entity,
-                      scale: value,
-                    }))
-                  }
-                  value={selectedEntity.scale}
-                />
-              </div>
-            ) : null}
-
-            {selectedNode === 'prefab' && prefabDraft ? (
-              <div className="scene-details">
-                <label className="form-field">
-                  <span>Prefab name</span>
-                  <input disabled type="text" value={prefabDraft.name} />
-                </label>
-                <label className="form-field">
-                  <span>Category</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updatePrefabDraft({
-                        ...prefabDraft,
-                        category: event.target.value,
-                      })
-                    }
-                    type="text"
-                    value={prefabDraft.category}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Spawn tag</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updatePrefabDraft({
-                        ...prefabDraft,
-                        spawnTag: event.target.value,
-                      })
-                    }
-                    type="text"
-                    value={prefabDraft.spawnTag}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Render procgeo</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updatePrefabDraft({
-                        ...prefabDraft,
-                        renderComponent: {
-                          ...prefabDraft.renderComponent,
-                          procgeo: sanitizeAssetName(event.target.value),
-                        },
-                      })
-                    }
-                    type="text"
-                    value={prefabDraft.renderComponent.procgeo}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Material hint</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updatePrefabDraft({
-                        ...prefabDraft,
-                        renderComponent: {
-                          ...prefabDraft.renderComponent,
-                          materialHint: sanitizeAssetName(event.target.value),
-                        },
-                      })
-                    }
-                    type="text"
-                    value={prefabDraft.renderComponent.materialHint}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Effect asset</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updatePrefabDraft({
-                        ...prefabDraft,
-                        effectComponent: {
-                          ...prefabDraft.effectComponent,
-                          effect: sanitizeAssetName(event.target.value),
-                        },
-                      })
-                    }
-                    type="text"
-                    value={prefabDraft.effectComponent.effect}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Effect trigger</span>
-                  <input
-                    disabled={!canEdit || busy}
-                    onChange={(event) =>
-                      updatePrefabDraft({
-                        ...prefabDraft,
-                        effectComponent: {
-                          ...prefabDraft.effectComponent,
-                          trigger: sanitizeAssetName(event.target.value),
-                        },
-                      })
-                    }
-                    type="text"
-                    value={prefabDraft.effectComponent.trigger}
-                  />
-                </label>
-                <dl className="fact-list">
-                  <div>
-                    <dt>Schema</dt>
-                    <dd>{prefabDraft.schema}</dd>
-                  </div>
-                  <div>
-                    <dt>Runtime</dt>
-                    <dd>{prefabDraft.runtimeFormat}</dd>
-                  </div>
-                  <div>
-                    <dt>Modified</dt>
-                    <dd>{prefabSaved?.modifiedAt || 'not saved yet'}</dd>
-                  </div>
-                </dl>
-              </div>
-            ) : null}
-
-            {(selectedNode === 'entity' && !selectedEntity) || (selectedNode === 'prefab' && !prefabDraft) ? (
-              <div className="scene-empty-state scene-empty-state--compact">
-                Select an entity or prefab to inspect it.
-              </div>
-            ) : null}
-          </article>
-
-          <article className="scene-card">
-            <div className="scene-card__header">
-              <div>
-                <span>Assets</span>
-                <strong>{prefabDocuments.length ? `${prefabDocuments.length} prefabs` : 'No prefabs yet'}</strong>
-              </div>
-              <span>{sceneDraft?.primaryPrefab || 'unassigned'}</span>
-            </div>
-            <div className="scene-asset-list">
-              {prefabDocuments.length ? (
-                prefabDocuments.map((document) => (
-                  <div className="scene-asset" key={document.path}>
+                  <div className="scene-form-block">
+                    <label className="form-field">
+                      <span>New scene name</span>
+                      <input
+                        autoComplete="off"
+                        disabled={!canEdit || busy}
+                        onChange={(event) => setNewSceneName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void handleCreateScene();
+                          }
+                        }}
+                        placeholder="prototype_arena"
+                        spellCheck={false}
+                        type="text"
+                        value={newSceneName}
+                      />
+                    </label>
+                    <p className="scene-form-help">
+                      A scene is the authored level/world instance saved under `content/scenes`.
+                    </p>
                     <button
-                      className={`scene-asset__main${prefabDraft?.path === document.path ? ' is-active' : ''}`}
-                      onClick={() => inspectPrefab(document)}
+                      className="ghost-button ghost-button--sm ghost-button--primary"
+                      disabled={!canEdit || busy}
+                      onClick={() => void handleCreateScene()}
                       type="button"
                     >
-                      <strong>{document.name}</strong>
-                      <span>{document.category}</span>
-                      {document.renderComponent.procgeo ? (
-                        <span>render: {document.renderComponent.procgeo}</span>
-                      ) : null}
-                      {document.effectComponent.effect ? (
-                        <span>effect: {document.effectComponent.effect}</span>
-                      ) : null}
+                      Create Scene
                     </button>
-                    <div className="scene-asset__actions">
-                      <button
-                        className="ghost-button ghost-button--sm"
-                        disabled={!sceneDraft || !canEdit || busy}
-                        onClick={() => selectPrimaryPrefab(document)}
-                        type="button"
-                      >
-                        {sceneDraft?.primaryPrefab === document.name ? 'Primary' : 'Use As Primary'}
-                      </button>
-                      <button
-                        className="ghost-button ghost-button--sm"
-                        disabled={!sceneDraft || !canEdit || busy}
-                        onClick={() => instantiatePrefab(document)}
-                        type="button"
-                      >
-                        Add To Scene
-                      </button>
-                    </div>
                   </div>
-                ))
-              ) : (
-                <div className="scene-empty-state scene-empty-state--compact">
-                  Add prefab assets under `content/prefabs` to widen the scene authoring lane.
-                </div>
-              )}
-            </div>
-          </article>
 
-          <article className="scene-card">
-            <div className="scene-card__header">
-              <div>
-                <span>Authoring status</span>
-                <strong>{busy ? 'Working' : 'Idle'}</strong>
-              </div>
-              <span>{activeSession.name}</span>
+                  <div className="scene-form-block">
+                    <label className="form-field">
+                      <span>Duplicate active scene as</span>
+                      <input
+                        autoComplete="off"
+                        disabled={!sceneDraft || !canEdit || busy}
+                        onChange={(event) => setDuplicateSceneName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void handleDuplicateScene();
+                          }
+                        }}
+                        placeholder="sandbox_copy"
+                        spellCheck={false}
+                        type="text"
+                        value={duplicateSceneName}
+                      />
+                    </label>
+                    <p className="scene-form-help">
+                      Copies the active scene asset and its current authored entity layout.
+                    </p>
+                    <button
+                      className="ghost-button ghost-button--sm"
+                      disabled={!sceneDraft || !canEdit || busy}
+                      onClick={() => void handleDuplicateScene()}
+                      type="button"
+                    >
+                      Duplicate Scene
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeSidebarTab === 'outliner' ? (
+                <div className="scene-sidebar-panel">
+                  <div className="scene-sidebar-panel__header">
+                    <div>
+                      <span>World Outliner</span>
+                      <strong>{sceneDraft?.name || 'No scene selected'}</strong>
+                    </div>
+                    <span>{selectedNode}</span>
+                  </div>
+                  <div className="scene-outliner-actions">
+                    <button
+                      className="ghost-button ghost-button--sm"
+                      disabled={!sceneDraft || !canEdit || busy || !prefabDocuments.length}
+                      onClick={() => instantiatePrefab(scenePrimaryPrefab || prefabDocuments[0])}
+                      type="button"
+                    >
+                      Add Entity
+                    </button>
+                    <button
+                      className="ghost-button ghost-button--sm"
+                      disabled={!selectedEntity || !canEdit || busy}
+                      onClick={duplicateSelectedEntity}
+                      type="button"
+                    >
+                      Duplicate
+                    </button>
+                    <button
+                      className="ghost-button ghost-button--sm"
+                      disabled={!selectedEntity || !canEdit || busy}
+                      onClick={deleteSelectedEntity}
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                  {sceneDraft ? (
+                    <div className="scene-tree scene-tree--fill">
+                      <button
+                        className={`scene-tree__node${selectedNode === 'scene' ? ' is-active' : ''}`}
+                        onClick={setSceneSelection}
+                        type="button"
+                      >
+                        <strong>{sceneDraft.title}</strong>
+                        <span>{sceneDraft.path}</span>
+                      </button>
+                      {sceneTreeRows.map((row) => (
+                        <button
+                          className={`scene-tree__node${selectedNode === 'entity' && selectedEntityId === row.entity.id ? ' is-active' : ''}`}
+                          key={row.entity.id}
+                          onClick={() => setEntitySelection(row.entity.id)}
+                          style={{ paddingLeft: `${10 + row.depth * 18}px` }}
+                          type="button"
+                        >
+                          <strong>{row.entity.displayName}</strong>
+                          <span>{row.entity.id} · prefab {row.entity.sourcePrefab}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="scene-empty-state scene-empty-state--compact">
+                      Open a scene to inspect its authored actor/entity hierarchy.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {activeSidebarTab === 'inspector' ? (
+                <div className="scene-sidebar-panel">
+                  <div className="scene-sidebar-panel__header">
+                    <div>
+                      <span>Selection Inspector</span>
+                      <strong>{selectionInspectorLabel}</strong>
+                    </div>
+                    <span>
+                      {selectedNode === 'scene'
+                        ? sceneDraft?.path || 'none'
+                        : selectedNode === 'entity'
+                          ? selectedEntity?.id || 'none'
+                          : prefabDraft?.path || 'none'}
+                    </span>
+                  </div>
+
+                  {selectedNode === 'scene' && sceneDraft ? (
+                    <div className="scene-details">
+                      <label className="form-field">
+                        <span>Scene name</span>
+                        <input disabled type="text" value={sceneDraft.name} />
+                      </label>
+                      <label className="form-field">
+                        <span>Scene title</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updateSceneDraft({
+                              ...sceneDraft,
+                              title: event.target.value,
+                            })
+                          }
+                          type="text"
+                          value={sceneDraft.title}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Primary prefab</span>
+                        <select
+                          disabled={!canEdit || busy || !prefabDocuments.length}
+                          onChange={(event) => {
+                            updateSceneDraft({
+                              ...sceneDraft,
+                              primaryPrefab: event.target.value,
+                            });
+                          }}
+                          value={sceneDraft.primaryPrefab}
+                        >
+                          {prefabDocuments.length ? null : <option value="">No prefabs available</option>}
+                          {prefabDocuments.map((document) => (
+                            <option key={document.path} value={document.name}>
+                              {document.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <dl className="fact-list">
+                        <div>
+                          <dt>Entities</dt>
+                          <dd>{sceneDraft.entities.length}</dd>
+                        </div>
+                        <div>
+                          <dt>Schema</dt>
+                          <dd>{sceneDraft.schema}</dd>
+                        </div>
+                        <div>
+                          <dt>Runtime</dt>
+                          <dd>{sceneDraft.runtimeFormat}</dd>
+                        </div>
+                        <div>
+                          <dt>Modified</dt>
+                          <dd>{sceneSaved?.modifiedAt || 'not saved yet'}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ) : null}
+
+                  {selectedNode === 'entity' && selectedEntity && sceneDraft ? (
+                    <div className="scene-details">
+                      <label className="form-field">
+                        <span>Entity id</span>
+                        <input disabled type="text" value={selectedEntity.id} />
+                      </label>
+                      <label className="form-field">
+                        <span>Display name</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updateSelectedEntity((entity) => ({
+                              ...entity,
+                              displayName: event.target.value,
+                            }))
+                          }
+                          type="text"
+                          value={selectedEntity.displayName}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Source prefab</span>
+                        <select
+                          disabled={!canEdit || busy || !prefabDocuments.length}
+                          onChange={(event) =>
+                            updateSelectedEntity((entity) => ({
+                              ...entity,
+                              sourcePrefab: event.target.value,
+                            }))
+                          }
+                          value={selectedEntity.sourcePrefab}
+                        >
+                          {prefabDocuments.map((document) => (
+                            <option key={document.path} value={document.name}>
+                              {document.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="form-field">
+                        <span>Parent</span>
+                        <select
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updateSelectedEntity((entity) => ({
+                              ...entity,
+                              parent: event.target.value,
+                            }))
+                          }
+                          value={selectedEntity.parent}
+                        >
+                          <option value="">Scene Root</option>
+                          {sceneDraft.entities
+                            .filter((entity) => entity.id !== selectedEntity.id)
+                            .map((entity) => (
+                              <option key={entity.id} value={entity.id}>
+                                {entity.displayName}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <Vector3Editor
+                        disabled={!canEdit || busy}
+                        label="Position"
+                        onChange={(value) =>
+                          updateSelectedEntity((entity) => ({
+                            ...entity,
+                            position: value,
+                          }))
+                        }
+                        value={selectedEntity.position}
+                      />
+                      <Vector3Editor
+                        disabled={!canEdit || busy}
+                        label="Rotation"
+                        onChange={(value) =>
+                          updateSelectedEntity((entity) => ({
+                            ...entity,
+                            rotation: value,
+                          }))
+                        }
+                        value={selectedEntity.rotation}
+                      />
+                      <Vector3Editor
+                        disabled={!canEdit || busy}
+                        label="Scale"
+                        onChange={(value) =>
+                          updateSelectedEntity((entity) => ({
+                            ...entity,
+                            scale: value,
+                          }))
+                        }
+                        value={selectedEntity.scale}
+                      />
+                    </div>
+                  ) : null}
+
+                  {selectedNode === 'prefab' && prefabDraft ? (
+                    <div className="scene-details">
+                      <label className="form-field">
+                        <span>Prefab name</span>
+                        <input disabled type="text" value={prefabDraft.name} />
+                      </label>
+                      <label className="form-field">
+                        <span>Category</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updatePrefabDraft({
+                              ...prefabDraft,
+                              category: event.target.value,
+                            })
+                          }
+                          type="text"
+                          value={prefabDraft.category}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Spawn tag</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updatePrefabDraft({
+                              ...prefabDraft,
+                              spawnTag: event.target.value,
+                            })
+                          }
+                          type="text"
+                          value={prefabDraft.spawnTag}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Render procgeo</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updatePrefabDraft({
+                              ...prefabDraft,
+                              renderComponent: {
+                                ...prefabDraft.renderComponent,
+                                procgeo: sanitizeAssetName(event.target.value),
+                              },
+                            })
+                          }
+                          type="text"
+                          value={prefabDraft.renderComponent.procgeo}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Material hint</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updatePrefabDraft({
+                              ...prefabDraft,
+                              renderComponent: {
+                                ...prefabDraft.renderComponent,
+                                materialHint: sanitizeAssetName(event.target.value),
+                              },
+                            })
+                          }
+                          type="text"
+                          value={prefabDraft.renderComponent.materialHint}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Effect asset</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updatePrefabDraft({
+                              ...prefabDraft,
+                              effectComponent: {
+                                ...prefabDraft.effectComponent,
+                                effect: sanitizeAssetName(event.target.value),
+                              },
+                            })
+                          }
+                          type="text"
+                          value={prefabDraft.effectComponent.effect}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Effect trigger</span>
+                        <input
+                          disabled={!canEdit || busy}
+                          onChange={(event) =>
+                            updatePrefabDraft({
+                              ...prefabDraft,
+                              effectComponent: {
+                                ...prefabDraft.effectComponent,
+                                trigger: sanitizeAssetName(event.target.value),
+                              },
+                            })
+                          }
+                          type="text"
+                          value={prefabDraft.effectComponent.trigger}
+                        />
+                      </label>
+                      <dl className="fact-list">
+                        <div>
+                          <dt>Schema</dt>
+                          <dd>{prefabDraft.schema}</dd>
+                        </div>
+                        <div>
+                          <dt>Runtime</dt>
+                          <dd>{prefabDraft.runtimeFormat}</dd>
+                        </div>
+                        <div>
+                          <dt>Modified</dt>
+                          <dd>{prefabSaved?.modifiedAt || 'not saved yet'}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ) : null}
+
+                  {(selectedNode === 'entity' && !selectedEntity) || (selectedNode === 'prefab' && !prefabDraft) ? (
+                    <div className="scene-empty-state scene-empty-state--compact">
+                      Select an entity or prefab to inspect it.
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {activeSidebarTab === 'assets' ? (
+                <div className="scene-sidebar-panel">
+                  <div className="scene-sidebar-panel__header">
+                    <div>
+                      <span>Prefab Assets</span>
+                      <strong>{prefabDocuments.length ? `${prefabDocuments.length} prefabs` : 'No prefabs yet'}</strong>
+                    </div>
+                    <span>{sceneDraft?.primaryPrefab || 'unassigned'}</span>
+                  </div>
+                  <div className="scene-asset-list">
+                    {prefabDocuments.length ? (
+                      prefabDocuments.map((document) => (
+                        <div className="scene-asset" key={document.path}>
+                          <button
+                            className={`scene-asset__main${prefabDraft?.path === document.path ? ' is-active' : ''}`}
+                            onClick={() => inspectPrefab(document)}
+                            type="button"
+                          >
+                            <strong>{document.name}</strong>
+                            <span>{document.category}</span>
+                            {document.renderComponent.procgeo ? (
+                              <span>render: {document.renderComponent.procgeo}</span>
+                            ) : null}
+                            {document.effectComponent.effect ? (
+                              <span>effect: {document.effectComponent.effect}</span>
+                            ) : null}
+                          </button>
+                          <div className="scene-asset__actions">
+                            <button
+                              className="ghost-button ghost-button--sm"
+                              disabled={!sceneDraft || !canEdit || busy}
+                              onClick={() => selectPrimaryPrefab(document)}
+                              type="button"
+                            >
+                              {sceneDraft?.primaryPrefab === document.name ? 'Primary' : 'Use As Primary'}
+                            </button>
+                            <button
+                              className="ghost-button ghost-button--sm"
+                              disabled={!sceneDraft || !canEdit || busy}
+                              onClick={() => instantiatePrefab(document)}
+                              type="button"
+                            >
+                              Add To Scene
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="scene-empty-state scene-empty-state--compact">
+                        Add prefab assets under `content/prefabs` to widen the scene authoring lane.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </div>
-            <div className="scene-status-block">
-              <strong>{statusMessage}</strong>
-              <p>
-                Current authoring roots: `content/scenes`, `content/prefabs`. Play Mode is
-                intentionally discard-only in this slice so runtime actions cannot overwrite source
-                assets silently, while placed entities and transforms still round-trip through the
-                same text assets.
-              </p>
-            </div>
-          </article>
+          </aside>
         </div>
       </section>
     </div>

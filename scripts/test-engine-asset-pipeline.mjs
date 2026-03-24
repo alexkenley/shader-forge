@@ -131,7 +131,7 @@ assert.ok(fs.existsSync(reportPath), 'Expected asset pipeline report to be writt
 const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
 assert.equal(report.foundation.runtimeFormat, 'flatbuffer');
 assert.equal(report.counts.scene, 1);
-assert.equal(report.counts.prefab, 2);
+assert.equal(report.counts.prefab, 3);
 assert.equal(report.counts.data, 1);
 assert.equal(report.counts.effect, 1);
 assert.equal(report.counts.procgeo, 2);
