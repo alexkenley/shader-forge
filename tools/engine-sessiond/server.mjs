@@ -2,6 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import { BuildStore } from './lib/build-store.mjs';
+import { CodeTrustApprovalStore } from './lib/code-trust-approval-store.mjs';
 import { initGitRepository, readGitStatus } from './lib/git-service.mjs';
 import { getPlatformInfo, listHostDirectory } from './lib/host-fs-service.mjs';
 import { SessionStore } from './lib/session-store.mjs';
@@ -10,7 +11,6 @@ import { TerminalStore } from './lib/terminal-store.mjs';
 import {
   codeTrustDefaultTargetPath,
   codeTrustRepoRoot,
-  enforceCodeTrustAction,
   evaluateCodeTrustAction,
   inspectCodeTrustState,
   recordCodeTrustArtifact,
@@ -145,7 +145,207 @@ function readCodeTrustOrigin(body) {
       : '';
 }
 
-function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, eventHub }) {
+function createHttpError(statusCode, message, extras = {}) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  Object.assign(error, extras);
+  return error;
+}
+
+function codeTrustErrorMessage(codeTrust) {
+  if (Array.isArray(codeTrust?.diagnostics) && codeTrust.diagnostics.length) {
+    return codeTrust.diagnostics[0].message;
+  }
+  return `Code-trust policy blocked ${codeTrust?.action || 'the request'} for ${codeTrust?.path || 'the target path'}.`;
+}
+
+function requireTrimmedString(value, fieldName) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) {
+    throw createHttpError(400, `${fieldName} is required.`);
+  }
+  return normalized;
+}
+
+function normalizeFileWriteRequest(body = {}) {
+  return {
+    sessionId: requireTrimmedString(body.sessionId, 'sessionId'),
+    path: requireTrimmedString(body.path, 'path'),
+    content: typeof body.content === 'string' ? body.content : '',
+  };
+}
+
+function normalizeBuildRuntimeRequest(body = {}) {
+  return {
+    config: typeof body.config === 'string' && body.config.trim() ? body.config.trim() : 'Debug',
+    buildDir: typeof body.buildDir === 'string' && body.buildDir.trim() ? body.buildDir.trim() : undefined,
+  };
+}
+
+function normalizeRuntimeRequest(body = {}) {
+  return {
+    sessionId: typeof body.sessionId === 'string' ? body.sessionId.trim() : '',
+    scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
+  };
+}
+
+function approvalRequestForOperation(operationType, body) {
+  if (operationType === 'file_write') {
+    return normalizeFileWriteRequest(body);
+  }
+  if (operationType === 'build_runtime') {
+    return normalizeBuildRuntimeRequest(body);
+  }
+  if (operationType === 'runtime_start' || operationType === 'runtime_restart') {
+    return normalizeRuntimeRequest(body);
+  }
+  throw createHttpError(400, `Unsupported approval operation: ${operationType}`);
+}
+
+function approvalSummary(operationType, request, codeTrust) {
+  if (operationType === 'file_write') {
+    return `Review assistant file write to ${codeTrust?.path || request.path}`;
+  }
+  if (operationType === 'build_runtime') {
+    return `Review assistant runtime build (${request.config})`;
+  }
+  if (operationType === 'runtime_start') {
+    return `Review assistant runtime start (${request.scene})`;
+  }
+  if (operationType === 'runtime_restart') {
+    return `Review assistant runtime restart (${request.scene})`;
+  }
+  return `${operationType} review`;
+}
+
+async function executeFileWrite({
+  sessionStore,
+  request,
+  codeTrust,
+  actor = 'human',
+  origin = '',
+}) {
+  const fileWrite = normalizeFileWriteRequest(request);
+  const rootPath = resolveCodeTrustRoot(sessionStore, fileWrite.sessionId);
+  const result = await sessionStore.writeFile(fileWrite.sessionId, fileWrite.path, fileWrite.content);
+  await recordCodeTrustArtifact({
+    rootPath,
+    relativePath: fileWrite.path,
+    actor,
+    origin,
+    evaluation: codeTrust,
+  });
+  return {
+    ...result,
+    codeTrust,
+  };
+}
+
+function executeBuildRuntime({ buildStore, request }) {
+  const buildRequest = normalizeBuildRuntimeRequest(request);
+  return buildStore.startBuild({
+    target: 'runtime',
+    config: buildRequest.config,
+    buildDir: buildRequest.buildDir,
+  });
+}
+
+function executeRuntimeStart({ sessionStore, runtimeStore, request }) {
+  const runtimeRequest = normalizeRuntimeRequest(request);
+  const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeRequest.sessionId);
+  return runtimeStore.startRuntime({
+    scene: runtimeRequest.scene,
+    sessionId: launchContext.sessionId,
+    workspaceRoot: launchContext.workspaceRoot,
+  });
+}
+
+async function executeRuntimeRestart({ sessionStore, runtimeStore, request }) {
+  const runtimeRequest = normalizeRuntimeRequest(request);
+  const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeRequest.sessionId);
+  return runtimeStore.restartRuntime({
+    scene: runtimeRequest.scene,
+    sessionId: launchContext.sessionId,
+    workspaceRoot: launchContext.workspaceRoot,
+  });
+}
+
+async function executeApprovedOperation({ sessionStore, runtimeStore, buildStore }, approvalRecord) {
+  if (!approvalRecord) {
+    throw createHttpError(404, 'Approval record is required.');
+  }
+  if (approvalRecord.operationType === 'file_write') {
+    return executeFileWrite({
+      sessionStore,
+      request: approvalRecord.request,
+      codeTrust: approvalRecord.codeTrust,
+      actor: 'human',
+      origin: approvalRecord.codeTrust?.effectiveOrigin || '',
+    });
+  }
+  if (approvalRecord.operationType === 'build_runtime') {
+    return executeBuildRuntime({
+      buildStore,
+      request: approvalRecord.request,
+    });
+  }
+  if (approvalRecord.operationType === 'runtime_start') {
+    return executeRuntimeStart({
+      sessionStore,
+      runtimeStore,
+      request: approvalRecord.request,
+    });
+  }
+  if (approvalRecord.operationType === 'runtime_restart') {
+    return executeRuntimeRestart({
+      sessionStore,
+      runtimeStore,
+      request: approvalRecord.request,
+    });
+  }
+  throw createHttpError(400, `Unsupported approval operation: ${approvalRecord.operationType}`);
+}
+
+function queueOrRejectCodeTrustRequest({
+  approvalStore,
+  operationType,
+  sessionId = '',
+  requestBody,
+  codeTrust,
+}) {
+  if (codeTrust.allowed) {
+    return;
+  }
+
+  const message = codeTrustErrorMessage(codeTrust);
+  if (codeTrust.decision === 'review_required') {
+    const approvalRequest = approvalRequestForOperation(operationType, requestBody);
+    const approval = approvalStore.createApproval({
+      sessionId: sessionId || approvalRequest.sessionId || '',
+      requestedBy: codeTrust.actor,
+      operationType,
+      summary: approvalSummary(operationType, approvalRequest, codeTrust),
+      request: approvalRequest,
+      codeTrust,
+    });
+    throw createHttpError(409, message, { codeTrust, approval });
+  }
+
+  throw createHttpError(403, message, { codeTrust });
+}
+
+function requirePendingApproval(approvalStore, approvalId) {
+  const approval = approvalStore.getApprovalRecord(approvalId);
+  if (!approval) {
+    throw createHttpError(404, `Unknown code-trust approval: ${approvalId}`);
+  }
+  if (approval.status !== 'pending') {
+    throw createHttpError(409, `Code-trust approval ${approvalId} is already ${approval.status}.`);
+  }
+  return approval;
+}
+
+function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, approvalStore, eventHub }) {
   return async function route(request, response) {
     if (!request.url) {
       writeJson(response, 400, { error: 'Request URL is required.' });
@@ -178,6 +378,7 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
           'build:lifecycle',
           'code-trust:summary',
           'code-trust:evaluate',
+          'code-trust:approvals',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -234,6 +435,72 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
         });
         writeJson(response, 200, evaluation);
         return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/code-trust/approvals') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const state = searchParams.get('state') || 'pending';
+        writeJson(response, 200, {
+          approvals: approvalStore.listApprovals({ sessionId, state }),
+        });
+        return;
+      }
+
+      const approvalDecisionMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/code-trust\/approvals\/([^/]+)\/decision$/)
+        : null;
+      if (approvalDecisionMatch) {
+        const approvalId = decodeURIComponent(approvalDecisionMatch[1]);
+        const body = await readJsonBody(request);
+        const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
+        const decisionBy = typeof body.decisionBy === 'string' && body.decisionBy.trim()
+          ? body.decisionBy.trim()
+          : 'human';
+        const approvalRecord = requirePendingApproval(approvalStore, approvalId);
+
+        if (!['approved', 'denied'].includes(decision)) {
+          throw createHttpError(400, 'decision must be approved or denied.');
+        }
+
+        if (decision === 'denied') {
+          const approval = approvalStore.resolveApproval(approvalId, {
+            status: 'denied',
+            decisionBy,
+            outcome: {
+              deniedAt: new Date().toISOString(),
+            },
+          });
+          writeJson(response, 200, { approval });
+          return;
+        }
+
+        try {
+          const outcome = await executeApprovedOperation(
+            { sessionStore, runtimeStore, buildStore },
+            approvalRecord,
+          );
+          const approval = approvalStore.resolveApproval(approvalId, {
+            status: 'approved',
+            decisionBy,
+            outcome,
+          });
+          writeJson(response, 200, { approval, outcome });
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const statusCode =
+            typeof error === 'object' && error && 'statusCode' in error && Number.isInteger(error.statusCode)
+              ? Number(error.statusCode)
+              : 500;
+          const approval = approvalStore.resolveApproval(approvalId, {
+            status: 'failed',
+            decisionBy,
+            outcome: {
+              error: message,
+            },
+          });
+          throw createHttpError(statusCode, message, { approval });
+        }
       }
 
       if (request.method === 'GET' && pathname === '/api/sessions') {
@@ -298,29 +565,30 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/files/write') {
         const body = await readJsonBody(request);
-        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
-        const relativePath = typeof body.path === 'string' ? body.path : '';
-        const content = typeof body.content === 'string' ? body.content : '';
-        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId);
-        const codeTrust = await enforceCodeTrustAction({
+        const fileWrite = normalizeFileWriteRequest(body);
+        const rootPath = resolveCodeTrustRoot(sessionStore, fileWrite.sessionId);
+        const codeTrust = await evaluateCodeTrustAction({
           rootPath,
           action: 'apply',
-          relativePath,
+          relativePath: fileWrite.path,
           actor: readCodeTrustActor(body),
           origin: readCodeTrustOrigin(body),
         });
-        const result = await sessionStore.writeFile(sessionId, relativePath, content);
-        await recordCodeTrustArtifact({
-          rootPath,
-          relativePath,
-          actor: readCodeTrustActor(body),
-          origin: readCodeTrustOrigin(body),
-          evaluation: codeTrust,
-        });
-        writeJson(response, 200, {
-          ...result,
+        queueOrRejectCodeTrustRequest({
+          approvalStore,
+          operationType: 'file_write',
+          sessionId: fileWrite.sessionId,
+          requestBody: fileWrite,
           codeTrust,
         });
+        const result = await executeFileWrite({
+          sessionStore,
+          request: fileWrite,
+          codeTrust,
+          actor: readCodeTrustActor(body),
+          origin: readCodeTrustOrigin(body),
+        });
+        writeJson(response, 200, result);
         return;
       }
 
@@ -350,19 +618,25 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/runtime/start') {
         const body = await readJsonBody(request);
-        const runtimeSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
-        await enforceCodeTrustAction({
+        const runtimeRequest = normalizeRuntimeRequest(body);
+        const codeTrust = await evaluateCodeTrustAction({
           rootPath: resolveCodeTrustRoot(sessionStore, '', codeTrustRepoRoot),
           action: 'load',
           relativePath: codeTrustDefaultTargetPath('load'),
           actor: readCodeTrustActor(body),
           origin: readCodeTrustOrigin(body),
         });
-        const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeSessionId);
-        const status = runtimeStore.startRuntime({
-          scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
-          sessionId: launchContext.sessionId,
-          workspaceRoot: launchContext.workspaceRoot,
+        queueOrRejectCodeTrustRequest({
+          approvalStore,
+          operationType: 'runtime_start',
+          sessionId: runtimeRequest.sessionId,
+          requestBody: runtimeRequest,
+          codeTrust,
+        });
+        const status = executeRuntimeStart({
+          sessionStore,
+          runtimeStore,
+          request: runtimeRequest,
         });
         writeJson(response, 200, status);
         return;
@@ -370,17 +644,23 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/build/runtime') {
         const body = await readJsonBody(request);
-        await enforceCodeTrustAction({
+        const buildRequest = normalizeBuildRuntimeRequest(body);
+        const codeTrust = await evaluateCodeTrustAction({
           rootPath: resolveCodeTrustRoot(sessionStore, '', codeTrustRepoRoot),
           action: 'compile',
           relativePath: codeTrustDefaultTargetPath('compile'),
           actor: readCodeTrustActor(body),
           origin: readCodeTrustOrigin(body),
         });
-        const status = buildStore.startBuild({
-          target: 'runtime',
-          config: typeof body.config === 'string' && body.config.trim() ? body.config.trim() : 'Debug',
-          buildDir: typeof body.buildDir === 'string' && body.buildDir.trim() ? body.buildDir.trim() : undefined,
+        queueOrRejectCodeTrustRequest({
+          approvalStore,
+          operationType: 'build_runtime',
+          requestBody: buildRequest,
+          codeTrust,
+        });
+        const status = executeBuildRuntime({
+          buildStore,
+          request: buildRequest,
         });
         writeJson(response, 200, status);
         return;
@@ -420,19 +700,25 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/runtime/restart') {
         const body = await readJsonBody(request);
-        const runtimeSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
-        await enforceCodeTrustAction({
+        const runtimeRequest = normalizeRuntimeRequest(body);
+        const codeTrust = await evaluateCodeTrustAction({
           rootPath: resolveCodeTrustRoot(sessionStore, '', codeTrustRepoRoot),
           action: 'load',
           relativePath: codeTrustDefaultTargetPath('load'),
           actor: readCodeTrustActor(body),
           origin: readCodeTrustOrigin(body),
         });
-        const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeSessionId);
-        const status = await runtimeStore.restartRuntime({
-          scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
-          sessionId: launchContext.sessionId,
-          workspaceRoot: launchContext.workspaceRoot,
+        queueOrRejectCodeTrustRequest({
+          approvalStore,
+          operationType: 'runtime_restart',
+          sessionId: runtimeRequest.sessionId,
+          requestBody: runtimeRequest,
+          codeTrust,
+        });
+        const status = await executeRuntimeRestart({
+          sessionStore,
+          runtimeStore,
+          request: runtimeRequest,
         });
         writeJson(response, 200, status);
         return;
@@ -497,6 +783,9 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
       if (typeof error === 'object' && error && 'codeTrust' in error && error.codeTrust) {
         payload.codeTrust = error.codeTrust;
       }
+      if (typeof error === 'object' && error && 'approval' in error && error.approval) {
+        payload.approval = error.approval;
+      }
       writeJson(response, statusCode, payload);
     }
   };
@@ -508,6 +797,7 @@ export async function startEngineSessiond({
   sessionStore = new SessionStore(),
   runtimeLaunchFactory,
   buildLaunchFactory,
+  approvalStore,
 } = {}) {
   const eventHub = createEventHub();
   const terminalStore = new TerminalStore({
@@ -527,10 +817,22 @@ export async function startEngineSessiond({
     },
     launchFactory: buildLaunchFactory,
   });
+  const resolvedApprovalStore = approvalStore || new CodeTrustApprovalStore({
+    emitEvent: (type, data) => {
+      eventHub.emit(type, data);
+    },
+  });
   if (typeof sessionStore.loadSessions === 'function') {
     await sessionStore.loadSessions();
   }
-  const server = http.createServer(createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, eventHub }));
+  const server = http.createServer(createRouter({
+    sessionStore,
+    terminalStore,
+    runtimeStore,
+    buildStore,
+    approvalStore: resolvedApprovalStore,
+    eventHub,
+  }));
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -550,6 +852,7 @@ export async function startEngineSessiond({
     terminalStore,
     runtimeStore,
     buildStore,
+    approvalStore: resolvedApprovalStore,
     close: async () => {
       await buildStore.close();
       await runtimeStore.close();

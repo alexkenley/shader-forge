@@ -1,6 +1,6 @@
 # Engine Code Trust Spec
 
-Status: first slice implemented
+Status: approval workflow slice implemented
 Date: 2026-03-25
 
 ## Purpose
@@ -13,7 +13,8 @@ This subsystem owns:
 - explicit policy decisions for apply, compile, load, install, and hot-reload requests
 - artifact-origin tracking for policy-relevant writes
 - actionable diagnostics for blocked or review-gated transitions
-- deterministic verification for both allowed and rejected paths
+- explicit review queues plus replay for `review_required` transitions
+- deterministic verification for allowed, queued, approved, denied, and rejected paths
 
 ## First Implemented Slice
 
@@ -26,15 +27,18 @@ Current implemented surfaces:
 - shared policy evaluation in `tools/shared/code-trust-policy.mjs`
 - `GET /api/code-trust/summary`
 - `POST /api/code-trust/evaluate`
+- `GET /api/code-trust/approvals`
+- `POST /api/code-trust/approvals/:id/decision`
 - policy enforcement on `POST /api/files/write`
 - policy enforcement on `POST /api/build/runtime`
 - policy enforcement on `POST /api/runtime/start`
 - policy enforcement on `POST /api/runtime/restart`
 - CLI inspection through `engine policy inspect`
 - CLI dry-run checks through `engine policy check`
-- shell-side inspection in the `Workspace` right-panel tab
+- CLI approval inspection and decisions through `engine policy approvals|approve|deny`
+- shell-side inspection and pending approval controls in the `Workspace` right-panel tab
 
-This slice does not try to provide full sandboxing or a full approval queue. It makes the trust boundary visible and testable first.
+This slice still does not try to provide full sandboxing. It makes the trust boundary visible, queueable, and testable first.
 
 ## Current Trust Tiers
 
@@ -90,6 +94,25 @@ Policy-relevant writes record:
 
 This metadata is what the shell and CLI inspect today when they show tracked trust state.
 
+## Review Workflow
+
+`review_required` decisions now enqueue an explicit approval record instead of only returning diagnostics.
+
+Each approval currently stores:
+
+- the queued operation type such as `file_write` or `build_runtime`
+- the normalized request payload that will be replayed if approved
+- the original code-trust evaluation and summary text
+- pending, approved, denied, or failed status plus resolver metadata
+
+Current approval behavior:
+
+- review-gated assistant file writes and assistant compile requests return HTTP `409` with both `codeTrust` and `approval`
+- approvals can be listed by workspace session, while engine-wide approvals remain visible alongside session-scoped entries
+- approving a queued request replays the stored operation as a human-reviewed action
+- denying a queued request records the decision without executing the deferred operation
+- failed replay attempts are captured as `failed` approvals so review history remains inspectable
+
 ## Current Tooling Surfaces
 
 `engine_sessiond` provides the shared local control plane for policy checks.
@@ -100,11 +123,13 @@ The shell currently uses the summary surface to show:
 - active unsafe-dev overrides
 - supported hot-reload roots
 - the most recent tracked artifacts
+- pending code-trust approvals with inline approve and deny actions
 
 The CLI currently uses the same core for:
 
 - policy inspection without running `engine_sessiond`
 - deterministic dry-run checks for future assistant workflows
+- approval listing and approval decisions against a running `engine_sessiond`
 
 ## Deterministic Verification
 
@@ -116,14 +141,16 @@ That harness verifies:
 
 - policy summary and dry-run surfaces
 - tracked assistant-generated artifact metadata
-- rejected assistant-triggered engine apply, compile, and load requests
+- queued approval surfaces for assistant-triggered engine apply and compile requests
+- approved replay of deferred file-write and runtime-build operations
+- denied approval decisions without side effects
+- rejected assistant-triggered engine load requests
 - allowed authored-content hot reload and rejected code hot reload
 
 ## Current Boundaries
 
 This first slice still does not provide:
 
-- a persistent approval queue or approval UI
 - signed or hashed artifact verification
 - real plugin package verification
 - code hot reload or upgrade contracts

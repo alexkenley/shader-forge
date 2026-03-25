@@ -1,3 +1,5 @@
+import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -29,6 +31,9 @@ Usage:
   engine file read <path> --session <id> [--base-url <url>]
   engine policy inspect [--root <path>]
   engine policy check <action> [path] [--root <path>] [--actor human|assistant|automation] [--origin <tier>]
+  engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]
+  engine policy approve <approval-id> [--base-url <url>] [--decision-by <name>]
+  engine policy deny <approval-id> [--base-url <url>] [--decision-by <name>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
@@ -70,16 +75,52 @@ function parseFlags(tokens) {
 }
 
 async function requestJson(baseUrl, pathname, options = {}) {
-  const response = await fetch(new URL(pathname, baseUrl), {
-    method: options.method || 'GET',
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined,
+  const target = new URL(pathname, baseUrl);
+  const requestBody = options.body ? JSON.stringify(options.body) : '';
+  const transport = target.protocol === 'https:' ? https : http;
+
+  return new Promise((resolve, reject) => {
+    const req = transport.request({
+      method: options.method || 'GET',
+      hostname: target.hostname,
+      port: target.port || (target.protocol === 'https:' ? 443 : 80),
+      path: `${target.pathname}${target.search}`,
+      headers: requestBody
+        ? {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(requestBody),
+          }
+        : undefined,
+    }, (response) => {
+      let rawBody = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => {
+        rawBody += chunk;
+      });
+      response.on('end', () => {
+        let payload = {};
+        try {
+          payload = rawBody ? JSON.parse(rawBody) : {};
+        } catch {
+          reject(new Error(`Invalid JSON response from ${target.toString()}`));
+          return;
+        }
+
+        if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
+          reject(new Error(payload.error || `Request failed with status ${response.statusCode || 0}`));
+          return;
+        }
+
+        resolve(payload);
+      });
+    });
+
+    req.on('error', reject);
+    if (requestBody) {
+      req.write(requestBody);
+    }
+    req.end();
   });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Request failed with status ${response.status}`);
-  }
-  return payload;
 }
 
 function resolvedBaseUrl(flags) {
@@ -306,6 +347,37 @@ async function checkPolicy(positionals, flags) {
   console.log(JSON.stringify(evaluation, null, 2));
 }
 
+async function listPolicyApprovals(flags) {
+  const baseUrl = resolvedBaseUrl(flags);
+  const query = new URL('/api/code-trust/approvals', baseUrl);
+  if (flags.session) {
+    query.searchParams.set('sessionId', String(flags.session));
+  }
+  query.searchParams.set('state', String(flags.state || 'pending'));
+  const payload = await requestJson(baseUrl, query.pathname + query.search);
+  console.log(JSON.stringify(payload.approvals, null, 2));
+}
+
+async function decidePolicyApproval(positionals, flags, decision) {
+  const approvalId = positionals[0];
+  if (!approvalId) {
+    throw new Error(`engine policy ${decision === 'approved' ? 'approve' : 'deny'} requires an approval id.`);
+  }
+  const baseUrl = resolvedBaseUrl(flags);
+  const payload = await requestJson(
+    baseUrl,
+    `/api/code-trust/approvals/${encodeURIComponent(approvalId)}/decision`,
+    {
+      method: 'POST',
+      body: {
+        decision,
+        decisionBy: flags['decision-by'] ? String(flags['decision-by']) : 'human',
+      },
+    },
+  );
+  console.log(JSON.stringify(payload, null, 2));
+}
+
 async function run() {
   const argv = process.argv.slice(2);
   if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
@@ -369,6 +441,18 @@ async function run() {
     }
     if (subcommand === 'check') {
       await checkPolicy(positionals, flags);
+      return;
+    }
+    if (subcommand === 'approvals') {
+      await listPolicyApprovals(flags);
+      return;
+    }
+    if (subcommand === 'approve') {
+      await decidePolicyApproval(positionals, flags, 'approved');
+      return;
+    }
+    if (subcommand === 'deny') {
+      await decidePolicyApproval(positionals, flags, 'denied');
       return;
     }
     throw new Error(`Unknown policy subcommand: ${subcommand}`);
@@ -447,7 +531,27 @@ async function run() {
   throw new Error(`Unknown command: ${argv.join(' ')}`);
 }
 
-run().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+function exitAfterFlush(code) {
+  const streams = [process.stdout, process.stderr];
+  let remaining = streams.length;
+
+  const finish = () => {
+    remaining -= 1;
+    if (remaining === 0) {
+      process.exit(code);
+    }
+  };
+
+  for (const stream of streams) {
+    stream.write('', finish);
+  }
+}
+
+run()
+  .then(() => {
+    exitAfterFlush(0);
+  })
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    exitAfterFlush(1);
+  });

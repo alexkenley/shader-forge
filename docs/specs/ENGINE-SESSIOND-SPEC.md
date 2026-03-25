@@ -29,6 +29,8 @@ Current implemented surfaces:
 - `POST /api/build/stop`
 - `GET /api/code-trust/summary`
 - `POST /api/code-trust/evaluate`
+- `GET /api/code-trust/approvals`
+- `POST /api/code-trust/approvals/:id/decision`
 - `GET /api/events`
 
 This gives the shell and harnesses a real backend-owned session and file model before PTY and runtime lifecycle work land.
@@ -59,6 +61,10 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - file writes now pass through the shared code-trust policy layer before sessiond persists policy-relevant code or assistant-authored outputs
 - runtime build and runtime start/restart now also pass through explicit code-trust policy checks so assistant-triggered compile and load transitions cannot bypass the local policy layer
 - sessiond now exposes an inspectable code-trust summary plus dry-run evaluation surface for shell and future assistant clients
+- `review_required` transitions now enqueue explicit approval records instead of only surfacing diagnostics
+- queued approvals can be listed, approved, denied, or marked failed after attempted replay
+- approving a deferred file write replays the stored request and records trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
+- approval lifecycle changes now stream through the same SSE event bus as runtime, build, and terminal events
 - policy-relevant artifact writes now record trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
 
 ## Future AI APIs

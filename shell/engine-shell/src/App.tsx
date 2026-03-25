@@ -6,8 +6,10 @@ import { SceneEditorView } from './SceneEditorView';
 import {
   closeTerminal,
   createSession,
+  decideCodeTrustApproval,
   deleteSession,
   fetchBuildStatus,
+  fetchCodeTrustApprovals,
   fetchCodeTrustSummary,
   fetchGitStatus,
   fetchPlatformInfo,
@@ -30,6 +32,7 @@ import {
   stopRuntime,
   subscribeSessiondEvents,
   updateSession,
+  type CodeTrustApproval,
   type BuildStatus,
   type CodeTrustSummary,
   type PlatformInfo,
@@ -504,6 +507,9 @@ function renderRightPanel(
   activeTab: RightTab,
   activeSession: EngineSession | null,
   codeTrustSummary: CodeTrustSummary | null,
+  codeTrustApprovals: CodeTrustApproval[],
+  approvalsBusy: boolean,
+  approvalActionId: string,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
   buildLog: string,
@@ -523,6 +529,8 @@ function renderRightPanel(
   onRestartRuntime: () => void,
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
+  onRefreshApprovals: () => void,
+  onDecideApproval: (approvalId: string, decision: 'approved' | 'denied') => void,
 ) {
   const buildHint = buildSetupHint(buildStatus.error);
   const runtimeHint = nativeRuntimeSetupHint(buildLog, runtimeLog);
@@ -624,6 +632,50 @@ function renderRightPanel(
               ) : (
                 <p className="panel-copy">
                   No tracked assistant or code-path artifacts have been recorded for this workspace yet.
+                </p>
+              )}
+              <div className="section-titlebar">
+                <h3>Pending Reviews</h3>
+                <span>{approvalsBusy ? 'Refreshing' : `${codeTrustApprovals.length} pending`}</span>
+              </div>
+              <div className="inline-actions">
+                <button className="ghost-button ghost-button--sm" disabled={!activeSession || approvalsBusy} onClick={onRefreshApprovals} type="button">
+                  Refresh approvals
+                </button>
+              </div>
+              {codeTrustApprovals.length ? (
+                <div className="metric-stack">
+                  {codeTrustApprovals.map((approval) => (
+                    <article className="mini-card" key={approval.id}>
+                      <span>{approval.operationType.replace(/_/g, ' ')} · {approval.codeTrust?.decision || approval.status}</span>
+                      <strong>{approval.summary}</strong>
+                      <p>{approval.codeTrust?.path || approval.codeTrust?.action || 'engine scope'}</p>
+                      <p>{approval.codeTrust?.diagnostics?.[0]?.message || 'Review required before the action can execute.'}</p>
+                      <p>{formatSessionTimestamp(approval.createdAt)}</p>
+                      <div className="inline-actions">
+                        <button
+                          className="ghost-button ghost-button--sm"
+                          disabled={approvalActionId === approval.id}
+                          onClick={() => onDecideApproval(approval.id, 'approved')}
+                          type="button"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          className="ghost-button ghost-button--sm"
+                          disabled={approvalActionId === approval.id}
+                          onClick={() => onDecideApproval(approval.id, 'denied')}
+                          type="button"
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="panel-copy">
+                  No pending code-trust approvals for this workspace or the shared engine lane.
                 </p>
               )}
             </>
@@ -1614,6 +1666,9 @@ export default function App() {
   const [buildStatus, setBuildStatus] = useState<BuildStatus>(idleBuildStatus);
   const [buildLog, setBuildLog] = useState('[build] idle\n');
   const [codeTrustSummary, setCodeTrustSummary] = useState<CodeTrustSummary | null>(null);
+  const [codeTrustApprovals, setCodeTrustApprovals] = useState<CodeTrustApproval[]>([]);
+  const [approvalsBusy, setApprovalsBusy] = useState(false);
+  const [approvalActionId, setApprovalActionId] = useState('');
   const [launchScene, setLaunchScene] = useState('sandbox');
   const [buildConfig, setBuildConfig] = useState<BuildConfig>('Debug');
   const [buildDir, setBuildDir] = useState('build/runtime');
@@ -1625,6 +1680,20 @@ export default function App() {
   const availableShells: TerminalShell[] = platformInfo?.platform === 'win32'
     ? [...windowsShells, ...unixShells]
     : [...unixShells];
+  const refreshApprovalPanelForActiveSession = useEffectEvent(() => {
+    if (!activeSessionId) {
+      setCodeTrustApprovals([]);
+      return;
+    }
+
+    void Promise.all([
+      refreshCodeTrust(activeSessionId),
+      refreshCodeTrustApprovals(activeSessionId),
+    ]).catch((error) => {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    });
+  });
 
   useEffect(() => {
     if (!bottomPaneResizing) {
@@ -1753,6 +1822,21 @@ export default function App() {
     setCodeTrustSummary(nextSummary);
   }
 
+  async function refreshCodeTrustApprovals(sessionId: string) {
+    if (!sessionId) {
+      setCodeTrustApprovals([]);
+      return;
+    }
+
+    setApprovalsBusy(true);
+    try {
+      const nextApprovals = await fetchCodeTrustApprovals(sessionId);
+      setCodeTrustApprovals(nextApprovals);
+    } finally {
+      setApprovalsBusy(false);
+    }
+  }
+
   async function navigateDirPicker(nextPath: string) {
     setDirPickerBusy(true);
     setDirPickerError('');
@@ -1789,7 +1873,12 @@ export default function App() {
 
   async function activateSession(sessionId: string) {
     setActiveSessionId(sessionId);
-    await Promise.all([refreshExplorer(sessionId, '.'), refreshGit(sessionId), refreshCodeTrust(sessionId)]);
+    await Promise.all([
+      refreshExplorer(sessionId, '.'),
+      refreshGit(sessionId),
+      refreshCodeTrust(sessionId),
+      refreshCodeTrustApprovals(sessionId),
+    ]);
   }
 
   function loadSessionIntoForm(session: EngineSession) {
@@ -1864,10 +1953,15 @@ export default function App() {
     if (!activeSessionId) {
       setGitStatus(emptyGitStatus);
       setCodeTrustSummary(null);
+      setCodeTrustApprovals([]);
       return;
     }
 
-    void Promise.all([refreshGit(activeSessionId), refreshCodeTrust(activeSessionId)]).catch((error) => {
+    void Promise.all([
+      refreshGit(activeSessionId),
+      refreshCodeTrust(activeSessionId),
+      refreshCodeTrustApprovals(activeSessionId),
+    ]).catch((error) => {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     });
@@ -1975,11 +2069,21 @@ export default function App() {
             tone: buildStatusTone(event.data.state),
           });
         }
+        return;
+      }
+
+      if (
+        event.type === 'code-trust.approval.created'
+        || event.type === 'code-trust.approval.resolved'
+      ) {
+        if (!event.data.sessionId || event.data.sessionId === activeSessionId) {
+          refreshApprovalPanelForActiveSession();
+        }
       }
     });
 
     return unsubscribe;
-  }, []);
+  }, [activeSessionId, refreshApprovalPanelForActiveSession]);
 
   useEffect(() => {
     if (!pendingRunAfterBuild) {
@@ -2170,6 +2274,8 @@ export default function App() {
         setSelectedExplorerPath('');
         setSelectedFilePreview('');
         setGitStatus(emptyGitStatus);
+        setCodeTrustSummary(null);
+        setCodeTrustApprovals([]);
       }
       if (editingSessionId === sessionId) {
         resetSessionForm();
@@ -2193,7 +2299,11 @@ export default function App() {
       const explorerSessionId = pickPreferredSessionId(nextSessions, activeSessionId);
       if (explorerSessionId) {
         await refreshExplorer(explorerSessionId, explorerPath);
-        await refreshGit(explorerSessionId);
+        await Promise.all([
+          refreshGit(explorerSessionId),
+          refreshCodeTrust(explorerSessionId),
+          refreshCodeTrustApprovals(explorerSessionId),
+        ]);
       }
     } catch (error) {
       setSessiondState('offline');
@@ -2228,6 +2338,8 @@ export default function App() {
         setSelectedExplorerPath('');
         setSelectedFilePreview('');
         setGitStatus(emptyGitStatus);
+        setCodeTrustSummary(null);
+        setCodeTrustApprovals([]);
       }
       setSessiondState('connected');
       setSessiondMessage(`Deleted ${disposableSessions.length} temporary harness workspace record(s)`);
@@ -2334,6 +2446,46 @@ export default function App() {
   function reportBackendStatus(state: 'connected' | 'offline', message: string) {
     setSessiondState(state);
     setSessiondMessage(message);
+  }
+
+  async function handleRefreshApprovals() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      await refreshCodeTrustApprovals(activeSessionId);
+      setSessiondState('connected');
+      setSessiondMessage(`Refreshed code-trust approvals for ${activeSession?.name || 'workspace'}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleDecideApproval(approvalId: string, decision: 'approved' | 'denied') {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setApprovalActionId(approvalId);
+      const result = await decideCodeTrustApproval(approvalId, decision);
+      await Promise.all([
+        refreshCodeTrust(activeSessionId),
+        refreshCodeTrustApprovals(activeSessionId),
+      ]);
+      if (decision === 'approved' && result.approval.operationType === 'file_write') {
+        await refreshExplorer(activeSessionId, explorerPath);
+      }
+      setSessiondState('connected');
+      setSessiondMessage(`${decision === 'approved' ? 'Approved' : 'Denied'} ${result.approval.summary}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setApprovalActionId('');
+    }
   }
 
   function handleAddTerminal() {
@@ -3132,6 +3284,9 @@ export default function App() {
               activeRightTab,
               activeSession,
               codeTrustSummary,
+              codeTrustApprovals,
+              approvalsBusy,
+              approvalActionId,
               runtimeStatus,
               buildStatus,
               buildLog,
@@ -3151,6 +3306,8 @@ export default function App() {
               handleRestartRuntime,
               handlePauseRuntime,
               handleResumeRuntime,
+              handleRefreshApprovals,
+              handleDecideApproval,
             )}
           </aside>
         ) : null}

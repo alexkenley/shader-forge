@@ -96,6 +96,46 @@ export type BuildStatus = {
   error: string | null;
 };
 
+export type CodeTrustDiagnostic = {
+  severity: string;
+  code: string;
+  message: string;
+  suggestion?: string;
+};
+
+export type CodeTrustEvaluation = {
+  action: string;
+  actor: string;
+  path: string;
+  decision: 'allow' | 'review_required' | 'deny';
+  allowed: boolean;
+  targetTier: string;
+  targetKind: string;
+  effectiveOrigin: string;
+  requestedOrigin: string | null;
+  matchedRuleId: string | null;
+  matchedRulePatterns: string[];
+  policyPath: string;
+  policySource: string;
+  supportedHotReloadRoots: string[];
+  diagnostics: CodeTrustDiagnostic[];
+};
+
+export type CodeTrustApproval = {
+  id: string;
+  sessionId: string | null;
+  requestedBy: string;
+  operationType: string;
+  summary: string;
+  status: 'pending' | 'approved' | 'denied' | 'failed';
+  decision: 'approved' | 'denied' | 'failed' | null;
+  decisionBy: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  codeTrust: CodeTrustEvaluation | null;
+  outcome: unknown;
+};
+
 export type CodeTrustSummary = {
   rootPath: string;
   policyPath: string;
@@ -188,6 +228,14 @@ export type SessiondTerminalEvent =
   | {
       type: 'build.completed';
       data: BuildStatus;
+    }
+  | {
+      type: 'code-trust.approval.created';
+      data: CodeTrustApproval;
+    }
+  | {
+      type: 'code-trust.approval.resolved';
+      data: CodeTrustApproval;
     };
 
 const DEFAULT_SESSIOND_BASE_URL = 'http://127.0.0.1:41741';
@@ -312,6 +360,28 @@ export async function fetchCodeTrustSummary(sessionId: string) {
   const query = new URL('/api/code-trust/summary', getSessiondBaseUrl());
   query.searchParams.set('sessionId', sessionId);
   return requestJson<CodeTrustSummary>(`${query.pathname}${query.search}`);
+}
+
+export async function fetchCodeTrustApprovals(sessionId: string, state = 'pending') {
+  const query = new URL('/api/code-trust/approvals', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  query.searchParams.set('state', state);
+  const payload = await requestJson<{ approvals: CodeTrustApproval[] }>(`${query.pathname}${query.search}`);
+  return payload.approvals;
+}
+
+export async function decideCodeTrustApproval(
+  approvalId: string,
+  decision: 'approved' | 'denied',
+  decisionBy = 'human',
+) {
+  return requestJson<{ approval: CodeTrustApproval; outcome?: unknown }>(
+    `/api/code-trust/approvals/${encodeURIComponent(approvalId)}/decision`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ decision, decisionBy }),
+    },
+  );
 }
 
 export async function openTerminal(payload: {
@@ -478,6 +548,18 @@ export function subscribeSessiondEvents(onEvent: (event: SessiondTerminalEvent) 
       data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'build.completed' }>['data'],
     });
   };
+  const approvalCreatedHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'code-trust.approval.created',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'code-trust.approval.created' }>['data'],
+    });
+  };
+  const approvalResolvedHandler = (message: MessageEvent<string>) => {
+    onEvent({
+      type: 'code-trust.approval.resolved',
+      data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'code-trust.approval.resolved' }>['data'],
+    });
+  };
 
   eventSource.addEventListener('terminal.output', outputHandler as EventListener);
   eventSource.addEventListener('terminal.exit', exitHandler as EventListener);
@@ -489,6 +571,8 @@ export function subscribeSessiondEvents(onEvent: (event: SessiondTerminalEvent) 
   eventSource.addEventListener('build.status', buildStatusHandler as EventListener);
   eventSource.addEventListener('build.started', buildStartedHandler as EventListener);
   eventSource.addEventListener('build.completed', buildCompletedHandler as EventListener);
+  eventSource.addEventListener('code-trust.approval.created', approvalCreatedHandler as EventListener);
+  eventSource.addEventListener('code-trust.approval.resolved', approvalResolvedHandler as EventListener);
 
   return () => {
     eventSource.removeEventListener('terminal.output', outputHandler as EventListener);
@@ -501,6 +585,8 @@ export function subscribeSessiondEvents(onEvent: (event: SessiondTerminalEvent) 
     eventSource.removeEventListener('build.status', buildStatusHandler as EventListener);
     eventSource.removeEventListener('build.started', buildStartedHandler as EventListener);
     eventSource.removeEventListener('build.completed', buildCompletedHandler as EventListener);
+    eventSource.removeEventListener('code-trust.approval.created', approvalCreatedHandler as EventListener);
+    eventSource.removeEventListener('code-trust.approval.resolved', approvalResolvedHandler as EventListener);
     eventSource.close();
   };
 }
