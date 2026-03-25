@@ -34,6 +34,8 @@
     "test:physics-scaffold": "node scripts/test-engine-physics-scaffold.mjs",
     "test:input-scaffold": "node scripts/test-engine-input-scaffold.mjs",
     "test:save-system-scaffold": "node scripts/test-engine-save-system-scaffold.mjs",
+    "test:packaging-scaffold": "node scripts/test-engine-packaging-scaffold.mjs",
+    "test:profiling-scaffold": "node scripts/test-engine-profiling-scaffold.mjs",
     "test:tooling-ui-scaffold": "node scripts/test-engine-tooling-ui-scaffold.mjs",
     "test:scene-authoring": "node scripts/test-engine-scene-authoring.mjs",
     "test:scene-runtime-scaffold": "node scripts/test-engine-scene-runtime-scaffold.mjs",

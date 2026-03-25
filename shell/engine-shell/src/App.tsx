@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useRef, useState, type PointerEvent as React
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
 import {
+  captureProfile,
   closeTerminal,
   createSession,
   decideCodeTrustApproval,
@@ -13,7 +14,9 @@ import {
   fetchCodeTrustApprovals,
   fetchCodeTrustSummary,
   fetchGitStatus,
+  fetchPackageInspect,
   fetchPlatformInfo,
+  fetchProfileLive,
   fetchSessiondHealth,
   fetchRuntimeStatus,
   getSessiondBaseUrl,
@@ -26,6 +29,7 @@ import {
   readFile,
   restartRuntime,
   resumeRuntime,
+  runPackageRelease,
   resizeTerminal,
   runAiSmokeTest,
   startRuntimeBuild,
@@ -40,7 +44,9 @@ import {
   type CodeTrustApproval,
   type BuildStatus,
   type CodeTrustSummary,
+  type PackageInspectSummary,
   type PlatformInfo,
+  type ProfilingLiveSummary,
   type SessionFileEntry,
   type SessionTerminalOpen,
   type SessiondTerminalEvent,
@@ -511,6 +517,10 @@ function ViewportShell({
 function renderRightPanel(
   activeTab: RightTab,
   activeSession: EngineSession | null,
+  packageSummary: PackageInspectSummary | null,
+  packageBusy: boolean,
+  profileSummary: ProfilingLiveSummary | null,
+  profileBusy: boolean,
   codeTrustSummary: CodeTrustSummary | null,
   codeTrustApprovals: CodeTrustApproval[],
   approvalsBusy: boolean,
@@ -539,6 +549,10 @@ function renderRightPanel(
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
   onRunAiSmokeTest: () => void,
+  onRefreshPackaging: () => void,
+  onRunPackaging: () => void,
+  onRefreshProfile: () => void,
+  onCaptureProfile: () => void,
   onRefreshApprovals: () => void,
   onDecideApproval: (approvalId: string, decision: 'approved' | 'denied') => void,
   onTransitionArtifact: (path: string, transition: 'promote' | 'quarantine') => void,
@@ -656,6 +670,157 @@ function renderRightPanel(
                   <p>{`${aiTestResult.finishReason || 'completed'} · ${Math.max(0, Math.round(aiTestResult.durationMs))} ms`}</p>
                 </article>
               ) : null}
+            </>
+          ) : null}
+        </section>
+        <section className="card compact-card">
+          <div className="section-titlebar">
+            <h3>Release Packaging</h3>
+            <span>
+              {packageSummary
+                ? packageSummary.ready
+                  ? 'Ready'
+                  : 'Needs prep'
+                : 'No workspace preset'}
+            </span>
+          </div>
+          <p className="panel-copy">
+            {packageSummary
+              ? 'Phase 6.2 now exposes a text-backed export preset, release-layout inspection, and deterministic package generation. The current launchers bundle cooked outputs, but still run against packaged authored roots until cooked-runtime loading lands.'
+              : 'Select a workspace to inspect the default export preset and generate the first reproducible release layout.'}
+          </p>
+          {packageSummary ? (
+            <>
+              <dl className="fact-list">
+                <div>
+                  <dt>Preset</dt>
+                  <dd>{`${packageSummary.label} (${packageSummary.presetId})`}</dd>
+                </div>
+                <div>
+                  <dt>Preset source</dt>
+                  <dd>{packageSummary.presetSource}</dd>
+                </div>
+                <div>
+                  <dt>Scene</dt>
+                  <dd>{packageSummary.launchScene}</dd>
+                </div>
+                <div>
+                  <dt>Config</dt>
+                  <dd>{packageSummary.runtimeConfig}</dd>
+                </div>
+                <div>
+                  <dt>Runtime</dt>
+                  <dd>{packageSummary.runtimeBinaryExists ? packageSummary.runtimeBinaryPath : `missing · ${packageSummary.runtimeBinaryPath}`}</dd>
+                </div>
+                <div>
+                  <dt>Cooked</dt>
+                  <dd>{packageSummary.cookedRootExists ? `${packageSummary.cookedAssetCount} assets` : `missing · ${packageSummary.cookedRootPath}`}</dd>
+                </div>
+                <div>
+                  <dt>Package root</dt>
+                  <dd>{packageSummary.packageRootPath}</dd>
+                </div>
+                <div>
+                  <dt>Hooks</dt>
+                  <dd>{packageSummary.platformHooks.join(', ') || 'none declared'}</dd>
+                </div>
+                <div>
+                  <dt>Last package</dt>
+                  <dd>{packageSummary.lastPackageAt ? `${formatSessionTimestamp(packageSummary.lastPackageAt)} · ${packageSummary.lastPackageFileCount} files` : 'not packaged yet'}</dd>
+                </div>
+              </dl>
+              <div className="inline-actions">
+                <button className="ghost-button ghost-button--sm" disabled={!activeSession || packageBusy} onClick={onRefreshPackaging} type="button">
+                  {packageBusy ? 'Working...' : 'Inspect export'}
+                </button>
+                <button className="ghost-button ghost-button--sm" disabled={!activeSession || packageBusy} onClick={onRunPackaging} type="button">
+                  {packageBusy ? 'Working...' : 'Package release'}
+                </button>
+              </div>
+              {packageSummary.warnings.length ? (
+                <div className="metric-stack">
+                  {packageSummary.warnings.slice(0, 3).map((warning) => (
+                    <article className="mini-card" key={warning}>
+                      <span>Packaging warning</span>
+                      <strong>{warning}</strong>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="panel-copy">
+                  Runtime binary, authored runtime roots, and cooked outputs are all present for the current default package preset.
+                </p>
+              )}
+            </>
+          ) : null}
+        </section>
+        <section className="card compact-card">
+          <div className="section-titlebar">
+            <h3>Profiling</h3>
+            <span>{profileSummary ? `${profileSummary.runtime.state} runtime` : 'No live snapshot'}</span>
+          </div>
+          <p className="panel-copy">
+            {profileSummary
+              ? 'Phase 6.3 now exposes a live diagnostic snapshot plus capture-report workflow from sessiond. This slice records runtime/build state, recent logs, git state, AI/code-trust summary, and package readiness; Tracy, RenderDoc, and native panels are still ahead.'
+              : 'Select a workspace to inspect live diagnostics and capture a first profiling report.'}
+          </p>
+          {profileSummary ? (
+            <>
+              <dl className="fact-list">
+                <div>
+                  <dt>Runtime</dt>
+                  <dd>{profileSummary.runtime.state}</dd>
+                </div>
+                <div>
+                  <dt>Scene</dt>
+                  <dd>{profileSummary.runtime.scene || launchScene}</dd>
+                </div>
+                <div>
+                  <dt>Build</dt>
+                  <dd>{profileSummary.build.state}</dd>
+                </div>
+                <div>
+                  <dt>Git</dt>
+                  <dd>{profileSummary.workspace.git.notARepo ? 'not a repo' : `${profileSummary.workspace.git.branch || 'detached'} · ${profileSummary.workspace.git.stagedCount}/${profileSummary.workspace.git.unstagedCount}/${profileSummary.workspace.git.untrackedCount}`}</dd>
+                </div>
+                <div>
+                  <dt>Package</dt>
+                  <dd>{profileSummary.workspace.packaging.ready ? 'ready' : 'needs prep'}</dd>
+                </div>
+                <div>
+                  <dt>AI</dt>
+                  <dd>{`${profileSummary.workspace.ai.readyProviderCount}/${profileSummary.workspace.ai.providerCount} ready`}</dd>
+                </div>
+                <div>
+                  <dt>Trust</dt>
+                  <dd>{`${profileSummary.workspace.codeTrust.trackedArtifactCount} tracked · ${profileSummary.workspace.codeTrust.verificationIssueCount} verify issues`}</dd>
+                </div>
+                <div>
+                  <dt>Snapshot</dt>
+                  <dd>{formatSessionTimestamp(profileSummary.capturedAt)}</dd>
+                </div>
+              </dl>
+              <div className="inline-actions">
+                <button className="ghost-button ghost-button--sm" disabled={!activeSession || profileBusy} onClick={onRefreshProfile} type="button">
+                  {profileBusy ? 'Working...' : 'Refresh live'}
+                </button>
+                <button className="ghost-button ghost-button--sm" disabled={!activeSession || profileBusy} onClick={onCaptureProfile} type="button">
+                  {profileBusy ? 'Working...' : 'Capture report'}
+                </button>
+              </div>
+              <div className="metric-stack">
+                <article className="mini-card">
+                  <span>Recent logs</span>
+                  <strong>{`${profileSummary.runtime.logLineCount} runtime lines · ${profileSummary.build.logLineCount} build lines`}</strong>
+                  <p>{profileSummary.workspace.packaging.ready ? `Release layout ready at ${profileSummary.workspace.packaging.packageRootPath}` : 'Complete build, bake, and package prerequisites before release-flow manual testing.'}</p>
+                </article>
+                {profileSummary.recommendations.slice(0, 2).map((recommendation) => (
+                  <article className="mini-card" key={recommendation}>
+                    <span>Recommendation</span>
+                    <strong>{recommendation}</strong>
+                  </article>
+                ))}
+              </div>
             </>
           ) : null}
         </section>
@@ -1776,6 +1941,10 @@ export default function App() {
   const [runtimeLog, setRuntimeLog] = useState('[runtime] idle\n');
   const [buildStatus, setBuildStatus] = useState<BuildStatus>(idleBuildStatus);
   const [buildLog, setBuildLog] = useState('[build] idle\n');
+  const [packageSummary, setPackageSummary] = useState<PackageInspectSummary | null>(null);
+  const [packageBusy, setPackageBusy] = useState(false);
+  const [profileSummary, setProfileSummary] = useState<ProfilingLiveSummary | null>(null);
+  const [profileBusy, setProfileBusy] = useState(false);
   const [codeTrustSummary, setCodeTrustSummary] = useState<CodeTrustSummary | null>(null);
   const [codeTrustApprovals, setCodeTrustApprovals] = useState<CodeTrustApproval[]>([]);
   const [approvalsBusy, setApprovalsBusy] = useState(false);
@@ -1804,6 +1973,8 @@ export default function App() {
     void Promise.all([
       refreshCodeTrust(activeSessionId),
       refreshCodeTrustApprovals(activeSessionId),
+      refreshPackageSummary(activeSessionId),
+      refreshProfiling(activeSessionId),
     ]).catch((error) => {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -1963,6 +2134,26 @@ export default function App() {
     setAiProviderSummary(nextSummary);
   }
 
+  async function refreshPackageSummary(sessionId: string) {
+    if (!sessionId) {
+      setPackageSummary(null);
+      return;
+    }
+
+    const nextSummary = await fetchPackageInspect(sessionId);
+    setPackageSummary(nextSummary);
+  }
+
+  async function refreshProfiling(sessionId: string) {
+    if (!sessionId) {
+      setProfileSummary(null);
+      return;
+    }
+
+    const nextSummary = await fetchProfileLive(sessionId);
+    setProfileSummary(nextSummary);
+  }
+
   async function navigateDirPicker(nextPath: string) {
     setDirPickerBusy(true);
     setDirPickerError('');
@@ -2003,6 +2194,8 @@ export default function App() {
       refreshExplorer(sessionId, '.'),
       refreshGit(sessionId),
       refreshAiProviders(sessionId),
+      refreshPackageSummary(sessionId),
+      refreshProfiling(sessionId),
       refreshCodeTrust(sessionId),
       refreshCodeTrustApprovals(sessionId),
     ]);
@@ -2081,6 +2274,8 @@ export default function App() {
       setGitStatus(emptyGitStatus);
       setAiProviderSummary(null);
       setAiTestResult(null);
+      setPackageSummary(null);
+      setProfileSummary(null);
       setCodeTrustSummary(null);
       setCodeTrustApprovals([]);
       return;
@@ -2089,6 +2284,8 @@ export default function App() {
     void Promise.all([
       refreshGit(activeSessionId),
       refreshAiProviders(activeSessionId),
+      refreshPackageSummary(activeSessionId),
+      refreshProfiling(activeSessionId),
       refreshCodeTrust(activeSessionId),
       refreshCodeTrustApprovals(activeSessionId),
     ]).catch((error) => {
@@ -2417,6 +2614,8 @@ export default function App() {
         setGitStatus(emptyGitStatus);
         setAiProviderSummary(null);
         setAiTestResult(null);
+        setPackageSummary(null);
+        setProfileSummary(null);
         setCodeTrustSummary(null);
         setCodeTrustApprovals([]);
       }
@@ -2445,6 +2644,8 @@ export default function App() {
         await Promise.all([
           refreshGit(explorerSessionId),
           refreshAiProviders(explorerSessionId),
+          refreshPackageSummary(explorerSessionId),
+          refreshProfiling(explorerSessionId),
           refreshCodeTrust(explorerSessionId),
           refreshCodeTrustApprovals(explorerSessionId),
         ]);
@@ -2484,6 +2685,8 @@ export default function App() {
         setGitStatus(emptyGitStatus);
         setAiProviderSummary(null);
         setAiTestResult(null);
+        setPackageSummary(null);
+        setProfileSummary(null);
         setCodeTrustSummary(null);
         setCodeTrustApprovals([]);
       }
@@ -2627,6 +2830,83 @@ export default function App() {
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setAiTestBusy(false);
+    }
+  }
+
+  async function handleRefreshPackaging() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setPackageBusy(true);
+      await refreshPackageSummary(activeSessionId);
+      setSessiondState('connected');
+      setSessiondMessage(`Refreshed export preset for ${activeSession?.name || 'workspace'}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPackageBusy(false);
+    }
+  }
+
+  async function handleRunPackaging() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setPackageBusy(true);
+      const result = await runPackageRelease(activeSessionId);
+      await Promise.all([
+        refreshPackageSummary(activeSessionId),
+        refreshProfiling(activeSessionId),
+      ]);
+      setSessiondState('connected');
+      setSessiondMessage(`Packaged release layout at ${result.packageRootPath}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPackageBusy(false);
+    }
+  }
+
+  async function handleRefreshProfile() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setProfileBusy(true);
+      await refreshProfiling(activeSessionId);
+      setSessiondState('connected');
+      setSessiondMessage(`Refreshed diagnostics snapshot for ${activeSession?.name || 'workspace'}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function handleCaptureProfile() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setProfileBusy(true);
+      const result = await captureProfile(activeSessionId);
+      await refreshProfiling(activeSessionId);
+      setSessiondState('connected');
+      setSessiondMessage(`Captured diagnostics report at ${result.outputPath}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProfileBusy(false);
     }
   }
 
@@ -3471,6 +3751,10 @@ export default function App() {
             {renderRightPanel(
               activeRightTab,
               activeSession,
+              packageSummary,
+              packageBusy,
+              profileSummary,
+              profileBusy,
               codeTrustSummary,
               codeTrustApprovals,
               approvalsBusy,
@@ -3499,6 +3783,10 @@ export default function App() {
               handlePauseRuntime,
               handleResumeRuntime,
               handleRunAiSmokeTest,
+              handleRefreshPackaging,
+              handleRunPackaging,
+              handleRefreshProfile,
+              handleCaptureProfile,
               handleRefreshApprovals,
               handleDecideApproval,
               handleTransitionArtifact,

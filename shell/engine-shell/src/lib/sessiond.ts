@@ -178,6 +178,169 @@ export type AiTestResult = {
   systemPrompt: string;
 };
 
+export type PackageInspectSummary = {
+  schema: string;
+  version: number;
+  rootPath: string;
+  presetId: string;
+  label: string;
+  platform: string;
+  runtimeConfig: string;
+  launchScene: string;
+  presetPath: string;
+  presetSource: string;
+  runtimeBinaryPath: string;
+  inputRootPath: string;
+  contentRootPath: string;
+  audioRootPath: string;
+  animationRootPath: string;
+  physicsRootPath: string;
+  dataFoundationPath: string;
+  toolingLayoutPath: string;
+  cookedRootPath: string;
+  assetReportPath: string;
+  packageRootPath: string;
+  packageReportPath: string;
+  platformHooks: string[];
+  cookedAssetCount: number;
+  generatedMeshCount: number;
+  audioSoundCount: number;
+  audioEventCount: number;
+  animationClipCount: number;
+  animationGraphCount: number;
+  physicsBodyCount: number;
+  lastPackageAt: string | null;
+  lastPackageFileCount: number;
+  ready: boolean;
+  warnings: string[];
+  runtimeBinaryExists: boolean;
+  inputRootExists: boolean;
+  contentRootExists: boolean;
+  audioRootExists: boolean;
+  animationRootExists: boolean;
+  physicsRootExists: boolean;
+  dataFoundationExists: boolean;
+  toolingLayoutExists: boolean;
+  cookedRootExists: boolean;
+};
+
+export type PackageReport = {
+  schema: string;
+  version: number;
+  packagedAt: string;
+  rootPath: string;
+  presetId: string;
+  label: string;
+  platform: string;
+  runtimeConfig: string;
+  launchScene: string;
+  presetPath: string;
+  presetSource: string;
+  packageRootPath: string;
+  runtimeBinaryPath: string;
+  cookedRootPath: string;
+  assetReportPath: string;
+  launchManifestPath: string;
+  unixLauncherPath: string;
+  windowsLauncherPath: string;
+  fileCount: number;
+  totalBytes: number;
+  cookedAssetCount: number;
+  generatedMeshCount: number;
+  audioSoundCount: number;
+  audioEventCount: number;
+  animationClipCount: number;
+  animationGraphCount: number;
+  physicsBodyCount: number;
+  warnings: string[];
+  hookResults: Array<{
+    id: string;
+    status: string;
+    message: string;
+  }>;
+  files: Array<{
+    path: string;
+    size: number;
+    sha256: string;
+  }>;
+  reportPath: string;
+};
+
+export type ProfilingLiveSummary = {
+  schema: string;
+  version: number;
+  capturedAt: string;
+  rootPath: string;
+  sessionId: string | null;
+  runtime: {
+    state: RuntimeStatus['state'];
+    scene: string | null;
+    sessionId: string | null;
+    workspaceRoot: string | null;
+    pid: number | null;
+    startedAt: string | null;
+    pausedAt: string | null;
+    executablePath: string | null;
+    supportsPause: boolean;
+    logTail: string;
+    logLineCount: number;
+  };
+  build: {
+    state: BuildStatus['state'];
+    target: string | null;
+    config: string | null;
+    buildDir: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    command: string | null;
+    exitCode: number | null;
+    error: string | null;
+    logTail: string;
+    logLineCount: number;
+  };
+  workspace: {
+    git: {
+      branch: string;
+      stagedCount: number;
+      unstagedCount: number;
+      untrackedCount: number;
+      notARepo: boolean;
+    };
+    codeTrust: {
+      policyPath: string;
+      trackedArtifactCount: number;
+      promotedArtifactCount: number;
+      quarantinedArtifactCount: number;
+      verificationIssueCount: number;
+    };
+    ai: {
+      configPath: string;
+      configSource: string;
+      defaultProviderId: string | null;
+      providerCount: number;
+      readyProviderCount: number;
+    };
+    packaging: {
+      presetId: string;
+      presetPath: string;
+      presetSource: string;
+      packageRootPath: string;
+      runtimeBinaryPath: string;
+      cookedRootPath: string;
+      ready: boolean;
+      warnings: string[];
+      cookedAssetCount: number;
+      lastPackageAt: string | null;
+    };
+  };
+  recommendations: string[];
+};
+
+export type ProfilingCapture = ProfilingLiveSummary & {
+  label: string;
+  outputPath: string;
+};
+
 export type CodeTrustSummary = {
   rootPath: string;
   policyPath: string;
@@ -445,6 +608,49 @@ export async function runAiSmokeTest(
       ...(options.providerId ? { providerId: options.providerId } : {}),
       ...(options.prompt ? { prompt: options.prompt } : {}),
       ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
+    }),
+  });
+}
+
+export async function fetchPackageInspect(sessionId: string, presetId = 'default') {
+  const query = new URL('/api/package/inspect', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  query.searchParams.set('preset', presetId);
+  return requestJson<PackageInspectSummary>(`${query.pathname}${query.search}`);
+}
+
+export async function runPackageRelease(
+  sessionId: string,
+  options: { presetId?: string; packageRoot?: string } = {},
+) {
+  return requestJson<PackageReport>('/api/package/run', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId,
+      ...(options.presetId ? { presetId: options.presetId } : {}),
+      ...(options.packageRoot ? { packageRoot: options.packageRoot } : {}),
+    }),
+  });
+}
+
+export async function fetchProfileLive(sessionId: string, presetId = 'default') {
+  const query = new URL('/api/profile/live', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  query.searchParams.set('preset', presetId);
+  return requestJson<ProfilingLiveSummary>(`${query.pathname}${query.search}`);
+}
+
+export async function captureProfile(
+  sessionId: string,
+  options: { presetId?: string; label?: string; outputPath?: string } = {},
+) {
+  return requestJson<ProfilingCapture>('/api/profile/capture', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId,
+      ...(options.presetId ? { presetId: options.presetId } : {}),
+      ...(options.label ? { label: options.label } : {}),
+      ...(options.outputPath ? { outputPath: options.outputPath } : {}),
     }),
   });
 }

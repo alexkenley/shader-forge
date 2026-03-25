@@ -74,6 +74,8 @@ Assistant entry points:
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
 - The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
 - The `Workspace` right-panel tab now also exposes workspace-backed AI provider status, manifest source, ready-provider counts, and a deterministic smoke-test action.
+- The `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, and last-package summary for the selected workspace.
+- The `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the selected workspace, including runtime/build state, packaging readiness, and first profiling recommendations.
 - The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals for the selected workspace plus the shared engine lane.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
 - Use `Game` and `Preview` to drive the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.
@@ -92,6 +94,8 @@ Assistant entry points:
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
 - `GET /api/ai/providers` and `POST /api/ai/test` now expose the first Phase 5.9 AI provider inspection and smoke-test lane from `engine_sessiond`.
+- `GET /api/package/inspect` and `POST /api/package/run` now expose the first Phase 6.2 release-layout inspect/package flow from `engine_sessiond`.
+- `GET /api/profile/live` and `POST /api/profile/capture` now expose the first Phase 6.3 diagnostics snapshot and capture-report lane from `engine_sessiond`.
 - `GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.
 - `GET /api/code-trust/artifacts` and `POST /api/code-trust/artifacts/transition` now expose tracked artifact hashes, verification state, and explicit promote/quarantine transitions.
 - `GET /api/code-trust/approvals` and `POST /api/code-trust/approvals/:id/decision` now expose the review queue for `review_required` code-trust operations.
@@ -109,6 +113,10 @@ Assistant entry points:
 - `engine ai providers [--root <path>]` now prints the workspace AI provider manifest, default provider, readiness state, and diagnostics.
 - `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs the first shared AI smoke-test lane.
 - `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses that same first-slice request path for deterministic fake output and optional Ollama-backed prompts.
+- `engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]` now prints the resolved export preset, path readiness, cooked-asset counts, and last-package summary for a workspace.
+- `engine package [--root <path>] [--preset <id>] [--package-root <path>]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, and a package report.
+- `engine profile live [--root <path>]` now prints the first diagnostics snapshot lane, and `--session` plus `--base-url` can switch that to a live `engine_sessiond` snapshot.
+- `engine profile capture [--root <path>] [--label <name>] [--output <path>]` now writes a shareable JSON diagnostics capture under `build/profiling/captures/`, and `--session` plus `--base-url` can capture a live sessiond-backed snapshot with recent runtime/build logs.
 - `engine policy inspect [--root <path>]` now prints the effective code-trust policy, supported authored hot-reload roots, and tracked artifacts for a workspace.
 - `engine policy check <action> [path] [--root <path>] [--actor ...] [--origin ...]` now dry-runs the same code-trust layer that sessiond enforces before risky assistant-facing transitions.
 - `engine policy artifacts [--root <path>]` now prints tracked artifact hashes, verification state, and promote/quarantine metadata for a workspace.
@@ -122,10 +130,12 @@ Assistant entry points:
 - `engine migrate detect|unity|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
 - `engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane, lower conversion confidence, and low-confidence Blueprint package manifests when exporter-assisted Unreal data is unavailable in the current slice.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
-- `engine import`, `engine package`, and `engine export` are still later phases.
+- `engine import` is still a later phase.
 - `ai/providers.toml` is now the current source-controlled provider manifest, with deterministic `fake` coverage for offline harnesses and an optional Ollama-backed local model lane.
 - `npm run test:ai-scaffold` is the deterministic harness for the first AI provider/status/test slice.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
+- The CLI packaging lane is now real, but it still packages authored runtime roots plus bundled cooked outputs rather than a final cooked-runtime shipping layout.
+- The CLI profiling lane is now real, but it still captures JSON diagnostics snapshots rather than Tracy, RenderDoc, or native in-process profiling panels.
 - The CLI migration lane is now split honestly: `detect` is report-only, while pinned engine lanes emit a first-pass Shader Forge project skeleton rather than claiming full parity.
 
 ### Migration Foundation
@@ -235,6 +245,8 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
+- `npm run test:packaging-scaffold` validates export-preset inspection plus release-layout generation through the CLI and `engine_sessiond`.
+- `npm run test:profiling-scaffold` validates live diagnostics snapshots plus persisted capture reports through the CLI and `engine_sessiond`.
 - `npm run test:code-trust-scaffold` validates the shared code-trust policy summary, artifact hashes plus verification state, promote/quarantine transitions, approval queue listing/decision flows, allowed authored-content hot reload, approved deferred apply/compile operations, and rejected assistant-triggered engine load paths.
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
 - `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.
@@ -252,6 +264,8 @@ Assistant entry points:
 - A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, first composed scene-runtime hooks, session-root launch alignment from the shell/session backend, and a first runtime save-system lane.
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
+- A first CLI and shell/sessiond packaging lane that resolves export presets, emits release-layout scaffolds under `build/package/`, and records package reports plus launch manifests.
+- A first CLI and shell/sessiond profiling lane that captures workspace diagnostics plus live runtime/build log context into JSON reports under `build/profiling/captures/`.
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
 - A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
@@ -262,10 +276,12 @@ Assistant entry points:
 - Scene authoring still needs transform gizmos, deeper scene/component payload authoring, and bake-back flows beyond the current text-backed entity plus prefab-component slice.
 - The runtime still needs a full mesh/material rendering path, richer prefab/component instancing beyond the current projected debug proxies, broader scene simulation, and broader native verification.
 - The save system still needs wider world-state persistence, multiple slots, profile/settings support, and migration-aware tooling beyond the current quick-save lane.
+- Packaging still needs auto-build/bake orchestration, archive generation, signing, richer preset families, and real cooked-runtime loading beyond the current release-layout scaffold.
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
 - Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.
+- Profiling still needs Tracy/RenderDoc integration, GPU and memory diagnostics, native profiling panels, and deeper performance-regression workflows beyond the current diagnostics snapshot lane.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

@@ -110,6 +110,8 @@ Current implementation status:
 - Phase 5.95 has now started through source-controlled policy data, shared sessiond/CLI policy evaluation, tracked assistant/code-path artifact metadata, hash-backed artifact verification, explicit review queues for `review_required` assistant operations, explicit promote/quarantine transitions for reviewed artifacts, explicit assistant-triggered compile/load/apply gating, and deterministic approval/policy coverage.
 - Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, input-driven controlled-entity state, first projected debug-proxy rendering for authored render components in the native runtime, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, first projected physics-body debug visualization, active-session-root runtime handoff from the shell/session backend, a first authored-content reload lane for manual iteration, and first view-resolved interaction/effect feedback.
 - Phase 6.1 has now started through a first runtime save-system foundation with versioned quick-slot payloads, session-root save paths, engine-owned save/load APIs, and explicit separation between authored assets and runtime persistence.
+- Phase 6.2 has now started through a source-controlled export-preset lane, release-layout inspection plus packaging commands, packaged authored runtime roots alongside bundled cooked outputs, launch scripts, shell/sessiond packaging surfaces, and deterministic packaging coverage.
+- Phase 6.3 has now started through a first diagnostics snapshot plus capture-report lane, recent runtime/build log preservation inside sessiond, shell/sessiond/CLI profiling surfaces, and deterministic profiling coverage.
 - Phase 5.5 has now started through a first data-and-effects foundation slice with an engine-wide format manifest, text-backed scene/prefab/data/effect assets, runtime-side catalog validation, and bootstrap-driven scene resolution.
 
 What is already done:
@@ -133,6 +135,8 @@ What is already done:
 - The native runtime now has a first authored-content reload lane for manual iteration: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps so external-window testing can follow shell edits without a full restart.
 - The native runtime now resolves effect-capable interaction targets from the current view/crosshair and exposes first triggered-effect feedback plus effect-descriptor-backed logs when the operator presses Enter or left-clicks on a target.
 - The native runtime now has a first widened engine-owned save lane under `saved/runtime/`: `F8` writes the active quick slot, `F9` reloads it, `F11`/`F12` cycle `quickslot_01` through `quickslot_03`, and the shell/session-root launch path keeps that save data scoped to the active project instead of mixing it with authored content.
+- Phase 6.2 has now started through `tooling/export-presets/default.export-preset.toml`, `engine export inspect`, `engine package`, sessiond-backed package inspect/run routes, shell-side workspace packaging controls, packaged authored runtime roots plus bundled cooked outputs under `build/package/default/`, generated launch scripts, and `test:packaging-scaffold`.
+- Phase 6.3 has now started through `engine profile live`, `engine profile capture`, sessiond-backed live/capture routes, shell-side workspace diagnostics controls, recent runtime/build log preservation for live captures, and `test:profiling-scaffold`.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
@@ -164,6 +168,8 @@ Where the build is currently up to:
 - Phase 5.95 groundwork now exists through source-controlled code-trust policy data, shared sessiond/CLI policy evaluation, explicit assistant-triggered compile/load/apply gating, queued review/approval handling, tracked artifact-origin metadata, hash-backed verification, and explicit promote/quarantine workflow, but there is still no signed-artifact verification, plugin-install verification, or real code hot reload yet
 - Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, preferred player-entity selection from spawn tags, first input-driven controlled-entity state, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, scene-context physics query origins, projected debug-proxy scene rendering, a first active-session-root editor/runtime handoff, a first polling/manual authored-content reload lane, and first view-resolved interaction/effect feedback, but full mesh/material rendering, broader component simulation, game UI, and deeper editor/runtime handoff still remain
 - Phase 6.1 groundwork now exists through an engine-owned runtime save subsystem, deterministic `saved/runtime/*.runtime-save.toml` payloads, `F8`/`F9` quicksave and quickload wiring, `F11`/`F12` active-slot cycling across the first quick-slot set, and session-root save-path handoff through the shell, CLI, and session backend, but full world-state deltas, richer save metadata, settings/profile persistence, migration/version-upgrade tooling, and gameplay-defined save contracts still remain
+- Phase 6.2 groundwork now exists through source-controlled export presets, release-layout inspection plus packaging commands, packaged authored runtime roots plus bundled cooked outputs, generated launch scripts, and shell/sessiond package surfaces, but auto-build/bake orchestration, archive generation, signing, richer preset families, and real cooked-runtime loading still remain
+- Phase 6.3 groundwork now exists through live diagnostics snapshots plus persisted JSON captures, recent runtime/build log preservation, and shell/sessiond/CLI profiling surfaces, but Tracy/RenderDoc integration, GPU and memory diagnostics, native profiling panels, and external capture orchestration still remain
 - Phase 5.5 groundwork now exists through a shared data manifest, content catalog, scene-to-prefab relationship validation, and bootstrap-driven runtime defaults, but there is still no real FlatBuffers cook step, SQLite-backed index implementation, or Effekseer runtime integration yet
 
 ## External Reference Track: Hell2025
@@ -841,6 +847,19 @@ Scope:
 - text-backed export presets
 - platform-specific packaging hooks
 
+Current checkpoint:
+- a source-controlled default export preset now exists under `tooling/export-presets/default.export-preset.toml`
+- `engine export inspect` now resolves the effective preset, validates runtime/authored/cooked prerequisites, reports cooked-asset counts, and surfaces the last package summary
+- `engine package` now emits the first reproducible release-layout scaffold under `build/package/<preset>/`
+- the current release layout bundles the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, the resolved export preset, a runtime-launch manifest, and a package report
+- `engine_sessiond` plus the shell `Workspace` tab now expose the same inspect/package flow for workspace-backed operators
+
+Still ahead inside this phase:
+- explicit build-and-bake orchestration instead of assuming prerequisites already exist
+- richer preset families plus per-platform release variants beyond the default desktop lane
+- archive/installer generation, signing hooks, and real platform hook execution beyond the current declared-only metadata
+- cooked-runtime loading so final release launchers stop depending on packaged authored roots
+
 Reference inputs:
 - for export workflow and release-layout shape, consult the [Packaging borrow guide](../docs/guides/ENGINE-PACKAGING-BORROW-GUIDE.md) and the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md)
 
@@ -861,6 +880,18 @@ Scope:
 - Dear ImGui-based native tooling UI panels for runtime inspection, debug drawing, and profiling workflows
 - external capture integration for deep graphics debugging
 - capture save/load and sharing workflows
+
+Current checkpoint:
+- `engine profile live` now exposes the first diagnostics snapshot lane, and it can switch to a live `engine_sessiond` snapshot for an active workspace session
+- `engine profile capture` now writes shareable JSON reports under `build/profiling/captures/`
+- the current snapshot records runtime/build state, recent runtime/build log tails when sessiond is present, git summary, code-trust counts, AI-provider readiness, packaging readiness, and explicit next-step recommendations
+- `engine_sessiond` plus the shell `Workspace` tab now expose the same live/capture workflow
+
+Still ahead inside this phase:
+- Tracy integration for CPU/GPU markers, memory, and lock diagnostics
+- RenderDoc capture launch/save flows and explicit external debugger orchestration
+- native Dear ImGui profiling panels and runtime inspection overlays beyond the current shell-side snapshot lane
+- richer performance-regression history, comparison, and sharing workflows beyond standalone JSON captures
 
 Reference inputs:
 - for profiling stack and workflow shape, consult the [Profiling borrow guide](../docs/guides/ENGINE-PROFILING-BORROW-GUIDE.md)
@@ -927,4 +958,6 @@ Current build target:
 - Phase 5.74 start: widen the authored-physics lane into a real backend, sweeps, debug draw, and gameplay-facing body control without discarding the text-backed layer/material/body contracts
 - Phase 5.9 start: widen the new provider/status/test foundation into queued requests, hosted-provider execution, budgets, and shared tool/skill registries while staying behind the Phase 5.95 trust boundary for risky assistant actions
 - Phase 5.95 continuation: widen the new code-trust lane from hash-backed verification and promote/quarantine controls into signed artifacts, stronger plugin verification, and explicit hotload contracts before Phase 5.9 assistant workflows expand
+- Phase 6.2 start: widen the new export/package foundation from preset inspection and release-layout scaffolding into archive generation, richer presets, and real cooked-runtime release flow
+- Phase 6.3 start: widen the new diagnostics snapshot lane into Tracy/RenderDoc integration, native profiling panels, and deeper runtime/performance investigation workflow
 - keep harness coverage current as each major slice lands

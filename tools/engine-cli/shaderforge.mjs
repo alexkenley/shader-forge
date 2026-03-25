@@ -19,7 +19,16 @@ import {
   inspectAiProviders,
   testAiProvider,
 } from '../shared/engine-ai-service.mjs';
+import {
+  inspectPackagingPreset,
+  packageProjectRelease,
+} from '../shared/engine-packaging-service.mjs';
+import {
+  captureProfilingSnapshot,
+  inspectProfilingState,
+} from '../shared/engine-profiling-service.mjs';
 import { requireCMakeCommand } from '../shared/cmake-command.mjs';
+import { readGitStatus } from '../engine-sessiond/lib/git-service.mjs';
 
 const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http://127.0.0.1:41741';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -46,6 +55,10 @@ Usage:
   engine ai providers [--root <path>]
   engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
+  engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]
+  engine package [--root <path>] [--preset <id>] [--package-root <path>]
+  engine profile live [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>]
+  engine profile capture [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>] [--label <name>] [--output <path>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
@@ -146,7 +159,7 @@ function resolvePolicyRoot(flags) {
 
 async function runReservedPlaceholder(commandName) {
   console.log(`engine ${commandName} is not implemented yet in this slice.`);
-  console.log('Current implemented surfaces: sessiond, files, runtime build, runtime run, asset bake, and migration detection/report foundations.');
+  console.log('Current implemented surfaces: sessiond, files, AI inspection, code trust, export/package inspection, profiling snapshots, runtime build/run, asset bake, and migration detection/report foundations.');
 }
 
 function normalizeBuildConfig(flags) {
@@ -436,8 +449,82 @@ async function testAiProviderCommand(positionals, flags, mode = 'test') {
   console.log(JSON.stringify(result, null, 2));
 }
 
-async function run() {
-  const argv = process.argv.slice(2);
+async function inspectExportPreset(flags) {
+  const result = await inspectPackagingPreset(resolvePolicyRoot(flags), {
+    presetId: flags.preset ? String(flags.preset) : 'default',
+    ...(flags['package-root'] ? { packageRoot: String(flags['package-root']) } : {}),
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function runPackageCommand(flags) {
+  const result = await packageProjectRelease(resolvePolicyRoot(flags), {
+    presetId: flags.preset ? String(flags.preset) : 'default',
+    ...(flags['package-root'] ? { packageRoot: String(flags['package-root']) } : {}),
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+function shouldUseProfileSessiond(flags) {
+  return Boolean(flags.session || flags['base-url']);
+}
+
+function localProfileOptions(flags) {
+  const rootPath = resolvePolicyRoot(flags);
+  return {
+    rootPath,
+    sessionId: flags.session ? String(flags.session) : '',
+    presetId: flags.preset ? String(flags.preset) : 'default',
+    label: flags.label ? String(flags.label) : 'diagnostics',
+    outputPath: flags.output ? String(flags.output) : '',
+    gitStatus: readGitStatus(rootPath),
+  };
+}
+
+async function runProfileLive(flags) {
+  if (shouldUseProfileSessiond(flags)) {
+    const baseUrl = resolvedBaseUrl(flags);
+    const query = new URL('/api/profile/live', baseUrl);
+    if (flags.session) {
+      query.searchParams.set('sessionId', String(flags.session));
+    }
+    if (flags.preset) {
+      query.searchParams.set('preset', String(flags.preset));
+    }
+    const result = await requestJson(baseUrl, query.pathname + query.search);
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const result = await inspectProfilingState(localProfileOptions(flags));
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function runProfileCapture(flags) {
+  if (shouldUseProfileSessiond(flags)) {
+    const baseUrl = resolvedBaseUrl(flags);
+    const result = await requestJson(baseUrl, '/api/profile/capture', {
+      method: 'POST',
+      body: {
+        ...(flags.session ? { sessionId: String(flags.session) } : {}),
+        ...(flags.preset ? { presetId: String(flags.preset) } : {}),
+        ...(flags.label ? { label: String(flags.label) } : {}),
+        ...(flags.output ? { outputPath: String(flags.output) } : {}),
+      },
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const localOptions = localProfileOptions(flags);
+  const result = await captureProfilingSnapshot({
+    ...localOptions,
+    ...(localOptions.outputPath ? { outputPath: localOptions.outputPath } : {}),
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+export async function runCli(argv = process.argv.slice(2)) {
   if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
     printHelp();
     return;
@@ -448,6 +535,39 @@ async function run() {
   if (['test', 'import'].includes(command)) {
     await runReservedPlaceholder(command);
     return;
+  }
+
+  if (command === 'package') {
+    const { flags } = parseFlags(argv.slice(1));
+    await runPackageCommand(flags);
+    return;
+  }
+
+  if (command === 'export') {
+    const exportSubcommand = !argv[1] || argv[1].startsWith('--') ? 'inspect' : argv[1];
+    const { flags } = parseFlags(argv.slice(exportSubcommand === argv[1] ? 2 : 1));
+    if (exportSubcommand !== 'inspect') {
+      throw new Error(`Unknown export subcommand: ${exportSubcommand}`);
+    }
+    await inspectExportPreset(flags);
+    return;
+  }
+
+  if (command === 'profile') {
+    const profileSubcommand = argv[1];
+    const { flags } = parseFlags(argv.slice(2));
+    if (!profileSubcommand) {
+      throw new Error('engine profile requires a subcommand.');
+    }
+    if (profileSubcommand === 'live') {
+      await runProfileLive(flags);
+      return;
+    }
+    if (profileSubcommand === 'capture') {
+      await runProfileCapture(flags);
+      return;
+    }
+    throw new Error(`Unknown profile subcommand: ${profileSubcommand}`);
   }
 
   if (command === 'bake') {
@@ -636,11 +756,13 @@ function exitAfterFlush(code) {
   }
 }
 
-run()
-  .then(() => {
-    exitAfterFlush(0);
-  })
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    exitAfterFlush(1);
-  });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runCli()
+    .then(() => {
+      exitAfterFlush(0);
+    })
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      exitAfterFlush(1);
+    });
+}

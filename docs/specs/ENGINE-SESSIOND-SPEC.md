@@ -29,6 +29,10 @@ Current implemented surfaces:
 - `POST /api/build/stop`
 - `GET /api/ai/providers`
 - `POST /api/ai/test`
+- `GET /api/package/inspect`
+- `POST /api/package/run`
+- `GET /api/profile/live`
+- `POST /api/profile/capture`
 - `GET /api/code-trust/summary`
 - `POST /api/code-trust/evaluate`
 - `GET /api/code-trust/artifacts`
@@ -76,6 +80,12 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - sessiond now exposes workspace-backed AI provider inspection and smoke-test routes so the shell and harnesses can inspect `ai/providers.toml` without building their own provider clients
 - `GET /api/ai/providers` now reports manifest source, default provider, provider readiness, installed Ollama models when reachable, and diagnostics for unimplemented hosted-provider entries
 - `POST /api/ai/test` now runs the current first-slice smoke-test path through the shared AI layer, with deterministic fake-provider coverage and optional Ollama-backed requests
+- sessiond now exposes workspace-backed export-preset inspection and release-layout packaging routes so the shell can drive the first Phase 6.2 package workflow without scraping terminal output
+- `GET /api/package/inspect` reports export preset source, prerequisite path readiness, cooked-asset counts, and last package metadata for a workspace
+- `POST /api/package/run` now emits the first reproducible release-layout scaffold under `build/package/<preset>/`, bundling the runtime binary, packaged authored runtime roots, cooked outputs, launch scripts, and a package report
+- sessiond now also records recent runtime and build log tails so profiling captures can preserve live diagnostics instead of only static workspace inspection
+- `GET /api/profile/live` returns the first Phase 6.3 live diagnostics snapshot, including runtime/build state, recent log tails, git summary, AI/code-trust counts, and packaging readiness
+- `POST /api/profile/capture` now writes a shareable JSON diagnostics capture under `build/profiling/captures/` from that same live snapshot lane
 
 ## Future AI APIs
 

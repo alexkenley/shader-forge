@@ -30,6 +30,21 @@ Recommended first stack:
 - RenderDoc for Vulkan frame capture and graphics debugging
 - native tooling UI for live lightweight inspection
 
+## Current Implemented Slice
+
+The first Phase 6.3 checkpoint is now real:
+
+- `engine profile live` now emits a diagnostics snapshot for a workspace, and it can switch to a live `engine_sessiond` snapshot when pointed at a running backend session
+- `engine profile capture` now writes a shareable JSON report under `build/profiling/captures/`
+- the current snapshot records runtime/build state, recent runtime/build log tails when sessiond is present, git summary, code-trust counts, AI-provider readiness, packaging readiness, and manual next-step recommendations
+- `engine_sessiond` now exposes `GET /api/profile/live` and `POST /api/profile/capture`
+- the shell `Workspace` tab now exposes the same live snapshot and capture-report actions
+- deterministic harness coverage now exists for the profiling/diagnostics scaffold
+
+## Current Boundary
+
+This slice is diagnostics-first rather than deep profiler integration. Tracy, RenderDoc capture launch, memory/allocation tracking, GPU markers, and native Dear ImGui profiling panels are still ahead.
+
 ## Non-Goals
 
 - inventing a brand-new external profiler when strong open-source tools already exist

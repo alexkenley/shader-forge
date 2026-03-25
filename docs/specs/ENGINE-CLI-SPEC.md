@@ -18,6 +18,10 @@ Current implemented commands:
 - `engine ai providers`
 - `engine ai test`
 - `engine ai request`
+- `engine export inspect`
+- `engine package`
+- `engine profile live`
+- `engine profile capture`
 - `engine policy inspect`
 - `engine policy check`
 - `engine policy artifacts`
@@ -66,8 +70,12 @@ The initial build/run/bake command family now targets the native runtime and coo
 - `engine ai providers [--root <path>]` now prints the effective AI provider manifest, provider readiness state, and current default provider for a workspace
 - `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs a workspace-backed smoke test through the shared AI layer
 - `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses the same first-slice request path for deterministic fake-provider output and optional Ollama-backed prompts
+- `engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]` now prints the resolved export preset, packaging prerequisites, cooked-asset counts, and last package summary for a workspace
+- `engine package [--root <path>] [--preset <id>] [--package-root <path>]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the current runtime binary, packaged authored runtime roots, cooked outputs, launch scripts, and a package report
+- `engine profile live [--root <path>]` now prints the first diagnostics snapshot lane, including runtime/build state, git summary, AI/code-trust summary, packaging readiness, and recommendations; `--session` plus `--base-url` can switch that to a live `engine_sessiond` snapshot
+- `engine profile capture [--root <path>] [--label <name>] [--output <path>]` now writes a shareable JSON diagnostics capture under `build/profiling/captures/`, and `--session` plus `--base-url` can capture a live sessiond-backed runtime/build snapshot with recent logs
 
-`engine test`, `engine import`, `engine package`, and `engine export` remain reserved command space.
+`engine test` and `engine import` remain reserved command space.
 
 The current migration lane is split honestly:
 
@@ -77,12 +85,12 @@ The current migration lane is split honestly:
 
 ## Future Packaging And Diagnostics Commands
 
-- `engine package`
-- `engine export`
+- `engine export preset init`
+- `engine package hook run`
 - `engine save inspect`
 - `engine save migrate`
-- `engine profile capture`
-- `engine profile live`
+- `engine profile trace`
+- `engine profile external-capture`
 
 ## Current Migration Commands
 

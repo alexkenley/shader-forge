@@ -21,6 +21,14 @@ import {
   inspectAiProviders,
   testAiProvider,
 } from '../shared/engine-ai-service.mjs';
+import {
+  inspectPackagingPreset,
+  packageProjectRelease,
+} from '../shared/engine-packaging-service.mjs';
+import {
+  captureProfilingSnapshot,
+  inspectProfilingState,
+} from '../shared/engine-profiling-service.mjs';
 
 function corsHeaders() {
   return {
@@ -104,6 +112,37 @@ function createEventHub() {
     emit,
     subscribe,
     closeAll,
+  };
+}
+
+function trimLogBuffer(currentValue, appendedValue, maxLength = 16000) {
+  const merged = `${String(currentValue || '')}${String(appendedValue || '')}`;
+  if (merged.length <= maxLength) {
+    return merged;
+  }
+  return merged.slice(merged.length - maxLength);
+}
+
+function createDiagnosticsRecorder(eventHub) {
+  let runtimeLog = '';
+  let buildLog = '';
+
+  return {
+    emit(type, data) {
+      if (type === 'runtime.log') {
+        runtimeLog = trimLogBuffer(runtimeLog, data?.data || '');
+      }
+      if (type === 'build.log') {
+        buildLog = trimLogBuffer(buildLog, data?.data || '');
+      }
+      eventHub.emit(type, data);
+    },
+    snapshot() {
+      return {
+        runtimeLog,
+        buildLog,
+      };
+    },
   };
 }
 
@@ -351,7 +390,15 @@ function requirePendingApproval(approvalStore, approvalId) {
   return approval;
 }
 
-function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, approvalStore, eventHub }) {
+function createRouter({
+  sessionStore,
+  terminalStore,
+  runtimeStore,
+  buildStore,
+  approvalStore,
+  eventHub,
+  diagnosticsRecorder,
+}) {
   return async function route(request, response) {
     if (!request.url) {
       writeJson(response, 400, { error: 'Request URL is required.' });
@@ -388,6 +435,10 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, a
           'code-trust:approvals',
           'ai:providers',
           'ai:test',
+          'package:inspect',
+          'package:run',
+          'profile:live',
+          'profile:capture',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -428,6 +479,84 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, a
           },
         );
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/package/inspect') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const presetId = searchParams.get('preset') || 'default';
+        const summary = await inspectPackagingPreset(
+          resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+          {
+            presetId,
+          },
+        );
+        writeJson(response, 200, summary);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/package/run') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const presetId = typeof body.presetId === 'string' && body.presetId.trim()
+          ? body.presetId.trim()
+          : 'default';
+        const packageRoot = typeof body.packageRoot === 'string' && body.packageRoot.trim()
+          ? body.packageRoot.trim()
+          : '';
+        const report = await packageProjectRelease(
+          resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+          {
+            presetId,
+            ...(packageRoot ? { packageRoot } : {}),
+          },
+        );
+        writeJson(response, 200, report);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/profile/live') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const presetId = searchParams.get('preset') || 'default';
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot);
+        const profile = await inspectProfilingState({
+          rootPath,
+          sessionId,
+          presetId,
+          runtimeStatus: runtimeStore.status(),
+          buildStatus: buildStore.status(),
+          gitStatus: readGitStatus(rootPath),
+          ...diagnosticsRecorder.snapshot(),
+        });
+        writeJson(response, 200, profile);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/profile/capture') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const presetId = typeof body.presetId === 'string' && body.presetId.trim()
+          ? body.presetId.trim()
+          : 'default';
+        const label = typeof body.label === 'string' && body.label.trim()
+          ? body.label.trim()
+          : 'diagnostics';
+        const outputPath = typeof body.outputPath === 'string' && body.outputPath.trim()
+          ? body.outputPath.trim()
+          : '';
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot);
+        const capture = await captureProfilingSnapshot({
+          rootPath,
+          sessionId,
+          presetId,
+          label,
+          ...(outputPath ? { outputPath } : {}),
+          runtimeStatus: runtimeStore.status(),
+          buildStatus: buildStore.status(),
+          gitStatus: readGitStatus(rootPath),
+          ...diagnosticsRecorder.snapshot(),
+        });
+        writeJson(response, 200, capture);
         return;
       }
 
@@ -873,26 +1002,27 @@ export async function startEngineSessiond({
   approvalStore,
 } = {}) {
   const eventHub = createEventHub();
+  const diagnosticsRecorder = createDiagnosticsRecorder(eventHub);
   const terminalStore = new TerminalStore({
     emitEvent: (type, data) => {
-      eventHub.emit(type, data);
+      diagnosticsRecorder.emit(type, data);
     },
   });
   const runtimeStore = new RuntimeStore({
     emitEvent: (type, data) => {
-      eventHub.emit(type, data);
+      diagnosticsRecorder.emit(type, data);
     },
     launchFactory: runtimeLaunchFactory,
   });
   const buildStore = new BuildStore({
     emitEvent: (type, data) => {
-      eventHub.emit(type, data);
+      diagnosticsRecorder.emit(type, data);
     },
     launchFactory: buildLaunchFactory,
   });
   const resolvedApprovalStore = approvalStore || new CodeTrustApprovalStore({
     emitEvent: (type, data) => {
-      eventHub.emit(type, data);
+      diagnosticsRecorder.emit(type, data);
     },
   });
   if (typeof sessionStore.loadSessions === 'function') {
@@ -905,6 +1035,7 @@ export async function startEngineSessiond({
     buildStore,
     approvalStore: resolvedApprovalStore,
     eventHub,
+    diagnosticsRecorder,
   }));
 
   await new Promise((resolve, reject) => {
