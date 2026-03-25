@@ -27,6 +27,8 @@ Current implemented surfaces:
 - `POST /api/runtime/resume`
 - `POST /api/build/runtime`
 - `POST /api/build/stop`
+- `GET /api/ai/providers`
+- `POST /api/ai/test`
 - `GET /api/code-trust/summary`
 - `POST /api/code-trust/evaluate`
 - `GET /api/code-trust/approvals`
@@ -66,11 +68,13 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - approving a deferred file write replays the stored request and records trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
 - approval lifecycle changes now stream through the same SSE event bus as runtime, build, and terminal events
 - policy-relevant artifact writes now record trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
+- sessiond now exposes workspace-backed AI provider inspection and smoke-test routes so the shell and harnesses can inspect `ai/providers.toml` without building their own provider clients
+- `GET /api/ai/providers` now reports manifest source, default provider, provider readiness, installed Ollama models when reachable, and diagnostics for unimplemented hosted-provider entries
+- `POST /api/ai/test` now runs the current first-slice smoke-test path through the shared AI layer, with deterministic fake-provider coverage and optional Ollama-backed requests
 
 ## Future AI APIs
 
-- provider status and health checks
 - AI request submit/cancel
 - AI request/event stream
-- local-model endpoint health probes
+- queued request metadata and budgeting
 - optional secure local key-management hooks

@@ -13,6 +13,10 @@ import {
   evaluateCodeTrustAction,
   inspectCodeTrustState,
 } from '../shared/code-trust-policy.mjs';
+import {
+  inspectAiProviders,
+  testAiProvider,
+} from '../shared/engine-ai-service.mjs';
 import { requireCMakeCommand } from '../shared/cmake-command.mjs';
 
 const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http://127.0.0.1:41741';
@@ -34,6 +38,9 @@ Usage:
   engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]
   engine policy approve <approval-id> [--base-url <url>] [--decision-by <name>]
   engine policy deny <approval-id> [--base-url <url>] [--decision-by <name>]
+  engine ai providers [--root <path>]
+  engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
+  engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
@@ -378,6 +385,29 @@ async function decidePolicyApproval(positionals, flags, decision) {
   console.log(JSON.stringify(payload, null, 2));
 }
 
+async function inspectAiProviderState(flags) {
+  const summary = await inspectAiProviders(resolvePolicyRoot(flags));
+  console.log(JSON.stringify(summary, null, 2));
+}
+
+async function testAiProviderCommand(positionals, flags, mode = 'test') {
+  const prompt = mode === 'request'
+    ? positionals.join(' ').trim()
+    : flags.prompt
+      ? String(flags.prompt)
+      : undefined;
+  if (mode === 'request' && !prompt) {
+    throw new Error('engine ai request requires a prompt.');
+  }
+
+  const result = await testAiProvider(resolvePolicyRoot(flags), {
+    providerId: flags.provider ? String(flags.provider) : '',
+    prompt,
+    systemPrompt: flags.system ? String(flags.system) : undefined,
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
 async function run() {
   const argv = process.argv.slice(2);
   if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
@@ -456,6 +486,25 @@ async function run() {
       return;
     }
     throw new Error(`Unknown policy subcommand: ${subcommand}`);
+  }
+
+  if (command === 'ai') {
+    if (!subcommand) {
+      throw new Error('engine ai requires a subcommand.');
+    }
+    if (subcommand === 'providers') {
+      await inspectAiProviderState(flags);
+      return;
+    }
+    if (subcommand === 'test') {
+      await testAiProviderCommand(positionals, flags, 'test');
+      return;
+    }
+    if (subcommand === 'request') {
+      await testAiProviderCommand(positionals, flags, 'request');
+      return;
+    }
+    throw new Error(`Unknown ai subcommand: ${subcommand}`);
   }
 
   if (command === 'sessiond' && subcommand === 'start') {

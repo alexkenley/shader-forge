@@ -17,3 +17,4 @@ test-results/
 *.tmp
 *.tsbuildinfo
 .DS_Store
+.shader-forge/code-trust-artifacts.json

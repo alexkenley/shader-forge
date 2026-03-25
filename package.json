@@ -38,6 +38,7 @@
     "test:scene-authoring": "node scripts/test-engine-scene-authoring.mjs",
     "test:scene-runtime-scaffold": "node scripts/test-engine-scene-runtime-scaffold.mjs",
     "test:code-trust-scaffold": "node scripts/test-engine-code-trust-scaffold.mjs",
+    "test:ai-scaffold": "node scripts/test-engine-ai-scaffold.mjs",
     "test:viewer-bridge": "node scripts/test-engine-viewer-bridge.mjs",
     "test:ollama-smoke": "node scripts/test-ollama-smoke.mjs"
   },

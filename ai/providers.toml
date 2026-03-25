@@ -1,0 +1,24 @@
+default_provider = "local_fake"
+
+[provider.local_fake]
+type = "fake"
+label = "Deterministic Fake"
+enabled = true
+mode = "LocalOnly"
+model = "deterministic-fake"
+
+[provider.local_ollama]
+type = "ollama"
+label = "Local Ollama"
+enabled = false
+mode = "LocalOnly"
+base_url = "http://127.0.0.1:11434"
+model = ""
+
+[provider.openai_dev]
+type = "openai"
+label = "OpenAI"
+enabled = false
+mode = "DeveloperHosted"
+model = "gpt-4.1-mini"
+api_key_env = "OPENAI_API_KEY"

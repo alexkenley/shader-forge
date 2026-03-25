@@ -259,6 +259,31 @@ Expected native in-engine assistant surfaces:
 - context-aware capability/skill routing for engine-native tasks
 - structured scene dump, query, and patch workflows for authoring tasks that need spatial context without hidden editor-only state
 
+## Current Phase 5.9 Checkpoint
+
+The first implemented Phase 5.9 slice is the provider/status/test foundation.
+
+Current implemented behavior:
+
+- `ai/providers.toml` is now the source-controlled provider manifest for workspace or repo-root AI configuration
+- provider manifests currently support deterministic `fake`, optional `ollama`, and reserved hosted-provider entries for `openai`, `anthropic`, `gemini`, and `openai_compatible`
+- `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider normalization, provider inspection, and smoke-test execution so sessiond, CLI, and future assistant clients share one local AI surface
+- the deterministic `fake` provider is the current offline and harness-safe default so Phase 5.9 work does not depend on a live model endpoint
+- the optional Ollama lane now probes `/api/tags`, selects an installed model when possible, and can issue a basic `/v1/chat/completions` smoke test against a reachable local endpoint
+- hosted-provider execution is not implemented yet, but the manifest and inspection layer already expose deployment mode plus required `api_key_env` diagnostics
+- `engine_sessiond` now exposes `GET /api/ai/providers` and `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
+- the shell `Workspace` panel now shows AI provider status, manifest source, ready-provider counts, and a smoke-test action beside the existing code-trust controls
+- the CLI now exposes `engine ai providers`, `engine ai test`, and `engine ai request`
+- deterministic coverage now exists through `npm run test:ai-scaffold`
+
+Still ahead in Phase 5.9:
+
+- queued request lifecycle, cancellation, timeout, retry, and fallback control beyond direct smoke-test execution
+- usage budgets, spend limits, and request logging
+- real hosted-provider adapters and secure key-management hooks
+- shared tool registry, skill registry, and structured engine action schemas
+- native in-engine assistant surfaces and gameplay-facing AI integrations
+
 The terminal coding assistant and the native in-engine assistant should be complementary, not mutually exclusive:
 
 - terminal/CLI assistant is best for repo-wide code, files, build, and test work

@@ -106,6 +106,7 @@ Current implementation status:
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph plus named-state resolution, and staged cooked animation metadata.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, first projected physics debug visualization, and staged cooked physics metadata.
 - Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
+- Phase 5.9 has now started through source-controlled AI provider manifests, a shared provider inspection/smoke-test core, deterministic fake-provider coverage, an optional local Ollama inspection path, shell/sessiond/CLI AI inspection surfaces, and a dedicated deterministic scaffold harness.
 - Phase 5.95 has now started through source-controlled policy data, shared sessiond/CLI policy evaluation, tracked assistant/code-path artifact metadata, explicit review queues for `review_required` assistant operations, explicit assistant-triggered compile/load/apply gating, and deterministic approval/policy coverage.
 - Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, input-driven controlled-entity state, first projected debug-proxy rendering for authored render components in the native runtime, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, first projected physics-body debug visualization, active-session-root runtime handoff from the shell/session backend, a first authored-content reload lane for manual iteration, and first view-resolved interaction/effect feedback.
 - Phase 6.1 has now started through a first runtime save-system foundation with versioned quick-slot payloads, session-root save paths, engine-owned save/load APIs, and explicit separation between authored assets and runtime persistence.
@@ -139,8 +140,9 @@ What is already done:
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
 - Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
 - Phase 5.74 has now started through `physics/layers.toml`, `physics/materials/*.physics-material.toml`, `physics/bodies/*.physics-body.toml`, native physics-system validation/query hooks, first projected physics debug visualization, and staged cooked physics outputs under `build/cooked/physics/`.
+- Phase 5.9 has now started through `ai/providers.toml`, shared provider inspection/smoke-test code under `tools/shared/engine-ai-service.mjs`, new `engine_sessiond` AI inspection/test routes, `engine ai providers|test|request`, a shell-side workspace AI status card, and `test:ai-scaffold`.
 - Phase 5.95 has now started through `tooling/policy/code-access-policy.json`, shared `engine_sessiond`/CLI code-trust evaluation, tracked artifact metadata under `.shader-forge/code-trust-artifacts.json`, queued approval handling for review-gated assistant operations, shell-side workspace approval controls, and `test:code-trust-scaffold`.
-- Deterministic harnesses exist for the shell, session backend, viewer bridge, scene authoring, scene runtime scaffold, runtime scaffold, save-system scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, physics scaffold, input scaffold, and tooling UI scaffold.
+- Deterministic harnesses exist for the shell, session backend, AI scaffold, viewer bridge, scene authoring, scene runtime scaffold, runtime scaffold, save-system scaffold, data foundation scaffold, asset pipeline, migration fixtures, audio scaffold, animation scaffold, physics scaffold, input scaffold, and tooling UI scaffold.
 - A local Hell2025 reference snapshot now exists under `docs/references/hell2025/`, with a scoped borrow plan in `docs/guides/ENGINE-HELL2025-BORROW-PLAN.md`.
 
 Where the build is currently up to:
@@ -158,6 +160,7 @@ Where the build is currently up to:
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph and named-state resolution, first movement-driven runtime state selection, and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
+- Phase 5.9 groundwork now exists through source-controlled provider manifests, shared provider inspection plus smoke-test execution, deterministic fake coverage, optional Ollama readiness checks, and shell/sessiond/CLI inspection surfaces, but queued request lifecycle, hosted-provider execution, budgets, tool/skill registries, and gameplay-facing/native-assistant integration still remain
 - Phase 5.95 groundwork now exists through source-controlled code-trust policy data, shared sessiond/CLI policy evaluation, explicit assistant-triggered compile/load/apply gating, queued review/approval handling, tracked artifact-origin metadata, and deterministic policy coverage, but there is still no signed-artifact verification, plugin-install verification, trust-promotion workflow, or real code hot reload yet
 - Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, preferred player-entity selection from spawn tags, first input-driven controlled-entity state, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, scene-context physics query origins, projected debug-proxy scene rendering, a first active-session-root editor/runtime handoff, a first polling/manual authored-content reload lane, and first view-resolved interaction/effect feedback, but full mesh/material rendering, broader component simulation, game UI, and deeper editor/runtime handoff still remain
 - Phase 6.1 groundwork now exists through an engine-owned runtime save subsystem, deterministic `saved/runtime/*.runtime-save.toml` payloads, `F8`/`F9` quicksave and quickload wiring, `F11`/`F12` active-slot cycling across the first quick-slot set, and session-root save-path handoff through the shell, CLI, and session backend, but full world-state deltas, richer save metadata, settings/profile persistence, migration/version-upgrade tooling, and gameplay-defined save contracts still remain
@@ -691,6 +694,20 @@ Exit criteria:
 - assistant data-authoring workflows can query, preview, validate, and apply bulk gameplay-data changes through shared engine services instead of ad-hoc editor-only mutations
 - deterministic and optional real-provider harness lanes exist for the subsystem
 
+Current checkpoint now implemented:
+- `ai/providers.toml` now defines the first source-controlled provider manifest, with deterministic `fake`, optional `ollama`, and reserved hosted-provider entries for later adapters
+- `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider inspection, and smoke-test execution so the shell, CLI, and session backend do not invent separate AI clients
+- `engine_sessiond` now exposes `GET /api/ai/providers` plus `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
+- `engine ai providers`, `engine ai test`, and `engine ai request` now expose the same first AI slice directly from the terminal
+- the shell `Workspace` panel now surfaces AI manifest source, ready-provider counts, provider diagnostics, and an inline smoke-test action
+- deterministic coverage now exists through `scripts/test-engine-ai-scaffold.mjs`
+
+Still ahead inside this phase:
+- queued request submit/cancel/event-stream behavior beyond direct smoke-test execution
+- hosted-provider execution, budgets, and secure key-management hooks
+- shared tool and skill registries plus structured action-schema enforcement
+- native in-engine assistant surfaces and gameplay-facing AI integration
+
 ## Phase 5.95: Code Access, Trust, And Hot Reload Safety
 
 Goal:
@@ -906,5 +923,6 @@ Current build target:
 - Phase 5.7 start: widen the authored-audio lane into real playback, bus control, and preview tooling without skipping the engine-owned event API
 - Phase 5.72 start: widen the authored-animation lane into real sampling, graph-parameter control, root motion, and preview tooling without discarding the text-backed graph/event contracts
 - Phase 5.74 start: widen the authored-physics lane into a real backend, sweeps, debug draw, and gameplay-facing body control without discarding the text-backed layer/material/body contracts
+- Phase 5.9 start: widen the new provider/status/test foundation into queued requests, hosted-provider execution, budgets, and shared tool/skill registries while staying behind the Phase 5.95 trust boundary for risky assistant actions
 - Phase 5.95 continuation: widen the new code-trust lane into approvals, stronger artifact verification, and explicit hotload contracts before Phase 5.9 assistant workflows expand
 - keep harness coverage current as each major slice lands

@@ -8,6 +8,7 @@ import {
   createSession,
   decideCodeTrustApproval,
   deleteSession,
+  fetchAiProviders,
   fetchBuildStatus,
   fetchCodeTrustApprovals,
   fetchCodeTrustSummary,
@@ -26,12 +27,15 @@ import {
   restartRuntime,
   resumeRuntime,
   resizeTerminal,
+  runAiSmokeTest,
   startRuntimeBuild,
   startRuntime,
   stopBuild,
   stopRuntime,
   subscribeSessiondEvents,
   updateSession,
+  type AiProviderSummary,
+  type AiTestResult,
   type CodeTrustApproval,
   type BuildStatus,
   type CodeTrustSummary,
@@ -510,6 +514,9 @@ function renderRightPanel(
   codeTrustApprovals: CodeTrustApproval[],
   approvalsBusy: boolean,
   approvalActionId: string,
+  aiProviderSummary: AiProviderSummary | null,
+  aiTestBusy: boolean,
+  aiTestResult: AiTestResult | null,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
   buildLog: string,
@@ -529,6 +536,7 @@ function renderRightPanel(
   onRestartRuntime: () => void,
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
+  onRunAiSmokeTest: () => void,
   onRefreshApprovals: () => void,
   onDecideApproval: (approvalId: string, decision: 'approved' | 'denied') => void,
 ) {
@@ -584,6 +592,69 @@ function renderRightPanel(
               <dd>{buildStatus.config || buildConfig}</dd>
             </div>
           </dl>
+        </section>
+        <section className="card compact-card">
+          <div className="section-titlebar">
+            <h3>AI</h3>
+            <span>{aiProviderSummary ? `${aiProviderSummary.readyProviderCount}/${aiProviderSummary.providerCount} ready` : 'No workspace config'}</span>
+          </div>
+          <p className="panel-copy">
+            {aiProviderSummary
+              ? 'Phase 5.9 now exposes provider manifests, readiness inspection, and a deterministic smoke-test lane for workspace-backed AI services.'
+              : 'Select a workspace to inspect the current AI provider manifest and run the deterministic smoke-test lane.'}
+          </p>
+          {aiProviderSummary ? (
+            <>
+              <dl className="fact-list">
+                <div>
+                  <dt>Config</dt>
+                  <dd>{aiProviderSummary.configPath}</dd>
+                </div>
+                <div>
+                  <dt>Source</dt>
+                  <dd>{aiProviderSummary.configSource}</dd>
+                </div>
+                <div>
+                  <dt>Default</dt>
+                  <dd>{aiProviderSummary.defaultProviderId || 'none configured'}</dd>
+                </div>
+                <div>
+                  <dt>Providers</dt>
+                  <dd>{`${aiProviderSummary.readyProviderCount} ready of ${aiProviderSummary.providerCount}`}</dd>
+                </div>
+              </dl>
+              <div className="inline-actions">
+                <button className="ghost-button ghost-button--sm" disabled={!activeSession || aiTestBusy} onClick={onRunAiSmokeTest} type="button">
+                  {aiTestBusy ? 'Running...' : 'Run smoke test'}
+                </button>
+              </div>
+              {aiProviderSummary.providers.length ? (
+                <div className="metric-stack">
+                  {aiProviderSummary.providers.map((provider) => (
+                    <article className="mini-card" key={provider.id}>
+                      <span>{`${provider.type} · ${provider.mode}`}</span>
+                      <strong>{provider.label || provider.id}</strong>
+                      <p>{provider.status}{provider.available ? ' · available' : ' · unavailable'}</p>
+                      <p>{provider.selectedModel || provider.model || provider.endpoint || provider.apiKeyEnv || 'No model or endpoint configured'}</p>
+                      <p>{provider.diagnostics[0] || 'Provider ready for inspection and smoke testing.'}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="panel-copy">
+                  No AI providers are configured for this workspace yet.
+                </p>
+              )}
+              {aiTestResult ? (
+                <article className="mini-card">
+                  <span>{`${aiTestResult.providerType} smoke test`}</span>
+                  <strong>{aiTestResult.providerId}</strong>
+                  <p>{aiTestResult.content || 'No response content returned.'}</p>
+                  <p>{`${aiTestResult.finishReason || 'completed'} · ${Math.max(0, Math.round(aiTestResult.durationMs))} ms`}</p>
+                </article>
+              ) : null}
+            </>
+          ) : null}
         </section>
         <section className="card compact-card">
           <div className="section-titlebar">
@@ -1669,6 +1740,9 @@ export default function App() {
   const [codeTrustApprovals, setCodeTrustApprovals] = useState<CodeTrustApproval[]>([]);
   const [approvalsBusy, setApprovalsBusy] = useState(false);
   const [approvalActionId, setApprovalActionId] = useState('');
+  const [aiProviderSummary, setAiProviderSummary] = useState<AiProviderSummary | null>(null);
+  const [aiTestBusy, setAiTestBusy] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<AiTestResult | null>(null);
   const [launchScene, setLaunchScene] = useState('sandbox');
   const [buildConfig, setBuildConfig] = useState<BuildConfig>('Debug');
   const [buildDir, setBuildDir] = useState('build/runtime');
@@ -1837,6 +1911,17 @@ export default function App() {
     }
   }
 
+  async function refreshAiProviders(sessionId: string) {
+    if (!sessionId) {
+      setAiProviderSummary(null);
+      setAiTestResult(null);
+      return;
+    }
+
+    const nextSummary = await fetchAiProviders(sessionId);
+    setAiProviderSummary(nextSummary);
+  }
+
   async function navigateDirPicker(nextPath: string) {
     setDirPickerBusy(true);
     setDirPickerError('');
@@ -1876,6 +1961,7 @@ export default function App() {
     await Promise.all([
       refreshExplorer(sessionId, '.'),
       refreshGit(sessionId),
+      refreshAiProviders(sessionId),
       refreshCodeTrust(sessionId),
       refreshCodeTrustApprovals(sessionId),
     ]);
@@ -1952,6 +2038,8 @@ export default function App() {
   useEffect(() => {
     if (!activeSessionId) {
       setGitStatus(emptyGitStatus);
+      setAiProviderSummary(null);
+      setAiTestResult(null);
       setCodeTrustSummary(null);
       setCodeTrustApprovals([]);
       return;
@@ -1959,12 +2047,17 @@ export default function App() {
 
     void Promise.all([
       refreshGit(activeSessionId),
+      refreshAiProviders(activeSessionId),
       refreshCodeTrust(activeSessionId),
       refreshCodeTrustApprovals(activeSessionId),
     ]).catch((error) => {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     });
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    setAiTestResult(null);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -2274,6 +2367,8 @@ export default function App() {
         setSelectedExplorerPath('');
         setSelectedFilePreview('');
         setGitStatus(emptyGitStatus);
+        setAiProviderSummary(null);
+        setAiTestResult(null);
         setCodeTrustSummary(null);
         setCodeTrustApprovals([]);
       }
@@ -2301,6 +2396,7 @@ export default function App() {
         await refreshExplorer(explorerSessionId, explorerPath);
         await Promise.all([
           refreshGit(explorerSessionId),
+          refreshAiProviders(explorerSessionId),
           refreshCodeTrust(explorerSessionId),
           refreshCodeTrustApprovals(explorerSessionId),
         ]);
@@ -2338,6 +2434,8 @@ export default function App() {
         setSelectedExplorerPath('');
         setSelectedFilePreview('');
         setGitStatus(emptyGitStatus);
+        setAiProviderSummary(null);
+        setAiTestResult(null);
         setCodeTrustSummary(null);
         setCodeTrustApprovals([]);
       }
@@ -2460,6 +2558,27 @@ export default function App() {
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleRunAiSmokeTest() {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setAiTestBusy(true);
+      const result = await runAiSmokeTest(activeSessionId, {
+        providerId: aiProviderSummary?.defaultProviderId || undefined,
+      });
+      setAiTestResult(result);
+      setSessiondState('connected');
+      setSessiondMessage(`AI smoke test completed via ${result.providerId}`);
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiTestBusy(false);
     }
   }
 
@@ -3287,6 +3406,9 @@ export default function App() {
               codeTrustApprovals,
               approvalsBusy,
               approvalActionId,
+              aiProviderSummary,
+              aiTestBusy,
+              aiTestResult,
               runtimeStatus,
               buildStatus,
               buildLog,
@@ -3306,6 +3428,7 @@ export default function App() {
               handleRestartRuntime,
               handlePauseRuntime,
               handleResumeRuntime,
+              handleRunAiSmokeTest,
               handleRefreshApprovals,
               handleDecideApproval,
             )}

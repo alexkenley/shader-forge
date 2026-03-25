@@ -73,6 +73,7 @@ Assistant entry points:
 - The right panel currently exposes `Runtime`, `Build`, and `Workspace` for non-`Scene` tabs, and it is intentionally hidden during `Scene` authoring so the editor can use that space directly.
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
 - The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
+- The `Workspace` right-panel tab now also exposes workspace-backed AI provider status, manifest source, ready-provider counts, and a deterministic smoke-test action.
 - The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, recent tracked artifacts, and pending code-trust approvals for the selected workspace plus the shared engine lane.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
 - Use `Game` and `Preview` to drive the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.
@@ -90,6 +91,7 @@ Assistant entry points:
 - Safe file list, file read, and file write APIs are now available inside the active session root.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
+- `GET /api/ai/providers` and `POST /api/ai/test` now expose the first Phase 5.9 AI provider inspection and smoke-test lane from `engine_sessiond`.
 - `GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.
 - `GET /api/code-trust/approvals` and `POST /api/code-trust/approvals/:id/decision` now expose the review queue for `review_required` code-trust operations.
 - Policy-relevant file writes now record origin and trust-tier metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`.
@@ -103,6 +105,9 @@ Assistant entry points:
 - `engine sessiond start` starts the local backend service.
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
+- `engine ai providers [--root <path>]` now prints the workspace AI provider manifest, default provider, readiness state, and diagnostics.
+- `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs the first shared AI smoke-test lane.
+- `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses that same first-slice request path for deterministic fake output and optional Ollama-backed prompts.
 - `engine policy inspect [--root <path>]` now prints the effective code-trust policy, supported authored hot-reload roots, and tracked artifacts for a workspace.
 - `engine policy check <action> [path] [--root <path>] [--actor ...] [--origin ...]` now dry-runs the same code-trust layer that sessiond enforces before risky assistant-facing transitions.
 - `engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]` now lists pending or historical code-trust approvals from a running backend.
@@ -114,6 +119,8 @@ Assistant entry points:
 - `engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane, lower conversion confidence, and low-confidence Blueprint package manifests when exporter-assisted Unreal data is unavailable in the current slice.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import`, `engine package`, and `engine export` are still later phases.
+- `ai/providers.toml` is now the current source-controlled provider manifest, with deterministic `fake` coverage for offline harnesses and an optional Ollama-backed local model lane.
+- `npm run test:ai-scaffold` is the deterministic harness for the first AI provider/status/test slice.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
 - The CLI migration lane is now split honestly: `detect` is report-only, while pinned engine lanes emit a first-pass Shader Forge project skeleton rather than claiming full parity.
 

@@ -15,6 +15,10 @@ import {
   inspectCodeTrustState,
   recordCodeTrustArtifact,
 } from '../shared/code-trust-policy.mjs';
+import {
+  inspectAiProviders,
+  testAiProvider,
+} from '../shared/engine-ai-service.mjs';
 
 function corsHeaders() {
   return {
@@ -379,6 +383,8 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, a
           'code-trust:summary',
           'code-trust:evaluate',
           'code-trust:approvals',
+          'ai:providers',
+          'ai:test',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -395,6 +401,30 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, a
 
       if (request.method === 'GET' && pathname === '/api/platform') {
         writeJson(response, 200, getPlatformInfo());
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/ai/providers') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const summary = await inspectAiProviders(resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot));
+        writeJson(response, 200, summary);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/ai/test') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const result = await testAiProvider(
+          resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+          {
+            providerId: typeof body.providerId === 'string' ? body.providerId.trim() : '',
+            prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : undefined,
+            systemPrompt: typeof body.systemPrompt === 'string' && body.systemPrompt.trim()
+              ? body.systemPrompt.trim()
+              : undefined,
+          },
+        );
+        writeJson(response, 200, result);
         return;
       }
 

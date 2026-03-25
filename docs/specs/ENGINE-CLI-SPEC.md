@@ -15,6 +15,9 @@ Current implemented commands:
 - `engine session list`
 - `engine file list`
 - `engine file read`
+- `engine ai providers`
+- `engine ai test`
+- `engine ai request`
 - `engine policy inspect`
 - `engine policy check`
 - `engine policy approvals`
@@ -54,6 +57,9 @@ The initial build/run/bake command family now targets the native runtime and coo
 - `engine policy check <action> [path] [--root <path>] [--actor ...] [--origin ...]` now dry-runs the shared code-trust layer so assistant-facing workflows can be validated without executing a risky transition first
 - `engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]` now lists queued review-required requests from a live `engine_sessiond`
 - `engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal
+- `engine ai providers [--root <path>]` now prints the effective AI provider manifest, provider readiness state, and current default provider for a workspace
+- `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs a workspace-backed smoke test through the shared AI layer
+- `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses the same first-slice request path for deterministic fake-provider output and optional Ollama-backed prompts
 
 `engine test`, `engine import`, `engine package`, and `engine export` remain reserved command space.
 
@@ -80,9 +86,6 @@ The current migration lane is split honestly:
 - `engine migrate godot`
 - `engine migrate report`
 
-## Future AI Commands
+## Remaining AI Commands
 
-- `engine ai providers`
-- `engine ai test`
-- `engine ai request`
 - `engine ai budgets`

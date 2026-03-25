@@ -136,6 +136,48 @@ export type CodeTrustApproval = {
   outcome: unknown;
 };
 
+export type AiProviderStatus = {
+  id: string;
+  type: string;
+  label: string;
+  enabled: boolean;
+  mode: string;
+  model: string | null;
+  endpoint: string | null;
+  apiKeyEnv: string | null;
+  supportedInSlice: boolean;
+  available: boolean;
+  status: string;
+  diagnostics: string[];
+  installedModels: string[];
+  selectedModel: string | null;
+};
+
+export type AiProviderSummary = {
+  rootPath: string;
+  configPath: string;
+  configSource: string;
+  defaultProviderId: string | null;
+  providerCount: number;
+  readyProviderCount: number;
+  providers: AiProviderStatus[];
+};
+
+export type AiTestResult = {
+  rootPath: string;
+  configPath: string;
+  providerId: string;
+  providerType: string;
+  model: string | null;
+  content: string;
+  finishReason: string;
+  durationMs: number;
+  requestId: string;
+  diagnostics: string[];
+  prompt: string;
+  systemPrompt: string;
+};
+
 export type CodeTrustSummary = {
   rootPath: string;
   policyPath: string;
@@ -360,6 +402,27 @@ export async function fetchCodeTrustSummary(sessionId: string) {
   const query = new URL('/api/code-trust/summary', getSessiondBaseUrl());
   query.searchParams.set('sessionId', sessionId);
   return requestJson<CodeTrustSummary>(`${query.pathname}${query.search}`);
+}
+
+export async function fetchAiProviders(sessionId: string) {
+  const query = new URL('/api/ai/providers', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  return requestJson<AiProviderSummary>(`${query.pathname}${query.search}`);
+}
+
+export async function runAiSmokeTest(
+  sessionId: string,
+  options: { providerId?: string; prompt?: string; systemPrompt?: string } = {},
+) {
+  return requestJson<AiTestResult>('/api/ai/test', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId,
+      ...(options.providerId ? { providerId: options.providerId } : {}),
+      ...(options.prompt ? { prompt: options.prompt } : {}),
+      ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
+    }),
+  });
 }
 
 export async function fetchCodeTrustApprovals(sessionId: string, state = 'pending') {
