@@ -26,6 +26,7 @@ import {
 import {
   captureProfilingSnapshot,
   inspectProfilingState,
+  listProfilingCaptures,
 } from '../shared/engine-profiling-service.mjs';
 import { requireCMakeCommand } from '../shared/cmake-command.mjs';
 import { readGitStatus } from '../engine-sessiond/lib/git-service.mjs';
@@ -56,7 +57,8 @@ Usage:
   engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
   engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]
-  engine package [--root <path>] [--preset <id>] [--package-root <path>]
+  engine package [--root <path>] [--preset <id>] [--package-root <path>] [--skip-bake] [--force-bake]
+  engine profile list [--root <path>] [--session <id>] [--base-url <url>] [--limit <count>]
   engine profile live [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>]
   engine profile capture [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>] [--label <name>] [--output <path>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
@@ -461,6 +463,8 @@ async function runPackageCommand(flags) {
   const result = await packageProjectRelease(resolvePolicyRoot(flags), {
     presetId: flags.preset ? String(flags.preset) : 'default',
     ...(flags['package-root'] ? { packageRoot: String(flags['package-root']) } : {}),
+    ...(flags['skip-bake'] ? { prepareCookedAssets: false } : {}),
+    ...(flags['force-bake'] ? { forceBake: true } : {}),
   });
   console.log(JSON.stringify(result, null, 2));
 }
@@ -497,6 +501,27 @@ async function runProfileLive(flags) {
   }
 
   const result = await inspectProfilingState(localProfileOptions(flags));
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function runProfileList(flags) {
+  if (shouldUseProfileSessiond(flags)) {
+    const baseUrl = resolvedBaseUrl(flags);
+    const query = new URL('/api/profile/captures', baseUrl);
+    if (flags.session) {
+      query.searchParams.set('sessionId', String(flags.session));
+    }
+    if (flags.limit) {
+      query.searchParams.set('limit', String(flags.limit));
+    }
+    const result = await requestJson(baseUrl, query.pathname + query.search);
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const result = await listProfilingCaptures(resolvePolicyRoot(flags), {
+    limit: flags.limit ? String(flags.limit) : '10',
+  });
   console.log(JSON.stringify(result, null, 2));
 }
 
@@ -558,6 +583,10 @@ export async function runCli(argv = process.argv.slice(2)) {
     const { flags } = parseFlags(argv.slice(2));
     if (!profileSubcommand) {
       throw new Error('engine profile requires a subcommand.');
+    }
+    if (profileSubcommand === 'list') {
+      await runProfileList(flags);
+      return;
     }
     if (profileSubcommand === 'live') {
       await runProfileLive(flags);

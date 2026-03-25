@@ -16,6 +16,7 @@ import {
   fetchGitStatus,
   fetchPackageInspect,
   fetchPlatformInfo,
+  fetchProfileCaptures,
   fetchProfileLive,
   fetchSessiondHealth,
   fetchRuntimeStatus,
@@ -46,6 +47,7 @@ import {
   type CodeTrustSummary,
   type PackageInspectSummary,
   type PlatformInfo,
+  type ProfilingCaptureList,
   type ProfilingLiveSummary,
   type SessionFileEntry,
   type SessionTerminalOpen,
@@ -520,6 +522,7 @@ function renderRightPanel(
   packageSummary: PackageInspectSummary | null,
   packageBusy: boolean,
   profileSummary: ProfilingLiveSummary | null,
+  profileCaptureList: ProfilingCaptureList | null,
   profileBusy: boolean,
   codeTrustSummary: CodeTrustSummary | null,
   codeTrustApprovals: CodeTrustApproval[],
@@ -686,7 +689,7 @@ function renderRightPanel(
           </div>
           <p className="panel-copy">
             {packageSummary
-              ? 'Phase 6.2 now exposes a text-backed export preset, release-layout inspection, and deterministic package generation. The current launchers bundle cooked outputs, but still run against packaged authored roots until cooked-runtime loading lands.'
+              ? 'Phase 6.2 now exposes a text-backed export preset, release-layout inspection, deterministic package generation, and safe auto-bake preparation when cooked outputs are missing. The current launchers bundle cooked outputs, but still run against packaged authored roots until cooked-runtime loading lands.'
               : 'Select a workspace to inspect the default export preset and generate the first reproducible release layout.'}
           </p>
           {packageSummary ? (
@@ -725,6 +728,18 @@ function renderRightPanel(
                   <dd>{packageSummary.platformHooks.join(', ') || 'none declared'}</dd>
                 </div>
                 <div>
+                  <dt>Prep</dt>
+                  <dd>
+                    {packageSummary.needsRuntimeBuild && packageSummary.needsAssetBake
+                      ? 'runtime build + asset bake required'
+                      : packageSummary.needsRuntimeBuild
+                        ? 'runtime build required'
+                        : packageSummary.needsAssetBake
+                          ? 'asset bake required'
+                          : 'none'}
+                  </dd>
+                </div>
+                <div>
                   <dt>Last package</dt>
                   <dd>{packageSummary.lastPackageAt ? `${formatSessionTimestamp(packageSummary.lastPackageAt)} · ${packageSummary.lastPackageFileCount} files` : 'not packaged yet'}</dd>
                 </div>
@@ -737,9 +752,21 @@ function renderRightPanel(
                   {packageBusy ? 'Working...' : 'Package release'}
                 </button>
               </div>
-              {packageSummary.warnings.length ? (
+              {packageSummary.needsAssetBake || packageSummary.needsRuntimeBuild || packageSummary.warnings.length ? (
                 <div className="metric-stack">
-                  {packageSummary.warnings.slice(0, 3).map((warning) => (
+                  {packageSummary.needsAssetBake ? (
+                    <article className="mini-card">
+                      <span>Auto prep</span>
+                      <strong>{`Package release will bake missing cooked outputs into ${packageSummary.cookedRootPath}.`}</strong>
+                    </article>
+                  ) : null}
+                  {packageSummary.needsRuntimeBuild ? (
+                    <article className="mini-card">
+                      <span>Manual prep</span>
+                      <strong>{`Build the runtime binary at ${packageSummary.runtimeBinaryPath} before packaging can succeed.`}</strong>
+                    </article>
+                  ) : null}
+                  {packageSummary.warnings.slice(0, 2).map((warning) => (
                     <article className="mini-card" key={warning}>
                       <span>Packaging warning</span>
                       <strong>{warning}</strong>
@@ -814,6 +841,13 @@ function renderRightPanel(
                   <strong>{`${profileSummary.runtime.logLineCount} runtime lines · ${profileSummary.build.logLineCount} build lines`}</strong>
                   <p>{profileSummary.workspace.packaging.ready ? `Release layout ready at ${profileSummary.workspace.packaging.packageRootPath}` : 'Complete build, bake, and package prerequisites before release-flow manual testing.'}</p>
                 </article>
+                {profileCaptureList?.captures.length ? (
+                  <article className="mini-card">
+                    <span>Recent captures</span>
+                    <strong>{`${profileCaptureList.captureCount} stored under ${profileCaptureList.captureRootPath}`}</strong>
+                    <p>{profileCaptureList.captures.slice(0, 2).map((capture) => `${capture.label} · ${formatSessionTimestamp(capture.capturedAt)}`).join(' | ')}</p>
+                  </article>
+                ) : null}
                 {profileSummary.recommendations.slice(0, 2).map((recommendation) => (
                   <article className="mini-card" key={recommendation}>
                     <span>Recommendation</span>
@@ -1944,6 +1978,7 @@ export default function App() {
   const [packageSummary, setPackageSummary] = useState<PackageInspectSummary | null>(null);
   const [packageBusy, setPackageBusy] = useState(false);
   const [profileSummary, setProfileSummary] = useState<ProfilingLiveSummary | null>(null);
+  const [profileCaptureList, setProfileCaptureList] = useState<ProfilingCaptureList | null>(null);
   const [profileBusy, setProfileBusy] = useState(false);
   const [codeTrustSummary, setCodeTrustSummary] = useState<CodeTrustSummary | null>(null);
   const [codeTrustApprovals, setCodeTrustApprovals] = useState<CodeTrustApproval[]>([]);
@@ -2147,11 +2182,16 @@ export default function App() {
   async function refreshProfiling(sessionId: string) {
     if (!sessionId) {
       setProfileSummary(null);
+      setProfileCaptureList(null);
       return;
     }
 
-    const nextSummary = await fetchProfileLive(sessionId);
+    const [nextSummary, nextCaptures] = await Promise.all([
+      fetchProfileLive(sessionId),
+      fetchProfileCaptures(sessionId, 6),
+    ]);
     setProfileSummary(nextSummary);
+    setProfileCaptureList(nextCaptures);
   }
 
   async function navigateDirPicker(nextPath: string) {
@@ -2276,6 +2316,7 @@ export default function App() {
       setAiTestResult(null);
       setPackageSummary(null);
       setProfileSummary(null);
+      setProfileCaptureList(null);
       setCodeTrustSummary(null);
       setCodeTrustApprovals([]);
       return;
@@ -2616,6 +2657,7 @@ export default function App() {
         setAiTestResult(null);
         setPackageSummary(null);
         setProfileSummary(null);
+        setProfileCaptureList(null);
         setCodeTrustSummary(null);
         setCodeTrustApprovals([]);
       }
@@ -2687,6 +2729,7 @@ export default function App() {
         setAiTestResult(null);
         setPackageSummary(null);
         setProfileSummary(null);
+        setProfileCaptureList(null);
         setCodeTrustSummary(null);
         setCodeTrustApprovals([]);
       }
@@ -2864,7 +2907,11 @@ export default function App() {
         refreshProfiling(activeSessionId),
       ]);
       setSessiondState('connected');
-      setSessiondMessage(`Packaged release layout at ${result.packageRootPath}`);
+      setSessiondMessage(
+        result.prerequisiteActions.length
+          ? `Packaged release layout at ${result.packageRootPath} after ${result.prerequisiteActions.length} prerequisite action${result.prerequisiteActions.length === 1 ? '' : 's'}`
+          : `Packaged release layout at ${result.packageRootPath}`,
+      );
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -3754,6 +3801,7 @@ export default function App() {
               packageSummary,
               packageBusy,
               profileSummary,
+              profileCaptureList,
               profileBusy,
               codeTrustSummary,
               codeTrustApprovals,

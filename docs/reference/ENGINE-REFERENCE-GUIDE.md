@@ -74,8 +74,8 @@ Assistant entry points:
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
 - The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
 - The `Workspace` right-panel tab now also exposes workspace-backed AI provider status, manifest source, ready-provider counts, and a deterministic smoke-test action.
-- The `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, and last-package summary for the selected workspace.
-- The `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the selected workspace, including runtime/build state, packaging readiness, and first profiling recommendations.
+- The `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, visible prep state, and last-package summary for the selected workspace.
+- The `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the selected workspace, including runtime/build state, packaging readiness, stored capture history, and first profiling recommendations.
 - The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals for the selected workspace plus the shared engine lane.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
 - Use `Game` and `Preview` to drive the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.
@@ -94,8 +94,8 @@ Assistant entry points:
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
 - `GET /api/ai/providers` and `POST /api/ai/test` now expose the first Phase 5.9 AI provider inspection and smoke-test lane from `engine_sessiond`.
-- `GET /api/package/inspect` and `POST /api/package/run` now expose the first Phase 6.2 release-layout inspect/package flow from `engine_sessiond`.
-- `GET /api/profile/live` and `POST /api/profile/capture` now expose the first Phase 6.3 diagnostics snapshot and capture-report lane from `engine_sessiond`.
+- `GET /api/package/inspect` and `POST /api/package/run` now expose the first Phase 6.2 release-layout inspect/package flow from `engine_sessiond`, including package prep state and optional auto-bake execution.
+- `GET /api/profile/live`, `GET /api/profile/captures`, and `POST /api/profile/capture` now expose the first Phase 6.3 diagnostics snapshot, capture-history, and capture-report lanes from `engine_sessiond`.
 - `GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.
 - `GET /api/code-trust/artifacts` and `POST /api/code-trust/artifacts/transition` now expose tracked artifact hashes, verification state, and explicit promote/quarantine transitions.
 - `GET /api/code-trust/approvals` and `POST /api/code-trust/approvals/:id/decision` now expose the review queue for `review_required` code-trust operations.
@@ -114,8 +114,9 @@ Assistant entry points:
 - `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs the first shared AI smoke-test lane.
 - `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses that same first-slice request path for deterministic fake output and optional Ollama-backed prompts.
 - `engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]` now prints the resolved export preset, path readiness, cooked-asset counts, and last-package summary for a workspace.
-- `engine package [--root <path>] [--preset <id>] [--package-root <path>]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, and a package report.
+- `engine package [--root <path>] [--preset <id>] [--package-root <path>] [--skip-bake] [--force-bake]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, and a package report; missing cooked outputs are auto-baked unless that step is explicitly skipped.
 - `engine profile live [--root <path>]` now prints the first diagnostics snapshot lane, and `--session` plus `--base-url` can switch that to a live `engine_sessiond` snapshot.
+- `engine profile list [--root <path>] [--session <id>] [--base-url <url>] [--limit <count>]` now lists persisted diagnostics captures from either a workspace or a live `engine_sessiond` session.
 - `engine profile capture [--root <path>] [--label <name>] [--output <path>]` now writes a shareable JSON diagnostics capture under `build/profiling/captures/`, and `--session` plus `--base-url` can capture a live sessiond-backed snapshot with recent runtime/build logs.
 - `engine policy inspect [--root <path>]` now prints the effective code-trust policy, supported authored hot-reload roots, and tracked artifacts for a workspace.
 - `engine policy check <action> [path] [--root <path>] [--actor ...] [--origin ...]` now dry-runs the same code-trust layer that sessiond enforces before risky assistant-facing transitions.
@@ -245,8 +246,8 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
-- `npm run test:packaging-scaffold` validates export-preset inspection plus release-layout generation through the CLI and `engine_sessiond`.
-- `npm run test:profiling-scaffold` validates live diagnostics snapshots plus persisted capture reports through the CLI and `engine_sessiond`.
+- `npm run test:packaging-scaffold` validates export-preset inspection, visible prep state, auto-bake packaging, and release-layout generation through the CLI and `engine_sessiond`.
+- `npm run test:profiling-scaffold` validates live diagnostics snapshots, persisted capture reports, and capture-history listing through the CLI and `engine_sessiond`.
 - `npm run test:code-trust-scaffold` validates the shared code-trust policy summary, artifact hashes plus verification state, promote/quarantine transitions, approval queue listing/decision flows, allowed authored-content hot reload, approved deferred apply/compile operations, and rejected assistant-triggered engine load paths.
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
 - `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.

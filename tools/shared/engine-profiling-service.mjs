@@ -7,6 +7,7 @@ import { inspectPackagingPreset } from './engine-packaging-service.mjs';
 
 const profileLiveSchema = 'shader_forge.profile_live';
 const profileCaptureSchema = 'shader_forge.profile_capture';
+const profileCaptureListSchema = 'shader_forge.profile_capture_list';
 
 function trim(value) {
   return String(value || '').trim();
@@ -76,6 +77,78 @@ function buildRecommendations({ runtimeStatus, buildStatus, packaging, git }) {
   return recommendations;
 }
 
+async function statIfExists(targetPath) {
+  try {
+    return await fs.stat(targetPath);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readJsonIfExists(targetPath) {
+  try {
+    return JSON.parse(await fs.readFile(targetPath, 'utf8'));
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function listProfilingCaptures(rootPath, options = {}) {
+  const resolvedRoot = path.resolve(options.rootPath || rootPath || process.cwd());
+  const captureRoot = path.join(resolvedRoot, 'build', 'profiling', 'captures');
+  const captureRootStats = await statIfExists(captureRoot);
+  if (!captureRootStats || !captureRootStats.isDirectory()) {
+    return {
+      schema: profileCaptureListSchema,
+      version: 1,
+      rootPath: resolvedRoot,
+      captureRootPath: relativePathFromRoot(resolvedRoot, captureRoot),
+      captureCount: 0,
+      captures: [],
+    };
+  }
+
+  const entries = await fs.readdir(captureRoot, { withFileTypes: true });
+  const captureFiles = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+  const limit = Math.max(1, Number.parseInt(String(options.limit || '10'), 10) || 10);
+  const captures = [];
+
+  for (const fileName of captureFiles.slice(0, limit)) {
+    const absolutePath = path.join(captureRoot, fileName);
+    const payload = await readJsonIfExists(absolutePath);
+    const stats = await fs.stat(absolutePath);
+    captures.push({
+      label: trim(payload?.label) || trim(fileName.replace(/\.json$/i, '')) || 'capture',
+      outputPath: relativePathFromRoot(resolvedRoot, absolutePath),
+      capturedAt: trim(payload?.capturedAt) || stats.mtime.toISOString(),
+      sessionId: trim(payload?.sessionId) || null,
+      runtimeState: trim(payload?.runtime?.state) || 'unknown',
+      runtimeScene: trim(payload?.runtime?.scene) || null,
+      buildState: trim(payload?.build?.state) || 'unknown',
+      size: stats.size,
+    });
+  }
+
+  return {
+    schema: profileCaptureListSchema,
+    version: 1,
+    rootPath: resolvedRoot,
+    captureRootPath: relativePathFromRoot(resolvedRoot, captureRoot),
+    captureCount: captureFiles.length,
+    captures,
+  };
+}
+
 export async function inspectProfilingState(options = {}) {
   const rootPath = path.resolve(options.rootPath || process.cwd());
   const runtimeStatus = options.runtimeStatus || {
@@ -108,6 +181,7 @@ export async function inspectProfilingState(options = {}) {
   const packaging = await inspectPackagingPreset(rootPath, {
     presetId: options.presetId || 'default',
   });
+  const recentCaptures = await listProfilingCaptures(rootPath, { limit: options.captureLimit || 3 });
 
   return {
     schema: profileLiveSchema,
@@ -168,6 +242,11 @@ export async function inspectProfilingState(options = {}) {
         warnings: packaging.warnings,
         cookedAssetCount: packaging.cookedAssetCount,
         lastPackageAt: packaging.lastPackageAt,
+      },
+      profiling: {
+        captureRootPath: recentCaptures.captureRootPath,
+        captureCount: recentCaptures.captureCount,
+        recentCaptures: recentCaptures.captures,
       },
     },
     recommendations: buildRecommendations({

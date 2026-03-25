@@ -28,6 +28,7 @@ import {
 import {
   captureProfilingSnapshot,
   inspectProfilingState,
+  listProfilingCaptures,
 } from '../shared/engine-profiling-service.mjs';
 
 function corsHeaders() {
@@ -439,6 +440,7 @@ function createRouter({
           'package:run',
           'profile:live',
           'profile:capture',
+          'profile:list',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -504,11 +506,15 @@ function createRouter({
         const packageRoot = typeof body.packageRoot === 'string' && body.packageRoot.trim()
           ? body.packageRoot.trim()
           : '';
+        const forceBake = body.forceBake === true;
+        const prepareCookedAssets = body.prepareCookedAssets !== false;
         const report = await packageProjectRelease(
           resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
           {
             presetId,
             ...(packageRoot ? { packageRoot } : {}),
+            forceBake,
+            prepareCookedAssets,
           },
         );
         writeJson(response, 200, report);
@@ -529,6 +535,17 @@ function createRouter({
           ...diagnosticsRecorder.snapshot(),
         });
         writeJson(response, 200, profile);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/profile/captures') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const limit = Number.parseInt(searchParams.get('limit') || '10', 10);
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot);
+        const captures = await listProfilingCaptures(rootPath, {
+          limit: Number.isFinite(limit) ? limit : 10,
+        });
+        writeJson(response, 200, captures);
         return;
       }
 

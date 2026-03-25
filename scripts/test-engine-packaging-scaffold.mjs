@@ -36,17 +36,34 @@ const exportInspect = await runCli(['export', 'inspect', '--root', tempProjectRo
 assert.equal(exportInspect.ready, true);
 assert.equal(exportInspect.presetId, 'default');
 assert.equal(exportInspect.cookedAssetCount, 1);
+assert.equal(exportInspect.needsAssetBake, false);
+
+await fs.rm(path.join(tempProjectRoot, 'build', 'cooked'), { recursive: true, force: true });
+
+const inspectBeforeBake = await runCli(['export', 'inspect', '--root', tempProjectRoot]);
+assert.equal(inspectBeforeBake.ready, false);
+assert.equal(inspectBeforeBake.needsAssetBake, true);
+assert.equal(inspectBeforeBake.cookedAssetCount, 0);
 
 const packageReport = await runCli(['package', '--root', tempProjectRoot]);
 assert.equal(packageReport.presetId, 'default');
 assert.ok(packageReport.fileCount >= 10);
 assert.match(packageReport.unixLauncherPath, /run-package\.sh$/);
 assert.match(packageReport.windowsLauncherPath, /run-package\.cmd$/);
+assert.equal(packageReport.prerequisiteActions.length, 1);
+assert.equal(packageReport.prerequisiteActions[0].id, 'asset_bake');
+assert.equal(packageReport.prerequisiteActions[0].outputRoot, 'build/cooked');
+assert.equal(packageReport.prerequisiteActions[0].reportPath, 'build/cooked/asset-pipeline-report.json');
 
 const writtenPackageReport = JSON.parse(
   await fs.readFile(path.join(tempProjectRoot, packageReport.reportPath), 'utf8'),
 );
 assert.equal(writtenPackageReport.fileCount, packageReport.fileCount);
+assert.equal(writtenPackageReport.prerequisiteActions.length, 1);
+
+const inspectAfterBake = await runCli(['export', 'inspect', '--root', tempProjectRoot]);
+assert.equal(inspectAfterBake.ready, true);
+assert.equal(inspectAfterBake.needsAssetBake, false);
 
 const service = await startEngineSessiond({
   host: '127.0.0.1',
@@ -71,20 +88,24 @@ try {
   );
   assert.equal(inspectPayload.ready, true);
   assert.equal(inspectPayload.packageRootPath, 'build/package/default');
+  assert.equal(inspectPayload.needsAssetBake, false);
 
   const runPayload = await requestJsonNoAuth(`${service.baseUrl}/api/package/run`, 'POST', {
     sessionId,
+    forceBake: true,
   });
   assert.equal(runPayload.presetId, 'default');
   assert.equal(runPayload.packageRootPath, 'build/package/default');
   assert.ok(runPayload.fileCount >= 10);
+  assert.equal(runPayload.prerequisiteActions.length, 1);
+  assert.equal(runPayload.prerequisiteActions[0].id, 'asset_bake');
 
   await fs.access(path.join(tempProjectRoot, 'build', 'package', 'default', 'run-package.sh'));
   await fs.access(path.join(tempProjectRoot, 'build', 'package', 'default', 'config', 'runtime-launch.json'));
 
   console.log('Engine packaging scaffold passed.');
-  console.log('- Verified default export-preset inspection through the engine CLI and engine_sessiond');
-  console.log('- Verified packaging emits a reproducible release layout with launch scripts, packaged authored roots, bundled cooked outputs, and a package report');
+  console.log('- Verified default export-preset inspection exposes missing cooked-output prep state through the engine CLI and engine_sessiond');
+  console.log('- Verified packaging auto-bakes cooked outputs when needed, records prerequisite actions, and emits a reproducible release layout with launch scripts, packaged authored roots, bundled cooked outputs, and a package report');
 } finally {
   await service.close();
 }

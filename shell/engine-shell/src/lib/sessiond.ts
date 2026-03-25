@@ -211,6 +211,8 @@ export type PackageInspectSummary = {
   physicsBodyCount: number;
   lastPackageAt: string | null;
   lastPackageFileCount: number;
+  needsRuntimeBuild: boolean;
+  needsAssetBake: boolean;
   ready: boolean;
   warnings: string[];
   runtimeBinaryExists: boolean;
@@ -252,6 +254,13 @@ export type PackageReport = {
   animationClipCount: number;
   animationGraphCount: number;
   physicsBodyCount: number;
+  prerequisiteActions: Array<{
+    id: string;
+    status: string;
+    message: string;
+    outputRoot?: string;
+    reportPath?: string;
+  }>;
   warnings: string[];
   hookResults: Array<{
     id: string;
@@ -332,6 +341,11 @@ export type ProfilingLiveSummary = {
       cookedAssetCount: number;
       lastPackageAt: string | null;
     };
+    profiling: {
+      captureRootPath: string;
+      captureCount: number;
+      recentCaptures: ProfilingCaptureList['captures'];
+    };
   };
   recommendations: string[];
 };
@@ -339,6 +353,24 @@ export type ProfilingLiveSummary = {
 export type ProfilingCapture = ProfilingLiveSummary & {
   label: string;
   outputPath: string;
+};
+
+export type ProfilingCaptureList = {
+  schema: string;
+  version: number;
+  rootPath: string;
+  captureRootPath: string;
+  captureCount: number;
+  captures: Array<{
+    label: string;
+    outputPath: string;
+    capturedAt: string;
+    sessionId: string | null;
+    runtimeState: string;
+    runtimeScene: string | null;
+    buildState: string;
+    size: number;
+  }>;
 };
 
 export type CodeTrustSummary = {
@@ -621,7 +653,12 @@ export async function fetchPackageInspect(sessionId: string, presetId = 'default
 
 export async function runPackageRelease(
   sessionId: string,
-  options: { presetId?: string; packageRoot?: string } = {},
+  options: {
+    presetId?: string;
+    packageRoot?: string;
+    prepareCookedAssets?: boolean;
+    forceBake?: boolean;
+  } = {},
 ) {
   return requestJson<PackageReport>('/api/package/run', {
     method: 'POST',
@@ -629,6 +666,8 @@ export async function runPackageRelease(
       sessionId,
       ...(options.presetId ? { presetId: options.presetId } : {}),
       ...(options.packageRoot ? { packageRoot: options.packageRoot } : {}),
+      ...(options.prepareCookedAssets === false ? { prepareCookedAssets: false } : {}),
+      ...(options.forceBake ? { forceBake: true } : {}),
     }),
   });
 }
@@ -653,6 +692,13 @@ export async function captureProfile(
       ...(options.outputPath ? { outputPath: options.outputPath } : {}),
     }),
   });
+}
+
+export async function fetchProfileCaptures(sessionId: string, limit = 10) {
+  const query = new URL('/api/profile/captures', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  query.searchParams.set('limit', String(limit));
+  return requestJson<ProfilingCaptureList>(`${query.pathname}${query.search}`);
 }
 
 export async function fetchCodeTrustApprovals(sessionId: string, state = 'pending') {

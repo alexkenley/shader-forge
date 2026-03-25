@@ -35,10 +35,11 @@ Recommended first stack:
 The first Phase 6.3 checkpoint is now real:
 
 - `engine profile live` now emits a diagnostics snapshot for a workspace, and it can switch to a live `engine_sessiond` snapshot when pointed at a running backend session
+- `engine profile list` now exposes persisted diagnostics-capture history for either a workspace or a live `engine_sessiond` session
 - `engine profile capture` now writes a shareable JSON report under `build/profiling/captures/`
-- the current snapshot records runtime/build state, recent runtime/build log tails when sessiond is present, git summary, code-trust counts, AI-provider readiness, packaging readiness, and manual next-step recommendations
-- `engine_sessiond` now exposes `GET /api/profile/live` and `POST /api/profile/capture`
-- the shell `Workspace` tab now exposes the same live snapshot and capture-report actions
+- the current snapshot records runtime/build state, recent runtime/build log tails when sessiond is present, git summary, code-trust counts, AI-provider readiness, packaging readiness, stored-capture history, and manual next-step recommendations
+- `engine_sessiond` now exposes `GET /api/profile/live`, `GET /api/profile/captures`, and `POST /api/profile/capture`
+- the shell `Workspace` tab now exposes the same live snapshot, recent-capture history, and capture-report actions
 - deterministic harness coverage now exists for the profiling/diagnostics scaffold
 
 ## Current Boundary

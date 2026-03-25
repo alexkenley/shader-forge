@@ -135,8 +135,8 @@ What is already done:
 - The native runtime now has a first authored-content reload lane for manual iteration: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps so external-window testing can follow shell edits without a full restart.
 - The native runtime now resolves effect-capable interaction targets from the current view/crosshair and exposes first triggered-effect feedback plus effect-descriptor-backed logs when the operator presses Enter or left-clicks on a target.
 - The native runtime now has a first widened engine-owned save lane under `saved/runtime/`: `F8` writes the active quick slot, `F9` reloads it, `F11`/`F12` cycle `quickslot_01` through `quickslot_03`, and the shell/session-root launch path keeps that save data scoped to the active project instead of mixing it with authored content.
-- Phase 6.2 has now started through `tooling/export-presets/default.export-preset.toml`, `engine export inspect`, `engine package`, sessiond-backed package inspect/run routes, shell-side workspace packaging controls, packaged authored runtime roots plus bundled cooked outputs under `build/package/default/`, generated launch scripts, and `test:packaging-scaffold`.
-- Phase 6.3 has now started through `engine profile live`, `engine profile capture`, sessiond-backed live/capture routes, shell-side workspace diagnostics controls, recent runtime/build log preservation for live captures, and `test:profiling-scaffold`.
+- Phase 6.2 has now started through `tooling/export-presets/default.export-preset.toml`, `engine export inspect`, `engine package`, sessiond-backed package inspect/run routes, shell-side workspace packaging controls, visible packaging prep state, auto-baked cooked outputs under `build/cooked/` when missing, packaged authored runtime roots plus bundled cooked outputs under `build/package/default/`, generated launch scripts, and `test:packaging-scaffold`.
+- Phase 6.3 has now started through `engine profile live`, `engine profile list`, `engine profile capture`, sessiond-backed live/list/capture routes, shell-side workspace diagnostics controls, recent runtime/build log preservation for live captures, stored capture history, and `test:profiling-scaffold`.
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
@@ -849,13 +849,14 @@ Scope:
 
 Current checkpoint:
 - a source-controlled default export preset now exists under `tooling/export-presets/default.export-preset.toml`
-- `engine export inspect` now resolves the effective preset, validates runtime/authored/cooked prerequisites, reports cooked-asset counts, and surfaces the last package summary
+- `engine export inspect` now resolves the effective preset, validates runtime/authored/cooked prerequisites, reports cooked-asset counts, surfaces the last package summary, and explicitly reports whether runtime build or asset-bake prep is still needed
 - `engine package` now emits the first reproducible release-layout scaffold under `build/package/<preset>/`
+- `engine package` now auto-bakes missing cooked outputs by default and records those prerequisite actions in the package report
 - the current release layout bundles the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, the resolved export preset, a runtime-launch manifest, and a package report
-- `engine_sessiond` plus the shell `Workspace` tab now expose the same inspect/package flow for workspace-backed operators
+- `engine_sessiond` plus the shell `Workspace` tab now expose the same inspect/package flow for workspace-backed operators, including visible prep state before packaging
 
 Still ahead inside this phase:
-- explicit build-and-bake orchestration instead of assuming prerequisites already exist
+- explicit runtime-build orchestration instead of assuming the binary already exists
 - richer preset families plus per-platform release variants beyond the default desktop lane
 - archive/installer generation, signing hooks, and real platform hook execution beyond the current declared-only metadata
 - cooked-runtime loading so final release launchers stop depending on packaged authored roots
@@ -883,15 +884,16 @@ Scope:
 
 Current checkpoint:
 - `engine profile live` now exposes the first diagnostics snapshot lane, and it can switch to a live `engine_sessiond` snapshot for an active workspace session
+- `engine profile list` now exposes stored diagnostics-capture history for either a workspace or a live `engine_sessiond` session
 - `engine profile capture` now writes shareable JSON reports under `build/profiling/captures/`
-- the current snapshot records runtime/build state, recent runtime/build log tails when sessiond is present, git summary, code-trust counts, AI-provider readiness, packaging readiness, and explicit next-step recommendations
-- `engine_sessiond` plus the shell `Workspace` tab now expose the same live/capture workflow
+- the current snapshot records runtime/build state, recent runtime/build log tails when sessiond is present, git summary, code-trust counts, AI-provider readiness, packaging readiness, stored capture history, and explicit next-step recommendations
+- `engine_sessiond` plus the shell `Workspace` tab now expose the same live/list/capture workflow
 
 Still ahead inside this phase:
 - Tracy integration for CPU/GPU markers, memory, and lock diagnostics
 - RenderDoc capture launch/save flows and explicit external debugger orchestration
 - native Dear ImGui profiling panels and runtime inspection overlays beyond the current shell-side snapshot lane
-- richer performance-regression history, comparison, and sharing workflows beyond standalone JSON captures
+- richer performance-regression comparison and sharing workflows beyond the current capture-list plus standalone JSON reports
 
 Reference inputs:
 - for profiling stack and workflow shape, consult the [Profiling borrow guide](../docs/guides/ENGINE-PROFILING-BORROW-GUIDE.md)

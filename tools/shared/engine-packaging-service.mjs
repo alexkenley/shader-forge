@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
+import { bakeAssetPipeline } from '../engine-cli/lib/asset-pipeline.mjs';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -389,6 +390,33 @@ function buildWarnings(summary) {
   return warnings;
 }
 
+async function ensureCookedAssets(rootPath, summary, options = {}) {
+  const actions = [];
+  const shouldBake = options.forceBake || (options.prepareCookedAssets !== false && summary.needsAssetBake);
+  if (!shouldBake) {
+    return actions;
+  }
+
+  const report = await bakeAssetPipeline({
+    repoRoot,
+    contentRoot: path.join(rootPath, summary.contentRootPath),
+    audioRoot: path.join(rootPath, summary.audioRootPath),
+    animationRoot: path.join(rootPath, summary.animationRootPath),
+    physicsRoot: path.join(rootPath, summary.physicsRootPath),
+    foundationPath: path.join(rootPath, summary.dataFoundationPath),
+    outputRoot: path.join(rootPath, summary.cookedRootPath),
+    reportPath: path.join(rootPath, summary.assetReportPath),
+  });
+  actions.push({
+    id: 'asset_bake',
+    status: 'completed',
+    message: `Baked ${report.bakedAssets.length} content asset(s) into ${summary.cookedRootPath}.`,
+    outputRoot: summary.cookedRootPath,
+    reportPath: summary.assetReportPath,
+  });
+  return actions;
+}
+
 export async function inspectPackagingPreset(rootPath, options = {}) {
   const { rootPath: resolvedRoot, presetId, presetPath, presetSource, preset } = await loadPackagingPreset(
     rootPath,
@@ -469,6 +497,8 @@ export async function inspectPackagingPreset(rootPath, options = {}) {
     physicsBodyCount: assetSummary.physicsBodyCount,
     lastPackageAt: typeof lastPackageReport?.packagedAt === 'string' ? lastPackageReport.packagedAt : null,
     lastPackageFileCount: Number.isFinite(lastPackageReport?.fileCount) ? Number(lastPackageReport.fileCount) : 0,
+    needsRuntimeBuild: !existence.runtimeBinaryExists,
+    needsAssetBake: !existence.cookedRootExists || !assetReport,
     ready: warnings.length === 0,
     warnings,
     ...existence,
@@ -476,7 +506,11 @@ export async function inspectPackagingPreset(rootPath, options = {}) {
 }
 
 export async function packageProjectRelease(rootPath, options = {}) {
-  const summary = await inspectPackagingPreset(rootPath, options);
+  let summary = await inspectPackagingPreset(rootPath, options);
+  const prerequisiteActions = await ensureCookedAssets(summary.rootPath, summary, options);
+  if (prerequisiteActions.length) {
+    summary = await inspectPackagingPreset(rootPath, options);
+  }
   if (!summary.ready) {
     throw new Error(`Packaging prerequisites are missing:\n- ${summary.warnings.join('\n- ')}`);
   }
@@ -571,6 +605,7 @@ export async function packageProjectRelease(rootPath, options = {}) {
     animationClipCount: summary.animationClipCount,
     animationGraphCount: summary.animationGraphCount,
     physicsBodyCount: summary.physicsBodyCount,
+    prerequisiteActions,
     warnings: buildWarnings(summary),
     hookResults,
     files,

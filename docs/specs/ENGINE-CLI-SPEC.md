@@ -20,6 +20,7 @@ Current implemented commands:
 - `engine ai request`
 - `engine export inspect`
 - `engine package`
+- `engine profile list`
 - `engine profile live`
 - `engine profile capture`
 - `engine policy inspect`
@@ -71,9 +72,10 @@ The initial build/run/bake command family now targets the native runtime and coo
 - `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs a workspace-backed smoke test through the shared AI layer
 - `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses the same first-slice request path for deterministic fake-provider output and optional Ollama-backed prompts
 - `engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]` now prints the resolved export preset, packaging prerequisites, cooked-asset counts, and last package summary for a workspace
-- `engine package [--root <path>] [--preset <id>] [--package-root <path>]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the current runtime binary, packaged authored runtime roots, cooked outputs, launch scripts, and a package report
+- `engine package [--root <path>] [--preset <id>] [--package-root <path>] [--skip-bake] [--force-bake]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the current runtime binary, packaged authored runtime roots, cooked outputs, launch scripts, and a package report; missing cooked outputs are auto-baked unless that step is explicitly skipped
+- `engine profile list [--root <path>] [--session <id>] [--base-url <url>] [--limit <count>]` now lists persisted diagnostics captures from either a workspace or a live `engine_sessiond` session
 - `engine profile live [--root <path>]` now prints the first diagnostics snapshot lane, including runtime/build state, git summary, AI/code-trust summary, packaging readiness, and recommendations; `--session` plus `--base-url` can switch that to a live `engine_sessiond` snapshot
-- `engine profile capture [--root <path>] [--label <name>] [--output <path>]` now writes a shareable JSON diagnostics capture under `build/profiling/captures/`, and `--session` plus `--base-url` can capture a live sessiond-backed runtime/build snapshot with recent logs
+- `engine profile capture [--root <path>] [--label <name>] [--output <path>]` now writes a shareable JSON diagnostics capture under `build/profiling/captures/`, and `--session` plus `--base-url` can capture a live sessiond-backed runtime/build snapshot with recent logs plus later list that history
 
 `engine test` and `engine import` remain reserved command space.
 

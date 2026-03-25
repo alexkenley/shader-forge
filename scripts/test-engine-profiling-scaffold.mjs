@@ -85,6 +85,7 @@ try {
   assert.equal(health.ok, true);
   assert.ok(health.capabilities.includes('profile:live'));
   assert.ok(health.capabilities.includes('profile:capture'));
+  assert.ok(health.capabilities.includes('profile:list'));
 
   const createSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
     name: 'profile-project',
@@ -152,9 +153,49 @@ try {
   assert.equal(offlineCapturePayload.runtime.state, 'stopped');
   await fs.access(path.join(tempProjectRoot, offlineCapturePayload.outputPath));
 
+  const sessiondCaptureList = await requestJsonNoAuth(
+    `${service.baseUrl}/api/profile/captures?sessionId=${encodeURIComponent(sessionId)}&limit=5`,
+  );
+  assert.ok(sessiondCaptureList.captureCount >= 3);
+  assert.ok(sessiondCaptureList.captures.some((capture) => capture.label === 'sessiond-live'));
+  assert.ok(sessiondCaptureList.captures.some((capture) => capture.label === 'cli-live'));
+  assert.ok(sessiondCaptureList.captures.some((capture) => capture.label === 'offline'));
+
+  const cliCaptureList = await runCli([
+    'profile',
+    'list',
+    '--session',
+    sessionId,
+    '--base-url',
+    service.baseUrl,
+    '--limit',
+    '5',
+  ]);
+  assert.ok(cliCaptureList.captureCount >= 3);
+  assert.ok(cliCaptureList.captures.some((capture) => capture.label === 'sessiond-live'));
+  assert.ok(cliCaptureList.captures.some((capture) => capture.label === 'cli-live'));
+
+  const offlineCaptureList = await runCli([
+    'profile',
+    'list',
+    '--root',
+    tempProjectRoot,
+    '--limit',
+    '5',
+  ]);
+  assert.ok(offlineCaptureList.captureCount >= 3);
+  assert.ok(offlineCaptureList.captures.some((capture) => capture.label === 'offline'));
+
+  const refreshedLivePayload = await requestJsonNoAuth(
+    `${service.baseUrl}/api/profile/live?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.ok(refreshedLivePayload.workspace.profiling.captureCount >= 3);
+  assert.ok(refreshedLivePayload.workspace.profiling.recentCaptures.some((capture) => capture.label === 'offline'));
+
   console.log('Engine profiling scaffold passed.');
   console.log('- Verified live diagnostic inspection through engine_sessiond and the engine CLI');
   console.log('- Verified profiling captures persist runtime/build status, recent logs, package readiness, and workspace diagnostics into shareable JSON reports');
+  console.log('- Verified stored capture history is queryable through engine_sessiond, the engine CLI, and live profiling summaries');
 } finally {
   await service.close();
 }
