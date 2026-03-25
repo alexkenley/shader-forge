@@ -200,14 +200,30 @@ export type CodeTrustSummary = {
     assistantActions: Record<string, string>;
   }>;
   trackedArtifactCount: number;
-  trackedArtifacts: Array<{
-    path: string;
-    origin: string;
-    targetTier: string;
-    targetKind: string;
-    lastAction: string;
-    updatedAt: string;
-  }>;
+  promotedArtifactCount: number;
+  quarantinedArtifactCount: number;
+  verificationIssueCount: number;
+  trackedArtifacts: CodeTrustArtifactRecord[];
+};
+
+export type CodeTrustArtifactRecord = {
+  path: string;
+  origin: string;
+  targetTier: string;
+  targetKind: string;
+  lastAction: string;
+  updatedAt: string;
+  hashAlgorithm: string;
+  contentHash: string;
+  promotionStatus: 'tracked' | 'promoted' | 'quarantined';
+  promotedAt: string | null;
+  promotedBy: string | null;
+  promotionNote: string;
+  quarantinedAt: string | null;
+  quarantinedBy: string | null;
+  quarantineNote: string;
+  verificationStatus: 'verified' | 'modified' | 'missing' | 'unhashed';
+  currentHash: string | null;
 };
 
 export type SessiondTerminalEvent =
@@ -278,6 +294,14 @@ export type SessiondTerminalEvent =
   | {
       type: 'code-trust.approval.resolved';
       data: CodeTrustApproval;
+    }
+  | {
+      type: 'code-trust.artifact.transitioned';
+      data: {
+        sessionId: string | null;
+        transition: 'promote' | 'quarantine';
+        artifact: CodeTrustArtifactRecord;
+      };
     };
 
 const DEFAULT_SESSIOND_BASE_URL = 'http://127.0.0.1:41741';
@@ -445,6 +469,25 @@ export async function decideCodeTrustApproval(
       body: JSON.stringify({ decision, decisionBy }),
     },
   );
+}
+
+export async function transitionCodeTrustArtifact(
+  sessionId: string,
+  path: string,
+  transition: 'promote' | 'quarantine',
+  decisionBy = 'human',
+  note = '',
+) {
+  return requestJson<{ artifact: CodeTrustArtifactRecord }>('/api/code-trust/artifacts/transition', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId,
+      path,
+      transition,
+      decisionBy,
+      ...(note ? { note } : {}),
+    }),
+  });
 }
 
 export async function openTerminal(payload: {

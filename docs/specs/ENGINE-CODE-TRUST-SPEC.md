@@ -1,6 +1,6 @@
 # Engine Code Trust Spec
 
-Status: approval workflow slice implemented
+Status: artifact verification and promotion slice implemented
 Date: 2026-03-25
 
 ## Purpose
@@ -12,6 +12,8 @@ This subsystem owns:
 - trust tiers for engine, project, assistant-generated, external-plugin, and unsafe-dev override paths
 - explicit policy decisions for apply, compile, load, install, and hot-reload requests
 - artifact-origin tracking for policy-relevant writes
+- artifact hashing and verification state for tracked files
+- explicit promote and quarantine transitions for reviewed artifacts
 - actionable diagnostics for blocked or review-gated transitions
 - explicit review queues plus replay for `review_required` transitions
 - deterministic verification for allowed, queued, approved, denied, and rejected paths
@@ -27,6 +29,8 @@ Current implemented surfaces:
 - shared policy evaluation in `tools/shared/code-trust-policy.mjs`
 - `GET /api/code-trust/summary`
 - `POST /api/code-trust/evaluate`
+- `GET /api/code-trust/artifacts`
+- `POST /api/code-trust/artifacts/transition`
 - `GET /api/code-trust/approvals`
 - `POST /api/code-trust/approvals/:id/decision`
 - policy enforcement on `POST /api/files/write`
@@ -34,9 +38,11 @@ Current implemented surfaces:
 - policy enforcement on `POST /api/runtime/start`
 - policy enforcement on `POST /api/runtime/restart`
 - CLI inspection through `engine policy inspect`
+- CLI artifact inspection through `engine policy artifacts`
 - CLI dry-run checks through `engine policy check`
 - CLI approval inspection and decisions through `engine policy approvals|approve|deny`
-- shell-side inspection and pending approval controls in the `Workspace` right-panel tab
+- CLI artifact promotion and quarantine through `engine policy promote|quarantine`
+- shell-side inspection, artifact promote/quarantine controls, and pending approval controls in the `Workspace` right-panel tab
 
 This slice still does not try to provide full sandboxing. It makes the trust boundary visible, queueable, and testable first.
 
@@ -91,8 +97,15 @@ Policy-relevant writes record:
 - target kind
 - last policy action
 - update timestamp
+- current tracked content hash
+- explicit promotion status: `tracked`, `promoted`, or `quarantined`
 
-This metadata is what the shell and CLI inspect today when they show tracked trust state.
+Inspect-time artifact state now also includes:
+
+- hash verification status: `verified`, `modified`, `missing`, or `unhashed`
+- promote/quarantine metadata including reviewer identity and note text
+
+Promoted artifacts now have an explicit trusted hash snapshot. If the file changes after promotion, later `load`, `install`, or `hot_reload` checks deny the transition until the artifact is reviewed again. Quarantined artifacts are always denied for those risky transitions until they are explicitly promoted again.
 
 ## Review Workflow
 
@@ -122,13 +135,16 @@ The shell currently uses the summary surface to show:
 - active policy source and path
 - active unsafe-dev overrides
 - supported hot-reload roots
-- the most recent tracked artifacts
+- the most recent tracked artifacts with hash verification and promote/quarantine state
+- inline promote and quarantine controls for tracked artifacts
 - pending code-trust approvals with inline approve and deny actions
 
 The CLI currently uses the same core for:
 
 - policy inspection without running `engine_sessiond`
+- full tracked-artifact inspection without running `engine_sessiond`
 - deterministic dry-run checks for future assistant workflows
+- explicit promote and quarantine transitions for tracked artifacts
 - approval listing and approval decisions against a running `engine_sessiond`
 
 ## Deterministic Verification
@@ -141,6 +157,8 @@ That harness verifies:
 
 - policy summary and dry-run surfaces
 - tracked assistant-generated artifact metadata
+- artifact hashes and current verification state
+- explicit promote and quarantine transitions for tracked artifacts
 - queued approval surfaces for assistant-triggered engine apply and compile requests
 - approved replay of deferred file-write and runtime-build operations
 - denied approval decisions without side effects
@@ -151,9 +169,9 @@ That harness verifies:
 
 This first slice still does not provide:
 
-- signed or hashed artifact verification
+- signed artifact verification
 - real plugin package verification
 - code hot reload or upgrade contracts
-- trust promotion workflows beyond visible policy edits
+- cryptographic signing keys or trust-promotion workflows beyond local explicit review metadata
 
 Those widening passes should land before Shader Forge treats assistant-driven code execution or plugin load as routine workflows.

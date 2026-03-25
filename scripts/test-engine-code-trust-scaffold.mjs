@@ -120,6 +120,7 @@ try {
   assert.ok(Array.isArray(health.capabilities));
   assert.ok(health.capabilities.includes('code-trust:summary'));
   assert.ok(health.capabilities.includes('code-trust:evaluate'));
+  assert.ok(health.capabilities.includes('code-trust:artifacts'));
   assert.ok(health.capabilities.includes('code-trust:approvals'));
 
   const createSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
@@ -164,6 +165,35 @@ try {
   assert.equal(summaryAfterWrite.trackedArtifactCount, 1);
   assert.equal(summaryAfterWrite.trackedArtifacts[0].path, 'generated/assistant/new_feature.ts');
   assert.equal(summaryAfterWrite.trackedArtifacts[0].origin, 'assistant_generated');
+  assert.equal(summaryAfterWrite.trackedArtifacts[0].promotionStatus, 'tracked');
+  assert.equal(summaryAfterWrite.trackedArtifacts[0].verificationStatus, 'verified');
+  assert.equal(summaryAfterWrite.trackedArtifacts[0].contentHash.length, 64);
+
+  const projectCodeWrite = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
+    sessionId,
+    path: 'games/demo/player_logic.ts',
+    content: 'export const playerLogic = true;\n',
+    policy: {
+      actor: 'assistant',
+      origin: 'assistant_generated',
+    },
+  });
+  assert.equal(projectCodeWrite.path, 'games/demo/player_logic.ts');
+  assert.equal(projectCodeWrite.codeTrust.allowed, true);
+  assert.equal(projectCodeWrite.codeTrust.effectiveOrigin, 'assistant_generated');
+
+  const deniedProjectLoadBeforePromotion = runCli([
+    'policy',
+    'check',
+    'load',
+    'games/demo/player_logic.ts',
+    '--root',
+    tempProjectRoot,
+    '--actor',
+    'assistant',
+  ]);
+  assert.equal(deniedProjectLoadBeforePromotion.decision, 'deny');
+  assert.equal(deniedProjectLoadBeforePromotion.effectiveOrigin, 'assistant_generated');
 
   const reviewedWrite = await postJson(`${service.baseUrl}/api/files/write`, {
     sessionId,
@@ -241,8 +271,93 @@ try {
   const summaryAfterApprovedWrite = await requestJsonNoAuth(
     `${service.baseUrl}/api/code-trust/summary?sessionId=${encodeURIComponent(sessionId)}`,
   );
-  assert.equal(summaryAfterApprovedWrite.trackedArtifactCount, 2);
+  assert.equal(summaryAfterApprovedWrite.trackedArtifactCount, 3);
   assert.equal(summaryAfterApprovedWrite.trackedArtifacts[0].path, 'engine/runtime/src/injected.cpp');
+
+  const codeTrustArtifacts = await requestJsonNoAuth(
+    `${service.baseUrl}/api/code-trust/artifacts?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.equal(codeTrustArtifacts.artifacts.length, 3);
+  const projectArtifactBeforePromotion = codeTrustArtifacts.artifacts.find(
+    (artifact) => artifact.path === 'games/demo/player_logic.ts',
+  );
+  assert.ok(projectArtifactBeforePromotion);
+  assert.equal(projectArtifactBeforePromotion.promotionStatus, 'tracked');
+  assert.equal(projectArtifactBeforePromotion.verificationStatus, 'verified');
+
+  const promotedProjectArtifact = await requestJsonNoAuth(
+    `${service.baseUrl}/api/code-trust/artifacts/transition`,
+    'POST',
+    {
+      sessionId,
+      path: 'games/demo/player_logic.ts',
+      transition: 'promote',
+      decisionBy: 'human',
+      note: 'Reviewed into project-owned gameplay code.',
+    },
+  );
+  assert.equal(promotedProjectArtifact.artifact.path, 'games/demo/player_logic.ts');
+  assert.equal(promotedProjectArtifact.artifact.promotionStatus, 'promoted');
+  assert.equal(promotedProjectArtifact.artifact.origin, 'project_authored');
+  assert.equal(promotedProjectArtifact.artifact.verificationStatus, 'verified');
+
+  const reviewRequiredProjectLoad = runCli([
+    'policy',
+    'check',
+    'load',
+    'games/demo/player_logic.ts',
+    '--root',
+    tempProjectRoot,
+    '--actor',
+    'assistant',
+  ]);
+  assert.equal(reviewRequiredProjectLoad.decision, 'review_required');
+  assert.equal(reviewRequiredProjectLoad.effectiveOrigin, 'project_authored');
+
+  await fs.writeFile(
+    path.join(tempProjectRoot, 'games', 'demo', 'player_logic.ts'),
+    'export const playerLogic = false;\n',
+    'utf8',
+  );
+  const modifiedPromotedLoad = runCli([
+    'policy',
+    'check',
+    'load',
+    'games/demo/player_logic.ts',
+    '--root',
+    tempProjectRoot,
+    '--actor',
+    'assistant',
+  ]);
+  assert.equal(modifiedPromotedLoad.decision, 'deny');
+  assert.equal(modifiedPromotedLoad.diagnostics[0].code, 'promoted_artifact_verification_failed');
+
+  const quarantinedProjectArtifact = runCli([
+    'policy',
+    'quarantine',
+    'games/demo/player_logic.ts',
+    '--root',
+    tempProjectRoot,
+    '--decision-by',
+    'human',
+    '--note',
+    'Hash mismatch detected during review.',
+  ]);
+  assert.equal(quarantinedProjectArtifact.promotionStatus, 'quarantined');
+  assert.equal(quarantinedProjectArtifact.quarantineNote, 'Hash mismatch detected during review.');
+
+  const quarantinedLoad = runCli([
+    'policy',
+    'check',
+    'load',
+    'games/demo/player_logic.ts',
+    '--root',
+    tempProjectRoot,
+    '--actor',
+    'assistant',
+  ]);
+  assert.equal(quarantinedLoad.decision, 'deny');
+  assert.equal(quarantinedLoad.diagnostics[0].code, 'artifact_quarantined');
 
   const approvedBuild = await runCliAsync([
     'policy',
@@ -274,8 +389,16 @@ try {
   assert.equal(deniedBuildDecision.approval.status, 'denied');
 
   const cliSummary = runCli(['policy', 'inspect', '--root', tempProjectRoot]);
-  assert.equal(cliSummary.trackedArtifactCount, 2);
-  assert.equal(cliSummary.trackedArtifacts[0].path, 'engine/runtime/src/injected.cpp');
+  assert.equal(cliSummary.trackedArtifactCount, 3);
+  assert.equal(cliSummary.quarantinedArtifactCount, 1);
+  assert.ok(cliSummary.verificationIssueCount >= 1);
+  assert.ok(cliSummary.trackedArtifacts.some((artifact) => artifact.path === 'engine/runtime/src/injected.cpp'));
+
+  const cliArtifacts = runCli(['policy', 'artifacts', '--root', tempProjectRoot]);
+  assert.equal(cliArtifacts.length, 3);
+  const cliProjectArtifact = cliArtifacts.find((artifact) => artifact.path === 'games/demo/player_logic.ts');
+  assert.equal(cliProjectArtifact.promotionStatus, 'quarantined');
+  assert.equal(cliProjectArtifact.verificationStatus, 'modified');
 
   const cliAllowedHotReload = runCli([
     'policy',
@@ -322,6 +445,7 @@ try {
   console.log('Engine code-trust scaffold passed.');
   console.log(`- Verified shared code-trust policy inspection through ${engineCliPath}`);
   console.log('- Verified assistant-generated artifacts are tracked and inspectable through engine_sessiond');
+  console.log('- Verified tracked artifacts now carry hashes, verification state, and explicit promote/quarantine transitions');
   console.log('- Verified assistant-triggered engine apply and compile requests queue explicit approvals that can be listed, approved, or denied');
   console.log('- Verified approved review-required operations execute their deferred file-write and runtime-build side effects');
   console.log('- Verified assistant-triggered engine load remains denied when the artifact origin is still assistant-generated');

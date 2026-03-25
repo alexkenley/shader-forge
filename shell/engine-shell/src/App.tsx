@@ -33,6 +33,7 @@ import {
   stopBuild,
   stopRuntime,
   subscribeSessiondEvents,
+  transitionCodeTrustArtifact,
   updateSession,
   type AiProviderSummary,
   type AiTestResult,
@@ -514,6 +515,7 @@ function renderRightPanel(
   codeTrustApprovals: CodeTrustApproval[],
   approvalsBusy: boolean,
   approvalActionId: string,
+  artifactActionPath: string,
   aiProviderSummary: AiProviderSummary | null,
   aiTestBusy: boolean,
   aiTestResult: AiTestResult | null,
@@ -539,6 +541,7 @@ function renderRightPanel(
   onRunAiSmokeTest: () => void,
   onRefreshApprovals: () => void,
   onDecideApproval: (approvalId: string, decision: 'approved' | 'denied') => void,
+  onTransitionArtifact: (path: string, transition: 'promote' | 'quarantine') => void,
 ) {
   const buildHint = buildSetupHint(buildStatus.error);
   const runtimeHint = nativeRuntimeSetupHint(buildLog, runtimeLog);
@@ -686,6 +689,18 @@ function renderRightPanel(
                   <dd>{codeTrustSummary.trackedArtifactCount} artifacts</dd>
                 </div>
                 <div>
+                  <dt>Promoted</dt>
+                  <dd>{codeTrustSummary.promotedArtifactCount}</dd>
+                </div>
+                <div>
+                  <dt>Quarantined</dt>
+                  <dd>{codeTrustSummary.quarantinedArtifactCount}</dd>
+                </div>
+                <div>
+                  <dt>Verify</dt>
+                  <dd>{codeTrustSummary.verificationIssueCount ? `${codeTrustSummary.verificationIssueCount} issues` : 'clean'}</dd>
+                </div>
+                <div>
                   <dt>Hot reload</dt>
                   <dd>{codeTrustSummary.supportedHotReloadRoots.join(', ') || 'none'}</dd>
                 </div>
@@ -694,9 +709,34 @@ function renderRightPanel(
                 <div className="metric-stack">
                   {codeTrustSummary.trackedArtifacts.slice(0, 3).map((artifact) => (
                     <article className="mini-card" key={artifact.path}>
-                      <span>{`${artifact.origin} -> ${artifact.targetTier}`}</span>
+                      <span>{`${artifact.origin} -> ${artifact.targetTier} · ${artifact.promotionStatus}`}</span>
                       <strong>{artifact.path}</strong>
+                      <p>{`${artifact.verificationStatus}${artifact.contentHash ? ` · ${artifact.contentHash.slice(0, 12)}` : ''}`}</p>
                       <p>{artifact.lastAction} · {formatSessionTimestamp(artifact.updatedAt)}</p>
+                      {artifact.promotionNote ? <p>{artifact.promotionNote}</p> : null}
+                      {artifact.quarantineNote ? <p>{artifact.quarantineNote}</p> : null}
+                      <div className="inline-actions">
+                        <button
+                          className="ghost-button ghost-button--sm"
+                          disabled={
+                            !activeSession
+                            || artifactActionPath === artifact.path
+                            || (artifact.promotionStatus === 'promoted' && artifact.verificationStatus === 'verified')
+                          }
+                          onClick={() => onTransitionArtifact(artifact.path, 'promote')}
+                          type="button"
+                        >
+                          Promote
+                        </button>
+                        <button
+                          className="ghost-button ghost-button--sm"
+                          disabled={!activeSession || artifactActionPath === artifact.path || artifact.promotionStatus === 'quarantined'}
+                          onClick={() => onTransitionArtifact(artifact.path, 'quarantine')}
+                          type="button"
+                        >
+                          Quarantine
+                        </button>
+                      </div>
                     </article>
                   ))}
                 </div>
@@ -1740,6 +1780,7 @@ export default function App() {
   const [codeTrustApprovals, setCodeTrustApprovals] = useState<CodeTrustApproval[]>([]);
   const [approvalsBusy, setApprovalsBusy] = useState(false);
   const [approvalActionId, setApprovalActionId] = useState('');
+  const [artifactActionPath, setArtifactActionPath] = useState('');
   const [aiProviderSummary, setAiProviderSummary] = useState<AiProviderSummary | null>(null);
   const [aiTestBusy, setAiTestBusy] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<AiTestResult | null>(null);
@@ -2171,6 +2212,13 @@ export default function App() {
       ) {
         if (!event.data.sessionId || event.data.sessionId === activeSessionId) {
           refreshApprovalPanelForActiveSession();
+        }
+        return;
+      }
+
+      if (event.type === 'code-trust.artifact.transitioned') {
+        if (!event.data.sessionId || event.data.sessionId === activeSessionId) {
+          void refreshCodeTrust(activeSessionId);
         }
       }
     });
@@ -2604,6 +2652,27 @@ export default function App() {
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setApprovalActionId('');
+    }
+  }
+
+  async function handleTransitionArtifact(path: string, transition: 'promote' | 'quarantine') {
+    if (!activeSessionId) {
+      return;
+    }
+
+    try {
+      setArtifactActionPath(path);
+      const result = await transitionCodeTrustArtifact(activeSessionId, path, transition);
+      await refreshCodeTrust(activeSessionId);
+      setSessiondState('connected');
+      setSessiondMessage(
+        `${transition === 'promote' ? 'Promoted' : 'Quarantined'} ${result.artifact.path}`,
+      );
+    } catch (error) {
+      setSessiondState('offline');
+      setSessiondMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setArtifactActionPath('');
     }
   }
 
@@ -3406,6 +3475,7 @@ export default function App() {
               codeTrustApprovals,
               approvalsBusy,
               approvalActionId,
+              artifactActionPath,
               aiProviderSummary,
               aiTestBusy,
               aiTestResult,
@@ -3431,6 +3501,7 @@ export default function App() {
               handleRunAiSmokeTest,
               handleRefreshApprovals,
               handleDecideApproval,
+              handleTransitionArtifact,
             )}
           </aside>
         ) : null}

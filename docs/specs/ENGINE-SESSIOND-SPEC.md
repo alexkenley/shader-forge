@@ -31,6 +31,8 @@ Current implemented surfaces:
 - `POST /api/ai/test`
 - `GET /api/code-trust/summary`
 - `POST /api/code-trust/evaluate`
+- `GET /api/code-trust/artifacts`
+- `POST /api/code-trust/artifacts/transition`
 - `GET /api/code-trust/approvals`
 - `POST /api/code-trust/approvals/:id/decision`
 - `GET /api/events`
@@ -68,6 +70,9 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - approving a deferred file write replays the stored request and records trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
 - approval lifecycle changes now stream through the same SSE event bus as runtime, build, and terminal events
 - policy-relevant artifact writes now record trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
+- tracked artifacts now also carry content hashes plus verification state so risky transitions can distinguish reviewed, modified, missing, and quarantined files
+- `GET /api/code-trust/artifacts` now exposes the full tracked-artifact list for a workspace instead of only the summary card slice
+- `POST /api/code-trust/artifacts/transition` now supports explicit `promote` and `quarantine` transitions, and those transitions emit SSE updates so shell trust state can refresh without polling hacks
 - sessiond now exposes workspace-backed AI provider inspection and smoke-test routes so the shell and harnesses can inspect `ai/providers.toml` without building their own provider clients
 - `GET /api/ai/providers` now reports manifest source, default provider, provider readiness, installed Ollama models when reachable, and diagnostics for unimplemented hosted-provider entries
 - `POST /api/ai/test` now runs the current first-slice smoke-test path through the shared AI layer, with deterministic fake-provider coverage and optional Ollama-backed requests

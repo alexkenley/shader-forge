@@ -13,7 +13,9 @@ import {
   codeTrustRepoRoot,
   evaluateCodeTrustAction,
   inspectCodeTrustState,
+  listCodeTrustArtifacts,
   recordCodeTrustArtifact,
+  transitionCodeTrustArtifact,
 } from '../shared/code-trust-policy.mjs';
 import {
   inspectAiProviders,
@@ -382,6 +384,7 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, a
           'build:lifecycle',
           'code-trust:summary',
           'code-trust:evaluate',
+          'code-trust:artifacts',
           'code-trust:approvals',
           'ai:providers',
           'ai:test',
@@ -464,6 +467,46 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, a
           origin: readCodeTrustOrigin(body),
         });
         writeJson(response, 200, evaluation);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/code-trust/artifacts') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const limit = Number.parseInt(searchParams.get('limit') || '64', 10);
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId);
+        const artifacts = await listCodeTrustArtifacts(rootPath, {
+          limit: Number.isFinite(limit) ? limit : 64,
+        });
+        writeJson(response, 200, { artifacts });
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/code-trust/artifacts/transition') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const relativePath = typeof body.path === 'string' ? body.path.trim() : '';
+        const transition = typeof body.transition === 'string' ? body.transition.trim() : '';
+        const decisionBy = typeof body.decisionBy === 'string' && body.decisionBy.trim()
+          ? body.decisionBy.trim()
+          : 'human';
+        const note = typeof body.note === 'string' ? body.note : '';
+        if (!relativePath) {
+          throw createHttpError(400, 'path is required.');
+        }
+
+        const artifact = await transitionCodeTrustArtifact({
+          rootPath: resolveCodeTrustRoot(sessionStore, sessionId),
+          relativePath,
+          transition,
+          decidedBy: decisionBy,
+          note,
+        });
+        eventHub.emit('code-trust.artifact.transitioned', {
+          sessionId: sessionId || null,
+          transition,
+          artifact,
+        });
+        writeJson(response, 200, { artifact });
         return;
       }
 

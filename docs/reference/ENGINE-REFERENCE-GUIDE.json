@@ -139,7 +139,7 @@
                 "The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.",
                 "The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.",
                 "The `Workspace` right-panel tab now also exposes workspace-backed AI provider status, manifest source, ready-provider counts, and a deterministic smoke-test action.",
-                "The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, recent tracked artifacts, and pending code-trust approvals for the selected workspace plus the shared engine lane."
+                "The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals for the selected workspace plus the shared engine lane."
               ]
             },
             {
@@ -188,6 +188,7 @@
                 "Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.",
                 "`GET /api/ai/providers` and `POST /api/ai/test` now expose the first Phase 5.9 AI provider inspection and smoke-test lane from `engine_sessiond`.",
                 "`GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.",
+                "`GET /api/code-trust/artifacts` and `POST /api/code-trust/artifacts/transition` now expose tracked artifact hashes, verification state, and explicit promote/quarantine transitions.",
                 "`GET /api/code-trust/approvals` and `POST /api/code-trust/approvals/:id/decision` now expose the review queue for `review_required` code-trust operations.",
                 "Policy-relevant file writes now record origin and trust-tier metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`.",
                 "Runtime build and runtime start/restart now pass through the same code-trust policy layer before compile or load transitions continue.",
@@ -236,8 +237,11 @@
                 "`engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses that same first-slice request path for deterministic fake output and optional Ollama-backed prompts.",
                 "`engine policy inspect [--root <path>]` now prints the effective code-trust policy, supported authored hot-reload roots, and tracked artifacts for a workspace.",
                 "`engine policy check <action> [path] [--root <path>] [--actor ...] [--origin ...]` now dry-runs the same code-trust layer that sessiond enforces before risky assistant-facing transitions.",
+                "`engine policy artifacts [--root <path>]` now prints tracked artifact hashes, verification state, and promote/quarantine metadata for a workspace.",
                 "`engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]` now lists pending or historical code-trust approvals from a running backend.",
                 "`engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal.",
+                "`engine policy promote <path> [--root <path>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact into a reviewed project-owned state and refreshes its trusted hash.",
+                "`engine policy quarantine <path> [--root <path>] [--decision-by <name>] [--note <text>]` now quarantines a tracked artifact so later risky transitions keep denying it until it is explicitly promoted again.",
                 "`engine build runtime` configures and builds the native runtime with CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`.",
                 "`engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.",
                 "`engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.",
@@ -554,7 +558,7 @@
                 "`npm test` runs the preserved shell smoke harness.",
                 "`npm run test:sessiond` validates the local backend session and file flows.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
-                "`npm run test:code-trust-scaffold` validates the shared code-trust policy summary, approval queue listing/decision flows, tracked artifact metadata, allowed authored-content hot reload, approved deferred apply/compile operations, and rejected assistant-triggered engine load paths.",
+                "`npm run test:code-trust-scaffold` validates the shared code-trust policy summary, artifact hashes plus verification state, promote/quarantine transitions, approval queue listing/decision flows, allowed authored-content hot reload, approved deferred apply/compile operations, and rejected assistant-triggered engine load paths.",
                 "`npm run test:scene-authoring` validates the shell scene-authoring surface plus deterministic scene/prefab file writes inside a session root.",
                 "`npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.",
                 "`npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."

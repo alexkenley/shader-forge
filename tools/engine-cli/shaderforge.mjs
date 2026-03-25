@@ -12,6 +12,8 @@ import {
   codeTrustDefaultTargetPath,
   evaluateCodeTrustAction,
   inspectCodeTrustState,
+  listCodeTrustArtifacts,
+  transitionCodeTrustArtifact,
 } from '../shared/code-trust-policy.mjs';
 import {
   inspectAiProviders,
@@ -35,9 +37,12 @@ Usage:
   engine file read <path> --session <id> [--base-url <url>]
   engine policy inspect [--root <path>]
   engine policy check <action> [path] [--root <path>] [--actor human|assistant|automation] [--origin <tier>]
+  engine policy artifacts [--root <path>]
   engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]
   engine policy approve <approval-id> [--base-url <url>] [--decision-by <name>]
   engine policy deny <approval-id> [--base-url <url>] [--decision-by <name>]
+  engine policy promote <path> [--root <path>] [--decision-by <name>] [--note <text>]
+  engine policy quarantine <path> [--root <path>] [--decision-by <name>] [--note <text>]
   engine ai providers [--root <path>]
   engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
@@ -354,6 +359,13 @@ async function checkPolicy(positionals, flags) {
   console.log(JSON.stringify(evaluation, null, 2));
 }
 
+async function listPolicyArtifacts(flags) {
+  const artifacts = await listCodeTrustArtifacts(resolvePolicyRoot(flags), {
+    limit: 64,
+  });
+  console.log(JSON.stringify(artifacts, null, 2));
+}
+
 async function listPolicyApprovals(flags) {
   const baseUrl = resolvedBaseUrl(flags);
   const query = new URL('/api/code-trust/approvals', baseUrl);
@@ -383,6 +395,22 @@ async function decidePolicyApproval(positionals, flags, decision) {
     },
   );
   console.log(JSON.stringify(payload, null, 2));
+}
+
+async function transitionPolicyArtifact(positionals, flags, transition) {
+  const relativePath = positionals.join(' ').trim();
+  if (!relativePath) {
+    throw new Error(`engine policy ${transition} requires an artifact path.`);
+  }
+
+  const artifact = await transitionCodeTrustArtifact({
+    rootPath: resolvePolicyRoot(flags),
+    relativePath,
+    transition,
+    decidedBy: flags['decision-by'] ? String(flags['decision-by']) : 'human',
+    note: flags.note ? String(flags.note) : '',
+  });
+  console.log(JSON.stringify(artifact, null, 2));
 }
 
 async function inspectAiProviderState(flags) {
@@ -473,6 +501,10 @@ async function run() {
       await checkPolicy(positionals, flags);
       return;
     }
+    if (subcommand === 'artifacts') {
+      await listPolicyArtifacts(flags);
+      return;
+    }
     if (subcommand === 'approvals') {
       await listPolicyApprovals(flags);
       return;
@@ -483,6 +515,14 @@ async function run() {
     }
     if (subcommand === 'deny') {
       await decidePolicyApproval(positionals, flags, 'denied');
+      return;
+    }
+    if (subcommand === 'promote') {
+      await transitionPolicyArtifact(positionals, flags, 'promote');
+      return;
+    }
+    if (subcommand === 'quarantine') {
+      await transitionPolicyArtifact(positionals, flags, 'quarantine');
       return;
     }
     throw new Error(`Unknown policy subcommand: ${subcommand}`);

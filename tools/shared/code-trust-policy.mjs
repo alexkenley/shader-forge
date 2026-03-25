@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -12,11 +13,14 @@ export const codeTrustTiers = [
   'external_plugin',
   'unsafe_dev_override',
 ];
+export const codeTrustArtifactPromotionStatuses = ['tracked', 'promoted', 'quarantined'];
+export const codeTrustArtifactVerificationStatuses = ['verified', 'modified', 'missing', 'unhashed'];
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const bundledPolicyPath = path.join(repoRoot, 'tooling', 'policy', 'code-access-policy.json');
 const artifactStorePathRelative = path.join('.shader-forge', 'code-trust-artifacts.json');
 const artifactStoreVersion = 1;
+const artifactHashAlgorithm = 'sha256';
 const decisionRank = {
   allow: 0,
   review_required: 1,
@@ -197,6 +201,18 @@ function normalizeOrigin(origin) {
   return codeTrustTiers.includes(origin) ? origin : '';
 }
 
+function normalizeArtifactPromotionStatus(value) {
+  return codeTrustArtifactPromotionStatuses.includes(value) ? value : 'tracked';
+}
+
+function normalizeArtifactVerificationStatus(value) {
+  return codeTrustArtifactVerificationStatuses.includes(value) ? value : 'unhashed';
+}
+
+function normalizeOptionalString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
 function matchPathRule(pathRules, relativePath) {
   return pathRules.find((rule) => rule.patternRegexes.some((pattern) => pattern.test(relativePath))) || null;
 }
@@ -238,7 +254,61 @@ function normalizeArtifactRecord(record) {
     updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim()
       ? record.updatedAt
       : new Date(0).toISOString(),
+    hashAlgorithm: typeof record.hashAlgorithm === 'string' && record.hashAlgorithm.trim()
+      ? record.hashAlgorithm.trim()
+      : '',
+    contentHash: typeof record.contentHash === 'string' && record.contentHash.trim()
+      ? record.contentHash.trim()
+      : '',
+    promotionStatus: normalizeArtifactPromotionStatus(record.promotionStatus),
+    promotedAt: normalizeOptionalString(record.promotedAt),
+    promotedBy: normalizeOptionalString(record.promotedBy),
+    promotionNote: typeof record.promotionNote === 'string' ? record.promotionNote.trim() : '',
+    quarantinedAt: normalizeOptionalString(record.quarantinedAt),
+    quarantinedBy: normalizeOptionalString(record.quarantinedBy),
+    quarantineNote: typeof record.quarantineNote === 'string' ? record.quarantineNote.trim() : '',
   };
+}
+
+async function hashArtifactFile(rootPath, relativePath) {
+  const artifactPath = path.join(rootPath, relativePath);
+  try {
+    const content = await fs.readFile(artifactPath);
+    const hash = createHash(artifactHashAlgorithm);
+    hash.update(content);
+    return hash.digest('hex');
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return '';
+    }
+    throw error;
+  }
+}
+
+async function inspectArtifactRecord(rootPath, record) {
+  const currentHash = await hashArtifactFile(rootPath, record.path);
+  let verificationStatus = 'unhashed';
+  if (!currentHash) {
+    verificationStatus = 'missing';
+  } else if (!record.contentHash) {
+    verificationStatus = 'unhashed';
+  } else if (currentHash === record.contentHash) {
+    verificationStatus = 'verified';
+  } else {
+    verificationStatus = 'modified';
+  }
+
+  return {
+    ...record,
+    hashAlgorithm: record.hashAlgorithm || artifactHashAlgorithm,
+    verificationStatus: normalizeArtifactVerificationStatus(verificationStatus),
+    currentHash: currentHash || null,
+  };
+}
+
+async function inspectArtifactRecords(rootPath, records) {
+  const inspected = await Promise.all(records.map((record) => inspectArtifactRecord(rootPath, record)));
+  return inspected.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 function shouldTrackArtifact({ evaluation, actor, requestOrigin }) {
@@ -331,9 +401,12 @@ export async function evaluateCodeTrustAction({
   const matchedRule = matchPathRule(loadedPolicy.policy.pathRules, normalizedPath);
   const { records } = await readArtifactStore(resolvedRoot);
   const existingRecord = records.find((record) => record.path === normalizedPath) || null;
+  const inspectedExistingRecord = existingRecord
+    ? await inspectArtifactRecord(resolvedRoot, existingRecord)
+    : null;
   const targetTier = matchedRule?.trustTier || loadedPolicy.policy.defaultTrustTier;
   const targetKind = matchedRule?.kind || loadedPolicy.policy.defaultKind;
-  const effectiveOrigin = requestedOrigin || existingRecord?.origin || inferOrigin({
+  const effectiveOrigin = requestedOrigin || inspectedExistingRecord?.origin || inferOrigin({
     actor: normalizedActor,
     targetTier,
     targetKind,
@@ -342,6 +415,39 @@ export async function evaluateCodeTrustAction({
 
   let decision = 'allow';
   const diagnostics = [];
+
+  if (
+    inspectedExistingRecord
+    && ['load', 'install', 'hot_reload'].includes(normalizedAction)
+    && inspectedExistingRecord.promotionStatus === 'quarantined'
+  ) {
+    decision = strongerDecision(decision, 'deny');
+    diagnostics.push(
+      createDiagnostic(
+        'error',
+        'artifact_quarantined',
+        `Artifact '${normalizedPath}' is quarantined and cannot be used for ${normalizedAction}.`,
+        'Review the tracked artifact, regenerate or replace it if needed, and explicitly promote it again before retrying.',
+      ),
+    );
+  }
+
+  if (
+    inspectedExistingRecord
+    && ['load', 'install', 'hot_reload'].includes(normalizedAction)
+    && inspectedExistingRecord.promotionStatus === 'promoted'
+    && inspectedExistingRecord.verificationStatus !== 'verified'
+  ) {
+    decision = strongerDecision(decision, 'deny');
+    diagnostics.push(
+      createDiagnostic(
+        'error',
+        'promoted_artifact_verification_failed',
+        `Promoted artifact '${normalizedPath}' is ${inspectedExistingRecord.verificationStatus}, so ${normalizedAction} is blocked until it is reviewed again.`,
+        'Rebuild or repair the artifact, then explicitly promote it again so the tracked hash matches the current file.',
+      ),
+    );
+  }
 
   if (normalizedAction === 'hot_reload' && targetKind !== 'content') {
     decision = strongerDecision(decision, 'deny');
@@ -523,6 +629,14 @@ export async function recordCodeTrustArtifact({
   const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath || evaluation.path);
   const { storePath, records } = await readArtifactStore(resolvedRoot);
   const timestamp = new Date().toISOString();
+  const existingRecord = records.find((record) => record.path === normalizedPath) || null;
+  const contentHash = await hashArtifactFile(resolvedRoot, normalizedPath);
+  const keepQuarantined = existingRecord?.promotionStatus === 'quarantined';
+  const keepPromoted =
+    existingRecord?.promotionStatus === 'promoted'
+    && existingRecord.origin === evaluation.effectiveOrigin
+    && evaluation.effectiveOrigin !== 'assistant_generated'
+    && evaluation.effectiveOrigin !== 'external_plugin';
   const nextRecord = {
     path: normalizedPath,
     origin: evaluation.effectiveOrigin,
@@ -530,6 +644,15 @@ export async function recordCodeTrustArtifact({
     targetKind: evaluation.targetKind,
     lastAction: evaluation.action,
     updatedAt: timestamp,
+    hashAlgorithm: contentHash ? artifactHashAlgorithm : '',
+    contentHash,
+    promotionStatus: keepQuarantined ? 'quarantined' : keepPromoted ? 'promoted' : 'tracked',
+    promotedAt: keepPromoted ? existingRecord.promotedAt : null,
+    promotedBy: keepPromoted ? existingRecord.promotedBy : null,
+    promotionNote: keepPromoted ? existingRecord.promotionNote : '',
+    quarantinedAt: keepQuarantined ? existingRecord.quarantinedAt : null,
+    quarantinedBy: keepQuarantined ? existingRecord.quarantinedBy : null,
+    quarantineNote: keepQuarantined ? existingRecord.quarantineNote : '',
   };
 
   const existingIndex = records.findIndex((record) => record.path === normalizedPath);
@@ -539,13 +662,79 @@ export async function recordCodeTrustArtifact({
 
   nextRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   await writeArtifactStore(resolvedRoot, storePath, nextRecords.slice(0, 64));
-  return nextRecord;
+  return inspectArtifactRecord(resolvedRoot, nextRecord);
+}
+
+export async function listCodeTrustArtifacts(rootPath, { limit = 64 } = {}) {
+  const resolvedRoot = path.resolve(rootPath);
+  const { records } = await readArtifactStore(resolvedRoot);
+  const inspectedRecords = await inspectArtifactRecords(resolvedRoot, records);
+  return inspectedRecords.slice(0, Math.max(0, Number(limit) || 0) || 64);
+}
+
+export async function transitionCodeTrustArtifact({
+  rootPath,
+  relativePath,
+  transition,
+  decidedBy = 'human',
+  note = '',
+} = {}) {
+  const resolvedRoot = path.resolve(rootPath);
+  const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath);
+  const normalizedTransition = transition === 'promote' || transition === 'quarantine'
+    ? transition
+    : '';
+  if (!normalizedTransition) {
+    throw new Error(`Unsupported code-trust artifact transition: ${transition}`);
+  }
+
+  const { storePath, records } = await readArtifactStore(resolvedRoot);
+  const existingIndex = records.findIndex((record) => record.path === normalizedPath);
+  if (existingIndex === -1) {
+    throw new Error(`No tracked code-trust artifact exists for '${normalizedPath}'.`);
+  }
+
+  const existingRecord = records[existingIndex];
+  const timestamp = new Date().toISOString();
+  const currentHash = await hashArtifactFile(resolvedRoot, normalizedPath);
+  if (normalizedTransition === 'promote' && !currentHash) {
+    throw new Error(`Cannot promote '${normalizedPath}' because the file is missing.`);
+  }
+
+  const nextRecord = normalizedTransition === 'promote'
+    ? {
+        ...existingRecord,
+        origin: 'project_authored',
+        updatedAt: timestamp,
+        hashAlgorithm: artifactHashAlgorithm,
+        contentHash: currentHash,
+        promotionStatus: 'promoted',
+        promotedAt: timestamp,
+        promotedBy: normalizeOptionalString(decidedBy) || 'human',
+        promotionNote: String(note || '').trim(),
+        quarantinedAt: null,
+        quarantinedBy: null,
+        quarantineNote: '',
+      }
+    : {
+        ...existingRecord,
+        updatedAt: timestamp,
+        promotionStatus: 'quarantined',
+        quarantinedAt: timestamp,
+        quarantinedBy: normalizeOptionalString(decidedBy) || 'human',
+        quarantineNote: String(note || '').trim(),
+      };
+
+  const nextRecords = records.map((record, index) => (index === existingIndex ? nextRecord : record));
+  nextRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  await writeArtifactStore(resolvedRoot, storePath, nextRecords.slice(0, 64));
+  return inspectArtifactRecord(resolvedRoot, nextRecord);
 }
 
 export async function inspectCodeTrustState(rootPath) {
   const resolvedRoot = path.resolve(rootPath);
   const loadedPolicy = await loadCodeTrustPolicy(resolvedRoot);
-  const { records } = await readArtifactStore(resolvedRoot);
+  const artifacts = await listCodeTrustArtifacts(resolvedRoot, { limit: 64 });
 
   return {
     rootPath: resolvedRoot,
@@ -562,12 +751,13 @@ export async function inspectCodeTrustState(rootPath) {
       trustTier: rule.trustTier,
       kind: rule.kind,
       patterns: rule.patterns,
-      assistantActions: rule.assistantActions,
+        assistantActions: rule.assistantActions,
     })),
-    trackedArtifactCount: records.length,
-    trackedArtifacts: records
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, 8),
+    trackedArtifactCount: artifacts.length,
+    promotedArtifactCount: artifacts.filter((artifact) => artifact.promotionStatus === 'promoted').length,
+    quarantinedArtifactCount: artifacts.filter((artifact) => artifact.promotionStatus === 'quarantined').length,
+    verificationIssueCount: artifacts.filter((artifact) => artifact.verificationStatus !== 'verified').length,
+    trackedArtifacts: artifacts.slice(0, 8),
   };
 }
 
