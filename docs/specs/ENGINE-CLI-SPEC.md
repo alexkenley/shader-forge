@@ -15,6 +15,8 @@ Current implemented commands:
 - `engine session list`
 - `engine file list`
 - `engine file read`
+- `engine policy inspect`
+- `engine policy check`
 - `engine build`
 - `engine run`
 - `engine bake`
@@ -45,6 +47,8 @@ The initial build/run/bake command family now targets the native runtime and coo
 - `engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane when exporter-assisted data is unavailable in this slice, emits first-pass scene/prefab/data skeleton outputs, and records low-confidence Blueprint package manifests from offline `.uasset` name inspection
 - `engine migrate report <path>` now summarizes a generated migration report without requiring manual file inspection
 - `engine_sessiond` also exposes a runtime build lifecycle surface so the shell can trigger native builds and stream logs without scraping a PTY
+- `engine policy inspect [--root <path>]` now prints the effective code-trust policy, supported hot-reload roots, and tracked artifact metadata for a workspace
+- `engine policy check <action> [path] [--root <path>] [--actor ...] [--origin ...]` now dry-runs the shared code-trust layer so assistant-facing workflows can be validated without executing a risky transition first
 
 `engine test`, `engine import`, `engine package`, and `engine export` remain reserved command space.
 

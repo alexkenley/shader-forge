@@ -73,6 +73,7 @@ Assistant entry points:
 - The right panel currently exposes `Runtime`, `Build`, and `Workspace` for non-`Scene` tabs, and it is intentionally hidden during `Scene` authoring so the editor can use that space directly.
 - The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
 - The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
+- The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, and recent tracked artifacts for the selected workspace.
 - Use `Code` for the preserved Monaco bridge and repo workspace context.
 - Use `Game` and `Preview` to drive the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.
 - Use `Scene` for repo-backed scene/prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.
@@ -89,6 +90,9 @@ Assistant entry points:
 - Safe file list, file read, and file write APIs are now available inside the active session root.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
+- `GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.
+- Policy-relevant file writes now record origin and trust-tier metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`.
+- Runtime build and runtime start/restart now pass through the same code-trust policy layer before compile or load transitions continue.
 - Host filesystem directory listing is already used by the workspace-root picker.
 - Git status and repository initialization are already used by the `Source Control` rail.
 - PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces.
@@ -98,6 +102,8 @@ Assistant entry points:
 - `engine sessiond start` starts the local backend service.
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
+- `engine policy inspect [--root <path>]` now prints the effective code-trust policy, supported authored hot-reload roots, and tracked artifacts for a workspace.
+- `engine policy check <action> [path] [--root <path>] [--actor ...] [--origin ...]` now dry-runs the same code-trust layer that sessiond enforces before risky assistant-facing transitions.
 - `engine build runtime` configures and builds the native runtime with CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`.
 - `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.
 - `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
@@ -215,6 +221,7 @@ Assistant entry points:
 - `npm test` runs the preserved shell smoke harness.
 - `npm run test:sessiond` validates the local backend session and file flows.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
+- `npm run test:code-trust-scaffold` validates the shared code-trust policy summary, tracked artifact metadata, allowed authored-content hot reload, and rejected assistant-triggered engine apply/compile/load paths.
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
 - `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.
 - `npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
@@ -232,6 +239,7 @@ Assistant entry points:
 - Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.
 - A first CLI bake lane that emits staged cooked outputs, generated-mesh preview artifacts, and staged cooked audio, animation, and physics metadata.
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
+- A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, and explicit assistant-triggered compile/load/apply gating.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
 ### What Still Needs Widening
@@ -245,4 +253,5 @@ Assistant entry points:
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
 - Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
+- Code trust still needs approvals, stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-diagnostics slice.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

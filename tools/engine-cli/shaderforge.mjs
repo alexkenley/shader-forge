@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { bakeAssetPipeline } from './lib/asset-pipeline.mjs';
 import { createMigrationRun, summarizeMigrationReport } from './lib/migration-foundation.mjs';
 import { startEngineSessiond } from '../engine-sessiond/server.mjs';
+import {
+  codeTrustDefaultTargetPath,
+  evaluateCodeTrustAction,
+  inspectCodeTrustState,
+} from '../shared/code-trust-policy.mjs';
 import { requireCMakeCommand } from '../shared/cmake-command.mjs';
 
 const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http://127.0.0.1:41741';
@@ -22,6 +27,8 @@ Usage:
   engine session list [--base-url <url>]
   engine file list <path> --session <id> [--base-url <url>]
   engine file read <path> --session <id> [--base-url <url>]
+  engine policy inspect [--root <path>]
+  engine policy check <action> [path] [--root <path>] [--actor human|assistant|automation] [--origin <tier>]
   engine build [runtime] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
@@ -77,6 +84,11 @@ async function requestJson(baseUrl, pathname, options = {}) {
 
 function resolvedBaseUrl(flags) {
   return String(flags['base-url'] || DEFAULT_BASE_URL);
+}
+
+function resolvePolicyRoot(flags) {
+  const requestedRoot = flags.root ? String(flags.root) : process.cwd();
+  return path.isAbsolute(requestedRoot) ? requestedRoot : path.resolve(process.cwd(), requestedRoot);
 }
 
 async function runReservedPlaceholder(commandName) {
@@ -272,6 +284,28 @@ async function runMigration(commandName, positionals, flags) {
     : '- No content conversion was performed in this slice.');
 }
 
+async function inspectPolicy(flags) {
+  const summary = await inspectCodeTrustState(resolvePolicyRoot(flags));
+  console.log(JSON.stringify(summary, null, 2));
+}
+
+async function checkPolicy(positionals, flags) {
+  const action = positionals[0];
+  if (!action) {
+    throw new Error('engine policy check requires an action.');
+  }
+
+  const relativePath = positionals[1] || codeTrustDefaultTargetPath(action);
+  const evaluation = await evaluateCodeTrustAction({
+    rootPath: resolvePolicyRoot(flags),
+    action,
+    relativePath,
+    actor: flags.actor ? String(flags.actor) : 'human',
+    origin: flags.origin ? String(flags.origin) : '',
+  });
+  console.log(JSON.stringify(evaluation, null, 2));
+}
+
 async function run() {
   const argv = process.argv.slice(2);
   if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
@@ -324,6 +358,21 @@ async function run() {
 
   const subcommand = argv[1];
   const { positionals, flags } = parseFlags(argv.slice(2));
+
+  if (command === 'policy') {
+    if (!subcommand) {
+      throw new Error('engine policy requires a subcommand.');
+    }
+    if (subcommand === 'inspect') {
+      await inspectPolicy(flags);
+      return;
+    }
+    if (subcommand === 'check') {
+      await checkPolicy(positionals, flags);
+      return;
+    }
+    throw new Error(`Unknown policy subcommand: ${subcommand}`);
+  }
 
   if (command === 'sessiond' && subcommand === 'start') {
     const host = String(flags.host || '127.0.0.1');

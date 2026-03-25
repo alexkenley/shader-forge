@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "summary": "Default Shader Forge code-trust policy for assistant-triggered apply, compile, load, install, and hot-reload workflows. Human-driven local workflows remain available, but risky assistant or plugin transitions must stay visible and reviewable in this slice.",
+  "defaultTrustTier": "project_authored",
+  "defaultKind": "code",
+  "defaultAssistantActions": {
+    "apply": "review",
+    "compile": "review",
+    "load": "review",
+    "hot_reload": "deny",
+    "install": "deny"
+  },
+  "unsafeDevOverrides": {
+    "allowAssistantEngineWrites": false,
+    "allowAssistantCompile": false,
+    "allowAssistantLoad": false,
+    "allowAssistantHotReload": false,
+    "allowExternalPluginLoad": false
+  },
+  "pathRules": [
+    {
+      "id": "engine-owned-source",
+      "description": "Engine-owned source, shell, tooling, and scripts live here. Assistant edits and compile transitions stay review-gated by default.",
+      "trustTier": "engine_trusted",
+      "kind": "code",
+      "patterns": [
+        "engine/**",
+        "shell/**",
+        "tools/**",
+        "scripts/**",
+        "docs/**",
+        "plans/**"
+      ],
+      "assistantActions": {
+        "apply": "review",
+        "compile": "review",
+        "load": "deny",
+        "hot_reload": "deny",
+        "install": "deny"
+      }
+    },
+    {
+      "id": "runtime-build-artifacts",
+      "description": "Built runtime artifacts are engine-trusted outputs and should not be assistant-loaded silently.",
+      "trustTier": "engine_trusted",
+      "kind": "artifact",
+      "patterns": [
+        "build/runtime/**"
+      ],
+      "assistantActions": {
+        "apply": "review",
+        "compile": "review",
+        "load": "review",
+        "hot_reload": "deny",
+        "install": "deny"
+      }
+    },
+    {
+      "id": "project-code",
+      "description": "Project-authored gameplay or local script code can be generated or patched, but compile and load still stay review-gated for assistants.",
+      "trustTier": "project_authored",
+      "kind": "code",
+      "patterns": [
+        "games/**",
+        "content/scripts/**"
+      ],
+      "assistantActions": {
+        "apply": "allow",
+        "compile": "review",
+        "load": "review",
+        "hot_reload": "deny",
+        "install": "deny"
+      }
+    },
+    {
+      "id": "assistant-generated-code",
+      "description": "Assistant-owned generated code stays isolated in explicit generated lanes until it is reviewed and promoted.",
+      "trustTier": "assistant_generated",
+      "kind": "code",
+      "patterns": [
+        "generated/assistant/**",
+        ".shader-forge/assistant/**"
+      ],
+      "assistantActions": {
+        "apply": "allow",
+        "compile": "review",
+        "load": "deny",
+        "hot_reload": "deny",
+        "install": "deny"
+      }
+    },
+    {
+      "id": "external-plugins",
+      "description": "Third-party plugins or addons are treated as external until explicitly reviewed and promoted.",
+      "trustTier": "external_plugin",
+      "kind": "plugin",
+      "patterns": [
+        "addons/**",
+        "plugins/**"
+      ],
+      "assistantActions": {
+        "apply": "review",
+        "compile": "deny",
+        "load": "deny",
+        "hot_reload": "deny",
+        "install": "deny"
+      }
+    },
+    {
+      "id": "authored-content-hot-reload",
+      "description": "Current hot reload support is limited to authored text-backed content and configuration roots.",
+      "trustTier": "project_authored",
+      "kind": "content",
+      "patterns": [
+        "content/**",
+        "audio/**",
+        "animation/**",
+        "physics/**",
+        "input/**",
+        "data/**",
+        "tooling/layouts/**"
+      ],
+      "assistantActions": {
+        "apply": "allow",
+        "compile": "deny",
+        "load": "allow",
+        "hot_reload": "allow",
+        "install": "deny"
+      }
+    }
+  ]
+}

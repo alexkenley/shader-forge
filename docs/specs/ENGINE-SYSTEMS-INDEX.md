@@ -23,6 +23,7 @@ Major system specs:
 - [Engine VFX Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-VFX-SPEC.md)
 - [Engine Data Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-DATA-SPEC.md)
 - [Engine AI Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-AI-SPEC.md)
+- [Engine Code Trust Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-CODE-TRUST-SPEC.md)
 - [Scene System Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SCENE-SPEC.md)
 - [Engine Level Editor Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-LEVEL-EDITOR-SPEC.md)
 - [Procedural Geometry Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-PROCGEO-SPEC.md)

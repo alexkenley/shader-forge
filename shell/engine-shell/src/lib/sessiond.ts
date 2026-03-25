@@ -96,6 +96,38 @@ export type BuildStatus = {
   error: string | null;
 };
 
+export type CodeTrustSummary = {
+  rootPath: string;
+  policyPath: string;
+  policySource: string;
+  summary: string;
+  unsafeDevOverrides: {
+    allowAssistantEngineWrites: boolean;
+    allowAssistantCompile: boolean;
+    allowAssistantLoad: boolean;
+    allowAssistantHotReload: boolean;
+    allowExternalPluginLoad: boolean;
+  };
+  supportedHotReloadRoots: string[];
+  pathRules: Array<{
+    id: string;
+    description: string;
+    trustTier: string;
+    kind: string;
+    patterns: string[];
+    assistantActions: Record<string, string>;
+  }>;
+  trackedArtifactCount: number;
+  trackedArtifacts: Array<{
+    path: string;
+    origin: string;
+    targetTier: string;
+    targetKind: string;
+    lastAction: string;
+    updatedAt: string;
+  }>;
+};
+
 export type SessiondTerminalEvent =
   | {
       type: 'terminal.output';
@@ -274,6 +306,12 @@ export async function initGitRepository(sessionId: string) {
     method: 'POST',
     body: JSON.stringify({ sessionId }),
   });
+}
+
+export async function fetchCodeTrustSummary(sessionId: string) {
+  const query = new URL('/api/code-trust/summary', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  return requestJson<CodeTrustSummary>(`${query.pathname}${query.search}`);
 }
 
 export async function openTerminal(payload: {

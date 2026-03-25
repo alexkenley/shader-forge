@@ -27,6 +27,8 @@ Current implemented surfaces:
 - `POST /api/runtime/resume`
 - `POST /api/build/runtime`
 - `POST /api/build/stop`
+- `GET /api/code-trust/summary`
+- `POST /api/code-trust/evaluate`
 - `GET /api/events`
 
 This gives the shell and harnesses a real backend-owned session and file model before PTY and runtime lifecycle work land.
@@ -54,6 +56,10 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - runtime status now includes `running`, `paused`, and `stopped` states plus the active session/workspace root when the runtime was started from a shell session
 - pause/resume is exposed on hosts where process-signal control is available
 - `/health` reports runtime pause/resume capabilities truthfully for the current host
+- file writes now pass through the shared code-trust policy layer before sessiond persists policy-relevant code or assistant-authored outputs
+- runtime build and runtime start/restart now also pass through explicit code-trust policy checks so assistant-triggered compile and load transitions cannot bypass the local policy layer
+- sessiond now exposes an inspectable code-trust summary plus dry-run evaluation surface for shell and future assistant clients
+- policy-relevant artifact writes now record trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
 
 ## Future AI APIs
 

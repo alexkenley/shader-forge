@@ -7,6 +7,14 @@ import { getPlatformInfo, listHostDirectory } from './lib/host-fs-service.mjs';
 import { SessionStore } from './lib/session-store.mjs';
 import { RuntimeStore } from './lib/runtime-store.mjs';
 import { TerminalStore } from './lib/terminal-store.mjs';
+import {
+  codeTrustDefaultTargetPath,
+  codeTrustRepoRoot,
+  enforceCodeTrustAction,
+  evaluateCodeTrustAction,
+  inspectCodeTrustState,
+  recordCodeTrustArtifact,
+} from '../shared/code-trust-policy.mjs';
 
 function corsHeaders() {
   return {
@@ -114,6 +122,29 @@ function resolveRuntimeLaunchContext(sessionStore, sessionId) {
   };
 }
 
+function resolveCodeTrustRoot(sessionStore, sessionId, fallbackRoot = codeTrustRepoRoot) {
+  if (!sessionId) {
+    return path.resolve(fallbackRoot);
+  }
+  return sessionStore.resolveSessionPath(sessionId, '.');
+}
+
+function readCodeTrustActor(body) {
+  return body?.policy && typeof body.policy === 'object' && typeof body.policy.actor === 'string'
+    ? body.policy.actor.trim()
+    : typeof body?.actor === 'string'
+      ? body.actor.trim()
+      : 'human';
+}
+
+function readCodeTrustOrigin(body) {
+  return body?.policy && typeof body.policy === 'object' && typeof body.policy.origin === 'string'
+    ? body.policy.origin.trim()
+    : typeof body?.origin === 'string'
+      ? body.origin.trim()
+      : '';
+}
+
 function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, eventHub }) {
   return async function route(request, response) {
     if (!request.url) {
@@ -145,6 +176,8 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
           'terminals',
           'runtime:lifecycle',
           'build:lifecycle',
+          'code-trust:summary',
+          'code-trust:evaluate',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -166,6 +199,40 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'GET' && pathname === '/api/events') {
         eventHub.subscribe(request, response);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/code-trust/summary') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId);
+        const summary = await inspectCodeTrustState(rootPath);
+        writeJson(response, 200, summary);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/code-trust/evaluate') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const action = typeof body.action === 'string' ? body.action.trim() : '';
+        const scope = typeof body.scope === 'string' ? body.scope.trim() : '';
+        const relativePath = typeof body.path === 'string' && body.path.trim()
+          ? body.path.trim()
+          : codeTrustDefaultTargetPath(action);
+        const rootPath = scope === 'engine'
+          ? resolveCodeTrustRoot(sessionStore, '', codeTrustRepoRoot)
+          : resolveCodeTrustRoot(
+            sessionStore,
+            sessionId,
+            action === 'compile' || action === 'load' ? codeTrustRepoRoot : codeTrustRepoRoot,
+          );
+        const evaluation = await evaluateCodeTrustAction({
+          rootPath,
+          action,
+          relativePath,
+          actor: readCodeTrustActor(body),
+          origin: readCodeTrustOrigin(body),
+        });
+        writeJson(response, 200, evaluation);
         return;
       }
 
@@ -234,8 +301,26 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
         const relativePath = typeof body.path === 'string' ? body.path : '';
         const content = typeof body.content === 'string' ? body.content : '';
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId);
+        const codeTrust = await enforceCodeTrustAction({
+          rootPath,
+          action: 'apply',
+          relativePath,
+          actor: readCodeTrustActor(body),
+          origin: readCodeTrustOrigin(body),
+        });
         const result = await sessionStore.writeFile(sessionId, relativePath, content);
-        writeJson(response, 200, result);
+        await recordCodeTrustArtifact({
+          rootPath,
+          relativePath,
+          actor: readCodeTrustActor(body),
+          origin: readCodeTrustOrigin(body),
+          evaluation: codeTrust,
+        });
+        writeJson(response, 200, {
+          ...result,
+          codeTrust,
+        });
         return;
       }
 
@@ -266,6 +351,13 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
       if (request.method === 'POST' && pathname === '/api/runtime/start') {
         const body = await readJsonBody(request);
         const runtimeSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        await enforceCodeTrustAction({
+          rootPath: resolveCodeTrustRoot(sessionStore, '', codeTrustRepoRoot),
+          action: 'load',
+          relativePath: codeTrustDefaultTargetPath('load'),
+          actor: readCodeTrustActor(body),
+          origin: readCodeTrustOrigin(body),
+        });
         const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeSessionId);
         const status = runtimeStore.startRuntime({
           scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
@@ -278,6 +370,13 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
 
       if (request.method === 'POST' && pathname === '/api/build/runtime') {
         const body = await readJsonBody(request);
+        await enforceCodeTrustAction({
+          rootPath: resolveCodeTrustRoot(sessionStore, '', codeTrustRepoRoot),
+          action: 'compile',
+          relativePath: codeTrustDefaultTargetPath('compile'),
+          actor: readCodeTrustActor(body),
+          origin: readCodeTrustOrigin(body),
+        });
         const status = buildStore.startBuild({
           target: 'runtime',
           config: typeof body.config === 'string' && body.config.trim() ? body.config.trim() : 'Debug',
@@ -322,6 +421,13 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
       if (request.method === 'POST' && pathname === '/api/runtime/restart') {
         const body = await readJsonBody(request);
         const runtimeSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        await enforceCodeTrustAction({
+          rootPath: resolveCodeTrustRoot(sessionStore, '', codeTrustRepoRoot),
+          action: 'load',
+          relativePath: codeTrustDefaultTargetPath('load'),
+          actor: readCodeTrustActor(body),
+          origin: readCodeTrustOrigin(body),
+        });
         const launchContext = resolveRuntimeLaunchContext(sessionStore, runtimeSessionId);
         const status = await runtimeStore.restartRuntime({
           scene: typeof body.scene === 'string' && body.scene.trim() ? body.scene.trim() : 'sandbox',
@@ -383,7 +489,15 @@ function createRouter({ sessionStore, terminalStore, runtimeStore, buildStore, e
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      writeJson(response, 400, { error: message });
+      const statusCode =
+        typeof error === 'object' && error && 'statusCode' in error && Number.isInteger(error.statusCode)
+          ? Number(error.statusCode)
+          : 400;
+      const payload = { error: message };
+      if (typeof error === 'object' && error && 'codeTrust' in error && error.codeTrust) {
+        payload.codeTrust = error.codeTrust;
+      }
+      writeJson(response, statusCode, payload);
     }
   };
 }

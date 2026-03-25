@@ -8,6 +8,7 @@ import {
   createSession,
   deleteSession,
   fetchBuildStatus,
+  fetchCodeTrustSummary,
   fetchGitStatus,
   fetchPlatformInfo,
   fetchSessiondHealth,
@@ -30,6 +31,7 @@ import {
   subscribeSessiondEvents,
   updateSession,
   type BuildStatus,
+  type CodeTrustSummary,
   type PlatformInfo,
   type SessionFileEntry,
   type SessionTerminalOpen,
@@ -501,6 +503,7 @@ function ViewportShell({
 function renderRightPanel(
   activeTab: RightTab,
   activeSession: EngineSession | null,
+  codeTrustSummary: CodeTrustSummary | null,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
   buildLog: string,
@@ -523,6 +526,9 @@ function renderRightPanel(
 ) {
   const buildHint = buildSetupHint(buildStatus.error);
   const runtimeHint = nativeRuntimeSetupHint(buildLog, runtimeLog);
+  const unsafeOverrideCount = codeTrustSummary
+    ? Object.values(codeTrustSummary.unsafeDevOverrides).filter(Boolean).length
+    : 0;
 
   if (activeTab === 'Workspace') {
     return (
@@ -570,6 +576,58 @@ function renderRightPanel(
               <dd>{buildStatus.config || buildConfig}</dd>
             </div>
           </dl>
+        </section>
+        <section className="card compact-card">
+          <div className="section-titlebar">
+            <h3>Code Trust</h3>
+            <span>{codeTrustSummary ? 'Policy active' : 'No workspace policy'}</span>
+          </div>
+          <p className="panel-copy">
+            {codeTrustSummary
+              ? codeTrustSummary.summary
+              : 'Select a workspace to inspect the current code-trust policy, supported hot-reload roots, and tracked artifact origins.'}
+          </p>
+          {codeTrustSummary ? (
+            <>
+              <dl className="fact-list">
+                <div>
+                  <dt>Policy</dt>
+                  <dd>{codeTrustSummary.policyPath}</dd>
+                </div>
+                <div>
+                  <dt>Source</dt>
+                  <dd>{codeTrustSummary.policySource}</dd>
+                </div>
+                <div>
+                  <dt>Overrides</dt>
+                  <dd>{unsafeOverrideCount > 0 ? `${unsafeOverrideCount} active` : 'none active'}</dd>
+                </div>
+                <div>
+                  <dt>Tracked</dt>
+                  <dd>{codeTrustSummary.trackedArtifactCount} artifacts</dd>
+                </div>
+                <div>
+                  <dt>Hot reload</dt>
+                  <dd>{codeTrustSummary.supportedHotReloadRoots.join(', ') || 'none'}</dd>
+                </div>
+              </dl>
+              {codeTrustSummary.trackedArtifacts.length ? (
+                <div className="metric-stack">
+                  {codeTrustSummary.trackedArtifacts.slice(0, 3).map((artifact) => (
+                    <article className="mini-card" key={artifact.path}>
+                      <span>{`${artifact.origin} -> ${artifact.targetTier}`}</span>
+                      <strong>{artifact.path}</strong>
+                      <p>{artifact.lastAction} · {formatSessionTimestamp(artifact.updatedAt)}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="panel-copy">
+                  No tracked assistant or code-path artifacts have been recorded for this workspace yet.
+                </p>
+              )}
+            </>
+          ) : null}
         </section>
         <section className="card compact-card">
           <div className="section-titlebar">
@@ -1555,6 +1613,7 @@ export default function App() {
   const [runtimeLog, setRuntimeLog] = useState('[runtime] idle\n');
   const [buildStatus, setBuildStatus] = useState<BuildStatus>(idleBuildStatus);
   const [buildLog, setBuildLog] = useState('[build] idle\n');
+  const [codeTrustSummary, setCodeTrustSummary] = useState<CodeTrustSummary | null>(null);
   const [launchScene, setLaunchScene] = useState('sandbox');
   const [buildConfig, setBuildConfig] = useState<BuildConfig>('Debug');
   const [buildDir, setBuildDir] = useState('build/runtime');
@@ -1684,6 +1743,16 @@ export default function App() {
     }
   }
 
+  async function refreshCodeTrust(sessionId: string) {
+    if (!sessionId) {
+      setCodeTrustSummary(null);
+      return;
+    }
+
+    const nextSummary = await fetchCodeTrustSummary(sessionId);
+    setCodeTrustSummary(nextSummary);
+  }
+
   async function navigateDirPicker(nextPath: string) {
     setDirPickerBusy(true);
     setDirPickerError('');
@@ -1720,7 +1789,7 @@ export default function App() {
 
   async function activateSession(sessionId: string) {
     setActiveSessionId(sessionId);
-    await Promise.all([refreshExplorer(sessionId, '.'), refreshGit(sessionId)]);
+    await Promise.all([refreshExplorer(sessionId, '.'), refreshGit(sessionId), refreshCodeTrust(sessionId)]);
   }
 
   function loadSessionIntoForm(session: EngineSession) {
@@ -1794,10 +1863,11 @@ export default function App() {
   useEffect(() => {
     if (!activeSessionId) {
       setGitStatus(emptyGitStatus);
+      setCodeTrustSummary(null);
       return;
     }
 
-    void refreshGit(activeSessionId).catch((error) => {
+    void Promise.all([refreshGit(activeSessionId), refreshCodeTrust(activeSessionId)]).catch((error) => {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     });
@@ -3061,6 +3131,7 @@ export default function App() {
             {renderRightPanel(
               activeRightTab,
               activeSession,
+              codeTrustSummary,
               runtimeStatus,
               buildStatus,
               buildLog,
