@@ -2270,6 +2270,55 @@ pre {
 .spatial-vector label span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
 .spatial-identity strong { overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; }
 
+.spatial-sample-controls {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.055);
+}
+
+.spatial-sample-controls h3,
+.spatial-sample-controls p { margin: 0; }
+.spatial-sample-controls h3 { font-size: 12px; }
+.spatial-sample-controls p { color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+.spatial-sample-controls__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+}
+
+.spatial-sample-controls__fields > button { grid-column: 1 / -1; }
+
+.spatial-sample-controls__fields label { display: grid; gap: 5px; min-width: 0; }
+.spatial-sample-controls__fields label span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.spatial-sample-controls select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.spatial-sample-controls__unavailable {
+  padding: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
 .spatial-tuner fieldset {
   min-width: 0;
   margin: 0;
@@ -2295,6 +2344,8 @@ pre {
 }
 
 .spatial-vector input:focus-visible,
+.spatial-sample-controls select:focus-visible,
+.spatial-sample-controls button:focus-visible,
 .spatial-profile-list button:focus-visible,
 .spatial-actions button:focus-visible,
 .spatial-lock-help button:focus-visible,
@@ -3557,7 +3608,8 @@ pre {
 
   .spatial-editor__body,
   .spatial-identity,
-  .spatial-vector {
+  .spatial-vector,
+  .spatial-sample-controls__fields {
     grid-template-columns: 1fr;
     overflow: visible;
   }

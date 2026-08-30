@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   disconnectCoordinationAgent,
   evaluateSpatialAttachment,
+  evaluateSpatialAttachmentSample,
   fetchCoordinationLease,
   fetchOperation,
   heartbeatCoordinationAgent,
@@ -19,19 +20,23 @@ import {
   type EngineSession,
   type SessionFileEntry,
   type SpatialAttachmentEvaluation,
+  type SpatialSourceRevision,
 } from './lib/sessiond';
 import {
   parseSpatialAttachment,
+  parseSpatialAttachmentMotionEnvelope,
   sameSpatialConnection,
   shouldCloseSpatialConnection,
   spatialActionStillCurrent,
   spatialLeaseCoversAttachment,
   spatialOperationReconciliation,
+  spatialSourceRevisionsCoverAttachment,
   updateSpatialAttachmentTransform,
   type SpatialAttachmentDraft,
+  type SpatialMotionEnvelopePhase,
   type SpatialVector3,
 } from './spatial-attachment-authoring';
-import { SpatialRestSchematic } from './SpatialRestSchematic';
+import { isSpatialAttachmentEvaluation, SpatialRestSchematic } from './SpatialRestSchematic';
 
 const attachmentRoot = 'animation/attachments';
 
@@ -52,6 +57,7 @@ type AuthoredEvidence = {
   path: string;
   revision: string;
   evaluation: SpatialAttachmentEvaluation;
+  sourceRevisions: SpatialSourceRevision[];
   values: EvaluatedValues | null;
 };
 
@@ -65,7 +71,18 @@ type CandidateEvidence = {
   values: EvaluatedValues;
 };
 
-type SchematicSource = 'authored' | 'candidate';
+type SampledEvidence = {
+  sessionId: string;
+  path: string;
+  revision: string;
+  phase: string;
+  normalizedTime: number;
+  sourceRevisions: SpatialSourceRevision[];
+  evaluation: SpatialAttachmentEvaluation;
+  values: EvaluatedValues | null;
+};
+
+type SchematicSource = 'authored' | 'candidate' | 'sample';
 
 const EVALUATION_ERROR_LIMIT = 800;
 
@@ -112,9 +129,16 @@ export function SpatialAttachmentEditorView({
   const [candidate, setCandidate] = useState('');
   const [authoredEvidence, setAuthoredEvidence] = useState<AuthoredEvidence | null>(null);
   const [candidateEvidence, setCandidateEvidence] = useState<CandidateEvidence | null>(null);
+  const [sampledEvidence, setSampledEvidence] = useState<SampledEvidence | null>(null);
   const [schematicSource, setSchematicSource] = useState<SchematicSource>('authored');
   const [evaluationError, setEvaluationError] = useState('');
   const [evaluationBusy, setEvaluationBusy] = useState(false);
+  const [sampledError, setSampledError] = useState('');
+  const [sampledBusy, setSampledBusy] = useState(false);
+  const [motionEnvelope, setMotionEnvelope] = useState<SpatialMotionEnvelopePhase[]>([]);
+  const [envelopeError, setEnvelopeError] = useState('');
+  const [selectedPhase, setSelectedPhase] = useState('');
+  const [selectedNormalizedTime, setSelectedNormalizedTime] = useState(Number.NaN);
   const [sourceLayoutError, setSourceLayoutError] = useState('');
   const [status, setStatus] = useState('Select an attachment profile to begin.');
   const [error, setError] = useState('');
@@ -122,11 +146,16 @@ export function SpatialAttachmentEditorView({
   const connectionRef = useRef<Connection | null>(null);
   const selectionKeyRef = useRef('');
   const authoredEvaluationRequestRef = useRef(0);
+  const sampledEvaluationRequestRef = useRef(0);
   const sourceReadRequestRef = useRef(0);
   const operationEventRequestRef = useRef(0);
   const actionRequestRef = useRef(0);
   const operationRef = useRef<EngineOperation | null>(null);
+  const revisionRef = useRef('');
+  const selectedSampleRef = useRef({ phase: '', time: Number.NaN });
   selectionKeyRef.current = `${activeSession?.id || ''}:${selectedPath}`;
+  revisionRef.current = revision;
+  selectedSampleRef.current = { phase: selectedPhase, time: selectedNormalizedTime };
 
   function setActiveOperation(next: EngineOperation | null) {
     operationRef.current = next;
@@ -136,7 +165,37 @@ export function SpatialAttachmentEditorView({
   function clearCandidateEvidence() {
     setCandidate('');
     setCandidateEvidence(null);
-    setSchematicSource('authored');
+    setSchematicSource((current) => current === 'candidate' ? 'authored' : current);
+  }
+
+  function clearSampledEvidence() {
+    sampledEvaluationRequestRef.current += 1;
+    setSampledEvidence(null);
+    setSampledError('');
+    setSampledBusy(false);
+    setSchematicSource((current) => current === 'sample' ? 'authored' : current);
+  }
+
+  function applyMotionEnvelope(content: string) {
+    try {
+      const envelope = parseSpatialAttachmentMotionEnvelope(content);
+      setMotionEnvelope(envelope);
+      setEnvelopeError('');
+      const current = selectedSampleRef.current;
+      const matching = envelope.find((entry) => entry.phase === current.phase);
+      if (matching && matching.normalizedTimes.includes(current.time)) {
+        setSelectedPhase(matching.phase);
+        setSelectedNormalizedTime(current.time);
+        return;
+      }
+      setSelectedPhase(envelope[0]?.phase || '');
+      setSelectedNormalizedTime(envelope[0]?.normalizedTimes[0] ?? Number.NaN);
+    } catch (caught) {
+      setMotionEnvelope([]);
+      setEnvelopeError(boundedText(errorMessage(caught)));
+      setSelectedPhase('');
+      setSelectedNormalizedTime(Number.NaN);
+    }
   }
 
   async function refreshAuthoredEvaluation(
@@ -156,7 +215,21 @@ export function SpatialAttachmentEditorView({
       if (result.path !== path || result.revision !== baseRevision) {
         throw new Error('Sessiond returned rest evaluation for a different attachment revision.');
       }
-      setAuthoredEvidence({ sessionId, path, revision: baseRevision, evaluation: result.evaluation, values });
+      if (
+        !spatialSourceRevisionsCoverAttachment(result.sourceRevisions, path, baseRevision)
+        || !isSpatialAttachmentEvaluation(result.evaluation)
+        || result.evaluation.pose.kind !== 'rest'
+      ) {
+        throw new Error('Sessiond returned malformed or incompletely bound rest evidence.');
+      }
+      setAuthoredEvidence({
+        sessionId,
+        path,
+        revision: baseRevision,
+        evaluation: result.evaluation,
+        sourceRevisions: result.sourceRevisions,
+        values,
+      });
     } catch (caught) {
       if (authoredEvaluationRequestRef.current !== requestId || selectionKeyRef.current !== expectedSelection) return;
       setEvaluationError(boundedText(errorMessage(caught)));
@@ -167,9 +240,73 @@ export function SpatialAttachmentEditorView({
     }
   }
 
+  async function refreshSampledEvaluation(
+    sessionId: string,
+    path: string,
+    baseRevision: string,
+    phase: string,
+    clip: string,
+    normalizedTime: number,
+    values: EvaluatedValues | null,
+    expectedSelection: string,
+  ) {
+    const requestId = ++sampledEvaluationRequestRef.current;
+    const requestStillCurrent = () => (
+      sampledEvaluationRequestRef.current === requestId
+      && selectionKeyRef.current === expectedSelection
+      && revisionRef.current === baseRevision
+      && selectedSampleRef.current.phase === phase
+      && selectedSampleRef.current.time === normalizedTime
+    );
+    setSchematicSource('sample');
+    setSampledError('');
+    setSampledBusy(true);
+    try {
+      const result = await evaluateSpatialAttachmentSample(
+        sessionId,
+        path,
+        baseRevision,
+        phase,
+        normalizedTime,
+      );
+      if (!requestStillCurrent()) return;
+      if (result.path !== path || result.revision !== baseRevision) {
+        throw new Error('Sessiond returned sampled evidence for a different attachment revision.');
+      }
+      if (!spatialSourceRevisionsCoverAttachment(result.sourceRevisions, path, baseRevision)) {
+        throw new Error('Sessiond returned sampled evidence without its exact authored source revisions.');
+      }
+      if (
+        !isSpatialAttachmentEvaluation(result.evaluation)
+        || result.evaluation.pose.kind !== 'clip_sample'
+        || result.evaluation.pose.phase !== phase
+        || result.evaluation.pose.clip !== clip
+        || result.evaluation.pose.normalizedTime !== normalizedTime
+      ) {
+        throw new Error('Sessiond returned malformed sampled evidence or a different authored sample.');
+      }
+      setSampledEvidence({
+        sessionId,
+        path,
+        revision: baseRevision,
+        phase,
+        normalizedTime,
+        sourceRevisions: result.sourceRevisions,
+        evaluation: result.evaluation,
+        values,
+      });
+    } catch (caught) {
+      if (!requestStillCurrent()) return;
+      setSampledError(boundedText(errorMessage(caught)));
+    } finally {
+      if (requestStillCurrent()) setSampledBusy(false);
+    }
+  }
+
   async function reread(path: string, expectedSelection = `${activeSession?.id || ''}:${path}`) {
     if (!activeSession) return;
     const readGeneration = ++sourceReadRequestRef.current;
+    clearSampledEvidence();
     authoredEvaluationRequestRef.current += 1;
     setAuthoredEvidence(null);
     setEvaluationError('');
@@ -184,6 +321,10 @@ export function SpatialAttachmentEditorView({
       ) {
         setEvaluationBusy(false);
         setEvaluationError('The attachment source could not be read for rest evaluation.');
+        setMotionEnvelope([]);
+        setEnvelopeError('The attachment source could not be read for sampled evaluation.');
+        setSelectedPhase('');
+        setSelectedNormalizedTime(Number.NaN);
       }
       throw caught;
     }
@@ -193,6 +334,7 @@ export function SpatialAttachmentEditorView({
     ) throw new Error('Attachment source read was superseded.');
     setSource(next.content);
     setRevision(next.revision);
+    applyMotionEnvelope(next.content);
     let parsed: SpatialAttachmentDraft | null = null;
     try {
       parsed = parseSpatialAttachment(next.content);
@@ -279,6 +421,11 @@ export function SpatialAttachmentEditorView({
     setLease(null);
     setActiveOperation(null);
     clearCandidateEvidence();
+    clearSampledEvidence();
+    setMotionEnvelope([]);
+    setEnvelopeError('');
+    setSelectedPhase('');
+    setSelectedNormalizedTime(Number.NaN);
     setAuthoredEvidence(null);
     setEvaluationError('');
     setEvaluationBusy(Boolean(activeSession && selectedPath));
@@ -307,6 +454,7 @@ export function SpatialAttachmentEditorView({
     return () => {
       cancelled = true;
       authoredEvaluationRequestRef.current += 1;
+      sampledEvaluationRequestRef.current += 1;
       sourceReadRequestRef.current += 1;
       operationEventRequestRef.current += 1;
       operationRef.current = null;
@@ -484,15 +632,46 @@ export function SpatialAttachmentEditorView({
   const candidateStale = candidateOperationStale
     || candidateIdentityStale
     || draftDiffersFrom(candidateEvidence?.values || null);
-  const showingCandidate = schematicSource === 'candidate' && Boolean(candidateEvidence);
-  const activeEvidence = showingCandidate ? candidateEvidence : authoredEvidence;
-  const activeRevision = showingCandidate ? candidateEvidence?.proposedRevision || '' : authoredEvidence?.revision || revision;
+  const sampledIdentityStale = Boolean(
+    sampledEvidence
+    && (
+      sampledEvidence.sessionId !== activeSession?.id
+      || sampledEvidence.path !== selectedPath
+      || sampledEvidence.revision !== revision
+      || sampledEvidence.phase !== selectedPhase
+      || sampledEvidence.normalizedTime !== selectedNormalizedTime
+      || !spatialSourceRevisionsCoverAttachment(
+        sampledEvidence.sourceRevisions,
+        sampledEvidence.path,
+        sampledEvidence.revision,
+      )
+    ),
+  );
+  const sampledStale = sampledIdentityStale || draftDiffersFrom(sampledEvidence?.values || null);
+  const showingCandidate = schematicSource === 'candidate';
+  const showingSample = schematicSource === 'sample';
+  const activeEvidence = showingSample
+    ? sampledEvidence
+    : showingCandidate
+      ? candidateEvidence
+      : authoredEvidence;
+  const activeRevision = showingCandidate
+    ? candidateEvidence?.proposedRevision || ''
+    : showingSample
+      ? sampledEvidence?.revision || revision
+      : authoredEvidence?.revision || revision;
   const activePath = activeEvidence?.path || selectedPath;
-  const schematicStale = showingCandidate ? candidateStale : authoredStale;
-  const evidenceLabel = showingCandidate
+  const schematicStale = showingSample ? sampledStale : showingCandidate ? candidateStale : authoredStale;
+  const evidenceLabel = showingSample
+    ? `${schematicStale ? 'STALE ' : ''}AUTHORED SAMPLE - READ ONLY`
+    : showingCandidate
     ? `${schematicStale ? 'STALE ' : ''}PREVIEW CANDIDATE - NOT APPLIED`
     : 'AUTHORED REST';
-  const staleReason = showingCandidate
+  const staleReason = showingSample
+    ? sampledIdentityStale
+      ? 'displayed sample does not match the current revision, phase, or authored normalized time'
+      : 'draft values differ from the authored revision used by this sample'
+    : showingCandidate
     ? operation?.state === 'conflicted'
       ? 'operation conflicted; source or operation state changed after evaluation'
       : candidateIdentityStale
@@ -503,11 +682,49 @@ export function SpatialAttachmentEditorView({
     : authoredIdentityStale
       ? 'displayed evidence does not match the current source revision'
       : 'draft values are not evaluated; display remains on the authored revision';
+  const sampledPose = sampledEvidence?.evaluation.pose.kind === 'clip_sample'
+    ? sampledEvidence.evaluation.pose
+    : null;
 
   function setAxis(kind: 'translation' | 'rotation', index: number, value: string) {
     const parsed = value.trim() ? Number(value) : Number.NaN;
     const setter = kind === 'translation' ? setTranslation : setRotationDegrees;
     setter((current) => current.map((entry, axis) => axis === index ? parsed : entry) as SpatialVector3);
+  }
+
+  function handleSamplePhaseChange(phase: string) {
+    sampledEvaluationRequestRef.current += 1;
+    setSampledBusy(false);
+    setSampledError('');
+    const entry = motionEnvelope.find((candidatePhase) => candidatePhase.phase === phase);
+    setSelectedPhase(entry?.phase || '');
+    setSelectedNormalizedTime(entry?.normalizedTimes[0] ?? Number.NaN);
+  }
+
+  function handleSampleTimeChange(normalizedTime: number) {
+    sampledEvaluationRequestRef.current += 1;
+    setSampledBusy(false);
+    setSampledError('');
+    setSelectedNormalizedTime(normalizedTime);
+  }
+
+  function handleSampleEvaluation() {
+    if (!activeSession || !selectedPath || !revision) return;
+    const phase = motionEnvelope.find((entry) => entry.phase === selectedPhase);
+    if (!phase || !phase.normalizedTimes.includes(selectedNormalizedTime)) {
+      setSampledError('Choose an exact authored motion-envelope phase and normalized time.');
+      return;
+    }
+    void refreshSampledEvaluation(
+      activeSession.id,
+      selectedPath,
+      revision,
+      phase.phase,
+      phase.clip,
+      selectedNormalizedTime,
+      draft ? evaluatedValues(draft) : null,
+      selectionKeyRef.current,
+    );
   }
 
   async function requireCurrentConnection(expectedSelection: string) {
@@ -652,6 +869,7 @@ export function SpatialAttachmentEditorView({
           path: selectedPath,
           revision: result.operation.baseRevision,
           evaluation: result.evaluation.baseline,
+          sourceRevisions: [],
           values: draft ? evaluatedValues(draft) : null,
         });
       }
@@ -772,8 +990,55 @@ export function SpatialAttachmentEditorView({
             <div className="spatial-status" aria-live="polite">{status}</div>
             {sourceLayoutError ? (
               <div className="spatial-alert" role="status">
-                Read-only rest evaluation remains available, but this source cannot be edited by the constrained tuner: {sourceLayoutError}
+                Read-only rest and authored-sample evaluation remain available, but this source cannot be edited by the constrained tuner: {sourceLayoutError}
               </div>
+            ) : null}
+            {selectedPath && revision ? (
+              <section className="spatial-sample-controls" aria-label="Authored motion sample">
+                <div>
+                  <h3>Authored motion sample</h3>
+                  <p>Read-only native evidence at an exact authored phase and time. No write lock or operation is created; candidate sampling is not available in this slice.</p>
+                </div>
+                {motionEnvelope.length ? (
+                  <div className="spatial-sample-controls__fields">
+                    <label>
+                      <span>Phase</span>
+                      <select
+                        aria-label="Authored motion phase"
+                        onChange={(event) => handleSamplePhaseChange(event.target.value)}
+                        value={selectedPhase}
+                      >
+                        {motionEnvelope.map((entry) => <option key={entry.phase} value={entry.phase}>{entry.phase} — {entry.clip}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Normalized time</span>
+                      <select
+                        aria-label="Authored normalized time"
+                        onChange={(event) => handleSampleTimeChange(Number(event.target.value))}
+                        value={Number.isFinite(selectedNormalizedTime) ? String(selectedNormalizedTime) : ''}
+                      >
+                        {(motionEnvelope.find((entry) => entry.phase === selectedPhase)?.normalizedTimes || []).map((time) => (
+                          <option key={time} value={String(time)}>{time}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="ghost-button"
+                      disabled={sampledBusy || !revision || !selectedPhase || !Number.isFinite(selectedNormalizedTime)}
+                      onClick={handleSampleEvaluation}
+                      type="button"
+                    >
+                      {sampledBusy ? 'Evaluating sample...' : 'Evaluate authored sample'}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="spatial-sample-controls__unavailable">
+                    {envelopeError || 'This attachment has no authored motion-envelope samples.'}
+                  </p>
+                )}
+                {sampledError ? <div className="spatial-alert" role="alert">{sampledError}</div> : null}
+              </section>
             ) : null}
             {draft ? (
               <>
@@ -851,15 +1116,23 @@ export function SpatialAttachmentEditorView({
             ) : null}
           </section>
 
-          <section className="spatial-schematic-pane" aria-label="Rest-pose rig schematic workbench">
-            <div className="spatial-schematic-source" role="group" aria-label="Rest schematic evidence source">
+          <section className="spatial-schematic-pane" aria-label="Spatial rig schematic workbench">
+            <div className="spatial-schematic-source" role="group" aria-label="Schematic evidence source">
               <button
-                aria-pressed={!showingCandidate}
+                aria-pressed={schematicSource === 'authored'}
                 disabled={!authoredEvidence && !evaluationBusy}
                 onClick={() => setSchematicSource('authored')}
                 type="button"
               >
-                Authored
+                Authored rest
+              </button>
+              <button
+                aria-pressed={showingSample}
+                disabled={!sampledEvidence && !sampledBusy && !sampledError}
+                onClick={() => setSchematicSource('sample')}
+                type="button"
+              >
+                Authored sample (read-only)
               </button>
               <button
                 aria-pressed={showingCandidate}
@@ -867,16 +1140,28 @@ export function SpatialAttachmentEditorView({
                 onClick={() => setSchematicSource('candidate')}
                 type="button"
               >
-                Candidate (NOT APPLIED)
+                Candidate rest (NOT APPLIED)
               </button>
             </div>
             <SpatialRestSchematic
-              busy={evaluationBusy && !showingCandidate}
-              error={showingCandidate ? '' : evaluationError}
+              busy={showingSample ? sampledBusy : evaluationBusy && !showingCandidate}
+              error={showingSample ? sampledError : showingCandidate ? '' : evaluationError}
               evaluation={activeEvidence?.evaluation || null}
               evidenceLabel={evidenceLabel}
               path={activePath}
+              poseKind={showingSample ? 'sampled' : 'rest'}
               revision={activeRevision}
+              sampleIdentity={showingSample && sampledPose ? {
+                phase: sampledPose.phase,
+                clip: sampledPose.clip,
+                normalizedTime: sampledPose.normalizedTime,
+                sourceRevisionCount: sampledEvidence?.sourceRevisions.length || 0,
+              } : undefined}
+              sourceRevisions={showingSample
+                ? sampledEvidence?.sourceRevisions || []
+                : showingCandidate
+                  ? []
+                  : authoredEvidence?.sourceRevisions || []}
               stale={schematicStale}
               staleReason={staleReason}
             />

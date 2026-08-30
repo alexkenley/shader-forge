@@ -9,6 +9,12 @@ export type SpatialAttachmentDraft = {
   rotationDegrees: SpatialVector3;
 };
 
+export type SpatialMotionEnvelopePhase = {
+  phase: string;
+  clip: string;
+  normalizedTimes: number[];
+};
+
 export type SpatialOperationReconciliation = {
   refreshAuthored: boolean;
   clearCandidate: boolean;
@@ -114,6 +120,24 @@ function arrayField(lines: SourceLine[], section: string, key: string, length: n
   return { line, prefix: match[1], suffix: match[3], values } satisfies ArrayField;
 }
 
+function numberArrayValues(lines: SourceLine[], section: string, key: string) {
+  const candidates = lines.filter((line) => line.section === section && new RegExp(`^\\s*${key}\\s*=`).test(line.text));
+  const line = requireOne(candidates, `[${section}] ${key}`);
+  const match = new RegExp(`^\\s*${key}\\s*=\\s*\\[([^\\]]*)\\]\\s*(?:#.*)?$`).exec(line.text);
+  if (!match) throw new Error(`Attachment [${section}] ${key} uses an unsupported layout.`);
+  const inner = match[1].trim();
+  if (!inner) throw new Error(`Attachment [${section}] ${key} must be a finite unique array.`);
+  const tokens = inner.split(',').map((value) => value.trim());
+  if (tokens.some((value) => !value || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value))) {
+    throw new Error(`Attachment [${section}] ${key} must be a finite unique array.`);
+  }
+  const values = tokens.map(Number);
+  if (values.some((value) => !Number.isFinite(value))) {
+    throw new Error(`Attachment [${section}] ${key} must be a finite unique array.`);
+  }
+  return values;
+}
+
 function quaternionToDegrees(values: number[]): SpatialVector3 {
   let [x, y, z, w] = values;
   const length = Math.hypot(x, y, z, w);
@@ -162,6 +186,99 @@ export function parseSpatialAttachment(source: string): SpatialAttachmentDraft {
     translation: translation.values as SpatialVector3,
     rotationDegrees: quaternionToDegrees(rotation.values),
   };
+}
+
+export function parseSpatialAttachmentMotionEnvelope(source: string): SpatialMotionEnvelopePhase[] {
+  const lines = sourceLines(source);
+  const headerPhases: string[] = [];
+  for (const line of lines) {
+    const header = /^\s*\[motion_envelope\.([^\]]*)\]\s*(?:#.*)?$/.exec(line.text);
+    if (!header) continue;
+    const phase = header[1];
+    if (!phase || phase !== phase.trim()) {
+      throw new Error('Attachment motion envelope phase must be a unique non-empty name.');
+    }
+    headerPhases.push(phase);
+  }
+  if (new Set(headerPhases).size !== headerPhases.length) {
+    throw new Error('Attachment motion envelope phases must be unique.');
+  }
+
+  const envelope: SpatialMotionEnvelopePhase[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (!line.section.startsWith('motion_envelope.') || seen.has(line.section)) continue;
+    seen.add(line.section);
+    const phase = line.section.slice('motion_envelope.'.length);
+    if (!phase || phase !== phase.trim()) {
+      throw new Error('Attachment motion envelope phase must be a unique non-empty name.');
+    }
+    const clip = stringField(lines, line.section, 'clip');
+    if (!clip) throw new Error(`Attachment [${line.section}] clip uses an unsupported layout.`);
+    const normalizedTimes = numberArrayValues(lines, line.section, 'normalized_times');
+    if (
+      normalizedTimes.length === 0
+      || normalizedTimes.some((value) => value < 0 || value > 1 || Object.is(value, -0))
+      || new Set(normalizedTimes).size !== normalizedTimes.length
+    ) {
+      throw new Error(`Attachment [${line.section}] normalized_times must be finite unique values in [0,1].`);
+    }
+    envelope.push({ phase, clip, normalizedTimes });
+  }
+  return envelope;
+}
+
+export function spatialSourceRevisionsCoverAttachment(
+  sourceRevisions: unknown,
+  attachmentPath: string,
+  revision: string,
+): sourceRevisions is Array<{ path: string; revision: string }> {
+  if (!Array.isArray(sourceRevisions) || sourceRevisions.length === 0 || sourceRevisions.length > 4096) return false;
+  if (
+    typeof attachmentPath !== 'string'
+    || !attachmentPath
+    || attachmentPath.length > 2048
+    || attachmentPath.startsWith('/')
+    || /^[A-Za-z]:/.test(attachmentPath)
+    || attachmentPath.includes('\\')
+    || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(attachmentPath)
+    || attachmentPath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+    || typeof revision !== 'string'
+    || !/^sha256:[a-f0-9]{64}$/.test(revision)
+  ) {
+    return false;
+  }
+  let previousPath = '';
+  let totalTextLength = 0;
+  let covers = false;
+  for (const entry of sourceRevisions) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const record = entry as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (
+      keys.length !== 2
+      || !keys.includes('path')
+      || !keys.includes('revision')
+      || typeof record.path !== 'string'
+      || !record.path
+      || record.path.length > 2048
+      || typeof record.revision !== 'string'
+      || !/^sha256:[a-f0-9]{64}$/.test(record.revision)
+      || record.path.startsWith('/')
+      || /^[A-Za-z]:/.test(record.path)
+      || record.path.includes('\\')
+      || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(record.path)
+      || record.path.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+    ) {
+      return false;
+    }
+    totalTextLength += record.path.length + record.revision.length;
+    if (totalTextLength > 65536) return false;
+    if (previousPath && record.path <= previousPath) return false;
+    previousPath = record.path;
+    if (record.path === attachmentPath && record.revision === revision) covers = true;
+  }
+  return covers;
 }
 
 export function updateSpatialAttachmentTransform(

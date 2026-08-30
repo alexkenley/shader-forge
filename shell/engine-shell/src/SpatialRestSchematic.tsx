@@ -2,9 +2,12 @@ import { useId, useMemo, useState, type ReactNode } from 'react';
 import type {
   SpatialAttachmentEvaluation,
   SpatialEvaluationVec3,
+  SpatialSampledPose,
+  SpatialSourceRevision,
 } from './lib/sessiond';
 
 export type SpatialRestSchematicProjection = 'xy' | 'zy' | 'xz';
+export type SpatialSchematicPoseKind = 'rest' | 'sampled';
 
 type SpatialRestSchematicProps = {
   evaluation: SpatialAttachmentEvaluation | null;
@@ -15,6 +18,14 @@ type SpatialRestSchematicProps = {
   revision: string;
   stale: boolean;
   staleReason: string;
+  poseKind?: SpatialSchematicPoseKind;
+  sampleIdentity?: {
+    phase: string;
+    clip: string;
+    normalizedTime: number;
+    sourceRevisionCount: number;
+  };
+  sourceRevisions?: SpatialSourceRevision[];
 };
 
 type ProjectionBounds = { minU: number; minV: number; span: number };
@@ -54,7 +65,41 @@ export const SPATIAL_EVALUATION_LIMITS = {
   maxSockets: 1024,
   maxLimitations: 64,
   maxCoordinateRows: 4096,
+  maxProceduralLayers: 8,
 } as const;
+
+const PRIMARY_ATTACHMENT_LAYER = 'primary_attachment';
+const SECONDARY_HAND_IK_LAYER = 'secondary_hand_ik';
+const ALLOWED_PROCEDURAL_LAYERS = [PRIMARY_ATTACHMENT_LAYER, SECONDARY_HAND_IK_LAYER] as const;
+const SAMPLED_POSE_KEYS = [
+  'kind',
+  'sampled',
+  'phase',
+  'clip',
+  'normalizedTime',
+  'proceduralLayersRequested',
+  'proceduralLayersApplied',
+  'proceduralLayersUnavailable',
+] as const;
+const APPLIED_SECONDARY_IK_KEYS = [
+  'status',
+  'solved',
+  'reachable',
+  'preSolveDistanceMeters',
+  'targetDistanceMeters',
+  'minReachMeters',
+  'maxReachMeters',
+  'reachResidualMeters',
+  'reachToleranceMeters',
+  'reachWithinTolerance',
+  'postSolveDistanceMeters',
+  'contactToleranceMeters',
+  'contactWithinTolerance',
+  'postSolveAngleDegrees',
+  'angleToleranceDegrees',
+  'angleWithinTolerance',
+  'withinTolerance',
+] as const;
 
 type ValidationBudget = { textLength: number };
 type SpatialEvaluationQuat = [number, number, number, number];
@@ -139,12 +184,209 @@ function validDiagnostic(value: unknown, budget: ValidationBudget, statuses: rea
     && boundedString(value.reason, budget);
 }
 
+function exactStatusReason(value: unknown, status: string, reason: string, budget: ValidationBudget) {
+  return isRecord(value)
+    && validDiagnostic(value, budget, [status])
+    && value.status === status
+    && value.reason === reason;
+}
+
+function exactStringArray(value: unknown, expected: readonly string[]) {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && value.every((entry, index) => entry === expected[index]);
+}
+
+function uniqueAllowedLayers(value: unknown, budget: ValidationBudget): value is string[] {
+  if (!Array.isArray(value) || value.length > SPATIAL_EVALUATION_LIMITS.maxProceduralLayers) return false;
+  const seen = new Set<string>();
+  for (const layer of value) {
+    if (
+      typeof layer !== 'string'
+      || !(ALLOWED_PROCEDURAL_LAYERS as readonly string[]).includes(layer)
+      || seen.has(layer)
+      || !boundedString(layer, budget)
+    ) return false;
+    seen.add(layer);
+  }
+  return true;
+}
+
+function finiteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function sampledPoseShape(value: unknown, budget: ValidationBudget): value is SpatialSampledPose {
+  return exactRecord(value, SAMPLED_POSE_KEYS)
+    && value.kind === 'clip_sample'
+    && value.sampled === true
+    && boundedString(value.phase, budget)
+    && boundedString(value.clip, budget)
+    && typeof value.normalizedTime === 'number'
+    && Number.isFinite(value.normalizedTime)
+    && !Object.is(value.normalizedTime, -0)
+    && value.normalizedTime >= 0
+    && value.normalizedTime <= 1
+    && uniqueAllowedLayers(value.proceduralLayersRequested, budget)
+    && uniqueAllowedLayers(value.proceduralLayersApplied, budget)
+    && uniqueAllowedLayers(value.proceduralLayersUnavailable, budget);
+}
+
+function validAppliedSecondaryIk(value: unknown, secondary: unknown) {
+  if (!exactRecord(value, APPLIED_SECONDARY_IK_KEYS)
+    || value.status !== 'applied'
+    || value.solved !== true
+    || typeof value.reachable !== 'boolean'
+    || !finiteNonNegative(value.preSolveDistanceMeters)
+    || !finiteNonNegative(value.targetDistanceMeters)
+    || !finiteNonNegative(value.minReachMeters)
+    || !finiteNonNegative(value.maxReachMeters)
+    || value.maxReachMeters < value.minReachMeters
+    || !finiteNonNegative(value.reachResidualMeters)
+    || !finiteNonNegative(value.reachToleranceMeters)
+    || typeof value.reachWithinTolerance !== 'boolean'
+    || !finiteNonNegative(value.postSolveDistanceMeters)
+    || !finiteNonNegative(value.contactToleranceMeters)
+    || typeof value.contactWithinTolerance !== 'boolean'
+    || !finiteNonNegative(value.postSolveAngleDegrees)
+    || !finiteNonNegative(value.angleToleranceDegrees)
+    || typeof value.angleWithinTolerance !== 'boolean'
+    || typeof value.withinTolerance !== 'boolean') {
+    return false;
+  }
+  if (value.reachWithinTolerance !== (value.reachResidualMeters <= value.reachToleranceMeters)) return false;
+  if (value.contactWithinTolerance !== (value.postSolveDistanceMeters <= value.contactToleranceMeters)) return false;
+  if (value.angleWithinTolerance !== (value.postSolveAngleDegrees <= value.angleToleranceDegrees)) return false;
+  if (value.withinTolerance !== (value.reachWithinTolerance && value.contactWithinTolerance && value.angleWithinTolerance)) {
+    return false;
+  }
+  const reachableByDistance = value.targetDistanceMeters >= value.minReachMeters
+    && value.targetDistanceMeters <= value.maxReachMeters;
+  if (value.reachable !== reachableByDistance) return false;
+  const expectedReachResidual = value.targetDistanceMeters < value.minReachMeters
+    ? value.minReachMeters - value.targetDistanceMeters
+    : value.targetDistanceMeters > value.maxReachMeters
+      ? value.targetDistanceMeters - value.maxReachMeters
+      : 0;
+  if (!near(value.reachResidualMeters, expectedReachResidual)) return false;
+  if (!isRecord(secondary)
+    || typeof secondary.preSolveDistanceMeters !== 'number'
+    || !Number.isFinite(secondary.preSolveDistanceMeters)
+    || !near(secondary.preSolveDistanceMeters, value.preSolveDistanceMeters)
+    || !validTransform(secondary.palmWorld)
+    || !validTransform(secondary.targetWorld)) {
+    return false;
+  }
+  const palm = secondary.palmWorld as { translation: SpatialEvaluationVec3; rotation: SpatialEvaluationQuat };
+  const target = secondary.targetWorld as { translation: SpatialEvaluationVec3; rotation: SpatialEvaluationQuat };
+  const geometryDistance = Math.hypot(
+    target.translation[0] - palm.translation[0],
+    target.translation[1] - palm.translation[1],
+    target.translation[2] - palm.translation[2],
+  );
+  const rotationDot = Math.min(1, Math.abs(
+    palm.rotation[0] * target.rotation[0]
+    + palm.rotation[1] * target.rotation[1]
+    + palm.rotation[2] * target.rotation[2]
+    + palm.rotation[3] * target.rotation[3],
+  ));
+  const geometryAngleDegrees = 2 * Math.acos(rotationDot) * 180 / Math.PI;
+  return near(value.postSolveDistanceMeters, geometryDistance)
+    && near(value.postSolveAngleDegrees, geometryAngleDegrees);
+}
+
+function validSampledBranch(
+  value: Record<string, unknown>,
+  pose: SpatialSampledPose,
+  budget: ValidationBudget,
+) {
+  if (!isRecord(value.attachment) || !isRecord(value.hands) || !isRecord(value.diagnostics)) return false;
+  if (value.hands.dominant === null) return false;
+  const mode = value.attachment.mode;
+  const schemaVersion = value.schemaVersion;
+  if (mode === 'one_hand') {
+    return value.hands.secondary === null
+      && exactStringArray(pose.proceduralLayersRequested, [PRIMARY_ATTACHMENT_LAYER])
+      && exactStringArray(pose.proceduralLayersApplied, [PRIMARY_ATTACHMENT_LAYER])
+      && exactStringArray(pose.proceduralLayersUnavailable, [])
+      && exactStatusReason(value.diagnostics.secondaryIk, 'not_applicable', 'one_hand_attachment', budget)
+      && exactStringArray(value.limitations, [
+        'sampled_attachment_schematic_only',
+        'not_review_evidence',
+        'item_mesh_unavailable',
+      ]);
+  }
+  if (mode !== 'two_hand' || value.hands.secondary === null || !isRecord(value.hands.secondary)) return false;
+  if (value.hands.secondary.enabled !== true
+    || value.hands.secondary.palmWorld === null
+    || value.hands.secondary.targetWorld === null
+    || value.hands.secondary.pole === null) {
+    return false;
+  }
+  if (schemaVersion === 1) {
+    return exactStringArray(pose.proceduralLayersRequested, [PRIMARY_ATTACHMENT_LAYER, SECONDARY_HAND_IK_LAYER])
+      && exactStringArray(pose.proceduralLayersApplied, [PRIMARY_ATTACHMENT_LAYER])
+      && exactStringArray(pose.proceduralLayersUnavailable, [SECONDARY_HAND_IK_LAYER])
+      && exactStatusReason(value.diagnostics.secondaryIk, 'unavailable', 'secondary_hand_ik_not_implemented', budget)
+      && exactStringArray(value.limitations, [
+        'pre_ik_only',
+        'not_review_evidence',
+        'item_mesh_unavailable',
+        'secondary_hand_ik_unavailable',
+      ]);
+  }
+  return schemaVersion === 2
+    && exactStringArray(pose.proceduralLayersRequested, [PRIMARY_ATTACHMENT_LAYER, SECONDARY_HAND_IK_LAYER])
+    && exactStringArray(pose.proceduralLayersApplied, [PRIMARY_ATTACHMENT_LAYER, SECONDARY_HAND_IK_LAYER])
+    && exactStringArray(pose.proceduralLayersUnavailable, [])
+    && validAppliedSecondaryIk(value.diagnostics.secondaryIk, value.hands.secondary)
+    && exactStringArray(value.limitations, [
+      'sampled_attachment_schematic_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+    ]);
+}
+
+function validRestBranch(value: Record<string, unknown>, budget: ValidationBudget) {
+  if (!isRecord(value.attachment) || !isRecord(value.hands) || !isRecord(value.diagnostics)) return false;
+  if (value.hands.dominant === null) return false;
+  if (value.attachment.mode === 'one_hand') {
+    return value.hands.secondary === null
+      && exactStatusReason(value.diagnostics.secondaryIk, 'not_applicable', 'one_hand_attachment', budget)
+      && exactStringArray(value.limitations, [
+        'rest_pose_only',
+        'not_review_evidence',
+        'item_mesh_unavailable',
+      ]);
+  }
+  if (
+    value.attachment.mode !== 'two_hand'
+    || !isRecord(value.hands.secondary)
+    || value.hands.secondary.enabled !== true
+    || value.hands.secondary.palmWorld === null
+    || value.hands.secondary.targetWorld === null
+    || value.hands.secondary.pole === null
+  ) return false;
+  return exactStatusReason(
+    value.diagnostics.secondaryIk,
+    'unavailable',
+    value.schemaVersion === 2 ? 'rest_pose_unsolved' : 'secondary_hand_ik_not_implemented',
+    budget,
+  ) && exactStringArray(value.limitations, [
+    'rest_pose_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+    'secondary_hand_ik_unavailable',
+  ]);
+}
+
 function validPole(value: unknown, schemaVersion: unknown, budget: ValidationBudget) {
   if (!exactRecord(value, ['translation', 'space', 'world', 'reason'])
       || !isSpatialEvaluationVec3(value.translation)) return false;
   if (schemaVersion === 1) {
     return value.space === 'unresolved'
       && value.world === null
+      && value.reason === 'pole_space_not_authored'
       && boundedString(value.reason, budget);
   }
   return schemaVersion === 2
@@ -171,12 +413,14 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     'schema', 'schemaVersion', 'pose', 'coordinateSystem', 'skeleton', 'attachment',
     'bones', 'segments', 'sockets', 'item', 'hands', 'diagnostics', 'limitations',
   ])) return false;
+  const restPose = exactRecord(value.pose, ['kind', 'sampled'])
+    && value.pose.kind === 'rest'
+    && value.pose.sampled === false;
+  const sampledPose = sampledPoseShape(value.pose, budget);
   if (
     value.schema !== 'shader_forge.spatial_attachment_evaluation'
     || (value.schemaVersion !== 1 && value.schemaVersion !== 2)
-    || !exactRecord(value.pose, ['kind', 'sampled'])
-    || value.pose.kind !== 'rest'
-    || value.pose.sampled !== false
+    || (!restPose && !sampledPose)
     || !exactRecord(value.coordinateSystem, ['units', 'handedness', 'up', 'forward', 'quaternionOrder'])
     || value.coordinateSystem.units !== 'meters'
     || value.coordinateSystem.handedness !== 'right'
@@ -199,6 +443,9 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     || !boundedString(value.attachment.mode, budget)
     || !boundedString(value.attachment.perspective, budget)
     || !boundedString(value.attachment.primaryGripSocket, budget)
+    || !['left', 'right'].includes(value.attachment.dominantHand as string)
+    || !['one_hand', 'two_hand'].includes(value.attachment.mode as string)
+    || !['first_person', 'third_person', 'both'].includes(value.attachment.perspective as string)
   ) return false;
   if (
     !Array.isArray(value.bones)
@@ -232,8 +479,9 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
   if (
     !exactRecord(value.item, ['prefabId', 'world', 'geometry', 'primaryContactWorld', 'handleAxisWorld'])
     || !boundedString(value.item.prefabId, budget)
+    || value.item.prefabId !== value.attachment.itemPrefabId
     || !validTransform(value.item.world)
-    || !validDiagnostic(value.item.geometry, budget, ['unavailable'])
+    || !exactStatusReason(value.item.geometry, 'unavailable', 'item_prefab_geometry_not_integrated', budget)
     || !(value.item.primaryContactWorld === null || validTransform(value.item.primaryContactWorld))
     || !(value.item.handleAxisWorld === null || (
       exactRecord(value.item.handleAxisWorld, ['origin', 'direction'])
@@ -242,7 +490,7 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     ))
   ) return false;
   if (!exactRecord(value.hands, ['dominant', 'secondary'])) return false;
-  if (value.hands.dominant !== null && !(
+  if (value.hands.dominant === null || !(
     exactRecord(value.hands.dominant, ['boneId', 'role', 'world', 'palmWorld'])
     && boundedString(value.hands.dominant.boneId, budget)
     && boundedString(value.hands.dominant.role, budget)
@@ -269,13 +517,14 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
   )) return false;
   if (
     !exactRecord(value.diagnostics, ['secondaryIk', 'jointLimits', 'clipping'])
-    || !validDiagnostic(value.diagnostics.secondaryIk, budget)
-    || !validDiagnostic(value.diagnostics.jointLimits, budget)
-    || !validDiagnostic(value.diagnostics.clipping, budget)
+    || !exactStatusReason(value.diagnostics.jointLimits, 'unavailable', 'joint_limits_not_authored', budget)
+    || !exactStatusReason(value.diagnostics.clipping, 'unavailable', 'item_and_capsule_geometry_not_integrated', budget)
     || !Array.isArray(value.limitations)
     || value.limitations.length > SPATIAL_EVALUATION_LIMITS.maxLimitations
     || !value.limitations.every((entry) => boundedString(entry, budget))
   ) return false;
+  if (restPose && !validRestBranch(value, budget)) return false;
+  if (sampledPose && !validSampledBranch(value, value.pose as SpatialSampledPose, budget)) return false;
   const coordinateRowCount = value.bones.length
     + value.segments.length * 2
     + value.sockets.length
@@ -644,6 +893,12 @@ function coordinateRows(evaluation: SpatialAttachmentEvaluation) {
   return rows;
 }
 
+function layerList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((entry) => typeof entry === 'string').join(', ') || 'none'
+    : 'unavailable';
+}
+
 function diagnosticRows(evaluation: SpatialAttachmentEvaluation) {
   const rows: Array<{ name: string; status: string; reason: string }> = [];
   const add = (name: string, value: unknown) => {
@@ -657,8 +912,51 @@ function diagnosticRows(evaluation: SpatialAttachmentEvaluation) {
       reason: typeof value.reason === 'string' ? value.reason : 'reason not provided',
     });
   };
+  if (evaluation.pose.kind === 'clip_sample') {
+    rows.push({
+      name: 'Procedural requested',
+      status: 'requested',
+      reason: layerList(evaluation.pose.proceduralLayersRequested),
+    });
+    rows.push({
+      name: 'Procedural applied',
+      status: 'applied',
+      reason: layerList(evaluation.pose.proceduralLayersApplied),
+    });
+    rows.push({
+      name: 'Procedural unavailable',
+      status: 'unavailable',
+      reason: layerList(evaluation.pose.proceduralLayersUnavailable),
+    });
+  }
   add('Item geometry', evaluation.item.geometry);
-  add('Secondary IK', evaluation.diagnostics.secondaryIk);
+  const secondaryIk = evaluation.diagnostics.secondaryIk;
+  if (isRecord(secondaryIk) && secondaryIk.status === 'applied') {
+    rows.push({
+      name: 'Secondary IK',
+      status: 'applied',
+      reason: secondaryIk.solved === true
+        ? (secondaryIk.reachable === true ? 'solved reachable' : 'solved unreachable')
+        : 'applied',
+    });
+    rows.push({
+      name: 'Secondary IK reach',
+      status: secondaryIk.reachWithinTolerance === true ? 'PASS' : 'FAIL',
+      reason: `residual ${String(secondaryIk.reachResidualMeters)} m / tolerance ${String(secondaryIk.reachToleranceMeters)} m; target ${String(secondaryIk.targetDistanceMeters)} m; interval [${String(secondaryIk.minReachMeters)}, ${String(secondaryIk.maxReachMeters)}] m`,
+    });
+    rows.push({
+      name: 'Secondary IK contact',
+      status: secondaryIk.contactWithinTolerance === true ? 'PASS' : 'FAIL',
+      reason: `post-solve ${String(secondaryIk.postSolveDistanceMeters)} m / tolerance ${String(secondaryIk.contactToleranceMeters)} m`,
+    });
+    rows.push({
+      name: 'Secondary IK angle',
+      status: secondaryIk.angleWithinTolerance === true ? 'PASS' : 'FAIL',
+      reason: `post-solve ${String(secondaryIk.postSolveAngleDegrees)} deg / tolerance ${String(secondaryIk.angleToleranceDegrees)} deg`,
+    });
+  } else {
+    add('Secondary IK', secondaryIk);
+  }
   add('Joint limits', evaluation.diagnostics.jointLimits);
   add('Clipping', evaluation.diagnostics.clipping);
   const pole = isRecord(evaluation.hands.secondary) && isRecord(evaluation.hands.secondary.pole)
@@ -683,37 +981,96 @@ export function SpatialRestSchematic({
   revision,
   stale,
   staleReason,
+  poseKind = 'rest',
+  sampleIdentity,
+  sourceRevisions = [],
 }: SpatialRestSchematicProps) {
   const titleId = useId();
   const descriptionId = useId();
   const [projection, setProjection] = useState<SpatialRestSchematicProjection>('xy');
-  const safeEvaluation = isSpatialAttachmentEvaluation(evaluation) ? evaluation : null;
+  const candidateEvaluation = isSpatialAttachmentEvaluation(evaluation) ? evaluation : null;
+  const sampleIdentityMatches = candidateEvaluation?.pose.kind !== 'clip_sample'
+    || !sampleIdentity
+    || (
+      candidateEvaluation.pose.phase === sampleIdentity.phase
+      && candidateEvaluation.pose.clip === sampleIdentity.clip
+      && candidateEvaluation.pose.normalizedTime === sampleIdentity.normalizedTime
+    );
+  const safeEvaluation = candidateEvaluation
+    && (poseKind !== 'rest' || candidateEvaluation.pose.kind === 'rest')
+    && (poseKind !== 'sampled' || candidateEvaluation.pose.kind === 'clip_sample')
+    && sampleIdentityMatches
+    ? candidateEvaluation
+    : null;
+  const sampled = poseKind === 'sampled';
+  const preIk = Boolean(
+    sampled
+    && (
+      safeEvaluation?.limitations.includes('pre_ik_only')
+      || (safeEvaluation?.schemaVersion === 1 && safeEvaluation.attachment.mode === 'two_hand')
+    ),
+  );
   const projectionDetail = PROJECTIONS.find((entry) => entry.id === projection)?.detail || '';
   const coordinates = useMemo(() => safeEvaluation ? coordinateRows(safeEvaluation) : [], [safeEvaluation]);
   const diagnostics = useMemo(() => safeEvaluation ? diagnosticRows(safeEvaluation) : [], [safeEvaluation]);
-  const description = `${evidenceLabel}. Unsampled rest-pose evaluator geometry. ${projectionDetail}. Not review evidence. Item geometry is unavailable.`;
+  const samplePhase = sampleIdentity?.phase
+    || (safeEvaluation?.pose.kind === 'clip_sample' ? safeEvaluation.pose.phase : '');
+  const sampleClip = sampleIdentity?.clip
+    || (safeEvaluation?.pose.kind === 'clip_sample' ? safeEvaluation.pose.clip : '');
+  const sampleTime = sampleIdentity && Number.isFinite(sampleIdentity.normalizedTime)
+    ? sampleIdentity.normalizedTime
+    : (safeEvaluation?.pose.kind === 'clip_sample' ? safeEvaluation.pose.normalizedTime : Number.NaN);
+  const sourceRevisionCount = sampleIdentity?.sourceRevisionCount;
+  const title = sampled ? 'SAMPLED RIG SCHEMATIC' : 'REST-POSE RIG SCHEMATIC';
+  const description = sampled
+    ? `${evidenceLabel}. Sampled clip-pose evaluator geometry at phase ${samplePhase || 'unavailable'}, clip ${sampleClip || 'unavailable'}, normalized time ${Number.isFinite(sampleTime) ? String(sampleTime) : 'unavailable'}. ${projectionDetail}. Not review evidence. Item geometry is unavailable. Not a camera, capture, or immutable review packet.`
+    : `${evidenceLabel}. Unsampled rest-pose evaluator geometry. ${projectionDetail}. Not review evidence. Item geometry is unavailable.`;
 
   let drawing: ReactNode;
-  if (busy && !safeEvaluation) drawing = <p className="spatial-rest-schematic__empty">Evaluating the exact authored revision...</p>;
-  else if (error && !safeEvaluation) drawing = <p className="spatial-rest-schematic__empty">Rest evaluation failed.</p>;
-  else if (!safeEvaluation) drawing = <p className="spatial-rest-schematic__empty">Rest-pose schematic is unavailable or malformed.</p>;
-  else drawing = <Drawing evaluation={safeEvaluation} projection={projection} />;
+  if (busy && !safeEvaluation) {
+    drawing = (
+      <p className="spatial-rest-schematic__empty">
+        {sampled ? 'Evaluating the exact authored sample...' : 'Evaluating the exact authored revision...'}
+      </p>
+    );
+  } else if (error && !safeEvaluation) {
+    drawing = (
+      <p className="spatial-rest-schematic__empty">
+        {sampled ? 'Sample evaluation failed.' : 'Rest evaluation failed.'}
+      </p>
+    );
+  } else if (!safeEvaluation) {
+    drawing = (
+      <p className="spatial-rest-schematic__empty">
+        {sampled ? 'Sampled rig schematic is unavailable or malformed.' : 'Rest-pose schematic is unavailable or malformed.'}
+      </p>
+    );
+  } else drawing = <Drawing evaluation={safeEvaluation} projection={projection} />;
 
   return (
     <figure aria-busy={busy} className={`spatial-rest-schematic${stale ? ' is-stale' : ''}`}>
       <div className="spatial-rest-schematic__header">
         <div>
-          <strong>REST-POSE RIG SCHEMATIC</strong>
+          <strong>{title}</strong>
           <span>{evidenceLabel}</span>
         </div>
         <div className="spatial-rest-schematic__badges" aria-label="Evidence limitations">
-          <span>UNSAMPLED</span>
+          <span>{sampled ? 'SAMPLED' : 'UNSAMPLED'}</span>
+          {preIk ? <span>PRE-IK</span> : null}
           <span>NOT REVIEW EVIDENCE</span>
         </div>
       </div>
       <dl className="spatial-rest-schematic__identity">
         <div><dt>Path</dt><dd>{path || 'Unavailable'}</dd></div>
         <div><dt>Revision</dt><dd>{revision || 'Unavailable'}</dd></div>
+        {sampled ? (
+          <>
+            <div><dt>Phase</dt><dd>{samplePhase || 'Unavailable'}</dd></div>
+            <div><dt>Clip</dt><dd>{sampleClip || 'Unavailable'}</dd></div>
+            <div><dt>Normalized time</dt><dd>{Number.isFinite(sampleTime) ? String(sampleTime) : 'Unavailable'}</dd></div>
+            <div><dt>Source revisions</dt><dd>{typeof sourceRevisionCount === 'number' ? String(sourceRevisionCount) : 'Unavailable'}</dd></div>
+          </>
+        ) : null}
       </dl>
       <div className="spatial-rest-schematic__toolbar">
         <div className="spatial-rest-schematic__projections" role="group" aria-label="Orthographic projection">
@@ -728,15 +1085,21 @@ export function SpatialRestSchematic({
       {stale ? <div className="spatial-rest-schematic__stale" role="status">STALE — {staleReason}</div> : null}
       {error ? <div className="spatial-rest-schematic__error" role="alert">{error}</div> : null}
       <div aria-live="polite" className="spatial-rest-schematic__live">
-        {busy ? 'Rest evaluation in progress.' : safeEvaluation ? `${evidenceLabel} loaded.` : 'Rest evaluation unavailable.'}
+        {busy
+          ? (sampled ? 'Sample evaluation in progress.' : 'Rest evaluation in progress.')
+          : safeEvaluation
+            ? `${evidenceLabel} loaded.`
+            : (sampled ? 'Sample evaluation unavailable.' : 'Rest evaluation unavailable.')}
       </div>
       <div aria-describedby={descriptionId} aria-labelledby={titleId} className="spatial-rest-schematic__frame" role="img">
-        <span className="spatial-rest-schematic__sr" id={titleId}>Rest-pose rig schematic</span>
+        <span className="spatial-rest-schematic__sr" id={titleId}>{sampled ? 'Sampled rig schematic' : 'Rest-pose rig schematic'}</span>
         <span className="spatial-rest-schematic__sr" id={descriptionId}>{description}</span>
         {drawing}
       </div>
       <figcaption>
-        Native evaluator world frames only. The item marker is an origin with orientation axes; a resolved authored pole is shown as a green ring. No mesh, bounds, sampled animation, IK result, clipping result, camera, or capture is shown. An unresolved pole is never projected.
+        {sampled
+          ? 'Native evaluator world frames only, including solved sampled hand and bone frames when present. The item marker is an origin with orientation axes; a resolved authored pole is shown as a green ring. No item mesh, joint-limit result, clipping result, camera, capture, or immutable review packet is shown. An unresolved pole is never projected. V1 two-hand samples remain pre-IK.'
+          : 'Native evaluator world frames only. The item marker is an origin with orientation axes; a resolved authored pole is shown as a green ring. No mesh, bounds, sampled animation, IK result, clipping result, camera, or capture is shown. An unresolved pole is never projected.'}
       </figcaption>
       <ul className="spatial-rest-schematic__legend" aria-label="Schematic legend">
         {LEGEND.map(([label, color]) => <li key={label}><span aria-hidden="true" style={{ background: color }} />{label}</li>)}
@@ -766,6 +1129,21 @@ export function SpatialRestSchematic({
               ))}
             </dl>
           </details>
+          {sourceRevisions.length ? (
+            <details>
+              <summary>Exact source revisions ({sourceRevisions.length})</summary>
+              <div className="spatial-rest-schematic__table-wrap">
+                <table>
+                  <thead><tr><th>Authored source</th><th>SHA-256 revision</th></tr></thead>
+                  <tbody>
+                    {sourceRevisions.map((entry) => (
+                      <tr key={entry.path}><th scope="row">{entry.path}</th><td><code>{entry.revision}</code></td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : null}
     </figure>

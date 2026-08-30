@@ -831,10 +831,53 @@ export type SpatialEvaluationDiagnostic = {
   reason: string;
 };
 
+export type SpatialRestPose = {
+  kind: 'rest';
+  sampled: false;
+};
+
+export type SpatialProceduralLayer = 'primary_attachment' | 'secondary_hand_ik';
+
+export type SpatialSampledPose = {
+  kind: 'clip_sample';
+  sampled: true;
+  phase: string;
+  clip: string;
+  normalizedTime: number;
+  proceduralLayersRequested: SpatialProceduralLayer[];
+  proceduralLayersApplied: SpatialProceduralLayer[];
+  proceduralLayersUnavailable: SpatialProceduralLayer[];
+};
+
+export type SpatialAppliedSecondaryIkDiagnostic = {
+  status: 'applied';
+  solved: true;
+  reachable: boolean;
+  preSolveDistanceMeters: number;
+  targetDistanceMeters: number;
+  minReachMeters: number;
+  maxReachMeters: number;
+  reachResidualMeters: number;
+  reachToleranceMeters: number;
+  reachWithinTolerance: boolean;
+  postSolveDistanceMeters: number;
+  contactToleranceMeters: number;
+  contactWithinTolerance: boolean;
+  postSolveAngleDegrees: number;
+  angleToleranceDegrees: number;
+  angleWithinTolerance: boolean;
+  withinTolerance: boolean;
+};
+
+export type SpatialSourceRevision = {
+  path: string;
+  revision: string;
+};
+
 export type SpatialAttachmentEvaluation = {
   schema: 'shader_forge.spatial_attachment_evaluation';
   schemaVersion: 1 | 2;
-  pose: { kind: 'rest'; sampled: false };
+  pose: SpatialRestPose | SpatialSampledPose;
   coordinateSystem: {
     units: 'meters';
     handedness: 'right';
@@ -906,7 +949,7 @@ export type SpatialAttachmentEvaluation = {
     } | null;
   };
   diagnostics: {
-    secondaryIk: SpatialEvaluationDiagnostic;
+    secondaryIk: SpatialEvaluationDiagnostic | SpatialAppliedSecondaryIkDiagnostic;
     jointLimits: SpatialEvaluationDiagnostic;
     clipping: SpatialEvaluationDiagnostic;
   };
@@ -917,6 +960,7 @@ export type SpatialAttachmentEvaluationResult = {
   evaluation: SpatialAttachmentEvaluation;
   path: string;
   revision: string;
+  sourceRevisions: SpatialSourceRevision[];
 };
 
 export type SpatialAttachmentPreviewResult = {
@@ -937,6 +981,22 @@ export async function evaluateSpatialAttachment(
   query.searchParams.set('sessionId', sessionId);
   query.searchParams.set('path', path);
   query.searchParams.set('baseRevision', baseRevision);
+  return requestJson<SpatialAttachmentEvaluationResult>(`${query.pathname}${query.search}`);
+}
+
+export async function evaluateSpatialAttachmentSample(
+  sessionId: string,
+  path: string,
+  baseRevision: string,
+  phase: string,
+  normalizedTime: number,
+) {
+  const query = new URL('/api/spatial/attachment/evaluate-sample', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  query.searchParams.set('path', path);
+  query.searchParams.set('baseRevision', baseRevision);
+  query.searchParams.set('phase', phase);
+  query.searchParams.set('normalizedTime', Number(normalizedTime).toString());
   return requestJson<SpatialAttachmentEvaluationResult>(`${query.pathname}${query.search}`);
 }
 

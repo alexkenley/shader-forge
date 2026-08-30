@@ -37,8 +37,10 @@ const schematicCompiled = ts.transpileModule(schematicSource, {
   'const React={createElement(){ return null; }}; const useId=()=>"test"; const useMemo=(factory)=>factory(); const useState=(value)=>[value,()=>{}];',
 );
 const schematic = await import(`data:text/javascript;base64,${Buffer.from(schematicCompiled).toString('base64')}`);
-const evaluateClientSource = /export async function evaluateSpatialAttachment[\s\S]*?(?=export async function previewSpatialAttachment)/.exec(clientSource)?.[0] || '';
+const evaluateClientSource = /export async function evaluateSpatialAttachment\([\s\S]*?(?=export async function evaluateSpatialAttachmentSample)/.exec(clientSource)?.[0] || '';
+const evaluateSampleClientSource = /export async function evaluateSpatialAttachmentSample[\s\S]*?(?=export async function previewSpatialAttachment)/.exec(clientSource)?.[0] || '';
 const rereadSource = /async function reread[\s\S]*?(?=\n  async function closeConnection)/.exec(viewSource)?.[0] || '';
+const sampledFetchSource = /async function refreshSampledEvaluation[\s\S]*?(?=\n  async function reread)/.exec(viewSource)?.[0] || '';
 const evaluationPointsSource = /function evaluationPoints[\s\S]*?(?=\nfunction CoordinateMarker)/.exec(schematicSource)?.[0] || '';
 const drawingSource = /function Drawing[\s\S]*?(?=\nfunction OptionalMarker)/.exec(schematicSource)?.[0] || '';
 
@@ -59,6 +61,14 @@ const source = [
   '[secondary_hand.target]',
   'translation = [8, 9, 10]',
   'rotation = [0, 0, 0, 1]',
+  '',
+  '[motion_envelope.idle]',
+  'clip = "rifle_idle"',
+  'normalized_times = [0.0, 0.5, 1e0]',
+  '',
+  '[motion_envelope.aim]',
+  'clip = "rifle_aim"',
+  'normalized_times = [0.25, 0.75]',
   '',
 ].join('\r\n');
 
@@ -92,7 +102,15 @@ const validRestEvaluation = {
     primaryContactWorld: null,
     handleAxisWorld: null,
   },
-  hands: { dominant: null, secondary: null },
+  hands: {
+    dominant: {
+      boneId: 'hand_r',
+      role: 'dominant',
+      world: structuredClone(evaluationTransform),
+      palmWorld: structuredClone(evaluationTransform),
+    },
+    secondary: null,
+  },
   diagnostics: {
     secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
     jointLimits: { status: 'unavailable', reason: 'joint_limits_not_authored' },
@@ -118,22 +136,97 @@ populatedRestEvaluation.sockets = [{
 }];
 populatedRestEvaluation.item.primaryContactWorld = structuredClone(evaluationTransform);
 populatedRestEvaluation.item.handleAxisWorld = { origin: [0, 0, 0], direction: [1, 0, 0] };
-populatedRestEvaluation.hands.dominant = {
-  boneId: 'hand_r',
-  role: 'dominant',
-  world: structuredClone(evaluationTransform),
-  palmWorld: structuredClone(evaluationTransform),
-};
-populatedRestEvaluation.hands.secondary = {
-  enabled: true,
-  boneId: 'hand_l',
-  role: 'secondary',
-  world: structuredClone(evaluationTransform),
-  palmWorld: structuredClone(evaluationTransform),
-  targetWorld: structuredClone(evaluationTransform),
-  pole: { translation: [0, 1, 0], space: 'unresolved', world: null, reason: 'not_resolved_in_rest_evaluation' },
-  preSolveDistanceMeters: 0.1,
-};
+
+function twoHandRestEvaluation(schemaVersion) {
+  const evaluation = structuredClone(populatedRestEvaluation);
+  evaluation.schemaVersion = schemaVersion;
+  evaluation.attachment.mode = 'two_hand';
+  evaluation.hands.secondary = {
+    enabled: true,
+    boneId: 'hand_l',
+    role: 'secondary',
+    world: structuredClone(evaluationTransform),
+    palmWorld: structuredClone(evaluationTransform),
+    targetWorld: structuredClone(evaluationTransform),
+    pole: schemaVersion === 1
+      ? { translation: [0, 1, 0], space: 'unresolved', world: null, reason: 'pole_space_not_authored' }
+      : { translation: [0, 1, 0], space: 'item', world: [0.25, 0.5, 0.75], reason: null },
+    preSolveDistanceMeters: 0.5,
+  };
+  evaluation.diagnostics.secondaryIk = {
+    status: 'unavailable',
+    reason: schemaVersion === 1 ? 'secondary_hand_ik_not_implemented' : 'rest_pose_unsolved',
+  };
+  evaluation.limitations = [
+    'rest_pose_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+    'secondary_hand_ik_unavailable',
+  ];
+  return evaluation;
+}
+
+function sampledEvaluation({ schemaVersion = 1, mode = 'one_hand', reachable = true } = {}) {
+  const evaluation = mode === 'two_hand'
+    ? twoHandRestEvaluation(schemaVersion)
+    : structuredClone(populatedRestEvaluation);
+  evaluation.schemaVersion = schemaVersion;
+  evaluation.pose = {
+    kind: 'clip_sample',
+    sampled: true,
+    phase: 'idle',
+    clip: 'rifle_idle',
+    normalizedTime: 0.5,
+    proceduralLayersRequested: ['primary_attachment'],
+    proceduralLayersApplied: ['primary_attachment'],
+    proceduralLayersUnavailable: [],
+  };
+  evaluation.limitations = [
+    'sampled_attachment_schematic_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+  ];
+  if (mode === 'one_hand') return evaluation;
+
+  evaluation.pose.proceduralLayersRequested.push('secondary_hand_ik');
+  if (schemaVersion === 1) {
+    evaluation.pose.proceduralLayersUnavailable.push('secondary_hand_ik');
+    evaluation.diagnostics.secondaryIk = {
+      status: 'unavailable',
+      reason: 'secondary_hand_ik_not_implemented',
+    };
+    evaluation.limitations = [
+      'pre_ik_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+      'secondary_hand_ik_unavailable',
+    ];
+    return evaluation;
+  }
+
+  evaluation.pose.proceduralLayersApplied.push('secondary_hand_ik');
+  if (!reachable) evaluation.hands.secondary.targetWorld.translation = [0.2, 0, 0];
+  evaluation.diagnostics.secondaryIk = {
+    status: 'applied',
+    solved: true,
+    reachable,
+    preSolveDistanceMeters: 0.5,
+    targetDistanceMeters: reachable ? 0.5 : 0.8,
+    minReachMeters: 0.1,
+    maxReachMeters: 0.6,
+    reachResidualMeters: reachable ? 0 : 0.2,
+    reachToleranceMeters: 0.04,
+    reachWithinTolerance: reachable,
+    postSolveDistanceMeters: reachable ? 0 : 0.2,
+    contactToleranceMeters: 0.015,
+    contactWithinTolerance: reachable,
+    postSolveAngleDegrees: 0,
+    angleToleranceDegrees: 8,
+    angleWithinTolerance: true,
+    withinTolerance: reachable,
+  };
+  return evaluation;
+}
 
 const parsed = helper.parseSpatialAttachment(source);
 assert.equal(parsed.id, 'weapon.rifle');
@@ -141,6 +234,101 @@ assert.equal(parsed.skeleton, 'humanoid.standard');
 assert.equal(parsed.socket, 'socket.hand_r.primary');
 assert.deepEqual(parsed.translation, [0, -0.015, 0.02]);
 assert.deepEqual(parsed.rotationDegrees, [0, 0, 0]);
+
+assert.deepEqual(helper.parseSpatialAttachmentMotionEnvelope(source), [
+  { phase: 'idle', clip: 'rifle_idle', normalizedTimes: [0, 0.5, 1] },
+  { phase: 'aim', clip: 'rifle_aim', normalizedTimes: [0.25, 0.75] },
+]);
+assert.deepEqual(helper.parseSpatialAttachmentMotionEnvelope(source.replace(/\[motion_envelope\.idle\][\s\S]*$/, '')), []);
+assert.deepEqual(
+  helper.parseSpatialAttachmentMotionEnvelope(source.replace('socket = "socket.hand_r.primary"', 'socket = get_socket()')),
+  helper.parseSpatialAttachmentMotionEnvelope(source),
+  'motion-envelope discovery must stay independent of the constrained primary-grip parser',
+);
+assert.doesNotThrow(
+  () => helper.parseSpatialAttachment(source.replace('normalized_times = [0.0, 0.5, 1e0]', 'normalized_times = [0.0, ]')),
+  'an unsupported motion-envelope layout must not disable otherwise safe primary-grip editing',
+);
+for (const [label, malformedSource] of [
+  ['duplicate phase', source.replace('[motion_envelope.aim]', '[motion_envelope.idle]')],
+  ['duplicate time', source.replace('[0.0, 0.5, 1e0]', '[0.0, 0.5, 0.5]')],
+  ['negative zero', source.replace('[0.0, 0.5, 1e0]', '[-0, 0.5, 1.0]')],
+  ['out of range', source.replace('[0.0, 0.5, 1e0]', '[0.0, 1.1]')],
+  ['non-number', source.replace('[0.0, 0.5, 1e0]', '[0.0, nope]')],
+  ['missing clip', source.replace('clip = "rifle_idle"', 'other = "rifle_idle"')],
+]) {
+  assert.throws(
+    () => helper.parseSpatialAttachmentMotionEnvelope(malformedSource),
+    /motion envelope|normalized_times|exactly one supported/i,
+    `${label} motion-envelope source must fail closed`,
+  );
+}
+
+const attachmentRevision = `sha256:${'a'.repeat(64)}`;
+const sourceRevisions = [
+  { path: 'animation/attachments/rifle.attachment.toml', revision: attachmentRevision },
+  { path: 'animation/clips/rifle_idle.anim.toml', revision: `sha256:${'b'.repeat(64)}` },
+  { path: 'animation/graphs/rifle.animgraph.toml', revision: `sha256:${'c'.repeat(64)}` },
+  { path: 'animation/skeletons/humanoid.skeleton.toml', revision: `sha256:${'d'.repeat(64)}` },
+];
+assert.equal(
+  helper.spatialSourceRevisionsCoverAttachment(
+    sourceRevisions,
+    'animation/attachments/rifle.attachment.toml',
+    attachmentRevision,
+  ),
+  true,
+);
+for (const [label, manifest] of [
+  ['unsorted', [sourceRevisions[1], sourceRevisions[0], ...sourceRevisions.slice(2)]],
+  ['duplicate path', [sourceRevisions[0], sourceRevisions[0]]],
+  ['missing attachment', sourceRevisions.slice(1)],
+  ['wrong attachment revision', [{ ...sourceRevisions[0], revision: `sha256:${'e'.repeat(64)}` }, ...sourceRevisions.slice(1)]],
+  ['unsafe relative path', [{ ...sourceRevisions[0], path: '../rifle.attachment.toml' }, ...sourceRevisions.slice(1)]],
+  ['backslash path', [{ ...sourceRevisions[0], path: 'animation\\attachments\\rifle.attachment.toml' }, ...sourceRevisions.slice(1)]],
+  ['drive-prefixed path', [{ ...sourceRevisions[0], path: 'C:/animation/attachments/rifle.attachment.toml' }, ...sourceRevisions.slice(1)]],
+  ['drive-relative path', [{ ...sourceRevisions[0], path: 'C:animation/attachments/rifle.attachment.toml' }, ...sourceRevisions.slice(1)]],
+  ['control-character path', [{ ...sourceRevisions[0], path: 'animation/attachments/rifle\n.attachment.toml' }, ...sourceRevisions.slice(1)]],
+  ['oversized path', [{ ...sourceRevisions[0], path: `animation/attachments/${'x'.repeat(2048)}.toml` }, ...sourceRevisions.slice(1)]],
+  ['invalid revision', [{ ...sourceRevisions[0], revision: 'sha256:not-a-hash' }, ...sourceRevisions.slice(1)]],
+  ['extra field', [{ ...sourceRevisions[0], hidden: true }, ...sourceRevisions.slice(1)]],
+]) {
+  assert.equal(
+    helper.spatialSourceRevisionsCoverAttachment(
+      manifest,
+      'animation/attachments/rifle.attachment.toml',
+      attachmentRevision,
+    ),
+    false,
+    `${label} source manifest must fail closed`,
+  );
+}
+const oversizedManifest = [
+  sourceRevisions[0],
+  ...Array.from({ length: 34 }, (_, index) => ({
+    path: `animation/clips/${String(index).padStart(2, '0')}-${'x'.repeat(1950)}.anim.toml`,
+    revision: `sha256:${'b'.repeat(64)}`,
+  })),
+];
+assert.equal(
+  helper.spatialSourceRevisionsCoverAttachment(
+    oversizedManifest,
+    'animation/attachments/rifle.attachment.toml',
+    attachmentRevision,
+  ),
+  false,
+  'aggregate manifest text must be bounded',
+);
+assert.equal(
+  helper.spatialSourceRevisionsCoverAttachment(sourceRevisions, 'C:/animation/attachments/rifle.attachment.toml', attachmentRevision),
+  false,
+  'selected attachment paths must also be safe relative paths',
+);
+assert.equal(
+  helper.spatialSourceRevisionsCoverAttachment(sourceRevisions, 'C:animation/attachments/rifle.attachment.toml', attachmentRevision),
+  false,
+  'selected attachment paths must reject drive-relative prefixes',
+);
 
 const candidate = helper.updateSpatialAttachmentTransform(source, [0.01, -0.02, 0.03], [10, 20, 30]);
 assert.match(candidate, /translation = \[0\.01, -0\.02, 0\.03\] # preserve comment/);
@@ -173,23 +361,59 @@ assert.equal(
 assert.equal(schematic.spatialProjectionBounds([], 'xy'), null);
 assert.equal(schematic.isSpatialAttachmentEvaluation(validRestEvaluation), true);
 assert.equal(schematic.isSpatialAttachmentEvaluation(populatedRestEvaluation), true);
-const resolvedPoleEvaluation = structuredClone(populatedRestEvaluation);
-resolvedPoleEvaluation.schemaVersion = 2;
-resolvedPoleEvaluation.attachment.mode = 'two_hand';
-resolvedPoleEvaluation.hands.secondary.pole = {
-  translation: [0, 1, 0], space: 'item', world: [0.25, 0.5, 0.75], reason: null,
-};
-resolvedPoleEvaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'rest_pose_unsolved' };
-resolvedPoleEvaluation.limitations.push('secondary_hand_ik_unavailable');
-assert.equal(schematic.isSpatialAttachmentEvaluation(resolvedPoleEvaluation), true);
+const restV2OneHand = structuredClone(populatedRestEvaluation);
+restV2OneHand.schemaVersion = 2;
+const restV1TwoHand = twoHandRestEvaluation(1);
+const restV2TwoHand = twoHandRestEvaluation(2);
+assert.equal(schematic.isSpatialAttachmentEvaluation(restV2OneHand), true);
+assert.equal(schematic.isSpatialAttachmentEvaluation(restV1TwoHand), true);
+assert.equal(schematic.isSpatialAttachmentEvaluation(restV2TwoHand), true);
 for (const mutate of [
   (report) => { report.hands.secondary.pole.world = null; },
   (report) => { report.hands.secondary.pole.reason = 'not actually resolved'; },
   (report) => { report.hands.secondary.pole.space = 'unresolved'; },
 ]) {
-  const malformed = structuredClone(resolvedPoleEvaluation);
+  const malformed = structuredClone(restV2TwoHand);
   mutate(malformed);
   assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, 'malformed schema-v2 pole must fail closed');
+}
+const sampledOneHand = sampledEvaluation();
+const sampledV1TwoHand = sampledEvaluation({ schemaVersion: 1, mode: 'two_hand' });
+const sampledV2Reachable = sampledEvaluation({ schemaVersion: 2, mode: 'two_hand' });
+const sampledV2Unreachable = sampledEvaluation({ schemaVersion: 2, mode: 'two_hand', reachable: false });
+assert.equal(schematic.isSpatialAttachmentEvaluation(sampledOneHand), true);
+assert.equal(schematic.isSpatialAttachmentEvaluation(sampledV1TwoHand), true);
+assert.equal(schematic.isSpatialAttachmentEvaluation(sampledV2Reachable), true);
+assert.equal(schematic.isSpatialAttachmentEvaluation(sampledV2Unreachable), true);
+for (const [label, mutate] of [
+  ['unexpected pose key', (report) => { report.pose.hidden = true; }],
+  ['wrong applied layers', (report) => { report.pose.proceduralLayersApplied = ['primary_attachment']; }],
+  ['duplicate requested layer', (report) => { report.pose.proceduralLayersRequested.push('secondary_hand_ik'); }],
+  ['unknown requested layer', (report) => { report.pose.proceduralLayersRequested = ['primary_attachment', 'invented_layer']; }],
+  ['non-finite sample time', (report) => { report.pose.normalizedTime = Number.NaN; }],
+  ['missing applied diagnostic field', (report) => { delete report.diagnostics.secondaryIk.postSolveDistanceMeters; }],
+  ['contradictory reach flag', (report) => { report.diagnostics.secondaryIk.reachWithinTolerance = false; }],
+  ['contradictory overall flag', (report) => { report.diagnostics.secondaryIk.withinTolerance = false; }],
+  ['contradictory reachability', (report) => { report.diagnostics.secondaryIk.reachable = false; }],
+  ['wrong reach residual', (report) => { report.diagnostics.secondaryIk.reachResidualMeters = 0.01; }],
+  ['palm-target distance mismatch', (report) => { report.diagnostics.secondaryIk.postSolveDistanceMeters = 0.01; }],
+  ['palm-target angle mismatch', (report) => { report.diagnostics.secondaryIk.postSolveAngleDegrees = 1; }],
+  ['wrong pre-solve distance', (report) => { report.diagnostics.secondaryIk.preSolveDistanceMeters = 0.4; }],
+  ['wrong limitations', (report) => { report.limitations[0] = 'review_evidence'; }],
+]) {
+  const malformed = structuredClone(sampledV2Reachable);
+  mutate(malformed);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, `${label} sampled report must fail closed`);
+}
+for (const [label, mutate] of [
+  ['v1 falsely applies IK', (report) => { report.pose.proceduralLayersApplied.push('secondary_hand_ik'); }],
+  ['v1 omits unavailable IK', (report) => { report.pose.proceduralLayersUnavailable = []; }],
+  ['v1 uses resolved pole', (report) => { report.hands.secondary.pole = structuredClone(restV2TwoHand.hands.secondary.pole); }],
+  ['v1 loses pre-IK truth', (report) => { report.limitations[0] = 'sampled_attachment_schematic_only'; }],
+]) {
+  const malformed = structuredClone(sampledV1TwoHand);
+  mutate(malformed);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, `${label} report must fail closed`);
 }
 const wrongCoordinate = structuredClone(validRestEvaluation);
 wrongCoordinate.coordinateSystem.forward = '-Z';
@@ -232,7 +456,7 @@ const malformedNestedCases = [
   ['limitation entry', (report) => { report.limitations[0] = { invalid: true }; }],
 ];
 for (const [label, mutate] of malformedNestedCases) {
-  const malformed = structuredClone(populatedRestEvaluation);
+  const malformed = structuredClone(restV1TwoHand);
   mutate(malformed);
   assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, `${label} must fail closed`);
 }
@@ -284,8 +508,32 @@ assert.match(viewSource, /previewSpatialAttachment/);
 assert.match(viewSource, /evaluateSpatialAttachment/);
 assert.match(rereadSource, /readFile/);
 assert.match(rereadSource, /parseSpatialAttachment[\s\S]*refreshAuthoredEvaluation/);
+assert.match(rereadSource, /parseSpatialAttachmentMotionEnvelope|applyMotionEnvelope/, 'source rereads must refresh exact authored motion-envelope choices');
+assert.match(rereadSource, /sampledEvaluationRequestRef\.current \+= 1|clearSampledEvidence/, 'source rereads must invalidate earlier sampled work');
 assert.match(rereadSource, /const readGeneration = \+\+sourceReadRequestRef\.current[\s\S]*readFile[\s\S]*sourceReadRequestRef\.current !== readGeneration[\s\S]*setSource\(next\.content\)/, 'a superseded same-selection reread must stop before source state mutation');
 assert.doesNotMatch(evaluateClientSource, /credential|requestCoordinationLease|method:\s*'POST'|body:/);
+assert.match(evaluateSampleClientSource, /\/api\/spatial\/attachment\/evaluate-sample/);
+assert.match(evaluateSampleClientSource, /searchParams\.set\('baseRevision', baseRevision\)/);
+assert.match(evaluateSampleClientSource, /searchParams\.set\('phase', phase\)/);
+assert.match(evaluateSampleClientSource, /searchParams\.set\('normalizedTime'/);
+assert.doesNotMatch(evaluateSampleClientSource, /credential|requestCoordinationLease|registerCoordinationAgent|method:\s*'POST'|body:/);
+assert.match(viewSource, /evaluateSpatialAttachmentSample/);
+assert.match(sampledFetchSource, /const requestId = \+\+sampledEvaluationRequestRef\.current/);
+assert.match(sampledFetchSource, /baseRevision: string/);
+assert.match(sampledFetchSource, /phase: string/);
+assert.match(sampledFetchSource, /normalizedTime: number/);
+assert.match(sampledFetchSource, /evaluateSpatialAttachmentSample\([\s\S]*baseRevision[\s\S]*phase[\s\S]*normalizedTime/);
+assert.match(sampledFetchSource, /sampledEvaluationRequestRef\.current === requestId/);
+assert.match(sampledFetchSource, /selectionKeyRef\.current === expectedSelection/);
+assert.match(sampledFetchSource, /revisionRef\.current === baseRevision/);
+assert.match(sampledFetchSource, /selectedSampleRef\.current\.phase === phase/);
+assert.match(sampledFetchSource, /selectedSampleRef\.current\.time === normalizedTime/);
+assert.match(sampledFetchSource, /result\.path !== path/);
+assert.match(sampledFetchSource, /result\.revision !== baseRevision/);
+assert.match(sampledFetchSource, /result\.evaluation\.pose\.phase !== phase/);
+assert.match(sampledFetchSource, /result\.evaluation\.pose\.normalizedTime !== normalizedTime/);
+assert.match(sampledFetchSource, /spatialSourceRevisionsCoverAttachment\(/);
+assert.doesNotMatch(sampledFetchSource, /requestCoordinationLease|registerCoordinationAgent|credential/);
 assert.match(viewSource, /result\.path !== path \|\| result\.revision !== baseRevision/);
 assert.match(viewSource, /operation\?\.state === 'conflicted'/);
 assert.match(viewSource, /candidateEvidence\.baseRevision !== revision/);
@@ -337,7 +585,16 @@ assert.match(viewSource, /catch \(caught\)[\s\S]*setSourceLayoutError[\s\S]*refr
 assert.match(viewSource, /PREVIEW CANDIDATE - NOT APPLIED/);
 assert.match(schematicSource, /REST-POSE RIG SCHEMATIC/);
 assert.match(schematicSource, /UNSAMPLED/);
+assert.match(schematicSource, /SAMPLED RIG SCHEMATIC/);
+assert.match(schematicSource, /PRE-IK/);
 assert.match(schematicSource, /NOT REVIEW EVIDENCE/);
+assert.match(schematicSource, /Exact source revisions/);
+assert.match(schematicSource, /Source revisions/);
+assert.match(schematicSource, /No item mesh, joint-limit result, clipping result, camera, capture, or immutable review packet/);
+assert.match(schematicSource, /Secondary IK reach/);
+assert.match(schematicSource, /Secondary IK contact/);
+assert.match(schematicSource, /Secondary IK angle/);
+assert.match(schematicSource, /'PASS'\s*:\s*'FAIL'/);
 assert.match(schematicSource, /handleAxisWorld/);
 assert.match(schematicSource, /palmWorld/);
 assert.match(schematicSource, /a resolved authored pole is shown as a green ring/);
@@ -345,26 +602,43 @@ assert.match(schematicSource, /An unresolved pole is never projected/);
 assert.match(schematicSource, /Exact evaluator coordinates/);
 assert.match(schematicSource, /Evaluator diagnostics/);
 assert.match(schematicSource, /isSpatialAttachmentEvaluation\(evaluation\)/);
-assert.match(schematicSource, /safeEvaluation \? `\$\{evidenceLabel\} loaded\.` : 'Rest evaluation unavailable\.'/);
+assert.match(schematicSource, /sampleIdentityMatches/);
+assert.match(schematicSource, /candidateEvaluation\.pose\.phase === sampleIdentity\.phase/);
+assert.match(schematicSource, /candidateEvaluation\.pose\.normalizedTime === sampleIdentity\.normalizedTime/);
+assert.match(schematicSource, /function validSampledBranch/);
+assert.match(schematicSource, /function validAppliedSecondaryIk/);
 assert.match(schematicSource, /<figure/);
 assert.match(schematicSource, /role="img"/);
 assert.match(schematicSource, /function validPole/, 'the fail-closed validator must inspect versioned pole coordinates');
 assert.match(evaluationPointsSource, /secondary\.pole/, 'resolved poles must influence projection bounds');
 assert.match(drawingSource, /secondaryPole/, 'resolved poles must be drawn');
+assert.ok((viewSource.match(/<select/g) || []).length >= 2, 'phase and normalized time must use native select controls');
+assert.match(viewSource, /<select[\s\S]*selectedPhase/);
+assert.match(viewSource, /<select[\s\S]*selectedNormalizedTime/);
+assert.match(viewSource, /Evaluate (?:authored )?sample/);
+assert.match(viewSource, /Authored motion sample|Motion envelope/);
+assert.ok(
+  viewSource.indexOf('aria-label="Authored motion sample"') < viewSource.indexOf('{draft ? ('),
+  'authored sample controls must remain available when only the constrained grip parser fails',
+);
 assert.match(viewSource, /transitionOperation/);
 assert.doesNotMatch(viewSource, /\bwriteFile\b/);
 assert.match(clientSource, /X-Shader-Forge-Agent-Credential/);
 assert.match(clientSource, /id: 'engine-shell'/);
 assert.match(clientSource, /kind: 'shell'/);
 assert.match(clientSource, /revision: string/);
+assert.match(clientSource, /type SpatialSourceRevision/);
+assert.match(clientSource, /sourceRevisions: SpatialSourceRevision\[\]/);
 assert.match(clientSource, /SpatialAttachmentEvaluationResult/);
 assert.match(clientSource, /\/api\/spatial\/attachment\/evaluate/);
+assert.match(clientSource, /\/api\/spatial\/attachment\/evaluate-sample/);
 assert.match(clientSource, /SpatialAttachmentPreviewResult/);
 assert.match(clientSource, /replaceAll\(credential, '\[redacted\]'\)/);
 assert.match(stylesSource, /\.workspace-panel\s*\{[^}]*flex:\s*1;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
 assert.match(stylesSource, /\.spatial-actions\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/s);
 assert.match(stylesSource, /\.spatial-editor__body\s*\{[^}]*grid-template-columns:\s*minmax\(210px, 250px\)[^;}]*minmax\(300px, 0\.85fr\)[^;}]*minmax\(380px, 1\.2fr\)/s);
 assert.match(stylesSource, /\.spatial-rest-schematic__frame\s*\{[^}]*min-height:\s*300px;/s);
+assert.match(stylesSource, /\.spatial-sample-controls__fields > button\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
 assert.match(stylesSource, /@media \(max-width: 1100px\)[\s\S]*?\.spatial-editor__body\s*\{[^}]*grid-template-columns:\s*1fr;/s);
 assert.match(stylesSource, /@media \(max-width: 1100px\)[\s\S]*?\.spatial-editor__body\s*\{[^}]*flex:\s*none;[^}]*min-height:\s*auto;/s);
 assert.match(stylesSource, /@media \(max-width: 1100px\)[\s\S]*?\.spatial-actions\s*\{[^}]*position:\s*static;/s);
@@ -375,6 +649,6 @@ const schematicStyles = stylesSource.slice(
 assert.doesNotMatch(schematicStyles, /font-size:\s*(?:9|10)px/, 'schematic user-facing text must be at least 11px');
 
 console.log('Engine spatial shell passed.');
-console.log('- Verified exact primary-grip-only source edits and unsupported-layout rejection');
+console.log('- Verified exact primary-grip edits plus independent authored motion-envelope parsing');
 console.log('- Verified the Assets-only operation route, explicit lock workflow, and credential redaction markers');
-console.log('- Verified revision-bound rest evidence, fail-closed projection guards, truthful labels, and responsive workbench markers');
+console.log('- Verified manifest-bound rest/sample evidence, strict v1/v2 IK truth, guarded requests, and truthful non-review labels');
