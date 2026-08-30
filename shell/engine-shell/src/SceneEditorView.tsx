@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   type BuildStatus,
   listFiles,
@@ -29,6 +29,7 @@ type BackendState = 'connected' | 'offline';
 type EditorMode = 'edit' | 'play';
 type SelectionNode = 'scene' | 'prefab' | 'entity';
 type SceneSidebarTab = 'scenes' | 'outliner' | 'inspector' | 'assets';
+const sceneSidebarTabs = ['scenes', 'outliner', 'inspector', 'assets'] as const;
 type EditorSnapshot = {
   scene: SceneAssetDocument | null;
   prefab: PrefabAssetDocument | null;
@@ -50,6 +51,7 @@ type SceneEditorViewProps = {
   onRestartRuntime: () => void;
   onRunScene: () => void;
   onStopRuntime: () => void;
+  preferredSidebarTab?: SceneSidebarTab;
 };
 
 const emptySnapshot: EditorSnapshot = {
@@ -269,6 +271,7 @@ export function SceneEditorView({
   onRestartRuntime,
   onRunScene,
   onStopRuntime,
+  preferredSidebarTab,
 }: SceneEditorViewProps) {
   const sceneShellRef = useRef<HTMLDivElement | null>(null);
   const [mode, setMode] = useState<EditorMode>('edit');
@@ -285,7 +288,7 @@ export function SceneEditorView({
   const [historyIndex, setHistoryIndex] = useState(0);
   const [newSceneName, setNewSceneName] = useState('');
   const [duplicateSceneName, setDuplicateSceneName] = useState('');
-  const [activeSidebarTab, setActiveSidebarTab] = useState<SceneSidebarTab>('outliner');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SceneSidebarTab>(preferredSidebarTab ?? 'outliner');
   const [sceneSidebarWidth, setSceneSidebarWidth] = useState(DEFAULT_SCENE_SIDEBAR_WIDTH);
   const [sceneSidebarResizing, setSceneSidebarResizing] = useState(false);
 
@@ -356,10 +359,16 @@ export function SceneEditorView({
   }, [sceneSidebarResizing]);
 
   useEffect(() => {
-    if (!sceneDraft) {
-      setActiveSidebarTab('scenes');
+    if (preferredSidebarTab) {
+      setActiveSidebarTab(preferredSidebarTab);
     }
-  }, [sceneDraft]);
+  }, [preferredSidebarTab]);
+
+  useEffect(() => {
+    if (!sceneDraft) {
+      setActiveSidebarTab(preferredSidebarTab === 'assets' ? 'assets' : 'scenes');
+    }
+  }, [preferredSidebarTab, sceneDraft]);
 
   function resetDrafts(nextScene: SceneAssetDocument | null, nextPrefab: PrefabAssetDocument | null) {
     setHistory([
@@ -883,12 +892,12 @@ export function SceneEditorView({
           <div className="surface-header">
             <div>
               <div className="surface-eyebrow">Authoring</div>
-              <h2>Scene / Level Editor</h2>
+              <h2>World / Level Editor</h2>
               <p>Select a workspace to load text-backed scene and prefab assets.</p>
             </div>
           </div>
           <div className="scene-empty-state">
-            `Scene` authoring is workspace-backed. Create or select a workspace in the left rail first.
+            `World` authoring is workspace-backed. Create or select a workspace in the left rail first.
           </div>
         </section>
         <section className="surface">

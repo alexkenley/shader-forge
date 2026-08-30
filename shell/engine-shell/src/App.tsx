@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
-import { useEffect, useEffectEvent, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
 import {
@@ -9,7 +9,6 @@ import {
   createSession,
   decideCodeTrustApproval,
   deleteSession,
-  fetchAiProviders,
   fetchBuildStatus,
   fetchCodeTrustApprovals,
   fetchCodeTrustSummary,
@@ -32,7 +31,6 @@ import {
   resumeRuntime,
   runPackageRelease,
   resizeTerminal,
-  runAiSmokeTest,
   startRuntimeBuild,
   startRuntime,
   stopBuild,
@@ -40,8 +38,6 @@ import {
   subscribeSessiondEvents,
   transitionCodeTrustArtifact,
   updateSession,
-  type AiProviderSummary,
-  type AiTestResult,
   type CodeTrustApproval,
   type BuildStatus,
   type CodeTrustSummary,
@@ -61,13 +57,9 @@ import {
 import { engineReferenceGuide } from './reference-guide';
 
 const leftTabs = ['Workspaces', 'Explorer', 'Source Control'] as const;
-const centerTabs = ['Scene', 'Game', 'Preview', 'Code', 'Guide'] as const;
+const centerTabs = ['World', 'Code', 'Playtest', 'Assets'] as const;
 const rightTabs = ['Runtime', 'Build', 'Workspace'] as const;
 const bottomTabs = ['Terminal', 'Logs', 'Output'] as const;
-const layoutModes = ['Code Focus', 'Code + Game', 'Triptych'] as const;
-const menuItems = ['File', 'Edit', 'View', 'Build', 'Tools', 'Window', 'Help'] as const;
-const viewportModes = ['Perspective', 'Lit', 'Realtime'] as const;
-const transformModes = ['Select', 'Move', 'Rotate', 'Scale'] as const;
 const unixShells = ['bash', 'zsh', 'sh'] as const;
 const windowsShells = ['powershell.exe', 'cmd.exe'] as const;
 const terminalShells = [...unixShells, ...windowsShells] as const;
@@ -112,7 +104,6 @@ type LeftTab = (typeof leftTabs)[number];
 type CenterTab = (typeof centerTabs)[number];
 type RightTab = (typeof rightTabs)[number];
 type BottomTab = (typeof bottomTabs)[number];
-type LayoutMode = (typeof layoutModes)[number];
 type TerminalShell = (typeof terminalShells)[number];
 type BuildConfig = (typeof buildConfigs)[number];
 
@@ -151,24 +142,67 @@ type TerminalDockProps = {
   onTerminalResize: (tabId: string, cols: number, rows: number) => void;
 };
 
-function layoutModeClassName(layoutMode: LayoutMode) {
-  return layoutMode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
 function TabButton({
   active,
   children,
+  controls,
+  id,
   onClick,
+  tabId,
 }: {
   active: boolean;
   children: string;
+  controls?: string;
+  id?: string;
   onClick: () => void;
+  tabId?: string;
 }) {
   return (
-    <button className={`pill-button${active ? ' is-active' : ''}`} onClick={onClick} type="button">
+    <button
+      aria-controls={controls}
+      aria-selected={active}
+      className={`pill-button${active ? ' is-active' : ''}`}
+      data-tab-id={tabId ?? children}
+      id={id}
+      onClick={onClick}
+      role="tab"
+      tabIndex={active ? 0 : -1}
+      type="button"
+    >
       {children}
     </button>
   );
+}
+
+function handleTabListKeyDown<T extends string>(
+  event: ReactKeyboardEvent<HTMLElement>,
+  tabs: readonly T[],
+  active: T,
+  onChange: (tab: T) => void,
+) {
+  const currentIndex = tabs.indexOf(active);
+  if (currentIndex < 0) {
+    return;
+  }
+
+  let nextIndex = currentIndex;
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    nextIndex = (currentIndex + 1) % tabs.length;
+  } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+  } else if (event.key === 'Home') {
+    nextIndex = 0;
+  } else if (event.key === 'End') {
+    nextIndex = tabs.length - 1;
+  } else {
+    return;
+  }
+
+  event.preventDefault();
+  const next = tabs[nextIndex];
+  onChange(next);
+  const button = event.currentTarget.querySelector<HTMLElement>(`[data-tab-id="${next}"]`);
+  button?.focus();
 }
 
 function formatSessionTimestamp(value: string) {
@@ -476,46 +510,6 @@ function createTerminalTab(index: number, defaultShell: TerminalShell = 'bash'):
   };
 }
 
-function ViewportShell({
-  title,
-  subtitle,
-  footer,
-}: {
-  title: string;
-  subtitle: string;
-  footer: string;
-}) {
-  return (
-    <div className="viewport-shell">
-      <div className="viewport-toolbar">
-        <div className="viewport-toolbar__group">
-          {viewportModes.map((mode) => (
-            <span className="viewport-token" key={mode}>
-              {mode}
-            </span>
-          ))}
-        </div>
-        <div className="viewport-toolbar__group">
-          {transformModes.map((mode) => (
-            <span className="viewport-token viewport-token--dim" key={mode}>
-              {mode}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="viewport-canvas">
-        <div className="viewport-canvas__label">
-          <strong>{title}</strong>
-          <span>{subtitle}</span>
-        </div>
-        <div className="viewport-canvas__guide viewport-canvas__guide--horizontal" />
-        <div className="viewport-canvas__guide viewport-canvas__guide--vertical" />
-      </div>
-      <div className="viewport-statusbar">{footer}</div>
-    </div>
-  );
-}
-
 function renderRightPanel(
   activeTab: RightTab,
   activeSession: EngineSession | null,
@@ -529,9 +523,6 @@ function renderRightPanel(
   approvalsBusy: boolean,
   approvalActionId: string,
   artifactActionPath: string,
-  aiProviderSummary: AiProviderSummary | null,
-  aiTestBusy: boolean,
-  aiTestResult: AiTestResult | null,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
   buildLog: string,
@@ -551,7 +542,6 @@ function renderRightPanel(
   onRestartRuntime: () => void,
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
-  onRunAiSmokeTest: () => void,
   onRefreshPackaging: () => void,
   onRunPackaging: () => void,
   onRefreshProfile: () => void,
@@ -612,69 +602,6 @@ function renderRightPanel(
               <dd>{buildStatus.config || buildConfig}</dd>
             </div>
           </dl>
-        </section>
-        <section className="card compact-card">
-          <div className="section-titlebar">
-            <h3>AI</h3>
-            <span>{aiProviderSummary ? `${aiProviderSummary.readyProviderCount}/${aiProviderSummary.providerCount} ready` : 'No workspace config'}</span>
-          </div>
-          <p className="panel-copy">
-            {aiProviderSummary
-              ? 'Phase 5.9 now exposes provider manifests, readiness inspection, and a deterministic smoke-test lane for workspace-backed AI services.'
-              : 'Select a workspace to inspect the current AI provider manifest and run the deterministic smoke-test lane.'}
-          </p>
-          {aiProviderSummary ? (
-            <>
-              <dl className="fact-list">
-                <div>
-                  <dt>Config</dt>
-                  <dd>{aiProviderSummary.configPath}</dd>
-                </div>
-                <div>
-                  <dt>Source</dt>
-                  <dd>{aiProviderSummary.configSource}</dd>
-                </div>
-                <div>
-                  <dt>Default</dt>
-                  <dd>{aiProviderSummary.defaultProviderId || 'none configured'}</dd>
-                </div>
-                <div>
-                  <dt>Providers</dt>
-                  <dd>{`${aiProviderSummary.readyProviderCount} ready of ${aiProviderSummary.providerCount}`}</dd>
-                </div>
-              </dl>
-              <div className="inline-actions">
-                <button className="ghost-button ghost-button--sm" disabled={!activeSession || aiTestBusy} onClick={onRunAiSmokeTest} type="button">
-                  {aiTestBusy ? 'Running...' : 'Run smoke test'}
-                </button>
-              </div>
-              {aiProviderSummary.providers.length ? (
-                <div className="metric-stack">
-                  {aiProviderSummary.providers.map((provider) => (
-                    <article className="mini-card" key={provider.id}>
-                      <span>{`${provider.type} · ${provider.mode}`}</span>
-                      <strong>{provider.label || provider.id}</strong>
-                      <p>{provider.status}{provider.available ? ' · available' : ' · unavailable'}</p>
-                      <p>{provider.selectedModel || provider.model || provider.endpoint || provider.apiKeyEnv || 'No model or endpoint configured'}</p>
-                      <p>{provider.diagnostics[0] || 'Provider ready for inspection and smoke testing.'}</p>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="panel-copy">
-                  No AI providers are configured for this workspace yet.
-                </p>
-              )}
-              {aiTestResult ? (
-                <article className="mini-card">
-                  <span>{`${aiTestResult.providerType} smoke test`}</span>
-                  <strong>{aiTestResult.providerId}</strong>
-                  <p>{aiTestResult.content || 'No response content returned.'}</p>
-                  <p>{`${aiTestResult.finishReason || 'completed'} · ${Math.max(0, Math.round(aiTestResult.durationMs))} ms`}</p>
-                </article>
-              ) : null}
-            </>
-          ) : null}
         </section>
         <section className="card compact-card">
           <div className="section-titlebar">
@@ -784,7 +711,9 @@ function renderRightPanel(
         <section className="card compact-card">
           <div className="section-titlebar">
             <h3>Profiling</h3>
-            <span>{profileSummary ? `${profileSummary.runtime.state} runtime` : 'No live snapshot'}</span>
+            <span aria-label={profileSummary ? `Runtime ${profileSummary.runtime.state}` : 'No live snapshot'}>
+              {profileSummary ? `${profileSummary.runtime.state} runtime` : 'No live snapshot'}
+            </span>
           </div>
           <p className="panel-copy">
             {profileSummary
@@ -813,10 +742,6 @@ function renderRightPanel(
                 <div>
                   <dt>Package</dt>
                   <dd>{profileSummary.workspace.packaging.ready ? 'ready' : 'needs prep'}</dd>
-                </div>
-                <div>
-                  <dt>AI</dt>
-                  <dd>{`${profileSummary.workspace.ai.readyProviderCount}/${profileSummary.workspace.ai.providerCount} ready`}</dd>
                 </div>
                 <div>
                   <dt>Trust</dt>
@@ -997,7 +922,7 @@ function renderRightPanel(
             <span>Current shell</span>
           </div>
           <p className="panel-copy">
-            `Scene` is for level authoring. `Run` and `Build + Run` launch the native runtime.
+            `World` is for level authoring. `Playtest` shows and controls the external native runtime.
             The bottom dock is for terminals, logs, and utility output.
           </p>
         </section>
@@ -1011,7 +936,11 @@ function renderRightPanel(
         <section className="card compact-card">
           <div className="section-titlebar">
             <h3>Build</h3>
-            <span className={`status-dot status-dot--${buildStatus.state === 'running' ? 'active' : buildStatus.state === 'failed' ? 'error' : 'idle'}`} />
+            <span
+              aria-label={`Build ${buildStateLabel(buildStatus.state)}`}
+              className={`status-dot status-dot--${buildStatus.state === 'running' ? 'active' : buildStatus.state === 'failed' ? 'error' : 'idle'}`}
+              role="img"
+            />
           </div>
           <div className="form-grid">
             <label className="form-field">
@@ -1090,7 +1019,11 @@ function renderRightPanel(
       <section className="card compact-card">
         <div className="section-titlebar">
           <h3>Runtime</h3>
-          <span className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`} />
+          <span
+            aria-label={`Runtime ${runtimeStateLabel(runtimeStatus.state)}`}
+            className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`}
+            role="img"
+          />
         </div>
         <div className="form-grid">
           <label className="form-field">
@@ -1402,17 +1335,17 @@ function TerminalDock({
               <strong>{tab.title}</strong>
               <span className="terminal-tab__shell">{tab.shell}</span>
               {tabs.length > 1 ? (
-                <span
+                <button
+                  aria-label={`Close ${tab.title}`}
                   className="terminal-tab__close"
                   onClick={(event) => {
                     event.stopPropagation();
                     onCloseTab(tab.id);
                   }}
-                  role="button"
-                  tabIndex={0}
+                  type="button"
                 >
                   ×
-                </span>
+                </button>
               ) : null}
             </button>
           ))}
@@ -1502,12 +1435,11 @@ function renderGitGroup(title: string, entries: GitStatus['staged']) {
 }
 
 function renderCodeBridge(
-  layoutMode: LayoutMode,
   showLegacyBridge: boolean,
   onToggleLegacyBridge: () => void,
 ) {
   return (
-    <div className={`workspace-layout workspace-layout--${layoutModeClassName(layoutMode)}`}>
+    <div className="workspace-layout workspace-layout--code-focus">
       <section className="surface legacy-surface">
         <div className="surface-header">
           <div>
@@ -1560,52 +1492,12 @@ function renderCodeBridge(
           </div>
         )}
       </section>
-
-      <section className="surface">
-        <div className="surface-header">
-          <div>
-            <div className="surface-eyebrow">Viewport Companion</div>
-            <h2>Game / Scene Pair</h2>
-          </div>
-        </div>
-        <ViewportShell
-          footer="Viewport dock placeholder. Native runtime stream lands here after the viewer bridge."
-          subtitle="Split layout partner"
-          title="Companion viewport"
-        />
-      </section>
-
-      {layoutMode === 'Triptych' ? (
-        <section className="surface">
-          <div className="surface-header">
-            <div>
-              <div className="surface-eyebrow">Preview Dock</div>
-              <h2>Asset / Inspector Partner</h2>
-            </div>
-          </div>
-          <div className="metric-stack">
-            <article className="mini-card">
-              <span>Selection</span>
-              <strong>CastleGate_A</strong>
-            </article>
-            <article className="mini-card">
-              <span>Asset preview</span>
-              <strong>SM_Gate_A</strong>
-            </article>
-            <article className="mini-card">
-              <span>Search preservation</span>
-              <strong>Match count + Prev/Next</strong>
-            </article>
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }
 
 function renderCenterContent(
   activeTab: CenterTab,
-  layoutMode: LayoutMode,
   showLegacyBridge: boolean,
   onToggleLegacyBridge: () => void,
   activeSession: EngineSession | null,
@@ -1628,100 +1520,10 @@ function renderCenterContent(
   onResumeRuntime: () => void,
 ) {
   if (activeTab === 'Code') {
-    return renderCodeBridge(layoutMode, showLegacyBridge, onToggleLegacyBridge);
+    return renderCodeBridge(showLegacyBridge, onToggleLegacyBridge);
   }
 
-  if (activeTab === 'Game') {
-    return (
-      <div className="workspace-layout workspace-layout--game">
-        <section className="surface">
-          <div className="surface-header">
-            <div>
-              <div className="surface-eyebrow">Runtime Control</div>
-              <h2>Game Viewer</h2>
-            </div>
-            <div className="inline-actions">
-              <button
-                className="ghost-button"
-                disabled={buildStatus.state === 'running'}
-                onClick={onBuildAndPlay}
-                type="button"
-              >
-                Build + Run
-              </button>
-              <button
-                className="ghost-button"
-                disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'}
-                onClick={onStartRuntime}
-                type="button"
-              >
-                Run
-              </button>
-              <button
-                className="ghost-button"
-                disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
-                onClick={onStopRuntime}
-                type="button"
-              >
-                Stop
-              </button>
-              <button
-                className="ghost-button"
-                disabled={!runtimeStatus.supportsPause || runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
-                onClick={runtimeStatus.state === 'paused' ? onResumeRuntime : onPauseRuntime}
-                type="button"
-              >
-                {runtimeStatus.state === 'paused' ? 'Resume' : 'Pause'}
-              </button>
-              <button
-                className="ghost-button"
-                disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
-                onClick={onRestartRuntime}
-                type="button"
-              >
-                Restart
-              </button>
-            </div>
-          </div>
-          <ViewportShell
-            footer="Windows native runtime window first. Aim at effect-capable proxies and press Enter or click to trigger them; F7 reloads authored content."
-            subtitle={`Run scene: ${launchScene}`}
-            title="Game viewport"
-          />
-        </section>
-        <section className="surface">
-          <div className="metric-stack">
-            <article className="mini-card">
-              <span>Status</span>
-              <strong>{runtimeStateLabel(runtimeStatus.state)}</strong>
-            </article>
-            <article className="mini-card">
-              <span>Scene</span>
-              <strong>{runtimeStatus.scene || launchScene}</strong>
-            </article>
-            <article className="mini-card">
-              <span>Workspace</span>
-              <strong>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</strong>
-            </article>
-            <article className="mini-card">
-              <span>Process</span>
-              <strong>{runtimeStatus.pid ? `pid ${runtimeStatus.pid}` : 'not running'}</strong>
-            </article>
-            <article className="mini-card">
-              <span>Build config</span>
-              <strong>{buildConfig}</strong>
-            </article>
-            <article className="mini-card">
-              <span>Pause</span>
-              <strong>{runtimeStatus.supportsPause ? (runtimeStatus.state === 'paused' ? 'Paused' : 'Available') : 'Unsupported'}</strong>
-            </article>
-          </div>
-        </section>
-      </div>
-    );
-  }
-
-  if (activeTab === 'Scene') {
+  if (activeTab === 'World' || activeTab === 'Assets') {
     return (
       <SceneEditorView
         activeSession={activeSession}
@@ -1734,26 +1536,26 @@ function renderCenterContent(
         onRestartRuntime={onRestartRuntime}
         onRunScene={onStartRuntime}
         onStopRuntime={onStopRuntime}
+        preferredSidebarTab={activeTab === 'Assets' ? 'assets' : 'outliner'}
         runtimeStatus={runtimeStatus}
       />
     );
-  }
-
-  if (activeTab === 'Guide') {
-    return <ReferenceGuideView guide={engineReferenceGuide} />;
   }
 
   const runtimeLogTail = takeLastLogLines(runtimeLog, 8);
   const buildLogTail = takeLastLogLines(buildLog, 8);
 
   return (
-    <div className="workspace-layout workspace-layout--preview">
+    <div className="workspace-layout workspace-layout--playtest">
       <section className="surface">
         <div className="surface-header">
           <div>
-            <div className="surface-eyebrow">Preview</div>
-            <h2>Viewer Workflow</h2>
-            <p>Keep the browser shell paired with the native runtime window until embedded streaming is worth the added complexity.</p>
+            <div className="surface-eyebrow">Playtest</div>
+            <h2>External Native Runtime</h2>
+            <p>
+              The native runtime stays in its own window. This workspace shows the real build and run
+              state from engine_sessiond; it does not embed a renderer.
+            </p>
           </div>
           <div className="inline-actions">
             <button
@@ -1817,7 +1619,7 @@ function renderCenterContent(
           <article className="preview-card">
             <span>Window</span>
             <strong>External native runtime</strong>
-            <p>Browser shell stays the primary workspace</p>
+            <p>Browser shell stays the control surface; the renderer is not embedded here.</p>
           </article>
           <article className="preview-card">
             <span>Queue</span>
@@ -1838,7 +1640,11 @@ function renderCenterContent(
           <article className="bridge-card">
             <div className="bridge-card__header">
               <div className="bridge-card__title">
-                <span className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`} />
+                <span
+                  aria-label={`Runtime ${runtimeStateLabel(runtimeStatus.state)}`}
+                  className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`}
+                  role="img"
+                />
                 <strong>Bridge State</strong>
               </div>
               <span>{runtimeStateLabel(runtimeStatus.state)}</span>
@@ -1877,7 +1683,7 @@ function renderCenterContent(
           <article className="bridge-card">
             <div className="bridge-card__header">
               <div className="bridge-card__title">
-                <span className="status-dot status-dot--active" />
+                <span aria-hidden="true" className="status-dot status-dot--active" />
                 <strong>Recent Bridge Activity</strong>
               </div>
               <span>{viewerBridgeEvents.length ? `${viewerBridgeEvents.length} entries` : 'waiting'}</span>
@@ -1888,7 +1694,11 @@ function renderCenterContent(
                   <li className="bridge-event" key={event.id}>
                     <div className="bridge-event__header">
                       <div className="bridge-card__title">
-                        <span className={`status-dot status-dot--${event.tone}`} />
+                        <span
+                          aria-label={event.tone}
+                          className={`status-dot status-dot--${event.tone}`}
+                          role="img"
+                        />
                         <strong>{event.title}</strong>
                       </div>
                       <span>{formatSessionTimestamp(event.at)}</span>
@@ -1910,7 +1720,7 @@ function renderCenterContent(
           <div>
             <div className="surface-eyebrow">Log Tail</div>
             <h2>Bridge Diagnostics</h2>
-            <p>Keep the viewer workflow inspectable from the shell even before there is an embedded frame stream.</p>
+            <p>Inspect the real runtime and build logs from the shell without pretending there is an embedded frame stream.</p>
           </div>
         </div>
         <div className="bridge-log-grid">
@@ -1940,13 +1750,13 @@ function renderCenterContent(
 
 export default function App() {
   const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('Workspaces');
-  const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('Scene');
+  const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('World');
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('Runtime');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
   const [bottomPaneHeight, setBottomPaneHeight] = useState(() => clampBottomPaneHeight(DEFAULT_BOTTOM_PANE_HEIGHT));
   const [bottomPaneCollapsed, setBottomPaneCollapsed] = useState(false);
   const [bottomPaneResizing, setBottomPaneResizing] = useState(false);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('Triptych');
+  const [showGuide, setShowGuide] = useState(false);
   const [showLegacyBridge, setShowLegacyBridge] = useState(false);
   const [sessiondState, setSessiondState] = useState<'connecting' | 'connected' | 'offline'>('connecting');
   const [sessiondMessage, setSessiondMessage] = useState('Checking engine_sessiond...');
@@ -1985,9 +1795,6 @@ export default function App() {
   const [approvalsBusy, setApprovalsBusy] = useState(false);
   const [approvalActionId, setApprovalActionId] = useState('');
   const [artifactActionPath, setArtifactActionPath] = useState('');
-  const [aiProviderSummary, setAiProviderSummary] = useState<AiProviderSummary | null>(null);
-  const [aiTestBusy, setAiTestBusy] = useState(false);
-  const [aiTestResult, setAiTestResult] = useState<AiTestResult | null>(null);
   const [launchScene, setLaunchScene] = useState('sandbox');
   const [buildConfig, setBuildConfig] = useState<BuildConfig>('Debug');
   const [buildDir, setBuildDir] = useState('build/runtime');
@@ -2158,17 +1965,6 @@ export default function App() {
     }
   }
 
-  async function refreshAiProviders(sessionId: string) {
-    if (!sessionId) {
-      setAiProviderSummary(null);
-      setAiTestResult(null);
-      return;
-    }
-
-    const nextSummary = await fetchAiProviders(sessionId);
-    setAiProviderSummary(nextSummary);
-  }
-
   async function refreshPackageSummary(sessionId: string) {
     if (!sessionId) {
       setPackageSummary(null);
@@ -2233,7 +2029,6 @@ export default function App() {
     await Promise.all([
       refreshExplorer(sessionId, '.'),
       refreshGit(sessionId),
-      refreshAiProviders(sessionId),
       refreshPackageSummary(sessionId),
       refreshProfiling(sessionId),
       refreshCodeTrust(sessionId),
@@ -2312,8 +2107,6 @@ export default function App() {
   useEffect(() => {
     if (!activeSessionId) {
       setGitStatus(emptyGitStatus);
-      setAiProviderSummary(null);
-      setAiTestResult(null);
       setPackageSummary(null);
       setProfileSummary(null);
       setProfileCaptureList(null);
@@ -2324,7 +2117,6 @@ export default function App() {
 
     void Promise.all([
       refreshGit(activeSessionId),
-      refreshAiProviders(activeSessionId),
       refreshPackageSummary(activeSessionId),
       refreshProfiling(activeSessionId),
       refreshCodeTrust(activeSessionId),
@@ -2333,10 +2125,6 @@ export default function App() {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     });
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    setAiTestResult(null);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -2653,8 +2441,6 @@ export default function App() {
         setSelectedExplorerPath('');
         setSelectedFilePreview('');
         setGitStatus(emptyGitStatus);
-        setAiProviderSummary(null);
-        setAiTestResult(null);
         setPackageSummary(null);
         setProfileSummary(null);
         setProfileCaptureList(null);
@@ -2685,7 +2471,6 @@ export default function App() {
         await refreshExplorer(explorerSessionId, explorerPath);
         await Promise.all([
           refreshGit(explorerSessionId),
-          refreshAiProviders(explorerSessionId),
           refreshPackageSummary(explorerSessionId),
           refreshProfiling(explorerSessionId),
           refreshCodeTrust(explorerSessionId),
@@ -2725,8 +2510,6 @@ export default function App() {
         setSelectedExplorerPath('');
         setSelectedFilePreview('');
         setGitStatus(emptyGitStatus);
-        setAiProviderSummary(null);
-        setAiTestResult(null);
         setPackageSummary(null);
         setProfileSummary(null);
         setProfileCaptureList(null);
@@ -2852,27 +2635,6 @@ export default function App() {
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function handleRunAiSmokeTest() {
-    if (!activeSessionId) {
-      return;
-    }
-
-    try {
-      setAiTestBusy(true);
-      const result = await runAiSmokeTest(activeSessionId, {
-        providerId: aiProviderSummary?.defaultProviderId || undefined,
-      });
-      setAiTestResult(result);
-      setSessiondState('connected');
-      setSessiondMessage(`AI smoke test completed via ${result.providerId}`);
-    } catch (error) {
-      setSessiondState('offline');
-      setSessiondMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAiTestBusy(false);
     }
   }
 
@@ -3331,26 +3093,25 @@ export default function App() {
   const suggestedWorkspaceSession = findSuggestedWorkspaceSession(sessions);
   const activeSessionIsHarness = activeSession ? isHarnessSession(activeSession) : false;
 
-  const showSidePane = activeCenterTab !== 'Scene';
+  const showSidePane = !showGuide && (activeCenterTab === 'Code' || activeCenterTab === 'Playtest');
+
+  function handleSelectCenterTab(tab: CenterTab) {
+    setShowGuide(false);
+    setActiveCenterTab(tab);
+  }
 
   return (
     <div className="shell-app">
       <header className="chrome-bar chrome-bar--menu">
         <div className="menu-strip">
-          {menuItems.map((item) => (
-            <button
-              className="menu-button"
-              key={item}
-              onClick={() => {
-                if (item === 'Help') {
-                  setActiveCenterTab('Guide');
-                }
-              }}
-              type="button"
-            >
-              {item}
-            </button>
-          ))}
+          <button
+            aria-pressed={showGuide}
+            className="menu-button"
+            onClick={() => setShowGuide(true)}
+            type="button"
+          >
+            Help
+          </button>
         </div>
         <div className="chrome-title">Shader Forge</div>
         <div className="toolbar-cluster toolbar-cluster--center">
@@ -3376,7 +3137,12 @@ export default function App() {
           </button>
         </div>
         <div className="chrome-strip-meta">
-          <span className={`status-indicator${sessiondState === 'connected' ? ' status-indicator--ok' : sessiondState === 'offline' ? ' status-indicator--err' : ''}`} />
+          <span
+            aria-label={`engine_sessiond ${sessiondState}: ${sessiondMessage}`}
+            className={`status-indicator${sessiondState === 'connected' ? ' status-indicator--ok' : sessiondState === 'offline' ? ' status-indicator--err' : ''}`}
+            role="status"
+            title={sessiondMessage}
+          />
           <span className="chrome-meta-chip">{buildConfig}</span>
           {buildStatus.state === 'running' ? <span className="chrome-meta-chip chrome-meta-chip--accent">Building</span> : null}
           {runtimeStatus.state === 'running' ? <span className="chrome-meta-chip chrome-meta-chip--accent">Running</span> : null}
@@ -3386,12 +3152,23 @@ export default function App() {
 
       <main className={`shell-grid${showSidePane ? '' : ' shell-grid--scene-mode'}`}>
         <aside className="pane rail-pane">
-          <nav className="rail-tabs">
+          <nav
+            aria-label="Workspace tools"
+            className="rail-tabs"
+            onKeyDown={(event) => handleTabListKeyDown(event, leftTabs, activeLeftTab, setActiveLeftTab)}
+            role="tablist"
+          >
             {leftTabs.map((tab) => (
               <button
+                aria-controls="workspace-tools-panel"
+                aria-selected={activeLeftTab === tab}
                 className={`rail-tab${activeLeftTab === tab ? ' is-active' : ''}`}
+                data-tab-id={tab}
+                id={`workspace-tool-tab-${tab}`}
                 key={tab}
                 onClick={() => setActiveLeftTab(tab)}
+                role="tab"
+                tabIndex={activeLeftTab === tab ? 0 : -1}
                 type="button"
               >
                 {tab}
@@ -3399,7 +3176,12 @@ export default function App() {
             ))}
           </nav>
           {activeLeftTab === 'Workspaces' ? (
-            <div className="rail-content">
+            <div
+              aria-labelledby="workspace-tool-tab-Workspaces"
+              className="rail-content"
+              id="workspace-tools-panel"
+              role="tabpanel"
+            >
               <section className="rail-section">
                 <div className="section-titlebar">
                   <h3>{editingSessionId ? 'Edit Workspace' : 'New Workspace'}</h3>
@@ -3416,7 +3198,7 @@ export default function App() {
                     <span>
                       {activeSession
                         ? activeSession.rootPath
-                        : 'Use one repo-root workspace so Scene, Explorer, terminals, and runtime all point at the same project files.'}
+                        : 'Use one repo-root workspace so World, Explorer, terminals, and runtime all point at the same project files.'}
                     </span>
                   </div>
                   <div className="inline-actions">
@@ -3462,6 +3244,7 @@ export default function App() {
                         value={newSessionRoot}
                       />
                       <button
+                        aria-label="Browse for workspace root"
                         className="ghost-button ghost-button--sm"
                         onClick={() => openDirPicker(newSessionRoot || activeSession?.rootPath || defaultBrowsePath)}
                         type="button"
@@ -3647,7 +3430,12 @@ export default function App() {
             </div>
           ) : null}
           {activeLeftTab === 'Explorer' ? (
-            <div className="rail-content">
+            <div
+              aria-labelledby="workspace-tool-tab-Explorer"
+              className="rail-content"
+              id="workspace-tools-panel"
+              role="tabpanel"
+            >
               {activeSession ? (
                 <>
                   <div className="inline-actions">
@@ -3691,7 +3479,12 @@ export default function App() {
             </div>
           ) : null}
           {activeLeftTab === 'Source Control' ? (
-            <div className="rail-content">
+            <div
+              aria-labelledby="workspace-tool-tab-Source Control"
+              className="rail-content"
+              id="workspace-tools-panel"
+              role="tabpanel"
+            >
               {activeSession ? (
                 <>
                   <div className="inline-actions">
@@ -3729,62 +3522,98 @@ export default function App() {
 
         <section className="center-column">
           <div className="center-toolbar">
-            <div className="tab-row">
+            <div
+              aria-label="Primary workspaces"
+              className="tab-row"
+              onKeyDown={(event) => handleTabListKeyDown(event, centerTabs, activeCenterTab, handleSelectCenterTab)}
+              role="tablist"
+            >
               {centerTabs.map((tab) => (
-                <TabButton active={activeCenterTab === tab} key={tab} onClick={() => setActiveCenterTab(tab)}>
+                <TabButton
+                  active={activeCenterTab === tab}
+                  controls="workspace-panel"
+                  id={`workspace-tab-${tab}`}
+                  key={tab}
+                  onClick={() => handleSelectCenterTab(tab)}
+                  tabId={tab}
+                >
                   {tab}
                 </TabButton>
               ))}
             </div>
             <div className="toolbar-rack__spacer" />
-            {activeCenterTab === 'Guide' ? (
-              <div className="guide-toolbar-meta">Searchable in-app wiki backed by repo-native markdown and structured assistant guide files.</div>
+            {showGuide ? (
+              <>
+                <div className="guide-toolbar-meta">Searchable in-app wiki backed by repo-native markdown and structured assistant guide files.</div>
+                <button className="ghost-button ghost-button--sm" onClick={() => setShowGuide(false)} type="button">
+                  Close Guide
+                </button>
+              </>
             ) : activeCenterTab === 'Code' ? (
-              <div className="tab-row tab-row--tight">
-                {layoutModes.map((mode) => (
-                  <TabButton active={layoutMode === mode} key={mode} onClick={() => setLayoutMode(mode)}>
-                    {mode}
-                  </TabButton>
-                ))}
-              </div>
-            ) : activeCenterTab === 'Scene' ? (
-              <div className="guide-toolbar-meta">Level editor workspace: author in the viewport, then use the visible Run controls inside Scene to launch the same scene in the native runtime.</div>
+              <div className="guide-toolbar-meta">Preserved Monaco editor and file search stay available through the compatibility bridge.</div>
+            ) : activeCenterTab === 'World' ? (
+              <div className="guide-toolbar-meta">Level editor workspace: author in the viewport, then use the visible Run controls inside World to launch the same scene in the native runtime.</div>
+            ) : activeCenterTab === 'Assets' ? (
+              <div className="guide-toolbar-meta">Prefab and scene assets for the active workspace. Placement and inspection reuse the existing authoring tools.</div>
             ) : (
-              <div className="guide-toolbar-meta">Runtime controls and build operations are grouped with `Game`, `Preview`, and the right-side runtime tools.</div>
+              <div className="guide-toolbar-meta">Playtest shows and controls the external native runtime. The browser does not embed a renderer.</div>
             )}
           </div>
 
-          {renderCenterContent(
-            activeCenterTab,
-            layoutMode,
-            showLegacyBridge,
-            () => setShowLegacyBridge((current) => !current),
-            activeSession,
-            runtimeStatus,
-            buildStatus,
-            launchScene,
-            setLaunchScene,
-            buildConfig,
-            buildDir,
-            runtimeLog,
-            buildLog,
-            viewerBridgeEvents,
-            pendingRunAfterBuild,
-            reportBackendStatus,
-            handleBuildAndPlay,
-            handleStartRuntime,
-            handleStopRuntime,
-            handleRestartRuntime,
-            handlePauseRuntime,
-            handleResumeRuntime,
-          )}
+          <div
+            aria-label={showGuide ? 'Reference guide' : undefined}
+            aria-labelledby={showGuide ? undefined : `workspace-tab-${activeCenterTab}`}
+            className="workspace-panel"
+            id="workspace-panel"
+            role={showGuide ? 'region' : 'tabpanel'}
+          >
+            {showGuide ? (
+              <ReferenceGuideView guide={engineReferenceGuide} />
+            ) : (
+              renderCenterContent(
+                activeCenterTab,
+                showLegacyBridge,
+                () => setShowLegacyBridge((current) => !current),
+                activeSession,
+                runtimeStatus,
+                buildStatus,
+                launchScene,
+                setLaunchScene,
+                buildConfig,
+                buildDir,
+                runtimeLog,
+                buildLog,
+                viewerBridgeEvents,
+                pendingRunAfterBuild,
+                reportBackendStatus,
+                handleBuildAndPlay,
+                handleStartRuntime,
+                handleStopRuntime,
+                handleRestartRuntime,
+                handlePauseRuntime,
+                handleResumeRuntime,
+              )
+            )}
+          </div>
         </section>
 
         {showSidePane ? (
           <aside className="pane side-pane">
-            <div className="tab-row tab-row--side">
+            <div
+              aria-label="Runtime tools"
+              className="tab-row tab-row--side"
+              onKeyDown={(event) => handleTabListKeyDown(event, rightTabs, activeRightTab, setActiveRightTab)}
+              role="tablist"
+            >
               {rightTabs.map((tab) => (
-                <TabButton active={activeRightTab === tab} key={tab} onClick={() => setActiveRightTab(tab)}>
+                <TabButton
+                  active={activeRightTab === tab}
+                  controls="runtime-tools-panel"
+                  id={`runtime-tool-tab-${tab}`}
+                  key={tab}
+                  onClick={() => setActiveRightTab(tab)}
+                  tabId={tab}
+                >
                   {tab}
                 </TabButton>
               ))}
@@ -3795,6 +3624,12 @@ export default function App() {
                 <span>{activeSession.rootPath}</span>
               </div>
             ) : null}
+            <div
+              aria-labelledby={`runtime-tool-tab-${activeRightTab}`}
+              className="runtime-tools-panel"
+              id="runtime-tools-panel"
+              role="tabpanel"
+            >
             {renderRightPanel(
               activeRightTab,
               activeSession,
@@ -3808,9 +3643,6 @@ export default function App() {
               approvalsBusy,
               approvalActionId,
               artifactActionPath,
-              aiProviderSummary,
-              aiTestBusy,
-              aiTestResult,
               runtimeStatus,
               buildStatus,
               buildLog,
@@ -3830,7 +3662,6 @@ export default function App() {
               handleRestartRuntime,
               handlePauseRuntime,
               handleResumeRuntime,
-              handleRunAiSmokeTest,
               handleRefreshPackaging,
               handleRunPackaging,
               handleRefreshProfile,
@@ -3839,6 +3670,7 @@ export default function App() {
               handleDecideApproval,
               handleTransitionArtifact,
             )}
+            </div>
           </aside>
         ) : null}
       </main>
@@ -3854,9 +3686,21 @@ export default function App() {
           role="separator"
         />
         <div className="bottom-pane__chrome">
-          <div className="tab-row">
+          <div
+            aria-label="Bottom dock"
+            className="tab-row"
+            onKeyDown={(event) => handleTabListKeyDown(event, bottomTabs, activeBottomTab, handleBottomTabSelect)}
+            role="tablist"
+          >
             {bottomTabs.map((tab) => (
-              <TabButton active={activeBottomTab === tab} key={tab} onClick={() => handleBottomTabSelect(tab)}>
+              <TabButton
+                active={activeBottomTab === tab}
+                controls="bottom-dock-panel"
+                id={`bottom-tab-${tab}`}
+                key={tab}
+                onClick={() => handleBottomTabSelect(tab)}
+                tabId={tab}
+              >
                 {tab}
               </TabButton>
             ))}
@@ -3879,7 +3723,12 @@ export default function App() {
           </div>
         </div>
         {!bottomPaneCollapsed ? (
-          <div className="bottom-pane__body">
+          <div
+            aria-labelledby={`bottom-tab-${activeBottomTab}`}
+            className="bottom-pane__body"
+            id="bottom-dock-panel"
+            role="tabpanel"
+          >
             {renderBottomPanel(activeBottomTab, terminalDock, runtimeLog, buildLog)}
           </div>
         ) : null}
