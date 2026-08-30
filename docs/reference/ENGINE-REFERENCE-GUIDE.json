@@ -118,8 +118,8 @@
         {
           "id": "shell-workspace",
           "title": "Shell Workspace Overview",
-          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, workspace AI inspection, release packaging, diagnostics capture, scene authoring, and the preserved code bridge, with a clearer separation between authoring, runtime, and utility surfaces.",
-          "keywords": ["shell", "workspace", "tabs", "rails", "layout", "ai", "package", "profile"],
+          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, release packaging, diagnostics capture, world authoring, assets, and the preserved code bridge, with a clearer separation between authoring, runtime, and utility surfaces.",
+          "keywords": ["shell", "workspace", "tabs", "rails", "layout", "world", "playtest", "assets", "package", "profile"],
           "references": [
             "shell/engine-shell/src/App.tsx",
             "shell/engine-shell/src/SceneEditorView.tsx",
@@ -134,11 +134,10 @@
               "keywords": ["left rail", "center dock", "right panel", "bottom dock"],
               "items": [
                 "The left rail currently exposes `Workspaces`, `Explorer`, and `Source Control`.",
-                "The center dock currently exposes `Scene`, `Game`, `Preview`, `Code`, and `Guide`.",
-                "The right panel currently exposes `Runtime`, `Build`, and `Workspace` for non-`Scene` tabs, and it is intentionally hidden during `Scene` authoring so the editor can use that space directly.",
+                "The primary workspace navigation exposes `World`, `Code`, `Playtest`, and `Assets`.",
+                "The right panel currently exposes `Runtime`, `Build`, and `Workspace` in `Code` and `Playtest`, while `World` and `Assets` use the center area directly.",
                 "The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.",
                 "The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.",
-                "The `Workspace` right-panel tab now also exposes workspace-backed AI provider status, manifest source, ready-provider counts, and a deterministic smoke-test action.",
                 "The `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, visible prep state, and last-package summary for the selected workspace.",
                 "The `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the selected workspace, including runtime/build state, packaging readiness, stored capture history, and first profiling recommendations.",
                 "The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals for the selected workspace plus the shared engine lane."
@@ -149,11 +148,13 @@
               "keywords": ["monaco", "preview", "scene", "guide"],
               "items": [
                 "Use `Code` when you need the preserved Monaco bridge and repo workspace context.",
-                "Use `Game` and `Preview` when you are driving the external native runtime window from the shell, with runtime/build/workspace tools grouped beside those runtime-facing surfaces.",
-                "Use `Scene` for repo-backed scene and prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.",
+                "Use `Playtest` when you are driving the external native runtime window from the shell, with runtime/build/workspace tools grouped beside that runtime-facing surface.",
+                "Use `World` for repo-backed scene and prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.",
+                "Use `Assets` to open the existing asset authoring tool directly.",
                 "If `Build` or `Build + Run` fails because `cmake` is missing, the shell now surfaces that as setup guidance; the clean-start scripts also auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible, while plain `Run` still depends on an already-built runtime binary under `build/runtime/bin`.",
                 "A successful native build can still be a stub runtime if SDL3 or Vulkan are missing; the shell now surfaces that separately as native dependency setup rather than another CMake problem.",
-                "Use `Guide` for the in-app wiki and repo source references."
+                "Use `Help` to open the Guide as a secondary searchable reference surface.",
+                "External development agents connect through the planned MCP control plane; the shell does not contain provider selection, prompts, or an assistant chat surface."
               ],
               "note": "The shell is still the primary workspace even though the native SDL3/Vulkan runtime renders in an external window."
             }
@@ -198,7 +199,10 @@
                 "Runtime build and runtime start/restart now pass through the same code-trust policy layer before compile or load transitions continue.",
                 "Host filesystem directory listing is already used by the workspace-root picker.",
                 "Git status and repository initialization are already used by the `Source Control` rail.",
-                "PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces."
+                "PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces.",
+                "`/api/coordination` now provides workspace-scoped agent registration, credential-protected heartbeat/disconnect, hierarchical read/write leases, FIFO conflict queues, writer fairness, expiry cleanup, and state inspection for future MCP clients.",
+                "Non-overlapping resources and separate workspaces can proceed concurrently; overlapping writes plus `build` or `runtime` exclusivity are coordinated without one global bridge lock.",
+                "Coordination credentials are returned only at registration and are excluded from state, lease, SSE event, log, and error views."
               ]
             },
             {
@@ -343,7 +347,7 @@
                 "The native runtime has Vulkan instance, surface, device, swapchain, render pass, framebuffer, submit, and present bring-up.",
                 "Resize-aware swapchain recreation is already implemented.",
                 "Runtime build, run, stop, restart, pause, and resume are already controlled from the shell, and shell-driven run/restart now follow the active session root.",
-                "The shell tracks runtime state, build state, bridge activity, and recent log tails in `Game` and `Preview`.",
+                "The shell tracks runtime state, build state, bridge activity, and recent log tails in `Playtest`.",
                 "The native runtime now also composes the authored scene into a first runtime world snapshot, selects a preferred controlled entity from prefab spawn tags, and projects authored prefab render components into visible debug-proxy scene cards in the external Vulkan window.",
                 "The native runtime now also has a first authored-content iteration lane: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps to pick up shell edits without a full restart.",
                 "The native runtime now resolves effect-capable interaction targets from the current view/crosshair, and `ui_accept` input such as Enter or left-click triggers first visible interaction feedback plus effect-descriptor-backed logs.",
@@ -569,7 +573,7 @@
               "keywords": ["npm test", "sessiond", "viewer bridge", "runtime scaffold", "animation scaffold", "physics scaffold"],
               "items": [
                 "`npm test` runs the preserved shell smoke harness.",
-                "`npm run test:sessiond` validates the local backend session and file flows.",
+                "`npm run test:sessiond` validates local backend session/file flows plus multi-agent leases, queue promotion, expiry, credential ownership, workspace cleanup, and isolation.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
                 "`npm run test:packaging-scaffold` validates export-preset inspection, visible prep state, auto-bake packaging, and release-layout generation through the CLI and `engine_sessiond`.",
                 "`npm run test:profiling-scaffold` validates live diagnostics snapshots, persisted capture reports, and capture-history listing through the CLI and `engine_sessiond`.",

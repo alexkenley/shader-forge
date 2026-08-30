@@ -40,6 +40,13 @@ Current implemented surfaces:
 - `POST /api/code-trust/artifacts/transition`
 - `GET /api/code-trust/approvals`
 - `POST /api/code-trust/approvals/:id/decision`
+- `POST /api/coordination/agents`
+- `POST /api/coordination/agents/:id/heartbeat`
+- `POST /api/coordination/agents/:id/disconnect`
+- `GET /api/coordination/state`
+- `POST /api/coordination/leases`
+- `GET /api/coordination/leases/:id`
+- `POST /api/coordination/leases/:id/release`
 - `GET /api/events`
 
 This gives the shell and harnesses a real backend-owned session and file model before PTY and runtime lifecycle work land.
@@ -88,10 +95,17 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - `GET /api/profile/live` returns the first Phase 6.3 live diagnostics snapshot, including runtime/build state, recent log tails, git summary, AI/code-trust counts, packaging readiness, and recent capture history
 - `GET /api/profile/captures` now lists persisted diagnostics captures for the active workspace session
 - `POST /api/profile/capture` now writes a shareable JSON diagnostics capture under `build/profiling/captures/` from that same live snapshot lane
+- sessiond now provides an in-process multi-agent coordinator for future process-scoped MCP clients instead of forcing every agent through one global bridge lock
+- agents register against an existing workspace session and receive an opaque credential that is returned once and excluded from state, lease, event, log, and error views
+- agent-owned heartbeat, disconnect, lease request, and lease release operations require that credential, and a lease can only be released by its owning agent
+- resource leases use normalized hierarchical keys: read/read overlaps are allowed, while any overlapping ancestor/descendant write conflict queues in FIFO order
+- later readers cannot bypass an earlier conflicting queued writer, preventing writer starvation
+- `build` and `runtime` are documented workspace-scoped exclusive resources, so unrelated work and separate workspace sessions remain concurrent
+- disconnect, heartbeat expiry, lease release, and workspace deletion clean up held work and promote eligible queued leases
+- coordination lifecycle changes stream through the existing SSE event bus without exposing agent credentials
 
 ## Future AI APIs
 
-- AI request submit/cancel
-- AI request/event stream
-- queued request metadata and budgeting
-- optional secure local key-management hooks
+- a process-scoped MCP adapter over the engine-owned coordination and mutation contracts
+- isolated change sets with preview, validation, revision preconditions, merge/apply, provenance, and undo
+- MCP resources for project, scene, asset, code, runtime, test, diagnostics, coordination, and activity state

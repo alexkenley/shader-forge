@@ -1,7 +1,7 @@
 # Engine Shell Spec
 
 Status: target architecture  
-Date: 2026-03-22
+Date: 2026-08-30
 
 ## Purpose
 
@@ -16,7 +16,8 @@ It is responsible for:
 - runtime launch and control
 - asset/details/inspector surfaces
 - persistent scene authoring surfaces
-- viewer tabs for code and runtime-facing workflows
+- distinct World, Code, Playtest, and Assets workspaces
+- operational activity, change, approval, conflict, and provenance surfaces for external agents
 
 It is not the engine runtime.
 
@@ -36,17 +37,16 @@ Left rail:
 - `Explorer`
 - `Source Control`
 
-Center dock:
+Primary workspaces:
 
-- `Scene`
-- `Game`
-- `Preview`
+- `World`
 - `Code`
-- `Guide`
+- `Playtest`
+- `Assets`
 
 Right panel:
 
-- context-aware runtime/workspace tools for non-`Scene` tabs
+- context-aware inspector, runtime, build, change, and activity tools
 - current implemented tabs: `Runtime`, `Build`, `Workspace`
 
 Bottom panel:
@@ -55,16 +55,21 @@ Bottom panel:
 - `Logs`
 - `Output`
 
+Secondary surfaces:
+
+- searchable `Guide` under `Help`
+- external-agent connection, change, approval, and conflict status without a built-in chat assistant
+
 ## Workspace Layout Architecture
 
 The shell layout should follow these rules:
 
 - keep authoring, runtime, and utility surfaces separated instead of mixing them into one generic side column
-- make the primary viewport the largest surface in `Scene`, `Game`, and `Preview`
+- make the primary authoring or runtime surface the largest area in `World` and `Playtest`
 - keep lightweight state such as dirty status, mode, and launch/runtime state in compact bars or chips instead of large summary cards
 - keep terminals, logs, and other utility surfaces in the bottom dock rather than letting them compete with the main workspace
 - put world hierarchy, selection inspection, and asset placement adjacent to the scene viewport, following familiar level-editor patterns from tools like Unreal, Unity, and Godot without copying any one layout blindly
-- keep runtime launch/build controls grouped with `Game`, `Preview`, and runtime-facing side panels rather than leaving them visible during pure scene authoring
+- keep runtime launch/build controls grouped with `Playtest` and runtime-facing side panels rather than leaving them visible during pure world authoring
 - prefer resizable editor sidebars and docks where screen-real-estate tradeoffs matter
 
 ## Core Behavior
@@ -75,7 +80,8 @@ The shell layout should follow these rules:
 - Windows clean-start path through a PowerShell launcher that delegates into WSL
 - persistent backend-owned sessions once `engine_sessiond` exists
 - text and code as the source of truth
-- `Scene` workflows should edit persistent text-backed scene and prefab assets rather than opaque editor state
+- `World` workflows should edit persistent text-backed scene and prefab assets rather than opaque editor state
+- external AI development clients connect through the MCP control plane; the shell does not own model selection, prompts, provider setup, or development-assistant chat
 
 ## Implemented Shell Bridge
 
@@ -89,15 +95,15 @@ Current implemented bridge surfaces:
 - the shell now surfaces explicit setup guidance when the build lane is unavailable, including the current `cmake` requirement for `Build` and `Build + Run`, while the clean-start scripts auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible
 - the shell now also calls out when a successful CMake build only produced the stub runtime because SDL3 or Vulkan were missing, so native dependency setup is separated clearly from CMake setup
 - runtime and build logs routed into shell bottom-dock surfaces, with the bottom dock now supporting vertical resize plus explicit collapse/restore/maximize controls
-- `Game` and `Preview` tabs that track external-runtime bridge state, recent runtime/build activity, and shell-side viewer workflow diagnostics
-- the `Workspace` right-panel tab now also exposes the active AI provider manifest summary, ready-provider counts, per-provider diagnostics, and a workspace-backed AI smoke-test action
+- a single `Playtest` workspace that truthfully tracks and controls the external native runtime, recent runtime/build activity, and viewer workflow diagnostics
 - the `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, visible prep state, and last-package summary for the selected workspace
 - the `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the current workspace, including runtime/build state, packaging readiness, stored capture history, and first profiling recommendations
 - the `Workspace` right-panel tab also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked trust-artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals with inline approve/deny actions for the selected workspace plus the shared engine lane
-- a real `Scene` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side authoring/review separation, surfaces explicit `Run Scene` plus `Build + Run` actions directly inside the editor, placed-entity hierarchy plus transform editing, first prefab component payload editing, writes deterministic save/reload/duplicate flows back through `engine_sessiond`, and now uses a viewport-first level-editor layout with an adjacent resizable `Scenes`/`Outliner`/`Inspector`/`Assets` tool stack plus a compact bottom status bar
+- a real `World` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side authoring/review separation, surfaces explicit `Run Scene` plus `Build + Run` actions directly inside the editor, placed-entity hierarchy plus transform editing, first prefab component payload editing, writes deterministic save/reload/duplicate flows back through `engine_sessiond`, and uses a viewport-first level-editor layout with an adjacent resizable `Scenes`/`Outliner`/`Inspector`/`Assets` tool stack plus a compact bottom status bar
+- an `Assets` workspace entry that opens the existing authoring asset tool directly while the fuller asset browser is developed
 - temporary harness sessions are not the intended user workflow and should be clearly separated from real repo-root workspaces in the `Workspaces` rail
-- the global right panel is now reserved for runtime/build/workspace tools on non-`Scene` tabs so scene authoring is not visually mixed with unrelated run/build controls
-- an in-app `Guide` tab backed by repo-native markdown and structured guide content so shell users, terminal assistants, and future native assistants can resolve the same operator wiki from the workspace
+- the global right panel is currently reserved for runtime/build/workspace tools in `Code` and `Playtest` so World and Assets can use the center area directly
+- an in-app `Guide` opened from `Help`, backed by repo-native markdown and structured guide content so shell users and external assistants can resolve the same operator wiki without treating Guide as a primary workspace
 
 The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.
 
@@ -135,5 +141,6 @@ The shell should eventually talk to:
 - `engine_sessiond` for sessions, file APIs, git APIs, PTY, runtime lifecycle, and logs
 - `engine_runtime` through structured runtime control and viewer protocols
 - `engine_cli` through normal shell terminals and explicit command surfaces
+- a process-scoped MCP adapter backed by engine-owned multi-agent coordination, revision checks, change previews, validation, and approval policies
 
 The shell should not be reused as the native tooling UI layer or the shipped in-game UI framework.

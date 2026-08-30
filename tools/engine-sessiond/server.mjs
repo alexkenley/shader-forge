@@ -3,6 +3,7 @@ import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import { BuildStore } from './lib/build-store.mjs';
 import { CodeTrustApprovalStore } from './lib/code-trust-approval-store.mjs';
+import { CoordinationStore } from './lib/coordination-store.mjs';
 import { initGitRepository, readGitStatus } from './lib/git-service.mjs';
 import { getPlatformInfo, listHostDirectory } from './lib/host-fs-service.mjs';
 import { SessionStore } from './lib/session-store.mjs';
@@ -213,6 +214,11 @@ function requireTrimmedString(value, fieldName) {
   return normalized;
 }
 
+function readAgentCredential(request) {
+  const value = request.headers['x-shader-forge-agent-credential'];
+  return Array.isArray(value) ? value[0] || '' : typeof value === 'string' ? value.trim() : '';
+}
+
 function normalizeFileWriteRequest(body = {}) {
   return {
     sessionId: requireTrimmedString(body.sessionId, 'sessionId'),
@@ -397,6 +403,7 @@ function createRouter({
   runtimeStore,
   buildStore,
   approvalStore,
+  coordinationStore,
   eventHub,
   diagnosticsRecorder,
 }) {
@@ -441,6 +448,7 @@ function createRouter({
           'profile:live',
           'profile:capture',
           'profile:list',
+          'coordination',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -579,6 +587,86 @@ function createRouter({
 
       if (request.method === 'GET' && pathname === '/api/events') {
         eventHub.subscribe(request, response);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/coordination/agents') {
+        const body = await readJsonBody(request);
+        const sessionId = requireTrimmedString(body.sessionId, 'sessionId');
+        const session = sessionStore.getSession(sessionId);
+        if (!session) {
+          throw createHttpError(404, `Unknown session: ${sessionId}`);
+        }
+        const name = typeof body.name === 'string' ? body.name.trim() : '';
+        const registration = coordinationStore.registerAgent({ sessionId, name });
+        writeJson(response, 201, registration);
+        return;
+      }
+
+      const agentHeartbeatMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/coordination\/agents\/([^/]+)\/heartbeat$/)
+        : null;
+      if (agentHeartbeatMatch) {
+        const agentId = decodeURIComponent(agentHeartbeatMatch[1]);
+        const agent = coordinationStore.heartbeat(agentId, readAgentCredential(request));
+        writeJson(response, 200, { agent });
+        return;
+      }
+
+      const agentDisconnectMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/coordination\/agents\/([^/]+)\/disconnect$/)
+        : null;
+      if (agentDisconnectMatch) {
+        const agentId = decodeURIComponent(agentDisconnectMatch[1]);
+        const agent = coordinationStore.disconnectAgent(agentId, readAgentCredential(request));
+        writeJson(response, 200, { ok: true, agent });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/coordination/state') {
+        const sessionId = searchParams.get('sessionId') || '';
+        if (sessionId && !sessionStore.getSession(sessionId)) {
+          throw createHttpError(404, `Unknown session: ${sessionId}`);
+        }
+        writeJson(response, 200, coordinationStore.inspectState({ sessionId }));
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/coordination/leases') {
+        const body = await readJsonBody(request);
+        const agentId = requireTrimmedString(body.agentId, 'agentId');
+        const lease = coordinationStore.requestLease({
+          agentId,
+          credential: readAgentCredential(request),
+          resources: body.resources,
+          mode: body.mode,
+        });
+        writeJson(response, 200, { lease, status: lease.status });
+        return;
+      }
+
+      const leaseReleaseMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/coordination\/leases\/([^/]+)\/release$/)
+        : null;
+      if (leaseReleaseMatch) {
+        const leaseId = decodeURIComponent(leaseReleaseMatch[1]);
+        const body = await readJsonBody(request);
+        const lease = coordinationStore.releaseLease(leaseId, {
+          agentId: requireTrimmedString(body.agentId, 'agentId'),
+          credential: readAgentCredential(request),
+        });
+        writeJson(response, 200, { lease, status: lease.status });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname.startsWith('/api/coordination/leases/')) {
+        const leaseId = decodeURIComponent(pathname.slice('/api/coordination/leases/'.length));
+        if (!leaseId || leaseId.includes('/')) {
+          writeJson(response, 404, { error: `No route for ${request.method} ${pathname}` });
+          return;
+        }
+        const lease = coordinationStore.getLease(leaseId);
+        writeJson(response, 200, { lease, status: lease.status });
         return;
       }
 
@@ -762,6 +850,7 @@ function createRouter({
       if (request.method === 'DELETE' && pathname.startsWith('/api/sessions/')) {
         const sessionId = pathname.slice('/api/sessions/'.length);
         const result = await sessionStore.deleteSession(sessionId);
+        coordinationStore.clearWorkspaceSession(sessionId);
         writeJson(response, 200, result);
         return;
       }
@@ -1005,6 +1094,9 @@ function createRouter({
       if (typeof error === 'object' && error && 'approval' in error && error.approval) {
         payload.approval = error.approval;
       }
+      if (typeof error === 'object' && error && 'lease' in error && error.lease) {
+        payload.lease = error.lease;
+      }
       writeJson(response, statusCode, payload);
     }
   };
@@ -1017,6 +1109,9 @@ export async function startEngineSessiond({
   runtimeLaunchFactory,
   buildLaunchFactory,
   approvalStore,
+  coordinationStore,
+  now,
+  heartbeatTimeoutMs,
 } = {}) {
   const eventHub = createEventHub();
   const diagnosticsRecorder = createDiagnosticsRecorder(eventHub);
@@ -1042,6 +1137,13 @@ export async function startEngineSessiond({
       diagnosticsRecorder.emit(type, data);
     },
   });
+  const resolvedCoordinationStore = coordinationStore || new CoordinationStore({
+    emitEvent: (type, data) => {
+      diagnosticsRecorder.emit(type, data);
+    },
+    now,
+    heartbeatTimeoutMs,
+  });
   if (typeof sessionStore.loadSessions === 'function') {
     await sessionStore.loadSessions();
   }
@@ -1051,6 +1153,7 @@ export async function startEngineSessiond({
     runtimeStore,
     buildStore,
     approvalStore: resolvedApprovalStore,
+    coordinationStore: resolvedCoordinationStore,
     eventHub,
     diagnosticsRecorder,
   }));
@@ -1074,6 +1177,7 @@ export async function startEngineSessiond({
     runtimeStore,
     buildStore,
     approvalStore: resolvedApprovalStore,
+    coordinationStore: resolvedCoordinationStore,
     close: async () => {
       await buildStore.close();
       await runtimeStore.close();
