@@ -16,7 +16,7 @@ Shader Forge is split between engine architecture docs and implementation scaffo
 - `npm run test:sessiond`: run the deterministic backend session/file harness.
 - `npm run test:mcp`: run the deterministic real-stdio MCP harness, including coordination and lease-gated spatial mutation.
 - `npm run test:spatial-authoring-scaffold`: compile and execute the native spatial skeleton/socket and attachment-profile parser harness; WSL `g++` is required on Windows.
-- `npm run test:spatial-tool`: compile and execute the native `shader_forge_spatial validate` and deterministic `cook` command harness; WSL `g++` is required on Windows and `g++` is required elsewhere.
+- `npm run test:spatial-tool`: compile and execute the native `shader_forge_spatial validate`, deterministic `cook`, and rest-pose attachment-evaluation command harness; WSL `g++` is required on Windows and `g++` is required elsewhere.
 - `npm run test:spatial-operations`: validate the sessiond spatial attachment preview, lease, durable context, apply, undo, and temporary staging contract.
 - `npm run test:spatial-cli`: validate the strict sessiond-backed spatial attachment CLI preview, review, apply, undo, UTF-8, and credential-redaction contract.
 - `npm run test:spatial-shell`: validate the Assets-only constrained primary-grip tuner, exact source transform rewrite, explicit lock workflow, and operation-only route.

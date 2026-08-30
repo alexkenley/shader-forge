@@ -20,6 +20,7 @@ assert.match(cmakeSource, /src\/spatial_authoring_tool\.cpp/);
 assert.match(cliSource, /engine build \[runtime\|spatial\]/);
 assert.match(cliSource, /engine spatial validate/);
 assert.match(cliSource, /engine spatial cook/);
+assert.match(cliSource, /engine spatial evaluate-rest --attachment/);
 assert.match(cliSource, /Build it first with/);
 assert.match(animationSourceText, /return utf8Path\(left\) < utf8Path\(right\)/);
 
@@ -28,6 +29,7 @@ assert.equal(help.status, 0, help.stderr || help.stdout);
 assert.match(help.stdout, /engine build \[runtime\|spatial\]/);
 assert.match(help.stdout, /engine spatial validate \[--animation-root animation\]/);
 assert.match(help.stdout, /engine spatial cook \[--animation-root animation\] \[--output-root build\/cooked\]/);
+assert.match(help.stdout, /engine spatial evaluate-rest --attachment <id>/);
 
 for (const [argumentsList, expectedError] of [
   [['spatial', 'validate', 'other-animation'], /does not accept positional arguments/],
@@ -39,6 +41,12 @@ for (const [argumentsList, expectedError] of [
   [['spatial', 'cook', '--output-root', 'first', '--output-root', 'second'], /Duplicate engine spatial cook flag: --output-root/],
   [['spatial', 'validate', '--animation-root', 'first', '--animation-root', 'second'], /Duplicate engine spatial validate flag: --animation-root/],
   [['spatial', 'validate', '--output-root', 'cooked'], /Unknown engine spatial validate flag: --output-root/],
+  [['spatial', 'evaluate-rest'], /requires --attachment/],
+  [['spatial', 'evaluate-rest', 'weapon.rifle.mk1.humanoid'], /does not accept positional arguments/],
+  [['spatial', 'evaluate-rest', '--attachment'], /requires a value for --attachment/],
+  [['spatial', 'evaluate-rest', '--attachement', 'weapon.rifle'], /Unknown engine spatial evaluate-rest flag: --attachement/],
+  [['spatial', 'evaluate-rest', '--attachment', 'first', '--attachment', 'second'], /Duplicate engine spatial evaluate-rest flag: --attachment/],
+  [['spatial', 'evaluate-rest', '--attachment', 'weapon.rifle', '--output-root', 'cooked'], /Unknown engine spatial evaluate-rest flag: --output-root/],
 ]) {
   const invalidCli = spawnSync(process.execPath, [cliPath, ...argumentsList], { cwd: repoRoot, encoding: 'utf8' });
   assert.notEqual(invalidCli.status, 0, `CLI arguments should be rejected: ${argumentsList.join(' ')}`);
@@ -63,6 +71,13 @@ try {
   assert.notEqual(missingCook.status, 0, 'engine spatial cook must fail when the native binary is absent');
   assert.match(missingCook.stderr, /Spatial tool was not found/);
   assert.match(missingCook.stderr, /engine build spatial/);
+  const missingEvaluate = spawnSync(
+    process.execPath,
+    [cliPath, 'spatial', 'evaluate-rest', '--attachment', 'weapon.rifle.mk1.humanoid', '--build-dir', missingBuildRoot],
+    { cwd: repoRoot, encoding: 'utf8' },
+  );
+  assert.notEqual(missingEvaluate.status, 0, 'engine spatial evaluate-rest must fail when the native binary is absent');
+  assert.match(missingEvaluate.stderr, /Spatial tool was not found/);
 } finally {
   fs.rmSync(missingBuildRoot, { recursive: true, force: true });
 }
@@ -235,6 +250,163 @@ try {
     assert.equal(firstCookBytes.includes(Buffer.from(fixtureRoot)), false, 'cooked payload must not contain the host absolute animation root');
     assert.equal(firstCookBytes.includes(Buffer.from('generation')), false, 'cooked payload must not serialize typed handles');
 
+    const evaluate = (...args) => {
+      const result = invoke(['evaluate-rest', ...args]);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      return result;
+    };
+    const findById = (entries, id) => entries.find((entry) => entry.id === id);
+    const assertVectorClose = (actual, expected, message = 'vector mismatch') => {
+      assert.equal(actual.length, expected.length, message);
+      actual.forEach((value, index) => {
+        assert.ok(Math.abs(value - expected[index]) <= 1e-12, `${message} at ${index}: ${value}`);
+      });
+    };
+    const firstRest = evaluate('--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid');
+    const secondRest = evaluate('--attachment', 'weapon.rifle.mk1.humanoid', '--animation-root', fixtureRoot);
+    assert.equal(secondRest.stdout, firstRest.stdout, 'rest evaluation must be byte-stable');
+    const rest = JSON.parse(firstRest.stdout);
+    assert.equal(rest.schema, 'shader_forge.spatial_attachment_evaluation');
+    assert.deepEqual(rest.pose, { kind: 'rest', sampled: false });
+    assert.deepEqual(rest.coordinateSystem, {
+      units: 'meters', handedness: 'right', up: '+Y', forward: '+Z', quaternionOrder: 'xyzw',
+    });
+    assert.equal(rest.attachment.id, 'weapon.rifle.mk1.humanoid');
+    assert.equal(rest.item.geometry.status, 'unavailable');
+    assertVectorClose(findById(rest.bones, 'hand_r').world.translation, [-0.78, 1.47, 0], 'hand_r world');
+    assertVectorClose(findById(rest.sockets, 'socket.hand_r.primary').world.translation, [-0.78, 1.47, 0.08], 'primary socket world');
+    assertVectorClose(rest.item.world.translation, [-0.78, 1.455, 0.1], 'item world');
+    assertVectorClose(rest.item.primaryContactWorld.translation, [-0.78, 1.455, 0.1], 'primary contact world');
+    assertVectorClose(rest.item.handleAxisWorld.origin, [-0.78, 1.455, 0.1], 'handle origin world');
+    assertVectorClose(rest.hands.secondary.targetWorld.translation, [-0.78, 1.455, 0.52], 'secondary target world');
+    assertVectorClose(rest.hands.secondary.palmWorld.translation, [0.78, 1.47, 0.04], 'secondary palm world');
+    assert.ok(Math.abs(rest.hands.secondary.preSolveDistanceMeters - 1.6322453859637651) <= 1e-12);
+    assert.deepEqual(rest.hands.secondary.pole, {
+      translation: [0, -0.2, 0.25],
+      space: 'unresolved',
+      world: null,
+      reason: 'pole_space_not_authored',
+    });
+    assert.equal(rest.diagnostics.secondaryIk.status, 'unavailable');
+    assert.ok(rest.limitations.includes('not_review_evidence'));
+    const handSegment = rest.segments.find((segment) => segment.boneId === 'hand_r');
+    assertVectorClose(handSegment.from, [-0.54, 1.47, 0], 'hand segment start');
+    assertVectorClose(handSegment.to, [-0.78, 1.47, 0], 'hand segment end');
+
+    fs.writeFileSync(path.join(fixtureRoot, 'skeletons', 'rotation_compose.skeleton.toml'), [
+      'schema = "shader_forge.skeleton"',
+      'schema_version = 2',
+      'id = "rotation.compose.v2"',
+      'name = "rotation_compose"',
+      'owner_system = "animation_system"',
+      'root_bone = "root"',
+      'units = "meters"',
+      'up = "y"',
+      'forward = "z"',
+      'handedness = "right"',
+      '',
+      '[bone.child]',
+      'id = "child"',
+      'parent = "root"',
+      'role = "hand_r"',
+      'translation = [1.0, 0.0, 0.0]',
+      'rotation = [0.7071067811865475, 0.0, 0.0, 0.7071067811865476]',
+      '',
+      '[bone.root]',
+      'id = "root"',
+      'parent = ""',
+      'role = "other"',
+      'translation = [0.5, 1.25, 0.25]',
+      'rotation = [0.0, 0.7071067811865475, 0.0, 0.7071067811865476]',
+      '',
+      '[socket.primary_grip]',
+      'id = "socket.child.primary"',
+      'bone = "child"',
+      'role = "primary_grip"',
+      'translation = [0.0, 0.2, 0.0]',
+      'rotation = [0.0, 0.0, 0.7071067811865475, 0.7071067811865476]',
+      '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(fixtureRoot, 'attachments', 'rotation_compose.attachment.toml'), [
+      'schema = "shader_forge.attachment_profile"',
+      'schema_version = 1',
+      'id = "rotation.compose.one_hand"',
+      'name = "Rotation Compose"',
+      'owner_system = "animation_system"',
+      'skeleton = "rotation.compose.v2"',
+      'item_prefab = "rotation.compose.item"',
+      'dominant_hand = "right"',
+      'mode = "one_hand"',
+      'perspective = "third_person"',
+      '',
+      '[primary_grip]',
+      'socket = "socket.child.primary"',
+      'space = "socket"',
+      'translation = [0.1, 0.0, 0.0]',
+      'rotation = [0.0, -0.7071067811865475, 0.0, -0.7071067811865476]',
+      '',
+    ].join('\n'));
+    const rotated = JSON.parse(evaluate(
+      '--animation-root', fixtureRoot, '--attachment', 'rotation.compose.one_hand',
+    ).stdout);
+    assertVectorClose(findById(rotated.bones, 'child').world.translation, [0.5, 1.25, -0.75], 'rotated child world');
+    const rotatedChild = findById(rotated.bones, 'child');
+    assertVectorClose(rotatedChild.world.axes.x, [0, 0, -1], 'child x axis');
+    assertVectorClose(rotatedChild.world.axes.y, [1, 0, 0], 'child y axis');
+    assertVectorClose(rotatedChild.world.axes.z, [0, -1, 0], 'child z axis');
+    assertVectorClose(rotatedChild.world.rotation, [0.5, 0.5, -0.5, 0.5], 'child quaternion order');
+    assertVectorClose(findById(rotated.sockets, 'socket.child.primary').world.translation, [0.7, 1.25, -0.75], 'rotated socket world');
+    assertVectorClose(findById(rotated.sockets, 'socket.child.primary').world.rotation, [0.7071067811865476, 0, 0, 0.7071067811865476], 'socket quaternion order');
+    assertVectorClose(rotated.item.world.translation, [0.8, 1.25, -0.75], 'rotated item world');
+    assertVectorClose(rotated.item.world.rotation, [0.5, 0.5, 0.5, 0.5], 'item quaternion order and sign');
+    assert.equal(rotated.hands.secondary, null);
+    assert.equal(rotated.diagnostics.secondaryIk.status, 'not_applicable');
+    assert.equal(rotated.limitations.includes('secondary_hand_ik_unavailable'), false);
+
+    fs.writeFileSync(path.join(fixtureRoot, 'skeletons', 'large_coordinates.skeleton.toml'), [
+      'schema = "shader_forge.skeleton"', 'schema_version = 2', 'id = "large.coordinates.v2"',
+      'name = "large_coordinates"', 'owner_system = "animation_system"', 'root_bone = "root"',
+      'units = "meters"', 'up = "y"', 'forward = "z"', 'handedness = "right"', '',
+      '[bone.root]', 'id = "root"', 'parent = ""', 'role = "other"',
+      'translation = [0.0, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+      '[bone.hand_r]', 'id = "hand_r"', 'parent = "root"', 'role = "hand_r"',
+      'translation = [-1e308, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+      '[bone.hand_l]', 'id = "hand_l"', 'parent = "root"', 'role = "hand_l"',
+      'translation = [1e308, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+      '[socket.primary]', 'id = "socket.hand_r.primary"', 'bone = "hand_r"', 'role = "primary_grip"',
+      'translation = [0.0, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+      '[socket.palm_l]', 'id = "socket.hand_l.palm"', 'bone = "hand_l"', 'role = "palm_contact"',
+      'translation = [0.0, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(fixtureRoot, 'attachments', 'large_coordinates.attachment.toml'), [
+      'schema = "shader_forge.attachment_profile"', 'schema_version = 1',
+      'id = "large.coordinates.two_hand"', 'name = "Large Coordinates"',
+      'owner_system = "animation_system"', 'skeleton = "large.coordinates.v2"',
+      'item_prefab = "large.coordinates.item"', 'dominant_hand = "right"',
+      'mode = "two_hand"', 'perspective = "third_person"', '',
+      '[primary_grip]', 'socket = "socket.hand_r.primary"', 'space = "socket"',
+      'translation = [0.0, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+      '[secondary_hand]', 'enabled = true', 'joint_limit_policy = "diagnose"', '',
+      '[secondary_hand.target]', 'translation = [0.0, 0.0, 0.0]',
+      'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+      '[secondary_hand.pole]', 'translation = [0.0, 0.0, 0.0]', '',
+      '[secondary_hand.tolerances]', 'reach_meters = 0.0', 'angle_degrees = 0.0',
+      'contact_meters = 0.0', '',
+    ].join('\n'));
+    const overflowRest = invoke([
+      'evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'large.coordinates.two_hand',
+    ]);
+    assert.notEqual(overflowRest.status, 0, 'non-finite evaluated diagnostics must fail closed');
+    assert.equal(overflowRest.stdout, '');
+    assert.match(overflowRest.stderr, /non-finite secondary-hand distance/);
+
+    const unknownRest = invoke([
+      'evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'weapon.missing',
+    ]);
+    assert.notEqual(unknownRest.status, 0);
+    assert.equal(unknownRest.stdout, '');
+    assert.match(unknownRest.stderr, /unknown attachment "weapon\.missing"/);
+
     fs.writeFileSync(cookedPath, 'sentinel');
     const invalidCook = invoke(['cook', '--animation-root', invalidRoot, '--output-root', cookedRoot]);
     assert.notEqual(invalidCook.status, 0, 'invalid attachment data must fail cooking');
@@ -267,6 +439,7 @@ try {
 console.log('Engine spatial validation tool passed.');
 console.log('- Verified deterministic validation JSON and precise invalid-input diagnostics');
 console.log('- Verified byte-stable complete cooking and invalid-input output preservation');
+console.log('- Verified rest-pose geometry, fixture invariants, and parent-rotated composition');
 console.log('- Verified CLI strict flags, help, and build-first behavior');
 assert.equal(nativeChecked, true, 'native spatial execution is required');
 console.log('- Compiled and ran shader_forge_spatial against isolated fixtures');

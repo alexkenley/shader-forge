@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <locale>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -21,8 +22,10 @@
 using shader_forge::runtime::AnimationConfig;
 using shader_forge::runtime::AnimationSystem;
 using shader_forge::runtime::AttachmentProfileSnapshot;
+using shader_forge::runtime::SpatialAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SkeletonDefinitionSnapshot;
 using shader_forge::runtime::SpatialQuaternionSnapshot;
+using shader_forge::runtime::SpatialTransformSnapshot;
 using shader_forge::runtime::SpatialVector3Snapshot;
 
 namespace {
@@ -52,12 +55,51 @@ std::string jsonString(std::string_view value) {
   return out.str();
 }
 
+void appendNumber(std::ostringstream& out, double value) {
+  out << (value == 0.0 ? 0.0 : value);
+}
+
 void appendVector(std::ostringstream& out, const SpatialVector3Snapshot& value) {
-  out << '[' << value.x << ',' << value.y << ',' << value.z << ']';
+  out << '[';
+  appendNumber(out, value.x);
+  out << ',';
+  appendNumber(out, value.y);
+  out << ',';
+  appendNumber(out, value.z);
+  out << ']';
 }
 
 void appendQuaternion(std::ostringstream& out, const SpatialQuaternionSnapshot& value) {
-  out << '[' << value.x << ',' << value.y << ',' << value.z << ',' << value.w << ']';
+  out << '[';
+  appendNumber(out, value.x);
+  out << ',';
+  appendNumber(out, value.y);
+  out << ',';
+  appendNumber(out, value.z);
+  out << ',';
+  appendNumber(out, value.w);
+  out << ']';
+}
+
+void appendTransform(std::ostringstream& out, const SpatialTransformSnapshot& value) {
+  out << "{\"translation\":";
+  appendVector(out, value.translation);
+  out << ",\"rotation\":";
+  appendQuaternion(out, value.rotation);
+  out << ",\"axes\":{\"x\":";
+  appendVector(out, value.axes.x);
+  out << ",\"y\":";
+  appendVector(out, value.axes.y);
+  out << ",\"z\":";
+  appendVector(out, value.axes.z);
+  out << "}}";
+}
+
+void appendOptionalTransform(
+  std::ostringstream& out,
+  const std::optional<SpatialTransformSnapshot>& value) {
+  if (value) appendTransform(out, *value);
+  else out << "null";
 }
 
 void appendStringArray(std::ostringstream& out, const std::vector<std::string>& values) {
@@ -304,10 +346,134 @@ bool writeCookedPayload(
   return true;
 }
 
+void appendRestEvaluation(
+  std::ostringstream& out,
+  const SpatialAttachmentEvaluationSnapshot& evaluation) {
+  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":1"
+      << ",\"pose\":{\"kind\":\"rest\",\"sampled\":false}"
+      << ",\"coordinateSystem\":{\"units\":\"meters\",\"handedness\":\"right\",\"up\":\"+Y\",\"forward\":\"+Z\",\"quaternionOrder\":\"xyzw\"}"
+      << ",\"skeleton\":{\"id\":" << jsonString(evaluation.skeletonId)
+      << ",\"name\":" << jsonString(evaluation.skeletonName)
+      << ",\"rootBone\":" << jsonString(evaluation.rootBone) << '}'
+      << ",\"attachment\":{\"id\":" << jsonString(evaluation.attachmentId)
+      << ",\"name\":" << jsonString(evaluation.attachmentName)
+      << ",\"itemPrefabId\":" << jsonString(evaluation.itemPrefabId)
+      << ",\"dominantHand\":" << jsonString(evaluation.dominantHand)
+      << ",\"mode\":" << jsonString(evaluation.mode)
+      << ",\"perspective\":" << jsonString(evaluation.perspective)
+      << ",\"primaryGripSocket\":" << jsonString(evaluation.primaryGripSocket) << '}'
+      << ",\"bones\":[";
+  for (std::size_t index = 0; index < evaluation.bones.size(); ++index) {
+    const auto& bone = evaluation.bones[index];
+    if (index != 0) out << ',';
+    out << "{\"id\":" << jsonString(bone.id)
+        << ",\"parent\":" << jsonString(bone.parent)
+        << ",\"role\":" << jsonString(bone.role)
+        << ",\"local\":";
+    appendTransform(out, bone.local);
+    out << ",\"world\":";
+    appendTransform(out, bone.world);
+    out << '}';
+  }
+  out << "],\"segments\":[";
+  for (std::size_t index = 0; index < evaluation.segments.size(); ++index) {
+    const auto& segment = evaluation.segments[index];
+    if (index != 0) out << ',';
+    out << "{\"parentBoneId\":" << jsonString(segment.parent)
+        << ",\"boneId\":" << jsonString(segment.child)
+        << ",\"from\":";
+    appendVector(out, segment.from);
+    out << ",\"to\":";
+    appendVector(out, segment.to);
+    out << '}';
+  }
+  out << "],\"sockets\":[";
+  for (std::size_t index = 0; index < evaluation.sockets.size(); ++index) {
+    const auto& socket = evaluation.sockets[index];
+    if (index != 0) out << ',';
+    out << "{\"id\":" << jsonString(socket.id)
+        << ",\"boneId\":" << jsonString(socket.bone)
+        << ",\"role\":" << jsonString(socket.role)
+        << ",\"local\":";
+    appendTransform(out, socket.local);
+    out << ",\"world\":";
+    appendTransform(out, socket.world);
+    out << '}';
+  }
+  out << "],\"item\":{\"prefabId\":" << jsonString(evaluation.itemPrefabId)
+      << ",\"world\":";
+  appendTransform(out, evaluation.itemWorld);
+  out << ",\"geometry\":{\"status\":\"unavailable\",\"reason\":\"item_prefab_geometry_not_integrated\"}"
+      << ",\"primaryContactWorld\":";
+  appendOptionalTransform(out, evaluation.primaryContactWorld);
+  out << ",\"handleAxisWorld\":";
+  if (evaluation.handleAxisWorld) {
+    out << "{\"origin\":";
+    appendVector(out, evaluation.handleAxisWorld->origin);
+    out << ",\"direction\":";
+    appendVector(out, evaluation.handleAxisWorld->direction);
+    out << '}';
+  } else {
+    out << "null";
+  }
+  out << "},\"hands\":{\"dominant\":";
+  if (evaluation.dominantHandFrame) {
+    const auto& hand = *evaluation.dominantHandFrame;
+    out << "{\"boneId\":" << jsonString(hand.bone) << ",\"role\":" << jsonString(hand.role)
+        << ",\"world\":";
+    appendTransform(out, hand.world);
+    out << ",\"palmWorld\":";
+    appendOptionalTransform(out, hand.palmWorld);
+    out << '}';
+  } else {
+    out << "null";
+  }
+  out << ",\"secondary\":";
+  if (evaluation.secondaryHandFrame) {
+    const auto& hand = *evaluation.secondaryHandFrame;
+    out << "{\"enabled\":" << (hand.enabled ? "true" : "false")
+        << ",\"boneId\":" << jsonString(hand.bone)
+        << ",\"role\":" << jsonString(hand.role)
+        << ",\"world\":";
+    appendTransform(out, hand.world);
+    out << ",\"palmWorld\":";
+    appendOptionalTransform(out, hand.palmWorld);
+    out << ",\"targetWorld\":";
+    appendOptionalTransform(out, hand.targetWorld);
+    out << ",\"pole\":";
+    if (hand.poleTranslation) {
+      out << "{\"translation\":";
+      appendVector(out, *hand.poleTranslation);
+      out << ",\"space\":\"unresolved\",\"world\":null,\"reason\":\"pole_space_not_authored\"}";
+    } else {
+      out << "null";
+    }
+    out << ",\"preSolveDistanceMeters\":";
+    if (hand.preSolveDistanceMeters) appendNumber(out, *hand.preSolveDistanceMeters);
+    else out << "null";
+    out << '}';
+  } else {
+    out << "null";
+  }
+  out << "},\"diagnostics\":{\"secondaryIk\":";
+  if (evaluation.mode == "two_hand") {
+    out << "{\"status\":\"unavailable\",\"reason\":\"secondary_hand_ik_not_implemented\"}";
+  } else {
+    out << "{\"status\":\"not_applicable\",\"reason\":\"one_hand_attachment\"}";
+  }
+  out << ','
+      << "\"jointLimits\":{\"status\":\"unavailable\",\"reason\":\"joint_limits_not_authored\"},"
+      << "\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}"
+      << ",\"limitations\":[\"rest_pose_only\",\"not_review_evidence\",\"item_mesh_unavailable\"";
+  if (evaluation.mode == "two_hand") out << ",\"secondary_hand_ik_unavailable\"";
+  out << "]}\n";
+}
+
 int usageError(std::string_view message) {
   std::cerr << "shader_forge_spatial: " << message << '\n'
             << "usage: shader_forge_spatial validate --animation-root <path>\n"
-            << "       shader_forge_spatial cook --animation-root <path> --output-root <path>\n";
+            << "       shader_forge_spatial cook --animation-root <path> --output-root <path>\n"
+            << "       shader_forge_spatial evaluate-rest --animation-root <path> --attachment <attachment-id>\n";
   return 2;
 }
 
@@ -334,10 +500,11 @@ bool resolvePath(
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 2) return usageError("expected validate or cook");
+  if (argc < 2) return usageError("expected validate, cook, or evaluate-rest");
   const std::string_view command = argv[1];
   std::filesystem::path requestedAnimationRoot;
   std::filesystem::path requestedOutputRoot;
+  std::string requestedAttachmentId;
   if (command == "validate") {
     if (argc != 4 || std::string_view(argv[2]) != "--animation-root" || std::string_view(argv[3]).empty()) {
       return usageError("expected validate --animation-root <path>");
@@ -362,8 +529,29 @@ int main(int argc, char** argv) {
       }
     }
     if (!hasAnimationRoot || !hasOutputRoot) return usageError("cook requires --animation-root and --output-root");
+  } else if (command == "evaluate-rest") {
+    if (argc != 6) return usageError("expected evaluate-rest --animation-root <path> --attachment <attachment-id>");
+    bool hasAnimationRoot = false;
+    bool hasAttachment = false;
+    for (int index = 2; index < argc; index += 2) {
+      const std::string_view flag = argv[index];
+      const std::string_view value = argv[index + 1];
+      if (value.empty()) return usageError("evaluate-rest flag values must not be empty");
+      if (flag == "--animation-root" && !hasAnimationRoot) {
+        requestedAnimationRoot = value;
+        hasAnimationRoot = true;
+      } else if (flag == "--attachment" && !hasAttachment) {
+        requestedAttachmentId = value;
+        hasAttachment = true;
+      } else {
+        return usageError("unknown or duplicate evaluate-rest flag");
+      }
+    }
+    if (!hasAnimationRoot || !hasAttachment) {
+      return usageError("evaluate-rest requires --animation-root and --attachment");
+    }
   } else {
-    return usageError("expected validate or cook");
+    return usageError("expected validate, cook, or evaluate-rest");
   }
 
   std::filesystem::path animationRoot;
@@ -378,6 +566,26 @@ int main(int argc, char** argv) {
 
   const auto skeletons = animation.snapshotSkeletons();
   const auto profiles = animation.snapshotAttachmentProfiles();
+  if (command == "evaluate-rest") {
+    const auto attachmentId = animation.findAttachmentProfileId(requestedAttachmentId);
+    if (!attachmentId) {
+      std::cerr << "shader_forge_spatial: evaluate-rest failed: unknown attachment "
+                << jsonString(requestedAttachmentId) << "\n";
+      return 1;
+    }
+    const auto evaluation = animation.evaluateRestAttachment(*attachmentId, &error);
+    if (!evaluation) {
+      std::cerr << "shader_forge_spatial: evaluate-rest failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
+    appendRestEvaluation(out, *evaluation);
+    std::cout << out.str();
+    return 0;
+  }
   if (command == "cook") {
     std::filesystem::path outputRoot;
     if (!resolvePath(requestedOutputRoot, "output root", &outputRoot)) return 1;

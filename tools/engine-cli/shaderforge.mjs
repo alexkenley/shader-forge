@@ -65,6 +65,7 @@ Usage:
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]
+  engine spatial evaluate-rest --attachment <id> [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]
   engine spatial approve <operation-id> [--base-url <url>]
   engine spatial reject <operation-id> [--base-url <url>]
@@ -306,6 +307,9 @@ async function runSpatialCommand(subcommand, flags) {
       ? path.normalize(requestedOutputRoot)
       : path.resolve(process.cwd(), requestedOutputRoot);
     args.push('--output-root', outputRoot);
+  }
+  if (subcommand === 'evaluate-rest') {
+    args.push('--attachment', String(flags.attachment));
   }
   await runCommand(binaryPath, args, { cwd: repoRoot });
 }
@@ -789,7 +793,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (command === 'spatial') {
     const spatialSubcommand = argv[1];
     const { positionals, flags, duplicateFlags } = parseFlags(argv.slice(2));
-    const nativeSubcommands = ['validate', 'cook'];
+    const nativeSubcommands = ['validate', 'cook', 'evaluate-rest'];
     const operationSubcommands = ['preview', 'approve', 'reject', 'apply', 'undo'];
     if (![...nativeSubcommands, ...operationSubcommands].includes(spatialSubcommand)) {
       throw new Error(spatialSubcommand
@@ -811,6 +815,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     const flagsBySubcommand = {
       validate: ['animation-root', 'build-dir', 'config'],
       cook: ['animation-root', 'output-root', 'build-dir', 'config'],
+      'evaluate-rest': ['attachment', 'animation-root', 'build-dir', 'config'],
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease', 'base-url'],
       approve: ['base-url'],
       reject: ['base-url'],
@@ -818,6 +823,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       undo: ['agent', 'lease', 'base-url'],
     };
     const requiredFlagsBySubcommand = {
+      'evaluate-rest': ['attachment'],
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease'],
       apply: ['agent', 'lease'],
       undo: ['agent', 'lease'],

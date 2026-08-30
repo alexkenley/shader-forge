@@ -14,6 +14,7 @@ Current execution status:
 - the shell now exposes durable active-workspace operation provenance and lease-free summary review through the global Activity bottom dock; exact public diffs and Activity apply/undo remain gated
 - Shader Forge MCP (`sf-mcp`) is the current process-scoped stdio adapter for external clients
 - `sf-mcp` now exposes the first lease-gated spatial attachment preview/review/apply/undo workflow through the shared operation contract; generic mutation remains disabled
+- the native spatial tool now emits deterministic rest-pose bone/socket/hand/item frames and joint-segment endpoints for one attachment; it is an unsampled schematic, not rendered review evidence
 
 ## 1. Executive Decision
 
@@ -595,7 +596,7 @@ The shell redesign alone will not make Shader Forge an alternative to Unreal or 
 | Input | remappable actions, keyboard, mouse, controller, context handling |
 | Physics | 3D and 2D integration appropriate to supported game claims |
 | Animation | skeletal import, graphs/state machines, blending, events, root motion |
-| Spatial authoring | planned/foundational: skeleton sockets, attachment profiles, immutable review packets, constrained tuning, shared shell/CLI/MCP apply. Not implemented. Current three-bone metadata and proxy-card rendering are not this track. |
+| Spatial authoring | foundation implemented: skeleton sockets, attachment profiles, deterministic rest-pose schematic evaluation, semantic operations, constrained Assets tuning, and shared CLI/MCP apply. Sampling, IK, geometry/joint/clipping diagnostics, rendered capture, and immutable review packets remain open; proxy-card rendering and the unsampled schematic are not review evidence. |
 | Audio | spatial audio, buses, mixing, streaming, events |
 | Game UI | layout, styling, input, localization path, accessibility hooks |
 | Assets | import, cook, cache, dependencies, reimport, provenance |
@@ -653,7 +654,7 @@ Exit criteria:
 
 ### Gate 1.5: Establish Spatial Authoring Truth
 
-Status: native schema/query/cook, semantic attachment operations, CLI, constrained Assets tuner, and first `sf-mcp` mutation adapter implemented. Sampling, IK, rendered capture, and review packets remain open. Canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
+Status: native schema/query/cook/rest-schematic evaluation, semantic attachment operations, CLI, constrained Assets tuner, and first `sf-mcp` mutation adapter implemented. The schematic reports `pose.sampled=false` and no item geometry, IK, joint-limit, or clipping evidence. Sampling, rendered capture, and review packets remain open. Canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
 This gate is ordered after the operation layer and before broad World/Assets visual polish. Shell Code/Playtest work and unrelated capability tracks may proceed in parallel. World/Assets gizmos must not invent a second grip or socket persistence path while this gate is open.
 
@@ -913,6 +914,7 @@ The direction-setting shell and coordination work is now implemented. Continue w
 7. completed: add a constrained Assets primary-grip tuner over the semantic spatial operation, with explicit exact-profile locking, visible unapplied candidates, separate review/apply, and fresh-lease undo
 8. completed: add the global Activity history and summary-review state model over authoritative operation list/detail reads, public operation events, and lease-free approve/reject
 9. completed: expose lease-gated `sf-mcp` spatial attachment preview/review/apply/undo with process-owned identity and credentials, selected-workspace checks, structured conflict recovery, and no generic write bypass
-10. next: implement rendered spatial sampling, diagnostics, capture, and review packets, then expose their MCP adapters only after shell/CLI operations exist; widen other MCP mutation families only when they carry equivalent resource keys
+10. completed: add deterministic native and CLI rest-pose attachment evaluation with machine-readable bone/socket/hand/item frames and joint segments, while labelling it unsampled and not review evidence
+11. next: implement rendered spatial sampling, diagnostics, capture, and review packets, then expose their MCP adapters only after shell/CLI operations exist; widen other MCP mutation families only when they carry equivalent resource keys
 
 Do not begin broad MCP mutation tools before their engine-owned operations and resource keys exist. Spatial visual work can now build on the shared authored truth and mutation path without introducing another persistence backend.

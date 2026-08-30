@@ -1472,6 +1472,291 @@ bool loadAttachmentProfileFile(
   return true;
 }
 
+double withoutSignedZero(double value) {
+  return value == 0.0 ? 0.0 : value;
+}
+
+SpatialVector3Snapshot cleanVector(SpatialVector3Snapshot value) {
+  value.x = withoutSignedZero(value.x);
+  value.y = withoutSignedZero(value.y);
+  value.z = withoutSignedZero(value.z);
+  return value;
+}
+
+SpatialVector3Snapshot addVectors(
+  const SpatialVector3Snapshot& left,
+  const SpatialVector3Snapshot& right) {
+  return cleanVector({left.x + right.x, left.y + right.y, left.z + right.z});
+}
+
+SpatialVector3Snapshot crossVectors(
+  const SpatialVector3Snapshot& left,
+  const SpatialVector3Snapshot& right) {
+  return {
+    left.y * right.z - left.z * right.y,
+    left.z * right.x - left.x * right.z,
+    left.x * right.y - left.y * right.x,
+  };
+}
+
+SpatialVector3Snapshot rotateVector(
+  const SpatialQuaternionSnapshot& rotation,
+  const SpatialVector3Snapshot& value) {
+  const SpatialVector3Snapshot quaternionAxis{rotation.x, rotation.y, rotation.z};
+  const SpatialVector3Snapshot cross = crossVectors(quaternionAxis, value);
+  const SpatialVector3Snapshot twiceCross{cross.x * 2.0, cross.y * 2.0, cross.z * 2.0};
+  const SpatialVector3Snapshot secondCross = crossVectors(quaternionAxis, twiceCross);
+  return cleanVector({
+    value.x + rotation.w * twiceCross.x + secondCross.x,
+    value.y + rotation.w * twiceCross.y + secondCross.y,
+    value.z + rotation.w * twiceCross.z + secondCross.z,
+  });
+}
+
+SpatialQuaternionSnapshot multiplyQuaternions(
+  const SpatialQuaternionSnapshot& parent,
+  const SpatialQuaternionSnapshot& local) {
+  return {
+    parent.w * local.x + parent.x * local.w + parent.y * local.z - parent.z * local.y,
+    parent.w * local.y - parent.x * local.z + parent.y * local.w + parent.z * local.x,
+    parent.w * local.z + parent.x * local.y - parent.y * local.x + parent.z * local.w,
+    parent.w * local.w - parent.x * local.x - parent.y * local.y - parent.z * local.z,
+  };
+}
+
+bool canonicalizeQuaternion(SpatialQuaternionSnapshot* rotation, std::string* errorMessage) {
+  const double length = std::sqrt(
+    rotation->x * rotation->x
+    + rotation->y * rotation->y
+    + rotation->z * rotation->z
+    + rotation->w * rotation->w);
+  if (!std::isfinite(length) || length == 0.0) {
+    return fail(errorMessage, "Spatial evaluation produced an invalid quaternion.");
+  }
+  rotation->x /= length;
+  rotation->y /= length;
+  rotation->z /= length;
+  rotation->w /= length;
+  if (rotation->w < 0.0) {
+    rotation->x = -rotation->x;
+    rotation->y = -rotation->y;
+    rotation->z = -rotation->z;
+    rotation->w = -rotation->w;
+  }
+  rotation->x = withoutSignedZero(rotation->x);
+  rotation->y = withoutSignedZero(rotation->y);
+  rotation->z = withoutSignedZero(rotation->z);
+  rotation->w = withoutSignedZero(rotation->w);
+  return true;
+}
+
+bool makeTransform(
+  SpatialVector3Snapshot translation,
+  SpatialQuaternionSnapshot rotation,
+  SpatialTransformSnapshot* transform,
+  std::string* errorMessage) {
+  if (!std::isfinite(translation.x) || !std::isfinite(translation.y) || !std::isfinite(translation.z)
+      || !canonicalizeQuaternion(&rotation, errorMessage)) {
+    return fail(errorMessage, "Spatial evaluation produced a non-finite transform.");
+  }
+  transform->translation = cleanVector(translation);
+  transform->rotation = rotation;
+  transform->axes = {
+    rotateVector(rotation, {1.0, 0.0, 0.0}),
+    rotateVector(rotation, {0.0, 1.0, 0.0}),
+    rotateVector(rotation, {0.0, 0.0, 1.0}),
+  };
+  return true;
+}
+
+bool composeTransforms(
+  const SpatialTransformSnapshot& parent,
+  const SpatialTransformSnapshot& local,
+  SpatialTransformSnapshot* world,
+  std::string* errorMessage) {
+  return makeTransform(
+    addVectors(parent.translation, rotateVector(parent.rotation, local.translation)),
+    multiplyQuaternions(parent.rotation, local.rotation),
+    world,
+    errorMessage);
+}
+
+bool resolveBoneWorld(
+  std::string_view boneId,
+  const std::map<std::string, const SkeletonBoneSnapshot*>& bonesById,
+  std::map<std::string, SpatialTransformSnapshot>* locals,
+  std::map<std::string, SpatialTransformSnapshot>* worlds,
+  std::set<std::string>* visiting,
+  std::string* errorMessage) {
+  if (worlds->contains(std::string(boneId))) return true;
+  const auto found = bonesById.find(std::string(boneId));
+  if (found == bonesById.end() || !visiting->insert(std::string(boneId)).second) {
+    return fail(errorMessage, "Spatial evaluation could not resolve bone '" + std::string(boneId) + "'.");
+  }
+  const auto& bone = *found->second;
+  SpatialTransformSnapshot local;
+  if (!makeTransform(bone.translation, bone.rotation, &local, errorMessage)) return false;
+  (*locals)[bone.id] = local;
+  if (bone.parent.empty()) {
+    (*worlds)[bone.id] = local;
+  } else {
+    if (!resolveBoneWorld(bone.parent, bonesById, locals, worlds, visiting, errorMessage)) return false;
+    SpatialTransformSnapshot world;
+    if (!composeTransforms(worlds->at(bone.parent), local, &world, errorMessage)) return false;
+    (*worlds)[bone.id] = world;
+  }
+  visiting->erase(bone.id);
+  return true;
+}
+
+const SkeletonBoneSnapshot* boneWithRole(
+  const SkeletonDefinitionSnapshot& skeleton,
+  std::string_view role) {
+  const auto found = std::find_if(
+    skeleton.boneDefinitions.begin(),
+    skeleton.boneDefinitions.end(),
+    [&](const auto& bone) { return bone.role == role; });
+  return found == skeleton.boneDefinitions.end() ? nullptr : &*found;
+}
+
+const SkeletonSocketSnapshot* palmSocketForBone(
+  const SkeletonDefinitionSnapshot& skeleton,
+  std::string_view boneId) {
+  const auto found = std::find_if(
+    skeleton.sockets.begin(),
+    skeleton.sockets.end(),
+    [&](const auto& socket) { return socket.bone == boneId && socket.role == "palm_contact"; });
+  return found == skeleton.sockets.end() ? nullptr : &*found;
+}
+
+bool evaluateRestAttachmentSnapshot(
+  const AttachmentProfileSnapshot& profile,
+  const SkeletonDefinitionSnapshot& skeleton,
+  SpatialAttachmentEvaluationSnapshot* evaluation,
+  std::string* errorMessage) {
+  std::map<std::string, const SkeletonBoneSnapshot*> bonesById;
+  for (const auto& bone : skeleton.boneDefinitions) bonesById.emplace(bone.id, &bone);
+
+  std::map<std::string, SpatialTransformSnapshot> locals;
+  std::map<std::string, SpatialTransformSnapshot> worlds;
+  std::set<std::string> visiting;
+  for (const auto& bone : skeleton.boneDefinitions) {
+    if (!resolveBoneWorld(bone.id, bonesById, &locals, &worlds, &visiting, errorMessage)) return false;
+  }
+
+  evaluation->skeletonId = skeleton.id;
+  evaluation->skeletonName = skeleton.name;
+  evaluation->rootBone = skeleton.rootBone;
+  evaluation->attachmentId = profile.id;
+  evaluation->attachmentName = profile.name;
+  evaluation->itemPrefabId = profile.itemPrefab;
+  evaluation->dominantHand = profile.dominantHand;
+  evaluation->mode = profile.mode;
+  evaluation->perspective = profile.perspective;
+  evaluation->primaryGripSocket = profile.primaryGrip.socket;
+
+  for (const auto& bone : skeleton.boneDefinitions) {
+    evaluation->bones.push_back({
+      bone.id,
+      bone.parent,
+      bone.role,
+      locals.at(bone.id),
+      worlds.at(bone.id),
+    });
+    if (!bone.parent.empty()) {
+      evaluation->segments.push_back({
+        bone.parent,
+        bone.id,
+        worlds.at(bone.parent).translation,
+        worlds.at(bone.id).translation,
+      });
+    }
+  }
+
+  std::map<std::string, SpatialTransformSnapshot> socketWorlds;
+  for (const auto& socket : skeleton.sockets) {
+    SpatialTransformSnapshot local;
+    SpatialTransformSnapshot world;
+    if (!makeTransform(socket.translation, socket.rotation, &local, errorMessage)
+        || !composeTransforms(worlds.at(socket.bone), local, &world, errorMessage)) {
+      return false;
+    }
+    socketWorlds.emplace(socket.id, world);
+    evaluation->sockets.push_back({socket.id, socket.bone, socket.role, local, world});
+  }
+
+  const auto primarySocket = socketWorlds.find(profile.primaryGrip.socket);
+  if (primarySocket == socketWorlds.end()) {
+    return fail(errorMessage, "Spatial evaluation could not resolve the primary socket.");
+  }
+  SpatialTransformSnapshot primaryGrip;
+  if (!makeTransform(profile.primaryGrip.translation, profile.primaryGrip.rotation, &primaryGrip, errorMessage)
+      || !composeTransforms(primarySocket->second, primaryGrip, &evaluation->itemWorld, errorMessage)) {
+    return false;
+  }
+
+  if (profile.primaryContact) {
+    SpatialTransformSnapshot local;
+    SpatialTransformSnapshot world;
+    if (!makeTransform(profile.primaryContact->translation, profile.primaryContact->rotation, &local, errorMessage)
+        || !composeTransforms(evaluation->itemWorld, local, &world, errorMessage)) return false;
+    evaluation->primaryContactWorld = world;
+  }
+  if (profile.handleAxis) {
+    SpatialTransformSnapshot origin;
+    if (!makeTransform(profile.handleAxis->origin, {}, &origin, errorMessage)
+        || !composeTransforms(evaluation->itemWorld, origin, &origin, errorMessage)) return false;
+    evaluation->handleAxisWorld = AttachmentHandleAxisSnapshot{
+      origin.translation,
+      rotateVector(evaluation->itemWorld.rotation, profile.handleAxis->direction),
+    };
+  }
+
+  const std::string dominantRole = profile.dominantHand == "right" ? "hand_r" : "hand_l";
+  const std::string secondaryRole = profile.dominantHand == "right" ? "hand_l" : "hand_r";
+  const auto makeHand = [&](const SkeletonBoneSnapshot& bone) {
+    EvaluatedHandFrameSnapshot hand{bone.id, bone.role, worlds.at(bone.id), std::nullopt};
+    if (const auto* palm = palmSocketForBone(skeleton, bone.id)) hand.palmWorld = socketWorlds.at(palm->id);
+    return hand;
+  };
+  if (const auto* dominant = boneWithRole(skeleton, dominantRole)) {
+    evaluation->dominantHandFrame = makeHand(*dominant);
+  }
+
+  const bool secondaryEnabled = profile.secondaryHand && profile.secondaryHand->enabled;
+  if (const auto* secondary = boneWithRole(skeleton, secondaryRole)) {
+    const auto basicHand = makeHand(*secondary);
+    EvaluatedSecondaryHandFrameSnapshot hand{
+      secondaryEnabled,
+      basicHand.bone,
+      basicHand.role,
+      basicHand.world,
+      basicHand.palmWorld,
+    };
+    if (secondaryEnabled) {
+      SpatialTransformSnapshot targetLocal;
+      SpatialTransformSnapshot targetWorld;
+      if (!makeTransform(profile.secondaryHand->targetTranslation, profile.secondaryHand->targetRotation, &targetLocal, errorMessage)
+          || !composeTransforms(evaluation->itemWorld, targetLocal, &targetWorld, errorMessage)) return false;
+      hand.targetWorld = targetWorld;
+      hand.poleTranslation = profile.secondaryHand->poleTranslation;
+      if (hand.palmWorld) {
+        const auto& palm = hand.palmWorld->translation;
+        const double distance = std::hypot(
+          targetWorld.translation.x - palm.x,
+          targetWorld.translation.y - palm.y,
+          targetWorld.translation.z - palm.z);
+        if (!std::isfinite(distance)) {
+          return fail(errorMessage, "Spatial evaluation produced a non-finite secondary-hand distance.");
+        }
+        hand.preSolveDistanceMeters = withoutSignedZero(distance);
+      }
+    }
+    evaluation->secondaryHandFrame = std::move(hand);
+  }
+  return true;
+}
+
 }  // namespace
 
 struct AnimationSystem::Impl {
@@ -1746,6 +2031,24 @@ std::optional<AttachmentProfileSnapshot> AnimationSystem::findAttachmentProfile(
     }
   }
   return std::nullopt;
+}
+
+std::optional<SpatialAttachmentEvaluationSnapshot> AnimationSystem::evaluateRestAttachment(
+  AttachmentProfileId id,
+  std::string* errorMessage) const {
+  const auto profile = snapshotAttachmentProfile(id);
+  if (!profile) {
+    fail(errorMessage, "Unknown attachment handle.");
+    return std::nullopt;
+  }
+  const auto skeleton = snapshotSkeleton(profile->skeletonHandle);
+  if (!skeleton) {
+    fail(errorMessage, "Attachment references a missing skeleton handle.");
+    return std::nullopt;
+  }
+  SpatialAttachmentEvaluationSnapshot evaluation;
+  if (!evaluateRestAttachmentSnapshot(*profile, *skeleton, &evaluation, errorMessage)) return std::nullopt;
+  return evaluation;
 }
 
 std::optional<ResolvedAnimationGraphSnapshot> AnimationSystem::resolveGraph(std::string_view graphName) const {

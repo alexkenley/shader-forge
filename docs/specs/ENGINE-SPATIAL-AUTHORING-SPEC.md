@@ -1,8 +1,8 @@
 # Engine Spatial Authoring And Attachment Tuning Spec
 
-Status: native schema/query/cook, semantic operation, CLI adapter, and constrained Assets tuner implemented; visual review workflow deferred
+Status: native schema/query/cook/rest-schematic evaluation, semantic operation, CLI adapter, and constrained Assets tuner implemented; visual review workflow deferred
 
-Date: 2026-08-30
+Date: 2026-08-31
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Shader Forge spatial authoring is the engine-owned contract for skeleton sockets
 
 It exists so a weapon, tool, or held item has one authored truth that native runtime code, cooked data, the React shell, the CLI, and `sf-mcp` all share. It is the product answer to Unreal's split truth, where Blueprint or editor presentation can drift from native C++ behavior.
 
-This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, validation, typed query access, a deterministic derived cooker, and lease-gated no-write attachment preview over the generic operation journal. It does not yet provide runtime cooked-data consumption, a spatial workbench, pose sampling, IK, rendering, capture, or review packets.
+This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, validation, typed query access, a deterministic derived cooker, deterministic rest-pose schematic evaluation, and lease-gated no-write attachment preview over the generic operation journal. It does not yet provide runtime cooked-data consumption, a spatial workbench, pose sampling, IK, rendering, capture, or review packets.
 
 ## Authored-Truth Contract
 
@@ -38,13 +38,14 @@ If a value affects how an item sits in a hand, it lives in an attachment profile
 - `npm run test:spatial-authoring-scaffold`, which compiles and executes a native C++ validation driver; WSL `g++` is required on Windows
 - a dependency-free `shader_forge_spatial validate --animation-root <path>` executable that calls the same `AnimationSystem::loadFromDisk` path and emits deterministic JSON with normalized root, collection counts, stable IDs, schema versions, bone/socket counts, attachment references/mode/perspective, and motion-envelope phase/sample counts
 - `shader_forge_spatial cook --animation-root <path> --output-root <path>`, which validates through that same loader and stages exactly one deterministic UTF-8 JSON payload at `<output-root>/animation/spatial-authoring.bin`; it includes complete snapshot-backed bone/socket/profile tables, relative source paths, canonical quaternions, and no generation handles or absolute machine paths
+- `shader_forge_spatial evaluate-rest --animation-root <path> --attachment <id>`, which composes the selected v2 skeleton rest pose, sockets, dominant/item frames, contact/handle frames, secondary target, unresolved pole input, and joint-segment endpoints into deterministic machine-readable geometry
 - sibling temporary-file replacement after a successful close, so invalid input and failed writes do not overwrite an existing final payload
-- `engine build spatial`, plus strict `engine spatial validate` and `engine spatial cook` adapters for running an already-built tool; neither command auto-builds, starts a daemon, or creates review artifacts
-- `npm run test:spatial-tool`, which requires a native compiler, compiles and runs both commands against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, and checks deterministic validation, byte-stable cooking, representative field completeness, relative paths, sentinel preservation, diagnostics, CLI strictness, help, and build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere
+- `engine build spatial`, plus strict `engine spatial validate`, `engine spatial cook`, and `engine spatial evaluate-rest --attachment <id>` adapters for running an already-built tool; none auto-builds or starts a daemon, and evaluate-rest creates no review artifact
+- `npm run test:spatial-tool`, which requires a native compiler, compiles and runs all three commands against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, and checks deterministic validation, byte-stable cooking, representative field completeness, relative paths, sentinel preservation, rest geometry invariants, non-commuting transform composition, canonical quaternion sign, unresolved pole space, non-finite failure, CLI strictness, help, and build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere
 
 The loader retains `item_prefab` as a stable reference but does not yet validate prefab existence because `AnimationSystem` does not own the prefab catalogue. Bone joint limits and diagnostic capsules are also not parsed in this slice.
 
-Still deferred: generic `engine bake` integration, cooked-runtime loading, sampling, blending, IK, attachment rendering, spatial diagnostics, workbench capture and review packets, operation-scoped validation/recapture, native overlay tuning, and typed `sf-mcp` validation/review resources. The semantic attachment mutation operation, constrained shell tuner, and `sf-mcp` preview/review/apply/undo adapter are implemented.
+The rest evaluator is a schematic geometry query only: `pose.sampled` is false, item mesh geometry is unavailable, and IK, joint-limit, and clipping diagnostics are explicitly unavailable. It is not rendered review evidence. Still deferred: generic `engine bake` integration, cooked-runtime loading, sampling, blending, IK, attachment rendering, spatial diagnostics, workbench capture and review packets, operation-scoped validation/recapture, native overlay tuning, and typed `sf-mcp` validation/review resources. The semantic attachment mutation operation, constrained shell tuner, and `sf-mcp` preview/review/apply/undo adapter are implemented.
 
 ## Goals
 
@@ -275,7 +276,7 @@ Optional `[secondary_hand]` for `mode = "two_hand"`:
 
 - `enabled = true`
 - `target.translation` and `target.rotation`: item-local frame the off-hand IK follows after the item is driven by the dominant grip
-- `pole.translation`: item-local or parent-space pole vector origin used by the off-hand IK
+- `pole.translation`: an authored pole input. Schema version 1 does not yet declare its coordinate space, so `evaluate-rest` returns the raw translation with `space = "unresolved"` and no world transform rather than inventing item-local or parent-space semantics
 - `tolerances.reach_meters`
 - `tolerances.angle_degrees`
 - `tolerances.contact_meters`
@@ -307,7 +308,7 @@ Rules:
 
 Native code now exposes generation-tagged, non-string `SkeletonId`, `BoneId`, `SocketId`, and `AttachmentProfileId` handles after validation. Query APIs resolve authored IDs to handles and handles to snapshots. A successful reload advances the generation so stale handles cannot resolve into reordered data; a failed reload retains the last valid generation and snapshots.
 
-Pose and review types in the example below remain target APIs. They are not part of the current schema/query/cook slice.
+The sampled-pose, IK, and review types in the example below remain target APIs. The implemented `SpatialAttachmentEvaluationSnapshot` is a separate rest-schematic query and must not be treated as sampled pose or review evidence.
 
 ```cpp
 struct SkeletonId { std::uint64_t generation = 0; std::uint64_t index = 0; };
@@ -348,7 +349,8 @@ Flow:
 4. Prefab existence, joint limits, and diagnostic capsules remain deferred because their owning catalogues/data are not integrated into this loader yet.
 5. The implemented explicit cooker serializes complete snapshot-backed skeleton/socket and attachment-profile tables to one deterministic `<output-root>/animation/spatial-authoring.bin` JSON payload, using relative source paths and omitting query handles.
 6. It writes a sibling temporary file and replaces the final only after validation and a successful close. Generic `engine bake` integration and runtime consumption remain deferred.
-7. Cooked files remain derived outputs rather than edit targets.
+7. The implemented rest evaluator composes parent-first rest bone transforms, sockets, attachment/item frames, hand targets, and joint-segment endpoints. It emits an unresolved raw pole input because the schema does not author pole space and fails closed on non-finite evaluated output.
+8. Cooked files remain derived outputs rather than edit targets.
 
 SQLite may store index rows for search. Deleting the tooling DB must not delete sockets or attachment tuning.
 
@@ -591,7 +593,7 @@ Implemented sessiond-backed operation commands:
 - `engine spatial approve|reject <operation-id>` performs the review transition
 - `engine spatial apply|undo <operation-id>` requires explicit agent and lease IDs plus `SHADER_FORGE_AGENT_CREDENTIAL`
 
-These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook` commands remain separate and unchanged.
+These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook|evaluate-rest` commands remain separate from the sessiond operation adapter. `evaluate-rest` is read-only and process-local; it emits a rest-pose schematic with `pose.sampled=false`, not operation validation or review evidence.
 
 Deferred commands:
 
@@ -781,7 +783,7 @@ Gameplay reads the profile through the animation system. It does not keep a para
 
 `npm run test:spatial-authoring-scaffold` builds a temporary animation root from the normal v1 assets plus isolated v2 humanoid and weapon-profile fixtures under `animation/fixtures/spatial/`. It compiles and runs a native C++ driver; WSL `g++` is required on Windows.
 
-`npm run test:spatial-tool` compiles the production `shader_forge_spatial` source with `AnimationSystem`, runs valid fixtures twice to require byte-stable JSON, rejects an invalid attachment with a precise loader diagnostic, and checks the CLI help/build-first contract. On Windows it executes the Linux test binary through WSL and does not pretend that binary is a Windows executable.
+`npm run test:spatial-tool` compiles the production `shader_forge_spatial` source with `AnimationSystem`, runs valid fixtures twice to require byte-stable validation, cook, and rest-evaluation JSON, rejects invalid input with precise diagnostics, and checks the CLI help/build-first contract. On Windows it executes the Linux test binary through WSL and does not pretend that binary is a Windows executable.
 
 Current assertions cover:
 
@@ -789,10 +791,14 @@ Current assertions cover:
 - dotted IDs, section isolation, tree/cycle/role/socket validation, quaternion validation and sign canonicalization
 - attachment skeleton/socket/clip cross-references, two-hand requirements, ranges, duplicate keys/IDs, deterministic ordering, optional attachment-root behavior, and failed-load state retention
 - generation-safe typed handle invalidation after successful reload
+- exact rest-pose bone, socket, joint-segment, item, contact, handle, palm, and secondary-target invariants for the rifle fixture
+- parent-first translation/rotation composition with non-commuting rotations, `xyzw` quaternion output, canonical non-negative `w`, and deterministic repeated output
+- explicit `pose.sampled=false`, unavailable item geometry/IK/joint-limit/clipping diagnostics, unresolved pole world space, and `not_review_evidence`
+- fail-closed behavior when evaluated numeric diagnostics are non-finite
 
 Later workflow assertions still required:
 
-- exact numeric invariants on rest bone translations, socket-local grip, baked world grip, secondary target, and diagnostic meters/degrees at each named phase
+- exact numeric invariants on sampled phase poses, solved secondary-hand IK, and available diagnostic meters/degrees at each named phase
 - quaternion canonicalization: `w >= 0` and unit length after every apply
 - review packet completeness: required cameras, resolution, framing, lighting, revisions, evaluated transforms/bounds/axes, candidate label, operation id, and all lease ids
 - lease concurrency: two unrelated attachment writes can proceed; two writes to the same attachment queue FIFO
@@ -808,7 +814,7 @@ The fixtures remain outside `animation/skeletons/`, `animation/clips/`, `animati
 
 ## Acceptance Gates
 
-A complete spatial-authoring workflow requires all gates below. The implemented native slice satisfies parsing, validation, typed handles, deterministic cooking, and fixture coverage only.
+A complete spatial-authoring workflow requires all gates below. The implemented native slice satisfies parsing, validation, typed handles, deterministic cooking, rest-pose schematic evaluation, and fixture coverage only.
 
 1. Skeleton schema version 2 with hierarchy, roles, and sockets validates natively. **Implemented.**
 2. Attachment profiles validate and load to generation-safe typed handles, then cook with skeleton sockets into a deterministic derived payload. **Implemented.** Generic bake and runtime-consumption integration remain deferred.
@@ -820,10 +826,10 @@ A complete spatial-authoring workflow requires all gates below. The implemented 
 8. Diagnostics are numeric and profile-driven.
 9. Unrelated profiles concurrent; overlapping keys queue; capture lease is short and exclusive.
 10. `sf-mcp` attachment mutation tools call those operations and no other write path. **Implemented for preview/review/apply/undo.**
-11. The native schema and production validate/cook command harnesses pass; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema, validation, and deterministic cooker portions implemented.**
+11. The native schema and production validate/cook/evaluate-rest command harnesses pass; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema, validation, deterministic cooker, and rest-schematic portions implemented.**
 12. Current three-bone metadata and proxy-card rendering are still described honestly wherever they remain.
 
-Until the remaining workflow gates pass, the implementation is a spatial schema/query/cook foundation rather than a complete authoring and review workbench.
+Until the remaining workflow gates pass, the implementation is a spatial schema/query/cook/rest-schematic foundation rather than a complete authoring and review workbench.
 
 ## Staged Implementation Order
 
@@ -833,13 +839,14 @@ Dependency order, with no calendar estimates. This work starts after the operati
 2. **Typed loader handles — implemented.** Generation-tagged skeleton, bone, socket, and attachment handles plus snapshot/query APIs, with transactional reload behavior and no sampling.
 3. **Read-only native validation command — implemented.** One `shader_forge_spatial` executable reuses `AnimationSystem`, emits deterministic JSON, and is exposed by CLI build and validate commands without auto-build or daemon state.
 4. **Deterministic cooker — implemented as an explicit spatial command.** `shader_forge_spatial cook` validates through `AnimationSystem` and atomically stages one complete socket/profile payload under `build/cooked/animation/`. Generic `engine bake` integration and runtime consumption remain deferred.
-5. **Spatial operations — attachment mutation implemented.** Preview/apply/undo over `engine_sessiond` for attachment TOML only, with separate review transitions and labelled candidates. Operation-scoped validate/recapture/review packets remain deferred. No fake captures.
-6. **Humanoid fixture — implemented for validation only.** Isolated humanoid, rifle, pistol, and clip fixtures plus the executable native harness now prove the schema without entering authored or cooked roots.
-7. **Sampling and procedural layers.** Native sampler, primary attachment, secondary-hand IK, diagnostics. This is the animation-runtime widening spatial authoring depends on.
-8. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.
-9. **Constrained tuner — first shell slice implemented.** The Assets inspector edits exact primary-grip translation/rotation fields through the operation workflow. Native overlay, probes, and rendered evidence remain deferred.
-10. **`sf-mcp` adapter — attachment mutation implemented.** Process-owned identity and credentials plus explicit leases adapt preview/review/apply/undo. Typed spatial resources and validation/recapture/review tools remain deferred until their engine operations exist.
-11. **World/Assets visual polish.** Gizmos and viewport chrome may then consume the same candidate/operation contract. They must not introduce a second persistence path.
+5. **Rest-pose schematic evaluation — implemented.** `shader_forge_spatial evaluate-rest` composes deterministic rest bone/socket, item, hand, and joint-segment frames. It is explicitly unsampled, has no mesh/IK/joint/clipping evidence, leaves the v1 pole space unresolved, and is not a review packet.
+6. **Spatial operations — attachment mutation implemented.** Preview/apply/undo over `engine_sessiond` for attachment TOML only, with separate review transitions and labelled candidates. Operation-scoped validate/recapture/review packets remain deferred. No fake captures.
+7. **Humanoid fixture — implemented for validation and rest evaluation only.** Isolated humanoid, rifle, pistol, and clip fixtures plus the executable native harness now prove the schema and transform composition without entering authored or cooked roots.
+8. **Sampling and procedural layers.** Native sampler, primary attachment, secondary-hand IK, diagnostics. This is the animation-runtime widening spatial authoring depends on.
+9. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.
+10. **Constrained tuner — first shell slice implemented.** The Assets inspector edits exact primary-grip translation/rotation fields through the operation workflow. Native overlay, probes, and rendered evidence remain deferred.
+11. **`sf-mcp` adapter — attachment mutation implemented.** Process-owned identity and credentials plus explicit leases adapt preview/review/apply/undo. Typed spatial resources and validation/recapture/review tools remain deferred until their engine operations exist.
+12. **World/Assets visual polish.** Gizmos and viewport chrome may then consume the same candidate/operation contract. They must not introduce a second persistence path.
 
 If World/Assets polish starts first, it must not ship free-drag attachment editing, proxy-card reviews, or prefab-copied grips.
 

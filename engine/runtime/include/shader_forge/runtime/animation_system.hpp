@@ -147,6 +147,80 @@ struct AttachmentProfileSnapshot {
   bool valid = false;
 };
 
+struct SpatialAxesSnapshot {
+  SpatialVector3Snapshot x{1.0, 0.0, 0.0};
+  SpatialVector3Snapshot y{0.0, 1.0, 0.0};
+  SpatialVector3Snapshot z{0.0, 0.0, 1.0};
+};
+
+struct SpatialTransformSnapshot {
+  SpatialVector3Snapshot translation;
+  SpatialQuaternionSnapshot rotation;
+  SpatialAxesSnapshot axes;
+};
+
+struct EvaluatedBonePoseSnapshot {
+  std::string id;
+  std::string parent;
+  std::string role;
+  SpatialTransformSnapshot local;
+  SpatialTransformSnapshot world;
+};
+
+struct EvaluatedBoneSegmentSnapshot {
+  std::string parent;
+  std::string child;
+  SpatialVector3Snapshot from;
+  SpatialVector3Snapshot to;
+};
+
+struct EvaluatedSocketPoseSnapshot {
+  std::string id;
+  std::string bone;
+  std::string role;
+  SpatialTransformSnapshot local;
+  SpatialTransformSnapshot world;
+};
+
+struct EvaluatedHandFrameSnapshot {
+  std::string bone;
+  std::string role;
+  SpatialTransformSnapshot world;
+  std::optional<SpatialTransformSnapshot> palmWorld;
+};
+
+struct EvaluatedSecondaryHandFrameSnapshot {
+  bool enabled = false;
+  std::string bone;
+  std::string role;
+  SpatialTransformSnapshot world;
+  std::optional<SpatialTransformSnapshot> palmWorld;
+  std::optional<SpatialTransformSnapshot> targetWorld;
+  std::optional<SpatialVector3Snapshot> poleTranslation;
+  std::optional<double> preSolveDistanceMeters;
+};
+
+struct SpatialAttachmentEvaluationSnapshot {
+  std::string skeletonId;
+  std::string skeletonName;
+  std::string rootBone;
+  std::string attachmentId;
+  std::string attachmentName;
+  std::string itemPrefabId;
+  std::string dominantHand;
+  std::string mode;
+  std::string perspective;
+  std::string primaryGripSocket;
+  std::vector<EvaluatedBonePoseSnapshot> bones;
+  std::vector<EvaluatedBoneSegmentSnapshot> segments;
+  std::vector<EvaluatedSocketPoseSnapshot> sockets;
+  SpatialTransformSnapshot itemWorld;
+  std::optional<SpatialTransformSnapshot> primaryContactWorld;
+  std::optional<AttachmentHandleAxisSnapshot> handleAxisWorld;
+  std::optional<EvaluatedHandFrameSnapshot> dominantHandFrame;
+  std::optional<EvaluatedSecondaryHandFrameSnapshot> secondaryHandFrame;
+};
+
 struct ClipDefinitionSnapshot {
   std::string name;
   std::string skeletonName;
@@ -239,6 +313,9 @@ public:
   std::optional<ResolvedAnimationStateSnapshot> resolveGraphState(
     std::string_view graphName,
     std::string_view stateName) const;
+  std::optional<SpatialAttachmentEvaluationSnapshot> evaluateRestAttachment(
+    AttachmentProfileId id,
+    std::string* errorMessage = nullptr) const;
 
   std::string foundationSummary() const;
   std::string graphCatalogSummary() const;

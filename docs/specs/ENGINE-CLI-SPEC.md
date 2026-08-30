@@ -35,6 +35,7 @@ Current implemented commands:
 - `engine run`
 - `engine spatial validate`
 - `engine spatial cook`
+- `engine spatial evaluate-rest`
 - `engine spatial preview`
 - `engine spatial approve`
 - `engine spatial reject`
@@ -60,9 +61,10 @@ Current implemented commands:
 The initial build/run/bake command family now targets the native runtime and cooked-content scaffolds:
 
 - `engine build runtime` configures and builds `shader_forge_runtime` through CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`; the no-target `engine build` form remains compatible and selects `runtime`
-- `engine build spatial` configures the same native tree and builds only the dependency-free `shader_forge_spatial` validate/cook executable
+- `engine build spatial` configures the same native tree and builds only the dependency-free `shader_forge_spatial` validate/cook/evaluate-rest executable
 - `engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs an already-built validator and prints deterministic JSON for valid skeleton/socket and attachment-profile data; it fails with a build-first diagnostic rather than compiling implicitly
 - `engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]` runs the same already-built tool, validates through `AnimationSystem`, and atomically stages one deterministic derived payload at `<output-root>/animation/spatial-authoring.bin`; it rejects unknown, missing, duplicate, or positional arguments and does not auto-build or join the generic `engine bake` lane yet
+- `engine spatial evaluate-rest --attachment <id> [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs the same already-built tool and emits `shader_forge.spatial_attachment_evaluation` schema version 1. The output is deterministic rest-pose schematic geometry with `pose.sampled=false`, meters/right-handed `+Y` up and `+Z` forward, `xyzw` quaternions, local/world bone and socket frames, joint-segment endpoints, item/contact/handle frames, and hand targets. Item geometry, IK, joint-limit, and clipping diagnostics are explicitly unavailable; an authored pole has `space="unresolved"` and `world=null` because the v1 profile has no pole-space discriminator. The result is not rendered review evidence and creates no review artifact.
 - `engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]` decodes the candidate file as strict BOM-free UTF-8 and sends the full candidate to the semantic sessiond preview route without writing authored data
 - `engine spatial approve|reject <operation-id> [--base-url <url>]` performs the lease-free review transition through sessiond
 - `engine spatial apply|undo <operation-id> --agent <id> --lease <id> [--base-url <url>]` sends the coordinator identity and lease through sessiond; the credential comes only from `SHADER_FORGE_AGENT_CREDENTIAL` and is never accepted as a flag or printed
