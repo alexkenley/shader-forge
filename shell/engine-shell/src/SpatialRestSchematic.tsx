@@ -586,7 +586,7 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
   )) return false;
   if (
     !exactRecord(value.diagnostics, ['secondaryIk', 'jointLimits', 'clipping'])
-    || !exactStatusReason(value.diagnostics.jointLimits, 'unavailable', 'joint_limits_not_authored', budget)
+    || !exactStatusReason(value.diagnostics.jointLimits, 'unavailable', 'joint_limit_evaluation_not_integrated', budget)
     || !exactStatusReason(value.diagnostics.clipping, 'unavailable', 'item_and_capsule_geometry_not_integrated', budget)
     || !Array.isArray(value.limitations)
     || value.limitations.length > SPATIAL_EVALUATION_LIMITS.maxLimitations

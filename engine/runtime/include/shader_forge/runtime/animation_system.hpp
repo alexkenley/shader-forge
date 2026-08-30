@@ -59,6 +59,21 @@ struct SpatialQuaternionSnapshot {
   double w = 1.0;
 };
 
+struct SkeletonBoneJointLimitSnapshot {
+  std::string kind;
+  SpatialVector3Snapshot twistAxis;
+  double swingDegrees = 0.0;
+  double twistMinDegrees = 0.0;
+  double twistMaxDegrees = 0.0;
+};
+
+struct SkeletonBoneDiagnosticCapsuleSnapshot {
+  SpatialVector3Snapshot center;
+  SpatialVector3Snapshot axis;
+  double radius = 0.0;
+  double halfLength = 0.0;
+};
+
 struct SkeletonBoneSnapshot {
   BoneId handle;
   std::string id;
@@ -66,6 +81,8 @@ struct SkeletonBoneSnapshot {
   std::string role;
   SpatialVector3Snapshot translation;
   SpatialQuaternionSnapshot rotation;
+  std::optional<SkeletonBoneJointLimitSnapshot> jointLimit;
+  std::optional<SkeletonBoneDiagnosticCapsuleSnapshot> diagnosticCapsule;
 };
 
 struct SkeletonSocketSnapshot {

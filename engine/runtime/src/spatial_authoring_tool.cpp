@@ -297,6 +297,35 @@ bool appendSkeleton(
     appendVector(out, bone.translation);
     out << ",\"rotation\":";
     appendQuaternion(out, bone.rotation);
+    out << ",\"jointLimit\":";
+    if (bone.jointLimit) {
+      out << "{\"kind\":" << jsonString(bone.jointLimit->kind)
+          << ",\"twistAxis\":";
+      appendVector(out, bone.jointLimit->twistAxis);
+      out << ",\"swingDegrees\":";
+      appendNumber(out, bone.jointLimit->swingDegrees);
+      out << ",\"twistMinDegrees\":";
+      appendNumber(out, bone.jointLimit->twistMinDegrees);
+      out << ",\"twistMaxDegrees\":";
+      appendNumber(out, bone.jointLimit->twistMaxDegrees);
+      out << '}';
+    } else {
+      out << "null";
+    }
+    out << ",\"diagnosticCapsule\":";
+    if (bone.diagnosticCapsule) {
+      out << "{\"center\":";
+      appendVector(out, bone.diagnosticCapsule->center);
+      out << ",\"axis\":";
+      appendVector(out, bone.diagnosticCapsule->axis);
+      out << ",\"radius\":";
+      appendNumber(out, bone.diagnosticCapsule->radius);
+      out << ",\"halfLength\":";
+      appendNumber(out, bone.diagnosticCapsule->halfLength);
+      out << '}';
+    } else {
+      out << "null";
+    }
     out << '}';
   }
   out << "],\"sockets\":[";
@@ -651,7 +680,7 @@ void appendAttachmentEvaluationFields(
   }
   out << '}'
       << ','
-      << "\"jointLimits\":{\"status\":\"unavailable\",\"reason\":\"joint_limits_not_authored\"},"
+      << "\"jointLimits\":{\"status\":\"unavailable\",\"reason\":\"joint_limit_evaluation_not_integrated\"},"
       << "\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}";
 }
 

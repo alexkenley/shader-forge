@@ -15,6 +15,8 @@ const header = fs.readFileSync(headerPath, 'utf8');
 
 assert.match(header, /AttachmentProfileSnapshot/);
 assert.match(header, /SkeletonSocketSnapshot/);
+assert.match(header, /SkeletonBoneJointLimitSnapshot/);
+assert.match(header, /SkeletonBoneDiagnosticCapsuleSnapshot/);
 assert.match(header, /findAttachmentProfile/);
 assert.match(header, /ClipKeyframeSnapshot/);
 assert.match(header, /sampleClipPose/);
@@ -72,7 +74,9 @@ std::string readFile(const std::filesystem::path& path) {
   std::ifstream stream(path);
   std::ostringstream contents;
   contents << stream.rdbuf();
-  return contents.str();
+  std::string normalized = contents.str();
+  normalized.erase(std::remove(normalized.begin(), normalized.end(), '\r'), normalized.end());
+  return normalized;
 }
 
 void writeFile(const std::filesystem::path& path, const std::string& contents) {
@@ -206,6 +210,16 @@ std::string observableFingerprint(const AnimationSystem& system) {
       out << "|bone=" << bone.handle.generation << ',' << bone.handle.index << ',' << bone.id << ',' << bone.parent << ',' << bone.role
           << ',' << bone.translation.x << ',' << bone.translation.y << ',' << bone.translation.z
           << ',' << bone.rotation.x << ',' << bone.rotation.y << ',' << bone.rotation.z << ',' << bone.rotation.w;
+      if (bone.jointLimit) {
+        out << "|joint=" << bone.jointLimit->kind
+            << ',' << bone.jointLimit->twistAxis.x << ',' << bone.jointLimit->twistAxis.y << ',' << bone.jointLimit->twistAxis.z
+            << ',' << bone.jointLimit->swingDegrees << ',' << bone.jointLimit->twistMinDegrees << ',' << bone.jointLimit->twistMaxDegrees;
+      }
+      if (bone.diagnosticCapsule) {
+        out << "|capsule=" << bone.diagnosticCapsule->center.x << ',' << bone.diagnosticCapsule->center.y << ',' << bone.diagnosticCapsule->center.z
+            << ',' << bone.diagnosticCapsule->axis.x << ',' << bone.diagnosticCapsule->axis.y << ',' << bone.diagnosticCapsule->axis.z
+            << ',' << bone.diagnosticCapsule->radius << ',' << bone.diagnosticCapsule->halfLength;
+      }
     }
     for (const auto& socket : skeleton.sockets) {
       out << "|socket=" << socket.handle.generation << ',' << socket.handle.index << ',' << socket.id << ',' << socket.bone << ',' << socket.role
@@ -278,6 +292,22 @@ int main(int argc, char** argv) {
   const auto skeleton = system.findSkeleton("humanoid.standard.v2");
   const auto profile = system.findAttachmentProfile("weapon.rifle.mk1.humanoid");
   if (!skeleton || skeleton->id != "humanoid.standard.v2" || skeleton->sockets.size() != 3) return fail("dotted skeleton id or sockets were not preserved");
+  const auto upperArmL = std::find_if(skeleton->boneDefinitions.begin(), skeleton->boneDefinitions.end(), [](const auto& bone) { return bone.id == "upper_arm_l"; });
+  const auto chest = std::find_if(skeleton->boneDefinitions.begin(), skeleton->boneDefinitions.end(), [](const auto& bone) { return bone.id == "chest"; });
+  const auto jointCount = std::count_if(skeleton->boneDefinitions.begin(), skeleton->boneDefinitions.end(), [](const auto& bone) { return bone.jointLimit.has_value(); });
+  const auto capsuleCount = std::count_if(skeleton->boneDefinitions.begin(), skeleton->boneDefinitions.end(), [](const auto& bone) { return bone.diagnosticCapsule.has_value(); });
+  if (upperArmL == skeleton->boneDefinitions.end() || !upperArmL->jointLimit
+      || upperArmL->jointLimit->kind != "cone_twist" || upperArmL->jointLimit->twistAxis.x != 1.0
+      || upperArmL->jointLimit->swingDegrees != 120.0 || upperArmL->jointLimit->twistMinDegrees != -90.0
+      || upperArmL->jointLimit->twistMaxDegrees != 90.0 || jointCount != 6) {
+    return fail("authored joint limits were not preserved exactly");
+  }
+  if (chest == skeleton->boneDefinitions.end() || !chest->diagnosticCapsule
+      || chest->diagnosticCapsule->center.y != 0.1 || chest->diagnosticCapsule->axis.y != 1.0
+      || chest->diagnosticCapsule->radius != 0.16 || chest->diagnosticCapsule->halfLength != 0.2
+      || capsuleCount != 7) {
+    return fail("authored diagnostic capsules were not preserved exactly");
+  }
   if (!profile || profile->id != "weapon.rifle.mk1.humanoid" || profile->schemaVersion != 2 || !profile->secondaryHand || profile->secondaryHand->poleSpace != "item") return fail("dotted attachment id, schema v2, or item pole space were not preserved");
   const auto skeletonHandle = system.findSkeletonId("humanoid.standard.v2");
   const auto profileHandle = system.findAttachmentProfileId("weapon.rifle.mk1.humanoid");
@@ -502,9 +532,9 @@ int main(int argc, char** argv) {
   const auto markerSkeletonPath = markerBoneRoot / "skeletons/spatial_humanoid.skeleton.toml";
   std::string markerSkeleton = readFile(markerSkeletonPath);
   const bool markerSkeletonReplaced =
-    replaceAll(&markerSkeleton, "[bone.upper_arm_r]", "[bone.upper.key.arm]")
-    && replaceAll(&markerSkeleton, "id = \"upper_arm_r\"", "id = \"upper.key.arm\"")
-    && replaceAll(&markerSkeleton, "parent = \"upper_arm_r\"", "parent = \"upper.key.arm\"");
+    replaceAll(&markerSkeleton, "[bone.upper_arm_r", "[bone.upper.key.arm.joint_limit")
+    && replaceAll(&markerSkeleton, "id = \"upper_arm_r\"", "id = \"upper.key.arm.joint_limit\"")
+    && replaceAll(&markerSkeleton, "parent = \"upper_arm_r\"", "parent = \"upper.key.arm.joint_limit\"");
   if (!markerSkeletonReplaced) return fail("marker skeleton fixture replacement failed");
   writeFile(markerSkeletonPath, markerSkeleton);
   for (const auto& relative : {
@@ -512,7 +542,7 @@ int main(int argc, char** argv) {
          std::filesystem::path("clips/rifle_aim.anim.toml")}) {
     const auto target = markerBoneRoot / relative;
     std::string contents = readFile(target);
-    if (!replaceAll(&contents, "track.upper_arm_r.", "track.upper.key.arm.")) {
+    if (!replaceAll(&contents, "track.upper_arm_r.", "track.upper.key.arm.joint_limit.")) {
       return fail("marker clip fixture replacement failed");
     }
     writeFile(target, contents);
@@ -523,8 +553,8 @@ int main(int argc, char** argv) {
     return fail("bone id containing .key. was rejected: " + error);
   }
   const auto markerBonePose = markerBoneSystem.sampleClipPose("rifle_ready", 0.5, &error);
-  if (!markerBonePose || !findPoseBone(markerBonePose->bones, "upper.key.arm")) {
-    return fail("bone id containing .key. could not be sampled: " + error);
+  if (!markerBonePose || !findPoseBone(markerBonePose->bones, "upper.key.arm.joint_limit")) {
+    return fail("bone id ending in a reserved-looking suffix could not be sampled: " + error);
   }
   std::filesystem::remove_all(markerBoneRoot);
 
@@ -657,6 +687,7 @@ int main(int argc, char** argv) {
   };
 
   const std::filesystem::path skeletonFile = "skeletons/spatial_humanoid.skeleton.toml";
+  const std::filesystem::path v1SkeletonFile = "skeletons/debug_humanoid.skeleton.toml";
   const std::filesystem::path attachmentFile = "attachments/rifle_mk1_humanoid.attachment.toml";
   const std::filesystem::path clipFile = "clips/rifle_ready.anim.toml";
   const std::filesystem::path graphFile = "graphs/debug_actor.animgraph.toml";
@@ -668,6 +699,15 @@ int main(int argc, char** argv) {
   if (!rejectMutation(skeletonFile, "rotation = [0.0, 0.0, 0.0, 1.0]", "rotation = [0.0, 0.0, 0.0, 0.5]")) return fail("non-unit quaternion accepted");
   if (!rejectMutation(skeletonFile, "rotation = [0.0, 0.0, 0.0, 1.0]", "rotation = [0.0, 0.0, 1.0]")) return fail("wrong-length quaternion accepted");
   if (!rejectMutation(skeletonFile, "rotation = [0.0, 0.0, 0.0, 1.0]", "rotation = [0.0, 0.0, 0.0, nan]")) return fail("non-finite quaternion accepted");
+  if (!rejectMutation(skeletonFile, "swing_degrees = 120.0", "swing_degrees = 181.0")) return fail("out-of-range joint swing accepted");
+  if (!rejectMutation(skeletonFile, "twist_axis = [1.0, 0.0, 0.0]", "twist_axis = [2.0, 0.0, 0.0]")) return fail("non-unit joint twist axis accepted");
+  if (!rejectMutation(skeletonFile, "twist_min_degrees = -90.0", "twist_min_degrees = 91.0")) return fail("reversed joint twist range accepted");
+  if (!rejectMutation(skeletonFile, "radius = 0.16", "radius = 0.0")) return fail("non-positive diagnostic capsule radius accepted");
+  if (!rejectMutation(skeletonFile, "half_length = 0.2", "half_length = nan")) return fail("non-finite diagnostic capsule half length accepted");
+  if (!rejectMutation(skeletonFile, "axis = [0.0, 1.0, 0.0]", "axis = [0.0, 2.0, 0.0]")) return fail("non-unit diagnostic capsule axis accepted");
+  if (!rejectMutation(skeletonFile, "half_length = 0.2", "half_length = 0.2\nunknown_key = true")) return fail("unknown diagnostic capsule key accepted");
+  if (!rejectMutation(skeletonFile, "[bone.chest.diagnostic_capsule]", "[bone.missing.diagnostic_capsule]")) return fail("diagnostic capsule for missing bone table accepted");
+  if (!rejectMutation(v1SkeletonFile, "name = \"debug_humanoid\"", "name = \"debug_humanoid\"\n\n[bone.hips.joint_limit]\nkind = \"cone_twist\"")) return fail("schema-v1 skeleton accepted v2 joint metadata");
   if (!rejectMutation(skeletonFile, "role = \"primary_grip\"", "role = \"utility\"")) return fail("wrong primary socket role accepted");
   if (!rejectMutation(attachmentFile, "mode = \"two_hand\"", "mode = \"three_hand\"")) return fail("invalid attachment mode accepted");
   if (!rejectMutation(attachmentFile, "schema_version = 2", "schema_version = 99")) return fail("unknown attachment version accepted");

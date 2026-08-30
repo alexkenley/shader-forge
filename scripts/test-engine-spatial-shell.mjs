@@ -113,7 +113,7 @@ const validRestEvaluation = {
   },
   diagnostics: {
     secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
-    jointLimits: { status: 'unavailable', reason: 'joint_limits_not_authored' },
+    jointLimits: { status: 'unavailable', reason: 'joint_limit_evaluation_not_integrated' },
     clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
   },
   limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],

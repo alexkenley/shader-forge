@@ -397,6 +397,29 @@ bool parseVector3(const std::string& raw, SpatialVector3Snapshot* vector) {
   return true;
 }
 
+bool vectorIsUnitLength(const SpatialVector3Snapshot& value) {
+  const double length = std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+  return std::isfinite(length) && std::abs(length - 1.0) <= 1e-6;
+}
+
+bool parseBoneNestedKey(std::string_view section, std::string_view suffix, std::string* boneKey) {
+  constexpr std::string_view prefix = "bone.";
+  if (!section.starts_with(prefix) || !section.ends_with(suffix)) {
+    return false;
+  }
+  if (section.size() <= prefix.size() + suffix.size()) {
+    return false;
+  }
+  *boneKey = std::string(section.substr(prefix.size(), section.size() - prefix.size() - suffix.size()));
+  return !boneKey->empty();
+}
+
+bool isV2OnlyBoneNestedSection(std::string_view section) {
+  std::string boneKey;
+  return parseBoneNestedKey(section, ".joint_limit", &boneKey)
+    || parseBoneNestedKey(section, ".diagnostic_capsule", &boneKey);
+}
+
 bool parseQuaternion(const std::string& raw, SpatialQuaternionSnapshot* rotation) {
   std::vector<double> values;
   if (!parseNumberArray(raw, &values) || values.size() != 4) {
@@ -470,6 +493,61 @@ bool readBool(const StrictTable& table, std::string_view key, bool* value, std::
     && (parseStrictBool(*raw, value)
       ? true
       : fail(errorMessage, "Invalid boolean key '" + std::string(key) + "' in " + std::string(context)));
+}
+
+bool loadBoneJointLimit(
+  const StrictTable& table,
+  std::string_view section,
+  SkeletonBoneJointLimitSnapshot* limit,
+  std::string* errorMessage) {
+  if (!requireOnlyKeys(
+        table,
+        {"kind", "twist_axis", "swing_degrees", "twist_min_degrees", "twist_max_degrees"},
+        section,
+        errorMessage)
+      || !readString(table, "kind", &limit->kind, section, errorMessage)
+      || !readVector3(table, "twist_axis", &limit->twistAxis, section, errorMessage)
+      || !readDouble(table, "swing_degrees", &limit->swingDegrees, section, errorMessage)
+      || !readDouble(table, "twist_min_degrees", &limit->twistMinDegrees, section, errorMessage)
+      || !readDouble(table, "twist_max_degrees", &limit->twistMaxDegrees, section, errorMessage)) {
+    return false;
+  }
+  if (limit->kind != "cone_twist") {
+    return fail(errorMessage, "Invalid joint_limit kind in " + std::string(section));
+  }
+  if (!vectorIsUnitLength(limit->twistAxis)) {
+    return fail(errorMessage, "joint_limit twist_axis must be a normalized finite vec3 in " + std::string(section));
+  }
+  if (limit->swingDegrees < 0.0 || limit->swingDegrees > 180.0) {
+    return fail(errorMessage, "joint_limit swing_degrees must be between 0 and 180 in " + std::string(section));
+  }
+  if (limit->twistMinDegrees < -180.0 || limit->twistMinDegrees > 180.0
+      || limit->twistMaxDegrees < -180.0 || limit->twistMaxDegrees > 180.0
+      || limit->twistMinDegrees > limit->twistMaxDegrees) {
+    return fail(errorMessage, "Invalid joint_limit twist range in " + std::string(section));
+  }
+  return true;
+}
+
+bool loadBoneDiagnosticCapsule(
+  const StrictTable& table,
+  std::string_view section,
+  SkeletonBoneDiagnosticCapsuleSnapshot* capsule,
+  std::string* errorMessage) {
+  if (!requireOnlyKeys(table, {"center", "axis", "radius", "half_length"}, section, errorMessage)
+      || !readVector3(table, "center", &capsule->center, section, errorMessage)
+      || !readVector3(table, "axis", &capsule->axis, section, errorMessage)
+      || !readDouble(table, "radius", &capsule->radius, section, errorMessage)
+      || !readDouble(table, "half_length", &capsule->halfLength, section, errorMessage)) {
+    return false;
+  }
+  if (!vectorIsUnitLength(capsule->axis)) {
+    return fail(errorMessage, "diagnostic_capsule axis must be a normalized finite vec3 in " + std::string(section));
+  }
+  if (capsule->radius <= 0.0 || capsule->halfLength <= 0.0) {
+    return fail(errorMessage, "diagnostic_capsule radius and half_length must be finite and > 0 in " + std::string(section));
+  }
+  return true;
 }
 
 std::string relativePathString(const std::filesystem::path& path) {
@@ -603,8 +681,27 @@ bool loadSkeletonV2File(
   std::set<std::string> boneIds;
   std::set<std::string> semanticBoneRoles;
   std::vector<std::pair<std::string, std::string>> socketRolePairs;
+  std::map<std::string, std::size_t> boneSectionIndex;
+  struct PendingBoneNestedSection {
+    std::string section;
+    const StrictTable* table = nullptr;
+    std::string boneKey;
+  };
+  std::vector<PendingBoneNestedSection> pendingJointLimits;
+  std::vector<PendingBoneNestedSection> pendingCapsules;
 
   for (const auto& [section, table] : document.sections) {
+    std::string nestedBoneKey;
+    const bool hasBoneFields = table.contains("id") || table.contains("parent")
+      || table.contains("role") || table.contains("translation") || table.contains("rotation");
+    if (!hasBoneFields && parseBoneNestedKey(section, ".joint_limit", &nestedBoneKey)) {
+      pendingJointLimits.push_back({section, &table, std::move(nestedBoneKey)});
+      continue;
+    }
+    if (!hasBoneFields && parseBoneNestedKey(section, ".diagnostic_capsule", &nestedBoneKey)) {
+      pendingCapsules.push_back({section, &table, std::move(nestedBoneKey)});
+      continue;
+    }
     if (section.starts_with("bone.")) {
       if (section.size() == 5 || !requireOnlyKeys(table, {"id", "parent", "role", "translation", "rotation"}, section, errorMessage)) {
         return false;
@@ -626,6 +723,10 @@ bool loadSkeletonV2File(
       }
       if (!bone.role.empty() && bone.role != "other" && !semanticBoneRoles.insert(bone.role).second) {
         return fail(errorMessage, "Duplicate bone role '" + bone.role + "' in " + context);
+      }
+      const std::string boneKey = section.substr(5);
+      if (!boneSectionIndex.emplace(boneKey, skeleton->boneDefinitions.size()).second) {
+        return fail(errorMessage, "Duplicate bone section '" + section + "' in " + context);
       }
       skeleton->bones.push_back(bone.id);
       skeleton->boneDefinitions.push_back(std::move(bone));
@@ -661,6 +762,43 @@ bool loadSkeletonV2File(
       continue;
     }
     return fail(errorMessage, "Unknown skeleton section '" + section + "' in " + context);
+  }
+
+  const auto attachNested = [&](const PendingBoneNestedSection& pending, std::string_view label) -> SkeletonBoneSnapshot* {
+    const auto found = boneSectionIndex.find(pending.boneKey);
+    if (found == boneSectionIndex.end()) {
+      fail(errorMessage, std::string(label) + " references missing bone table '" + pending.boneKey + "' in " + context);
+      return nullptr;
+    }
+    return &skeleton->boneDefinitions[found->second];
+  };
+  for (const auto& pending : pendingJointLimits) {
+    SkeletonBoneSnapshot* bone = attachNested(pending, "joint_limit");
+    if (!bone) {
+      return false;
+    }
+    if (bone->jointLimit) {
+      return fail(errorMessage, "Duplicate joint_limit for bone '" + pending.boneKey + "' in " + context);
+    }
+    SkeletonBoneJointLimitSnapshot limit;
+    if (!loadBoneJointLimit(*pending.table, pending.section, &limit, errorMessage)) {
+      return false;
+    }
+    bone->jointLimit = std::move(limit);
+  }
+  for (const auto& pending : pendingCapsules) {
+    SkeletonBoneSnapshot* bone = attachNested(pending, "diagnostic_capsule");
+    if (!bone) {
+      return false;
+    }
+    if (bone->diagnosticCapsule) {
+      return fail(errorMessage, "Duplicate diagnostic_capsule for bone '" + pending.boneKey + "' in " + context);
+    }
+    SkeletonBoneDiagnosticCapsuleSnapshot capsule;
+    if (!loadBoneDiagnosticCapsule(*pending.table, pending.section, &capsule, errorMessage)) {
+      return false;
+    }
+    bone->diagnosticCapsule = std::move(capsule);
   }
 
   if (skeleton->boneDefinitions.empty() || !boneIds.contains(skeleton->rootBone)) {
@@ -725,6 +863,7 @@ bool loadSkeletonFile(
   std::string line;
   std::size_t lineNumber = 0;
   bool inSection = false;
+  std::vector<std::string> sectionNames;
 
   while (std::getline(stream, line)) {
     lineNumber += 1;
@@ -733,6 +872,9 @@ bool loadSkeletonFile(
       continue;
     }
     if (cleaned.front() == '[') {
+      if (cleaned.size() >= 3 && cleaned.back() == ']') {
+        sectionNames.push_back(trim(std::string_view(cleaned).substr(1, cleaned.size() - 2)));
+      }
       inSection = true;
       continue;
     }
@@ -793,6 +935,13 @@ bool loadSkeletonFile(
       *errorMessage = "Unsupported animation skeleton schema_version in " + path.string();
     }
     return false;
+  }
+  for (const auto& section : sectionNames) {
+    if (isV2OnlyBoneNestedSection(section)) {
+      return fail(
+        errorMessage,
+        "Schema-v1 skeleton rejects v2-only nested section '" + section + "' in " + path.string());
+    }
   }
   if (ownerSystem != "animation_system") {
     if (errorMessage) {

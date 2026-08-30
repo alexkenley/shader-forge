@@ -286,6 +286,24 @@ try {
     const hips = cooked.skeletons[1].bones.find((entry) => entry.id === 'hips');
     assert.deepEqual(hips.translation, [0, 0.95, 0]);
     assert.deepEqual(hips.rotation, [0, 0, 0, 1]);
+    assert.equal(hips.jointLimit, null);
+    assert.equal(hips.diagnosticCapsule, null);
+    const cookedUpperArmL = cooked.skeletons[1].bones.find((entry) => entry.id === 'upper_arm_l');
+    assert.deepEqual(cookedUpperArmL.jointLimit, {
+      kind: 'cone_twist',
+      twistAxis: [1, 0, 0],
+      swingDegrees: 120,
+      twistMinDegrees: -90,
+      twistMaxDegrees: 90,
+    });
+    assert.deepEqual(cookedUpperArmL.diagnosticCapsule, {
+      center: [0.14, 0, 0],
+      axis: [1, 0, 0],
+      radius: 0.055,
+      halfLength: 0.14,
+    });
+    assert.equal(cooked.skeletons[1].bones.filter((entry) => entry.jointLimit).length, 6);
+    assert.equal(cooked.skeletons[1].bones.filter((entry) => entry.diagnosticCapsule).length, 7);
     assert.equal(cooked.skeletons[1].sockets.length, 3);
     const primarySocket = cooked.skeletons[1].sockets.find((entry) => entry.id === 'socket.hand_r.primary');
     assert.equal(primarySocket.bone, 'hand_r');

@@ -128,6 +128,90 @@ role = "hand_l"
 translation = [0.24, 0.0, 0.0]
 rotation = [0.0, 0.0, 0.0, 1.0]
 
+[bone.upper_arm_r.joint_limit]
+kind = "cone_twist"
+twist_axis = [-1.0, 0.0, 0.0]
+swing_degrees = 120.0
+twist_min_degrees = -90.0
+twist_max_degrees = 90.0
+
+[bone.lower_arm_r.joint_limit]
+kind = "cone_twist"
+twist_axis = [-1.0, 0.0, 0.0]
+swing_degrees = 145.0
+twist_min_degrees = -15.0
+twist_max_degrees = 15.0
+
+[bone.hand_r.joint_limit]
+kind = "cone_twist"
+twist_axis = [-1.0, 0.0, 0.0]
+swing_degrees = 70.0
+twist_min_degrees = -80.0
+twist_max_degrees = 80.0
+
+[bone.upper_arm_l.joint_limit]
+kind = "cone_twist"
+twist_axis = [1.0, 0.0, 0.0]
+swing_degrees = 120.0
+twist_min_degrees = -90.0
+twist_max_degrees = 90.0
+
+[bone.lower_arm_l.joint_limit]
+kind = "cone_twist"
+twist_axis = [1.0, 0.0, 0.0]
+swing_degrees = 145.0
+twist_min_degrees = -15.0
+twist_max_degrees = 15.0
+
+[bone.hand_l.joint_limit]
+kind = "cone_twist"
+twist_axis = [1.0, 0.0, 0.0]
+swing_degrees = 70.0
+twist_min_degrees = -80.0
+twist_max_degrees = 80.0
+
+[bone.chest.diagnostic_capsule]
+center = [0.0, 0.1, 0.0]
+axis = [0.0, 1.0, 0.0]
+radius = 0.16
+half_length = 0.2
+
+[bone.upper_arm_r.diagnostic_capsule]
+center = [-0.14, 0.0, 0.0]
+axis = [-1.0, 0.0, 0.0]
+radius = 0.055
+half_length = 0.14
+
+[bone.lower_arm_r.diagnostic_capsule]
+center = [-0.12, 0.0, 0.0]
+axis = [-1.0, 0.0, 0.0]
+radius = 0.045
+half_length = 0.12
+
+[bone.hand_r.diagnostic_capsule]
+center = [-0.05, 0.0, 0.0]
+axis = [-1.0, 0.0, 0.0]
+radius = 0.05
+half_length = 0.07
+
+[bone.upper_arm_l.diagnostic_capsule]
+center = [0.14, 0.0, 0.0]
+axis = [1.0, 0.0, 0.0]
+radius = 0.055
+half_length = 0.14
+
+[bone.lower_arm_l.diagnostic_capsule]
+center = [0.12, 0.0, 0.0]
+axis = [1.0, 0.0, 0.0]
+radius = 0.045
+half_length = 0.12
+
+[bone.hand_l.diagnostic_capsule]
+center = [0.05, 0.0, 0.0]
+axis = [1.0, 0.0, 0.0]
+radius = 0.05
+half_length = 0.07
+
 [socket.primary_grip]
 id = "socket.hand_r.primary"
 bone = "hand_r"

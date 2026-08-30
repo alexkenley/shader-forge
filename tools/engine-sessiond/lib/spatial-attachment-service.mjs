@@ -575,7 +575,7 @@ function requireEvaluationGeometry(evaluation, expectedProfile) {
     evaluation.diagnostics,
     ['secondaryIk', 'jointLimits', 'clipping'],
   );
-  requireStatusReason(diagnostics.jointLimits, 'unavailable', 'joint_limits_not_authored');
+  requireStatusReason(diagnostics.jointLimits, 'unavailable', 'joint_limit_evaluation_not_integrated');
   requireStatusReason(
     diagnostics.clipping,
     'unavailable',
