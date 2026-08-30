@@ -17,6 +17,7 @@ Recommended split:
 The current Phase 5.5 slice locks the first engine-wide data conventions into the repo:
 
 - `data/foundation/engine-data-layout.toml` defines the source, cooked, tooling-db, and content-root conventions
+- every manifest source subdirectory must resolve beneath the configured content root; absolute paths, traversal, and symlink escapes are rejected before scanning, and only lowercase `.toml` regular files participate in the authored source set
 - `content/scenes/*.scene.toml`, `content/prefabs/*.prefab.toml`, `content/data/*.data.toml`, and `content/effects/*.effect.toml` are now the first real source-data roots
 - `content/procgeo/*.procgeo.toml` is now the first procedural-geometry source-data root
 - `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are now the first dedicated authored audio-metadata roots beside `content/`
@@ -26,6 +27,8 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - scene lookup is now tied to real text assets instead of a purely free-form runtime scene name
 - scene-to-prefab relationships and `runtime_bootstrap` defaults are validated across the catalog rather than treated as isolated files
 - prefab component payloads can now reference `content/procgeo/*.procgeo.toml` and `content/effects/*.effect.toml` through deterministic `[component.render]` and `[component.effect]` sections
+- the spatial evaluator reuses this same prefab-to-render-procgeo chain to expose exact authored box corners for attachment tuning; it does not create a second prefab geometry schema, and the visual box is not collision geometry
+- procgeo dimensions must be finite positive numbers before a source can become valid evaluator or cook input
 - runtime startup now resolves the active scene and overlay preference from the text-backed source assets when possible
 - cooked outputs are still planning targets only in this slice, but they now target a stable `FlatBuffers` runtime-data lane under `build/cooked/`
 - the current staged cook lane now also validates prefab-component references and stages prefab component payloads into cooked prefab outputs under the same deterministic authored-data workflow

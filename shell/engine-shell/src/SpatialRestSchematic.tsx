@@ -42,6 +42,7 @@ const PROJECTIONS: Array<{ id: SpatialRestSchematicProjection; label: string; de
 
 const LEGEND = [
   ['Bone segment', '#9fb2c3'],
+  ['Authored visual box', '#64748b'],
   ['Bone origin', '#d4d4d4'],
   ['Socket', '#fbbf24'],
   ['Item origin / axes', '#f8fafc'],
@@ -52,6 +53,18 @@ const LEGEND = [
   ['Secondary pole', '#34d399'],
   ['Handle direction', '#fb923c'],
 ] as const;
+const ITEM_BOX_EDGES = [
+  [0, 1], [1, 2], [2, 3], [3, 0],
+  [4, 5], [5, 6], [6, 7], [7, 4],
+  [0, 4], [1, 5], [2, 6], [3, 7],
+] as const;
+const ITEM_GEOMETRY_UNAVAILABLE_REASONS = new Set([
+  'item_prefab_not_found',
+  'item_prefab_ambiguous',
+  'item_prefab_visual_geometry_unavailable',
+  'item_prefab_visual_geometry_ambiguous',
+  'item_prefab_visual_geometry_not_box',
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -182,6 +195,62 @@ function validDiagnostic(value: unknown, budget: ValidationBudget, statuses: rea
     && typeof value.status === 'string'
     && statuses.includes(value.status)
     && boundedString(value.reason, budget);
+}
+
+function validItemGeometry(
+  value: unknown,
+  itemWorld: unknown,
+  budget: ValidationBudget,
+) {
+  if (!isRecord(value) || !isRecord(itemWorld)) return false;
+  if (value.status === 'unavailable') {
+    return exactRecord(value, ['status', 'reason'])
+      && boundedString(value.reason, budget)
+      && ITEM_GEOMETRY_UNAVAILABLE_REASONS.has(value.reason as string);
+  }
+  if (
+    !exactRecord(value, ['status', 'kind', 'procgeoId', 'dimensionsMeters', 'worldCorners'])
+    || value.status !== 'available'
+    || value.kind !== 'authored_visual_box'
+    || !boundedString(value.procgeoId, budget)
+    || !isSpatialEvaluationVec3(value.dimensionsMeters)
+    || value.dimensionsMeters.some((entry) => entry <= 0)
+    || !Array.isArray(value.worldCorners)
+    || value.worldCorners.length !== 8
+    || !exactRecord(itemWorld.axes, ['x', 'y', 'z'])
+    || !isSpatialEvaluationVec3(itemWorld.translation)
+    || !isSpatialEvaluationVec3(itemWorld.axes.x)
+    || !isSpatialEvaluationVec3(itemWorld.axes.y)
+    || !isSpatialEvaluationVec3(itemWorld.axes.z)
+  ) return false;
+  const itemTranslation = itemWorld.translation as SpatialEvaluationVec3;
+  const itemAxes = itemWorld.axes as {
+    x: SpatialEvaluationVec3;
+    y: SpatialEvaluationVec3;
+    z: SpatialEvaluationVec3;
+  };
+  const half = value.dimensionsMeters.map((entry) => entry * 0.5);
+  const localCorners = [
+    [-half[0], -half[1], -half[2]],
+    [half[0], -half[1], -half[2]],
+    [half[0], half[1], -half[2]],
+    [-half[0], half[1], -half[2]],
+    [-half[0], -half[1], half[2]],
+    [half[0], -half[1], half[2]],
+    [half[0], half[1], half[2]],
+    [-half[0], half[1], half[2]],
+  ];
+  return value.worldCorners.every((corner, index) => {
+    if (!isSpatialEvaluationVec3(corner)) return false;
+    const local = localCorners[index];
+    const expected = itemTranslation.map((entry, axisIndex) => (
+      entry
+      + local[0] * itemAxes.x[axisIndex]
+      + local[1] * itemAxes.y[axisIndex]
+      + local[2] * itemAxes.z[axisIndex]
+    ));
+    return corner.every((entry, axisIndex) => near(entry, expected[axisIndex]));
+  });
 }
 
 function exactStatusReason(value: unknown, status: string, reason: string, budget: ValidationBudget) {
@@ -481,7 +550,7 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     || !boundedString(value.item.prefabId, budget)
     || value.item.prefabId !== value.attachment.itemPrefabId
     || !validTransform(value.item.world)
-    || !exactStatusReason(value.item.geometry, 'unavailable', 'item_prefab_geometry_not_integrated', budget)
+    || !validItemGeometry(value.item.geometry, value.item.world, budget)
     || !(value.item.primaryContactWorld === null || validTransform(value.item.primaryContactWorld))
     || !(value.item.handleAxisWorld === null || (
       exactRecord(value.item.handleAxisWorld, ['origin', 'direction'])
@@ -529,6 +598,9 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     + value.segments.length * 2
     + value.sockets.length
     + 4
+    + (isRecord(value.item.geometry)
+      && value.item.geometry.status === 'available'
+      && Array.isArray(value.item.geometry.worldCorners) ? 8 : 0)
     + (value.item.primaryContactWorld ? 1 : 0)
     + (value.item.handleAxisWorld ? 2 : 0)
     + (value.hands.dominant ? 1 + (value.hands.dominant.palmWorld ? 1 : 0) : 0)
@@ -623,6 +695,9 @@ function evaluationPoints(evaluation: SpatialAttachmentEvaluation) {
   }
   for (const entry of evaluation.sockets) {
     if (isRecord(entry)) add(transformTranslation(entry.world));
+  }
+  if (evaluation.item.geometry.status === 'available') {
+    for (const corner of evaluation.item.geometry.worldCorners) add(corner);
   }
   add(transformTranslation(evaluation.item.world));
   add(transformTranslation(evaluation.item.primaryContactWorld));
@@ -730,6 +805,9 @@ function Drawing({
   const glyphLength = bounds.span * 0.08;
   const itemOrigin = transformTranslation(evaluation.item.world);
   const itemAxes = transformAxes(evaluation.item.world);
+  const itemCorners = evaluation.item.geometry.status === 'available'
+    ? evaluation.item.geometry.worldCorners
+    : [];
   const contact = transformTranslation(evaluation.item.primaryContactWorld);
   const dominant = isRecord(evaluation.hands.dominant) ? evaluation.hands.dominant : null;
   const secondary = isRecord(evaluation.hands.secondary) ? evaluation.hands.secondary : null;
@@ -744,6 +822,26 @@ function Drawing({
 
   return (
     <svg aria-hidden="true" className="spatial-rest-schematic__svg" viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}>
+      {ITEM_BOX_EDGES.map(([fromIndex, toIndex]) => {
+        const from = itemCorners[fromIndex]
+          ? projectSpatialPoint(itemCorners[fromIndex], projection, bounds)
+          : null;
+        const to = itemCorners[toIndex]
+          ? projectSpatialPoint(itemCorners[toIndex], projection, bounds)
+          : null;
+        return from && to ? (
+          <line
+            key={`item-box:${fromIndex}:${toIndex}`}
+            stroke="#64748b"
+            strokeLinecap="round"
+            strokeWidth="0.75"
+            x1={from.x}
+            x2={to.x}
+            y1={from.y}
+            y2={to.y}
+          />
+        ) : null;
+      })}
       {evaluation.segments.map((entry, index) => {
         if (!isRecord(entry) || !isSpatialEvaluationVec3(entry.from) || !isSpatialEvaluationVec3(entry.to)) return null;
         const from = projectSpatialPoint(entry.from, projection, bounds);
@@ -865,6 +963,11 @@ function coordinateRows(evaluation: SpatialAttachmentEvaluation) {
     if (isRecord(entry)) addTransform('Socket', typeof entry.id === 'string' ? entry.id : `#${index}`, entry.world, typeof entry.role === 'string' ? entry.role : undefined);
   }
   addTransform('Item origin', typeof evaluation.item.prefabId === 'string' ? evaluation.item.prefabId : 'item', evaluation.item.world);
+  if (evaluation.item.geometry.status === 'available') {
+    evaluation.item.geometry.worldCorners.forEach((value, index) => {
+      rows.push({ kind: 'Item visual-box corner', id: String(index), value });
+    });
+  }
   const itemAxes = transformAxes(evaluation.item.world);
   if (itemAxes) {
     rows.push({ kind: 'Item axis X', id: 'item', value: itemAxes.x, unit: '', detail: 'unit direction, not an extent' });
@@ -929,7 +1032,15 @@ function diagnosticRows(evaluation: SpatialAttachmentEvaluation) {
       reason: layerList(evaluation.pose.proceduralLayersUnavailable),
     });
   }
-  add('Item geometry', evaluation.item.geometry);
+  if (evaluation.item.geometry.status === 'available') {
+    rows.push({
+      name: 'Item geometry',
+      status: 'available',
+      reason: `authored visual box ${evaluation.item.geometry.dimensionsMeters.join(' x ')} m via ${evaluation.item.geometry.procgeoId}`,
+    });
+  } else {
+    add('Item geometry', evaluation.item.geometry);
+  }
   const secondaryIk = evaluation.diagnostics.secondaryIk;
   if (isRecord(secondaryIk) && secondaryIk.status === 'applied') {
     rows.push({
@@ -1022,9 +1133,13 @@ export function SpatialRestSchematic({
     : (safeEvaluation?.pose.kind === 'clip_sample' ? safeEvaluation.pose.normalizedTime : Number.NaN);
   const sourceRevisionCount = sampleIdentity?.sourceRevisionCount;
   const title = sampled ? 'SAMPLED RIG SCHEMATIC' : 'REST-POSE RIG SCHEMATIC';
+  const hasVisualBox = safeEvaluation?.item.geometry.status === 'available';
+  const itemGeometryDescription = hasVisualBox
+    ? 'The exact authored visual-box outline is shown; it is not collision geometry or a rendered mesh.'
+    : 'Authored visual-box evidence is unavailable.';
   const description = sampled
-    ? `${evidenceLabel}. Sampled clip-pose evaluator geometry at phase ${samplePhase || 'unavailable'}, clip ${sampleClip || 'unavailable'}, normalized time ${Number.isFinite(sampleTime) ? String(sampleTime) : 'unavailable'}. ${projectionDetail}. Not review evidence. Item geometry is unavailable. Not a camera, capture, or immutable review packet.`
-    : `${evidenceLabel}. Unsampled rest-pose evaluator geometry. ${projectionDetail}. Not review evidence. Item geometry is unavailable.`;
+    ? `${evidenceLabel}. Sampled clip-pose evaluator geometry at phase ${samplePhase || 'unavailable'}, clip ${sampleClip || 'unavailable'}, normalized time ${Number.isFinite(sampleTime) ? String(sampleTime) : 'unavailable'}. ${projectionDetail}. ${itemGeometryDescription} Not review evidence. Not a camera, capture, or immutable review packet.`
+    : `${evidenceLabel}. Unsampled rest-pose evaluator geometry. ${projectionDetail}. ${itemGeometryDescription} Not review evidence.`;
 
   let drawing: ReactNode;
   if (busy && !safeEvaluation) {
@@ -1098,8 +1213,8 @@ export function SpatialRestSchematic({
       </div>
       <figcaption>
         {sampled
-          ? 'Native evaluator world frames only, including solved sampled hand and bone frames when present. The item marker is an origin with orientation axes; a resolved authored pole is shown as a green ring. No item mesh, joint-limit result, clipping result, camera, capture, or immutable review packet is shown. An unresolved pole is never projected. V1 two-hand samples remain pre-IK.'
-          : 'Native evaluator world frames only. The item marker is an origin with orientation axes; a resolved authored pole is shown as a green ring. No mesh, bounds, sampled animation, IK result, clipping result, camera, or capture is shown. An unresolved pole is never projected.'}
+          ? `Native evaluator world frames only, including solved sampled hand and bone frames when present. ${hasVisualBox ? 'The outlined item box is exact authored render-procgeo evidence, not collision truth.' : 'No authored item box is available.'} A resolved authored pole is shown as a green ring. No item mesh, joint-limit result, clipping result, camera, capture, or immutable review packet is shown. An unresolved pole is never projected. V1 two-hand samples remain pre-IK.`
+          : `Native evaluator world frames only. ${hasVisualBox ? 'The outlined item box is exact authored render-procgeo evidence, not collision truth.' : 'No authored item box is available.'} The item origin and axes plus any resolved authored pole remain explicit. No rendered mesh, sampled animation, IK result, clipping result, camera, capture, or immutable review packet is shown.`}
       </figcaption>
       <ul className="spatial-rest-schematic__legend" aria-label="Schematic legend">
         {LEGEND.map(([label, color]) => <li key={label}><span aria-hidden="true" style={{ background: color }} />{label}</li>)}

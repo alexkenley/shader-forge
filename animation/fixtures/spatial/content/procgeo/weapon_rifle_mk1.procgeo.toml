@@ -1,0 +1,12 @@
+schema = "shader_forge.procgeo"
+schema_version = 1
+name = "weapon.rifle.mk1"
+owner_system = "procgeo_system"
+runtime_format = "flatbuffer"
+
+generator = "box"
+bake_output = "generated_mesh"
+material_hint = "weapon_rifle"
+width = 0.125
+height = 0.25
+depth = 1.0

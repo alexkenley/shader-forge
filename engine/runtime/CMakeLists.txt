@@ -18,6 +18,7 @@ add_executable(
   shader_forge_spatial
   src/spatial_authoring_tool.cpp
   src/animation_system.cpp
+  src/data_foundation.cpp
 )
 
 target_include_directories(

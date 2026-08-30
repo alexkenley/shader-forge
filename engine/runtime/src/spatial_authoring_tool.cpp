@@ -1,6 +1,8 @@
 #include "shader_forge/runtime/animation_system.hpp"
+#include "shader_forge/runtime/data_foundation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +26,11 @@
 using shader_forge::runtime::AnimationConfig;
 using shader_forge::runtime::AnimationSystem;
 using shader_forge::runtime::AttachmentProfileSnapshot;
+using shader_forge::runtime::DataFoundation;
+using shader_forge::runtime::DataFoundationConfig;
+using shader_forge::runtime::DataAssetKind;
+using shader_forge::runtime::PrefabSourceSnapshot;
+using shader_forge::runtime::ProcgeoSourceSnapshot;
 using shader_forge::runtime::SpatialAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SpatialSampledAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SkeletonDefinitionSnapshot;
@@ -112,6 +119,138 @@ void appendStringArray(std::ostringstream& out, const std::vector<std::string>& 
     out << jsonString(values[index]);
   }
   out << ']';
+}
+
+struct ItemVisualBoxEvidence {
+  bool available = false;
+  std::string unavailableReason = "item_prefab_not_found";
+  std::string procgeoId;
+  double width = 0.0;
+  double height = 0.0;
+  double depth = 0.0;
+  std::array<SpatialVector3Snapshot, 8> worldCorners{};
+};
+
+SpatialVector3Snapshot transformLocalCorner(
+  const SpatialTransformSnapshot& world,
+  double localX,
+  double localY,
+  double localZ) {
+  return SpatialVector3Snapshot{
+    world.translation.x + localX * world.axes.x.x + localY * world.axes.y.x + localZ * world.axes.z.x,
+    world.translation.y + localX * world.axes.x.y + localY * world.axes.y.y + localZ * world.axes.z.y,
+    world.translation.z + localX * world.axes.x.z + localY * world.axes.y.z + localZ * world.axes.z.z,
+  };
+}
+
+bool finiteVector(const SpatialVector3Snapshot& value) {
+  return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool resolveAuthoredVisualBox(
+  const DataFoundation& foundation,
+  const SpatialAttachmentEvaluationSnapshot& evaluation,
+  ItemVisualBoxEvidence* evidence,
+  std::string* errorMessage) {
+  const std::optional<PrefabSourceSnapshot> prefab = foundation.prefabSource(evaluation.itemPrefabId);
+  if (!prefab) return true;
+  const auto assets = foundation.snapshotAssets();
+  const std::size_t prefabMatches = std::count_if(
+    assets.begin(),
+    assets.end(),
+    [&](const auto& asset) {
+      return asset.kind == DataAssetKind::prefab && asset.name == prefab->name;
+    });
+  if (prefabMatches != 1) {
+    evidence->unavailableReason = "item_prefab_ambiguous";
+    return true;
+  }
+  if (!prefab->valid || prefab->renderComponent.procgeo.empty()) {
+    evidence->unavailableReason = "item_prefab_visual_geometry_unavailable";
+    return true;
+  }
+  const std::optional<ProcgeoSourceSnapshot> procgeo = foundation.procgeoSource(prefab->renderComponent.procgeo);
+  if (!procgeo || !procgeo->valid) {
+    evidence->unavailableReason = "item_prefab_visual_geometry_unavailable";
+    return true;
+  }
+  const auto procgeoSources = foundation.snapshotProcgeoSources();
+  const std::size_t procgeoMatches = std::count_if(
+    procgeoSources.begin(),
+    procgeoSources.end(),
+    [&](const auto& candidate) { return candidate.name == procgeo->name; });
+  if (procgeoMatches != 1) {
+    evidence->unavailableReason = "item_prefab_visual_geometry_ambiguous";
+    return true;
+  }
+  if (procgeo->generator != "box") {
+    evidence->unavailableReason = "item_prefab_visual_geometry_not_box";
+    return true;
+  }
+
+  const double width = static_cast<double>(procgeo->width);
+  const double height = static_cast<double>(procgeo->height);
+  const double depth = static_cast<double>(procgeo->depth);
+  if (
+    !std::isfinite(width) || !std::isfinite(height) || !std::isfinite(depth)
+    || width <= 0.0 || height <= 0.0 || depth <= 0.0) {
+    if (errorMessage) *errorMessage = "Authored visual-box dimensions are non-finite or non-positive.";
+    return false;
+  }
+  const double halfWidth = width * 0.5;
+  const double halfHeight = height * 0.5;
+  const double halfDepth = depth * 0.5;
+  // Same local corner order as buildBoxMesh in tools/engine-cli/lib/asset-pipeline.mjs.
+  const double localCorners[8][3] = {
+    {-halfWidth, -halfHeight, -halfDepth},
+    { halfWidth, -halfHeight, -halfDepth},
+    { halfWidth,  halfHeight, -halfDepth},
+    {-halfWidth,  halfHeight, -halfDepth},
+    {-halfWidth, -halfHeight,  halfDepth},
+    { halfWidth, -halfHeight,  halfDepth},
+    { halfWidth,  halfHeight,  halfDepth},
+    {-halfWidth,  halfHeight,  halfDepth},
+  };
+
+  for (std::size_t index = 0; index < evidence->worldCorners.size(); ++index) {
+    const SpatialVector3Snapshot corner = transformLocalCorner(
+      evaluation.itemWorld,
+      localCorners[index][0],
+      localCorners[index][1],
+      localCorners[index][2]);
+    if (!finiteVector(corner)) {
+      if (errorMessage) *errorMessage = "Authored visual-box world corners are non-finite.";
+      return false;
+    }
+    evidence->worldCorners[index] = corner;
+  }
+  evidence->available = true;
+  evidence->procgeoId = procgeo->name;
+  evidence->width = width;
+  evidence->height = height;
+  evidence->depth = depth;
+  return true;
+}
+
+void appendItemGeometry(std::ostringstream& out, const ItemVisualBoxEvidence& geometry) {
+  if (!geometry.available) {
+    out << "{\"status\":\"unavailable\",\"reason\":" << jsonString(geometry.unavailableReason) << '}';
+    return;
+  }
+  out << "{\"status\":\"available\",\"kind\":\"authored_visual_box\",\"procgeoId\":"
+      << jsonString(geometry.procgeoId)
+      << ",\"dimensionsMeters\":[";
+  appendNumber(out, geometry.width);
+  out << ',';
+  appendNumber(out, geometry.height);
+  out << ',';
+  appendNumber(out, geometry.depth);
+  out << "],\"worldCorners\":[";
+  for (std::size_t index = 0; index < geometry.worldCorners.size(); ++index) {
+    if (index != 0) out << ',';
+    appendVector(out, geometry.worldCorners[index]);
+  }
+  out << "]}";
 }
 
 std::string utf8Path(const std::filesystem::path& path) {
@@ -358,7 +497,8 @@ bool writeCookedPayload(
 
 void appendAttachmentEvaluationFields(
   std::ostringstream& out,
-  const SpatialAttachmentEvaluationSnapshot& evaluation) {
+  const SpatialAttachmentEvaluationSnapshot& evaluation,
+  const ItemVisualBoxEvidence& geometry) {
   out << ",\"coordinateSystem\":{\"units\":\"meters\",\"handedness\":\"right\",\"up\":\"+Y\",\"forward\":\"+Z\",\"quaternionOrder\":\"xyzw\"}"
       << ",\"skeleton\":{\"id\":" << jsonString(evaluation.skeletonId)
       << ",\"name\":" << jsonString(evaluation.skeletonName)
@@ -411,8 +551,9 @@ void appendAttachmentEvaluationFields(
   out << "],\"item\":{\"prefabId\":" << jsonString(evaluation.itemPrefabId)
       << ",\"world\":";
   appendTransform(out, evaluation.itemWorld);
-  out << ",\"geometry\":{\"status\":\"unavailable\",\"reason\":\"item_prefab_geometry_not_integrated\"}"
-      << ",\"primaryContactWorld\":";
+  out << ",\"geometry\":";
+  appendItemGeometry(out, geometry);
+  out << ",\"primaryContactWorld\":";
   appendOptionalTransform(out, evaluation.primaryContactWorld);
   out << ",\"handleAxisWorld\":";
   if (evaluation.handleAxisWorld) {
@@ -528,17 +669,19 @@ void appendEvaluationLimitations(
 
 void appendRestEvaluation(
   std::ostringstream& out,
-  const SpatialAttachmentEvaluationSnapshot& evaluation) {
+  const SpatialAttachmentEvaluationSnapshot& evaluation,
+  const ItemVisualBoxEvidence& geometry) {
   out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":"
       << (evaluation.attachmentSchemaVersion >= 2 ? 2 : 1)
       << ",\"pose\":{\"kind\":\"rest\",\"sampled\":false}";
-  appendAttachmentEvaluationFields(out, evaluation);
+  appendAttachmentEvaluationFields(out, evaluation, geometry);
   appendEvaluationLimitations(out, evaluation, "rest_pose_only");
 }
 
 void appendSampledEvaluation(
   std::ostringstream& out,
-  const SpatialSampledAttachmentEvaluationSnapshot& sampled) {
+  const SpatialSampledAttachmentEvaluationSnapshot& sampled,
+  const ItemVisualBoxEvidence& geometry) {
   out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":"
       << (sampled.evaluation.attachmentSchemaVersion >= 2 ? 2 : 1)
       << ",\"pose\":{\"kind\":\"clip_sample\",\"sampled\":true"
@@ -553,7 +696,7 @@ void appendSampledEvaluation(
   out << ",\"proceduralLayersUnavailable\":";
   appendStringArray(out, sampled.proceduralLayersUnavailable);
   out << '}';
-  appendAttachmentEvaluationFields(out, sampled.evaluation);
+  appendAttachmentEvaluationFields(out, sampled.evaluation, geometry);
   const bool awaitsSecondaryIk = std::find(
     sampled.proceduralLayersUnavailable.begin(),
     sampled.proceduralLayersUnavailable.end(),
@@ -580,8 +723,8 @@ int usageError(std::string_view message) {
   std::cerr << "shader_forge_spatial: " << message << '\n'
             << "usage: shader_forge_spatial validate --animation-root <path>\n"
             << "       shader_forge_spatial cook --animation-root <path> --output-root <path>\n"
-            << "       shader_forge_spatial evaluate-rest --animation-root <path> --attachment <attachment-id>\n"
-            << "       shader_forge_spatial evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value>\n";
+            << "       shader_forge_spatial evaluate-rest --animation-root <path> --attachment <attachment-id> --content-root <path> --data-foundation <path>\n"
+            << "       shader_forge_spatial evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path>\n";
   return 2;
 }
 
@@ -612,6 +755,8 @@ int main(int argc, char** argv) {
   const std::string_view command = argv[1];
   std::filesystem::path requestedAnimationRoot;
   std::filesystem::path requestedOutputRoot;
+  std::filesystem::path requestedContentRoot;
+  std::filesystem::path requestedDataFoundation;
   std::string requestedAttachmentId;
   std::string requestedPhase;
   double requestedNormalizedTime = 0.0;
@@ -640,9 +785,13 @@ int main(int argc, char** argv) {
     }
     if (!hasAnimationRoot || !hasOutputRoot) return usageError("cook requires --animation-root and --output-root");
   } else if (command == "evaluate-rest") {
-    if (argc != 6) return usageError("expected evaluate-rest --animation-root <path> --attachment <attachment-id>");
+    if (argc != 10) {
+      return usageError("expected evaluate-rest --animation-root <path> --attachment <attachment-id> --content-root <path> --data-foundation <path>");
+    }
     bool hasAnimationRoot = false;
     bool hasAttachment = false;
+    bool hasContentRoot = false;
+    bool hasDataFoundation = false;
     for (int index = 2; index < argc; index += 2) {
       const std::string_view flag = argv[index];
       const std::string_view value = argv[index + 1];
@@ -653,21 +802,29 @@ int main(int argc, char** argv) {
       } else if (flag == "--attachment" && !hasAttachment) {
         requestedAttachmentId = value;
         hasAttachment = true;
+      } else if (flag == "--content-root" && !hasContentRoot) {
+        requestedContentRoot = value;
+        hasContentRoot = true;
+      } else if (flag == "--data-foundation" && !hasDataFoundation) {
+        requestedDataFoundation = value;
+        hasDataFoundation = true;
       } else {
         return usageError("unknown or duplicate evaluate-rest flag");
       }
     }
-    if (!hasAnimationRoot || !hasAttachment) {
-      return usageError("evaluate-rest requires --animation-root and --attachment");
+    if (!hasAnimationRoot || !hasAttachment || !hasContentRoot || !hasDataFoundation) {
+      return usageError("evaluate-rest requires --animation-root, --attachment, --content-root, and --data-foundation");
     }
   } else if (command == "evaluate-sample") {
-    if (argc != 10) {
-      return usageError("expected evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value>");
+    if (argc != 14) {
+      return usageError("expected evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path>");
     }
     bool hasAnimationRoot = false;
     bool hasAttachment = false;
     bool hasPhase = false;
     bool hasNormalizedTime = false;
+    bool hasContentRoot = false;
+    bool hasDataFoundation = false;
     std::string requestedNormalizedTimeRaw;
     for (int index = 2; index < argc; index += 2) {
       const std::string_view flag = argv[index];
@@ -685,12 +842,18 @@ int main(int argc, char** argv) {
       } else if (flag == "--normalized-time" && !hasNormalizedTime) {
         requestedNormalizedTimeRaw = value;
         hasNormalizedTime = true;
+      } else if (flag == "--content-root" && !hasContentRoot) {
+        requestedContentRoot = value;
+        hasContentRoot = true;
+      } else if (flag == "--data-foundation" && !hasDataFoundation) {
+        requestedDataFoundation = value;
+        hasDataFoundation = true;
       } else {
         return usageError("unknown or duplicate evaluate-sample flag");
       }
     }
-    if (!hasAnimationRoot || !hasAttachment || !hasPhase || !hasNormalizedTime) {
-      return usageError("evaluate-sample requires --animation-root, --attachment, --phase, and --normalized-time");
+    if (!hasAnimationRoot || !hasAttachment || !hasPhase || !hasNormalizedTime || !hasContentRoot || !hasDataFoundation) {
+      return usageError("evaluate-sample requires --animation-root, --attachment, --phase, --normalized-time, --content-root, and --data-foundation");
     }
     if (!parseCliFiniteNumber(requestedNormalizedTimeRaw, &requestedNormalizedTime)) {
       return usageError("evaluate-sample --normalized-time must be a locale-independent finite number");
@@ -711,6 +874,17 @@ int main(int argc, char** argv) {
 
   const auto skeletons = animation.snapshotSkeletons();
   const auto profiles = animation.snapshotAttachmentProfiles();
+  DataFoundation dataFoundation;
+  if (command == "evaluate-rest" || command == "evaluate-sample") {
+    std::filesystem::path contentRoot;
+    std::filesystem::path dataFoundationPath;
+    if (!resolvePath(requestedContentRoot, "content root", &contentRoot)) return 1;
+    if (!resolvePath(requestedDataFoundation, "data foundation", &dataFoundationPath)) return 1;
+    if (!dataFoundation.loadFromDisk(DataFoundationConfig{contentRoot, dataFoundationPath}, &error)) {
+      std::cerr << "shader_forge_spatial: " << command << " failed: " << error << '\n';
+      return 1;
+    }
+  }
   if (command == "evaluate-rest") {
     const auto attachmentId = animation.findAttachmentProfileId(requestedAttachmentId);
     if (!attachmentId) {
@@ -727,7 +901,13 @@ int main(int argc, char** argv) {
     std::ostringstream out;
     out.imbue(std::locale::classic());
     out << std::setprecision(std::numeric_limits<double>::max_digits10);
-    appendRestEvaluation(out, *evaluation);
+    ItemVisualBoxEvidence geometry;
+    if (!resolveAuthoredVisualBox(dataFoundation, *evaluation, &geometry, &error)) {
+      std::cerr << "shader_forge_spatial: evaluate-rest failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    appendRestEvaluation(out, *evaluation, geometry);
     std::cout << out.str();
     return 0;
   }
@@ -748,7 +928,13 @@ int main(int argc, char** argv) {
     std::ostringstream out;
     out.imbue(std::locale::classic());
     out << std::setprecision(std::numeric_limits<double>::max_digits10);
-    appendSampledEvaluation(out, *evaluation);
+    ItemVisualBoxEvidence geometry;
+    if (!resolveAuthoredVisualBox(dataFoundation, evaluation->evaluation, &geometry, &error)) {
+      std::cerr << "shader_forge_spatial: evaluate-sample failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    appendSampledEvaluation(out, *evaluation, geometry);
     std::cout << out.str();
     return 0;
   }

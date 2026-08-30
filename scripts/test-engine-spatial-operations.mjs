@@ -5,8 +5,11 @@ import path from 'node:path';
 import { CoordinationStore } from '../tools/engine-sessiond/lib/coordination-store.mjs';
 import { SessionStore, textContentRevision } from '../tools/engine-sessiond/lib/session-store.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
+import { repoRootFromScript } from './lib/harness-utils.mjs';
 
 const actor = { kind: 'human', id: 'spatial-test', name: 'Spatial Test' };
+const repoRoot = repoRootFromScript(import.meta.url);
+const spatialFixtureRoot = path.join(repoRoot, 'animation', 'fixtures', 'spatial');
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-operations-'));
 const projectRoot = path.join(temporaryRoot, 'project');
 const secondProjectRoot = path.join(temporaryRoot, 'other-project');
@@ -19,6 +22,24 @@ for (const root of [projectRoot, secondProjectRoot]) {
   for (const directory of ['skeletons', 'clips', 'graphs', 'attachments']) {
     await fs.mkdir(path.join(root, 'animation', directory), { recursive: true });
   }
+  for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
+    await fs.mkdir(path.join(root, 'content', directory), { recursive: true });
+  }
+  await fs.cp(
+    path.join(spatialFixtureRoot, 'content', 'prefabs'),
+    path.join(root, 'content', 'prefabs'),
+    { recursive: true },
+  );
+  await fs.cp(
+    path.join(spatialFixtureRoot, 'content', 'procgeo'),
+    path.join(root, 'content', 'procgeo'),
+    { recursive: true },
+  );
+  await fs.mkdir(path.join(root, 'data', 'foundation'), { recursive: true });
+  await fs.copyFile(
+    path.join(spatialFixtureRoot, 'data', 'foundation', 'engine-data-layout.toml'),
+    path.join(root, 'data', 'foundation', 'engine-data-layout.toml'),
+  );
 }
 await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
 await fs.writeFile(path.join(projectRoot, 'animation', 'skeletons', 'test.skeleton.toml'), 'name = "test"\n', 'utf8');
@@ -107,7 +128,7 @@ function restEvaluation(attachmentId) {
       world: identityTransform(),
       geometry: {
         status: 'unavailable',
-        reason: 'item_prefab_geometry_not_integrated',
+        reason: 'item_prefab_not_found',
       },
       primaryContactWorld: null,
       handleAxisWorld: {
@@ -149,6 +170,20 @@ function restEvaluationV2(attachmentId) {
   };
   evaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'rest_pose_unsolved' };
   evaluation.limitations.push('secondary_hand_ik_unavailable');
+  return evaluation;
+}
+
+function withAuthoredVisualBox(evaluation) {
+  evaluation.item.geometry = {
+    status: 'available',
+    kind: 'authored_visual_box',
+    procgeoId: 'test.item.visual',
+    dimensionsMeters: [2, 4, 6],
+    worldCorners: [
+      [-1, -2, -3], [1, -2, -3], [1, 2, -3], [-1, 2, -3],
+      [-1, -2, 3], [1, -2, 3], [1, 2, 3], [-1, 2, 3],
+    ],
+  };
   return evaluation;
 }
 
@@ -257,7 +292,21 @@ let evaluateImpl = async (animationRoot, attachmentId) => {
   return restEvaluation(attachmentId);
 };
 
-async function evaluateRestAttachment(animationRoot, attachmentId) {
+async function assertStagedDataInputs(contentRoot, foundationPath) {
+  for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
+    assert.equal((await fs.stat(path.join(contentRoot, directory))).isDirectory(), true);
+  }
+  assert.equal(
+    await fs.readFile(foundationPath, 'utf8'),
+    await fs.readFile(
+      path.join(spatialFixtureRoot, 'data', 'foundation', 'engine-data-layout.toml'),
+      'utf8',
+    ),
+  );
+}
+
+async function evaluateRestAttachment(animationRoot, contentRoot, foundationPath, attachmentId) {
+  await assertStagedDataInputs(contentRoot, foundationPath);
   return evaluateImpl(animationRoot, attachmentId);
 }
 
@@ -276,7 +325,15 @@ let sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTi
   return sampledEvaluation(attachmentId, { phase, normalizedTime });
 };
 
-async function evaluateSampledAttachment(animationRoot, attachmentId, phase, normalizedTime) {
+async function evaluateSampledAttachment(
+  animationRoot,
+  contentRoot,
+  foundationPath,
+  attachmentId,
+  phase,
+  normalizedTime,
+) {
+  await assertStagedDataInputs(contentRoot, foundationPath);
   return sampleEvaluateImpl(animationRoot, attachmentId, phase, normalizedTime);
 }
 
@@ -431,6 +488,32 @@ function exerciseCoordinationAssertions(sessionId, otherSessionId) {
 let service;
 try {
   const sessionStore = new SessionStore({ storageFilePath: statePath });
+  let readFileHook = null;
+  let listFilesHook = null;
+  const readFile = sessionStore.readFile.bind(sessionStore);
+  const listFiles = sessionStore.listFiles.bind(sessionStore);
+  sessionStore.readFile = async (sessionId, relativePath, options) => {
+    if (readFileHook?.path === relativePath) {
+      const hook = readFileHook;
+      readFileHook = null;
+      await hook.run();
+    }
+    return readFile(sessionId, relativePath, options);
+  };
+  sessionStore.listFiles = async (sessionId, relativePath, options) => {
+    if (listFilesHook?.path === relativePath) {
+      const hook = listFilesHook;
+      listFilesHook = null;
+      await hook.run();
+    }
+    return listFiles(sessionId, relativePath, options);
+  };
+  const removeThenNotFound = (remove) => async () => {
+    await remove();
+    const error = new Error('source removed during test read');
+    error.code = 'ENOENT';
+    throw error;
+  };
   service = await startEngineSessiond({
     port: 0,
     sessionStore,
@@ -514,6 +597,70 @@ try {
   assert.equal(evaluatedCalls.length, callsBeforeEvaluateGates);
   await fs.rm(path.join(secondProjectRoot, attachmentPath));
 
+  const contentSymlinkPath = path.join(projectRoot, 'content', 'linked-prefabs');
+  await fs.symlink(
+    path.join(projectRoot, 'content', 'prefabs'),
+    contentSymlinkPath,
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  const contentSymlinkEvaluate = await request(
+    service.baseUrl,
+    attachmentEvaluatePath(evaluateQuery),
+  );
+  assert.equal(contentSymlinkEvaluate.status, 400);
+  assert.equal(contentSymlinkEvaluate.payload.code, 'spatial_source_symlink_rejected');
+  assert.equal(evaluatedCalls.length, callsBeforeEvaluateGates);
+  await fs.rm(contentSymlinkPath, { recursive: true });
+
+  const assertSnapshotRace = (response, expectedPath) => {
+    assert.equal(response.status, 409);
+    assert.equal(response.payload.code, 'spatial_evaluation_inputs_changed');
+    assert.equal(response.payload.conflict.code, 'spatial_evaluation_inputs_changed');
+    assert.equal(response.payload.conflict.path, expectedPath);
+    assert.equal('diagnostic' in response.payload, false);
+    assert.ok(String(response.payload.error || '').length <= 128);
+    const serialized = JSON.stringify(response.payload);
+    assert.equal(serialized.includes(projectRoot), false);
+    assert.equal(serialized.includes(temporaryRoot), false);
+  };
+  const procgeoRelativePath = 'content/procgeo/weapon_rifle_mk1.procgeo.toml';
+  const procgeoPath = path.join(projectRoot, ...procgeoRelativePath.split('/'));
+  const procgeoSource = await fs.readFile(procgeoPath, 'utf8');
+  readFileHook = { path: procgeoRelativePath, run: removeThenNotFound(() => fs.rm(procgeoPath)) };
+  assertSnapshotRace(
+    await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery)),
+    procgeoRelativePath,
+  );
+  await fs.writeFile(procgeoPath, procgeoSource, 'utf8');
+
+  const procgeoDirectory = path.join(projectRoot, 'content', 'procgeo');
+  const procgeoBackup = path.join(projectRoot, 'content', 'procgeo-race-backup');
+  listFilesHook = {
+    path: 'content/procgeo',
+    run: removeThenNotFound(() => fs.rename(procgeoDirectory, procgeoBackup)),
+  };
+  assertSnapshotRace(
+    await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery)),
+    'content/procgeo',
+  );
+  await fs.rename(procgeoBackup, procgeoDirectory);
+
+  const foundationRelativePath = 'data/foundation/engine-data-layout.toml';
+  const foundationRacePath = path.join(projectRoot, ...foundationRelativePath.split('/'));
+  const foundationSource = await fs.readFile(foundationRacePath, 'utf8');
+  readFileHook = {
+    path: foundationRelativePath,
+    run: removeThenNotFound(() => fs.rm(foundationRacePath)),
+  };
+  assertSnapshotRace(
+    await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery)),
+    foundationRelativePath,
+  );
+  await fs.writeFile(foundationRacePath, foundationSource, 'utf8');
+  assert.equal(evaluatedCalls.length, callsBeforeEvaluateGates);
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
+
   const baselineEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
   assert.equal(baselineEvaluate.status, 200);
   assert.equal(baselineEvaluate.payload.path, attachmentPath);
@@ -537,6 +684,14 @@ try {
   await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
 
   const normalEvaluate = evaluateImpl;
+  evaluateImpl = async (_animationRoot, attachmentId) => (
+    withAuthoredVisualBox(restEvaluation(attachmentId))
+  );
+  const visualBoxEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(visualBoxEvaluate.status, 200);
+  assert.equal(visualBoxEvaluate.payload.evaluation.item.geometry.kind, 'authored_visual_box');
+  assert.equal(visualBoxEvaluate.payload.evaluation.item.geometry.worldCorners.length, 8);
+
   evaluateImpl = async (_animationRoot, attachmentId) => restEvaluationV2(attachmentId);
   const v1SourceV2Report = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
   assert.equal(v1SourceV2Report.status, 500);
@@ -621,6 +776,26 @@ try {
     ['non-finite geometry', (id) => mutateRestEvaluation(id, (evaluation) => {
       evaluation.item.world.translation = [Number.POSITIVE_INFINITY, 0, 0];
     })],
+    ['unknown unavailable geometry reason', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.geometry.reason = 'future_untrusted_reason';
+    })],
+    ['non-positive visual-box dimension', (id) => {
+      const evaluation = withAuthoredVisualBox(restEvaluation(id));
+      evaluation.item.geometry.dimensionsMeters[0] = 0;
+      return evaluation;
+    }],
+    ['visual-box corner order mismatch', (id) => {
+      const evaluation = withAuthoredVisualBox(restEvaluation(id));
+      [evaluation.item.geometry.worldCorners[0], evaluation.item.geometry.worldCorners[1]] = [
+        evaluation.item.geometry.worldCorners[1], evaluation.item.geometry.worldCorners[0],
+      ];
+      return evaluation;
+    }],
+    ['visual-box extra key', (id) => {
+      const evaluation = withAuthoredVisualBox(restEvaluation(id));
+      evaluation.item.geometry.collisionShape = 'box';
+      return evaluation;
+    }],
     ['wrong diagnostic contract', (id) => mutateRestEvaluation(id, (evaluation) => {
       evaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'unknown' };
     })],
@@ -688,6 +863,37 @@ try {
   assert.equal(revisionDrift.payload.code, 'revision_conflict');
   assert.equal(revisionDrift.payload.conflict.actualRevision, textContentRevision(candidateContent));
   await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
+
+  const rifleProcgeoPath = path.join(
+    projectRoot,
+    'content',
+    'procgeo',
+    'weapon_rifle_mk1.procgeo.toml',
+  );
+  const originalRifleProcgeo = await fs.readFile(rifleProcgeoPath, 'utf8');
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    await fs.writeFile(rifleProcgeoPath, `${originalRifleProcgeo}\n# changed during evaluation\n`, 'utf8');
+    return evaluation;
+  };
+  const contentDrift = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(contentDrift.status, 409);
+  assert.equal(contentDrift.payload.code, 'spatial_evaluation_inputs_changed');
+  assert.equal(contentDrift.payload.conflict.path, 'content/procgeo/weapon_rifle_mk1.procgeo.toml');
+  await fs.writeFile(rifleProcgeoPath, originalRifleProcgeo, 'utf8');
+
+  const foundationPath = path.join(projectRoot, 'data', 'foundation', 'engine-data-layout.toml');
+  const originalFoundation = await fs.readFile(foundationPath, 'utf8');
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    await fs.writeFile(foundationPath, `${originalFoundation}\n# changed during evaluation\n`, 'utf8');
+    return evaluation;
+  };
+  const foundationDrift = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(foundationDrift.status, 409);
+  assert.equal(foundationDrift.payload.code, 'spatial_evaluation_inputs_changed');
+  assert.equal(foundationDrift.payload.conflict.path, 'data/foundation/engine-data-layout.toml');
+  await fs.writeFile(foundationPath, originalFoundation, 'utf8');
   evaluateImpl = normalEvaluate;
 
   const normalSampleEvaluate = sampleEvaluateImpl;
@@ -788,6 +994,16 @@ try {
       path: 'animation/skeletons/test.skeleton.toml',
       revision: textContentRevision('name = "test"\n'),
     },
+    ...await Promise.all([
+      'content/prefabs/weapon_pistol_mk1.prefab.toml',
+      'content/prefabs/weapon_rifle_mk1.prefab.toml',
+      'content/procgeo/weapon_pistol_mk1.procgeo.toml',
+      'content/procgeo/weapon_rifle_mk1.procgeo.toml',
+      'data/foundation/engine-data-layout.toml',
+    ].map(async (sourcePath) => ({
+      path: sourcePath,
+      revision: textContentRevision(await fs.readFile(path.join(projectRoot, sourcePath), 'utf8')),
+    }))),
   ]);
   assert.deepEqual(sampledCalls.at(-1), {
     animationRoot: sampledCalls.at(-1).animationRoot,

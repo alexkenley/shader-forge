@@ -1,0 +1,14 @@
+schema = "shader_forge.procgeo"
+schema_version = 1
+name = "weapon.pistol.mk1"
+owner_system = "procgeo_system"
+runtime_format = "flatbuffer"
+
+generator = "plane_grid"
+bake_output = "generated_mesh"
+material_hint = "weapon_pistol"
+width = 0.2
+height = 0.01
+depth = 0.4
+rows = 1
+columns = 1

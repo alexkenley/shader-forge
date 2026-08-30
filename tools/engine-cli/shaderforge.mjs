@@ -65,8 +65,8 @@ Usage:
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]
-  engine spatial evaluate-rest --attachment <id> [--animation-root animation] [--build-dir build/runtime] [--config Debug]
-  engine spatial evaluate-sample --attachment <id> --phase <phase> --normalized-time <value> [--animation-root animation] [--build-dir build/runtime] [--config Debug]
+  engine spatial evaluate-rest --attachment <id> [--animation-root animation] [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--build-dir build/runtime] [--config Debug]
+  engine spatial evaluate-sample --attachment <id> --phase <phase> --normalized-time <value> [--animation-root animation] [--content-root content] [--data-foundation data/foundation/engine-data-layout.toml] [--build-dir build/runtime] [--config Debug]
   engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]
   engine spatial approve <operation-id> [--base-url <url>]
   engine spatial reject <operation-id> [--base-url <url>]
@@ -311,6 +311,17 @@ async function runSpatialCommand(subcommand, flags) {
   }
   if (subcommand === 'evaluate-rest' || subcommand === 'evaluate-sample') {
     args.push('--attachment', String(flags.attachment));
+    const requestedContentRoot = String(flags['content-root'] || 'content');
+    const contentRoot = path.isAbsolute(requestedContentRoot)
+      ? path.normalize(requestedContentRoot)
+      : path.resolve(process.cwd(), requestedContentRoot);
+    const requestedFoundationPath = String(
+      flags['data-foundation'] || path.join('data', 'foundation', 'engine-data-layout.toml'),
+    );
+    const foundationPath = path.isAbsolute(requestedFoundationPath)
+      ? path.normalize(requestedFoundationPath)
+      : path.resolve(process.cwd(), requestedFoundationPath);
+    args.push('--content-root', contentRoot, '--data-foundation', foundationPath);
   }
   if (subcommand === 'evaluate-sample') {
     args.push('--phase', String(flags.phase), '--normalized-time', String(flags['normalized-time']));
@@ -819,8 +830,8 @@ export async function runCli(argv = process.argv.slice(2)) {
     const flagsBySubcommand = {
       validate: ['animation-root', 'build-dir', 'config'],
       cook: ['animation-root', 'output-root', 'build-dir', 'config'],
-      'evaluate-rest': ['attachment', 'animation-root', 'build-dir', 'config'],
-      'evaluate-sample': ['attachment', 'phase', 'normalized-time', 'animation-root', 'build-dir', 'config'],
+      'evaluate-rest': ['attachment', 'animation-root', 'content-root', 'data-foundation', 'build-dir', 'config'],
+      'evaluate-sample': ['attachment', 'phase', 'normalized-time', 'animation-root', 'content-root', 'data-foundation', 'build-dir', 'config'],
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease', 'base-url'],
       approve: ['base-url'],
       reject: ['base-url'],

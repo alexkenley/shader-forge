@@ -918,7 +918,25 @@ export type SpatialAttachmentEvaluation = {
   item: {
     prefabId: string;
     world: SpatialEvaluationTransform;
-    geometry: { status: 'unavailable'; reason: string };
+    geometry: {
+      status: 'unavailable';
+      reason: string;
+    } | {
+      status: 'available';
+      kind: 'authored_visual_box';
+      procgeoId: string;
+      dimensionsMeters: SpatialEvaluationVec3;
+      worldCorners: [
+        SpatialEvaluationVec3,
+        SpatialEvaluationVec3,
+        SpatialEvaluationVec3,
+        SpatialEvaluationVec3,
+        SpatialEvaluationVec3,
+        SpatialEvaluationVec3,
+        SpatialEvaluationVec3,
+        SpatialEvaluationVec3,
+      ];
+    };
     primaryContactWorld: SpatialEvaluationTransform | null;
     handleAxisWorld: {
       origin: SpatialEvaluationVec3;

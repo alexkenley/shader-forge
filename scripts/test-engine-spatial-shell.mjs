@@ -98,7 +98,7 @@ const validRestEvaluation = {
   item: {
     prefabId: 'item.test',
     world: evaluationTransform,
-    geometry: { status: 'unavailable', reason: 'item_prefab_geometry_not_integrated' },
+    geometry: { status: 'unavailable', reason: 'item_prefab_not_found' },
     primaryContactWorld: null,
     handleAxisWorld: null,
   },
@@ -361,6 +361,32 @@ assert.equal(
 assert.equal(schematic.spatialProjectionBounds([], 'xy'), null);
 assert.equal(schematic.isSpatialAttachmentEvaluation(validRestEvaluation), true);
 assert.equal(schematic.isSpatialAttachmentEvaluation(populatedRestEvaluation), true);
+const visualBoxEvaluation = structuredClone(populatedRestEvaluation);
+visualBoxEvaluation.item.geometry = {
+  status: 'available',
+  kind: 'authored_visual_box',
+  procgeoId: 'item.test.visual',
+  dimensionsMeters: [2, 4, 6],
+  worldCorners: [
+    [-1, -2, -3], [1, -2, -3], [1, 2, -3], [-1, 2, -3],
+    [-1, -2, 3], [1, -2, 3], [1, 2, 3], [-1, 2, 3],
+  ],
+};
+assert.equal(schematic.isSpatialAttachmentEvaluation(visualBoxEvaluation), true);
+for (const mutate of [
+  (report) => { report.item.geometry.dimensionsMeters[0] = 0; },
+  (report) => { report.item.geometry.worldCorners.pop(); },
+  (report) => { [report.item.geometry.worldCorners[0], report.item.geometry.worldCorners[1]] = [report.item.geometry.worldCorners[1], report.item.geometry.worldCorners[0]]; },
+  (report) => { report.item.geometry.procgeoId = ''; },
+  (report) => { report.item.geometry.collisionShape = 'box'; },
+]) {
+  const malformed = structuredClone(visualBoxEvaluation);
+  mutate(malformed);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, 'malformed visual-box evidence must fail closed');
+}
+const unknownGeometryReason = structuredClone(populatedRestEvaluation);
+unknownGeometryReason.item.geometry.reason = 'future_untrusted_reason';
+assert.equal(schematic.isSpatialAttachmentEvaluation(unknownGeometryReason), false);
 const restV2OneHand = structuredClone(populatedRestEvaluation);
 restV2OneHand.schemaVersion = 2;
 const restV1TwoHand = twoHandRestEvaluation(1);
@@ -591,13 +617,16 @@ assert.match(schematicSource, /NOT REVIEW EVIDENCE/);
 assert.match(schematicSource, /Exact source revisions/);
 assert.match(schematicSource, /Source revisions/);
 assert.match(schematicSource, /No item mesh, joint-limit result, clipping result, camera, capture, or immutable review packet/);
+assert.match(schematicSource, /ITEM_BOX_EDGES/);
+assert.match(schematicSource, /exact authored render-procgeo evidence, not collision truth/);
+assert.match(schematicSource, /not collision geometry or a rendered mesh/);
 assert.match(schematicSource, /Secondary IK reach/);
 assert.match(schematicSource, /Secondary IK contact/);
 assert.match(schematicSource, /Secondary IK angle/);
 assert.match(schematicSource, /'PASS'\s*:\s*'FAIL'/);
 assert.match(schematicSource, /handleAxisWorld/);
 assert.match(schematicSource, /palmWorld/);
-assert.match(schematicSource, /a resolved authored pole is shown as a green ring/);
+assert.match(schematicSource, /[Aa] resolved authored pole is shown as a green ring/);
 assert.match(schematicSource, /An unresolved pole is never projected/);
 assert.match(schematicSource, /Exact evaluator coordinates/);
 assert.match(schematicSource, /Evaluator diagnostics/);

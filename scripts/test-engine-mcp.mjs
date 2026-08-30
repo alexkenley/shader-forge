@@ -9,6 +9,7 @@ import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
 import { restEvaluation } from './lib/spatial-evaluation-fixture.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const spatialFixtureRoot = path.join(repoRoot, 'animation', 'fixtures', 'spatial');
 const MCP_REQUEST_TIMEOUT_MS = 5_000;
 const MCP_EXIT_TIMEOUT_MS = 5_000;
 
@@ -157,7 +158,7 @@ async function validateAnimationRoot(animationRoot) {
   };
 }
 
-async function evaluateRestAttachment(_animationRoot, attachmentId) {
+async function evaluateRestAttachment(_animationRoot, _contentRoot, _foundationPath, attachmentId) {
   return restEvaluation(attachmentId);
 }
 
@@ -173,6 +174,24 @@ async function main() {
   for (const directory of ['skeletons', 'clips', 'graphs', 'attachments']) {
     await fs.mkdir(path.join(workspaceRoot, 'animation', directory), { recursive: true });
   }
+  for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
+    await fs.mkdir(path.join(workspaceRoot, 'content', directory), { recursive: true });
+  }
+  await fs.cp(
+    path.join(spatialFixtureRoot, 'content', 'prefabs'),
+    path.join(workspaceRoot, 'content', 'prefabs'),
+    { recursive: true },
+  );
+  await fs.cp(
+    path.join(spatialFixtureRoot, 'content', 'procgeo'),
+    path.join(workspaceRoot, 'content', 'procgeo'),
+    { recursive: true },
+  );
+  await fs.mkdir(path.join(workspaceRoot, 'data', 'foundation'), { recursive: true });
+  await fs.copyFile(
+    path.join(spatialFixtureRoot, 'data', 'foundation', 'engine-data-layout.toml'),
+    path.join(workspaceRoot, 'data', 'foundation', 'engine-data-layout.toml'),
+  );
   await fs.writeFile(path.join(workspaceRoot, 'src', 'fixture.txt'), 'shader forge mcp fixture\n', 'utf8');
   await fs.writeFile(path.join(workspaceRoot, attachmentPath), originalAttachment, 'utf8');
   await fs.writeFile(path.join(workspaceRoot, 'animation', 'skeletons', 'test.skeleton.toml'), 'name = "test"\n', 'utf8');

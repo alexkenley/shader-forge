@@ -38,7 +38,7 @@ export function restEvaluation(attachmentId) {
     item: {
       prefabId: 'test.item',
       world: identityTransform(),
-      geometry: { status: 'unavailable', reason: 'item_prefab_geometry_not_integrated' },
+      geometry: { status: 'unavailable', reason: 'item_prefab_not_found' },
       primaryContactWorld: null,
       handleAxisWorld: { origin: [0, 0, 0], direction: [0, 0, 1] },
     },

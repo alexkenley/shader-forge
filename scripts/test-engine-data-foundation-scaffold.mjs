@@ -81,7 +81,7 @@ assert.match(foundationSource, /default_scene/);
 assert.match(foundationSource, /tooling_overlay/);
 assert.match(foundationSource, /generator must be 'box' or 'plane_grid'/);
 assert.match(foundationSource, /bake_output must be 'generated_mesh'/);
-assert.match(foundationSource, /width, height, and depth must be positive/);
+assert.match(foundationSource, /width, height, and depth must be finite positive numbers/);
 assert.match(foundationSource, /plane_grid requires rows and columns >= 1/);
 assert.match(foundationSource, /Content relationships:/);
 assert.match(runtimeHeader, /contentRoot/);

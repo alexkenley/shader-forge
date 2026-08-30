@@ -1,0 +1,12 @@
+schema = "shader_forge.prefab"
+schema_version = 1
+name = "weapon.rifle.mk1"
+owner_system = "scene_system"
+runtime_format = "flatbuffer"
+
+category = "item"
+spawn_tag = "weapon"
+
+[component.render]
+procgeo = "weapon.rifle.mk1"
+material_hint = "weapon_rifle"

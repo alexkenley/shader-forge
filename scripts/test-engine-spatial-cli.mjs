@@ -11,6 +11,7 @@ import { restEvaluation } from './lib/spatial-evaluation-fixture.mjs';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const spatialFixtureRoot = path.join(repoRoot, 'animation', 'fixtures', 'spatial');
 const cliPath = path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs');
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-cli-'));
 const projectRoot = path.join(temporaryRoot, 'project');
@@ -23,6 +24,24 @@ let expectedCredential = '';
 for (const directory of ['skeletons', 'clips', 'graphs', 'attachments']) {
   await fs.mkdir(path.join(projectRoot, 'animation', directory), { recursive: true });
 }
+for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
+  await fs.mkdir(path.join(projectRoot, 'content', directory), { recursive: true });
+}
+await fs.cp(
+  path.join(spatialFixtureRoot, 'content', 'prefabs'),
+  path.join(projectRoot, 'content', 'prefabs'),
+  { recursive: true },
+);
+await fs.cp(
+  path.join(spatialFixtureRoot, 'content', 'procgeo'),
+  path.join(projectRoot, 'content', 'procgeo'),
+  { recursive: true },
+);
+await fs.mkdir(path.join(projectRoot, 'data', 'foundation'), { recursive: true });
+await fs.copyFile(
+  path.join(spatialFixtureRoot, 'data', 'foundation', 'engine-data-layout.toml'),
+  path.join(projectRoot, 'data', 'foundation', 'engine-data-layout.toml'),
+);
 await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
 const candidatePath = path.join(temporaryRoot, 'candidate.attachment.toml');
 const invalidCandidatePath = path.join(temporaryRoot, 'invalid.attachment.toml');
@@ -67,7 +86,7 @@ async function validateAnimationRoot(animationRoot) {
   };
 }
 
-async function evaluateRestAttachment(_animationRoot, attachmentId) {
+async function evaluateRestAttachment(_animationRoot, _contentRoot, _foundationPath, attachmentId) {
   return restEvaluation(attachmentId);
 }
 

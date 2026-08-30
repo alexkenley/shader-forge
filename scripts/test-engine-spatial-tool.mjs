@@ -8,6 +8,7 @@ import { repoRootFromScript } from './lib/harness-utils.mjs';
 const repoRoot = repoRootFromScript(import.meta.url);
 const includeRoot = path.join(repoRoot, 'engine', 'runtime', 'include');
 const animationSource = path.join(repoRoot, 'engine', 'runtime', 'src', 'animation_system.cpp');
+const dataFoundationSource = path.join(repoRoot, 'engine', 'runtime', 'src', 'data_foundation.cpp');
 const toolSource = path.join(repoRoot, 'engine', 'runtime', 'src', 'spatial_authoring_tool.cpp');
 const cliPath = path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs');
 const animationRoot = path.join(repoRoot, 'animation');
@@ -17,6 +18,7 @@ const cmakeSource = fs.readFileSync(path.join(repoRoot, 'engine', 'runtime', 'CM
 
 assert.match(cmakeSource, /add_executable\(\s*shader_forge_spatial/);
 assert.match(cmakeSource, /src\/spatial_authoring_tool\.cpp/);
+assert.match(cmakeSource, /add_executable\(\s*shader_forge_spatial[\s\S]*src\/data_foundation\.cpp/);
 assert.match(cliSource, /engine build \[runtime\|spatial\]/);
 assert.match(cliSource, /engine spatial validate/);
 assert.match(cliSource, /engine spatial cook/);
@@ -30,6 +32,12 @@ const toolSourceText = fs.readFileSync(toolSource, 'utf8');
 assert.match(toolSourceText, /evaluate-sample/);
 assert.match(toolSourceText, /clip_sample/);
 assert.match(toolSourceText, /pre_ik_only/);
+assert.match(toolSourceText, /DataFoundation/);
+assert.match(toolSourceText, /authored_visual_box/);
+assert.match(toolSourceText, /--content-root/);
+assert.match(toolSourceText, /--data-foundation/);
+assert.match(toolSourceText, /prefabSource/);
+assert.match(toolSourceText, /procgeoSource/);
 
 const help = spawnSync(process.execPath, [cliPath, '--help'], { cwd: repoRoot, encoding: 'utf8' });
 assert.equal(help.status, 0, help.stderr || help.stdout);
@@ -110,6 +118,24 @@ const invalidUtf8Root = path.join(tempRoot, 'invalid utf8 animation');
 const cookedRoot = path.join(tempRoot, 'cooked output');
 const executablePath = path.join(tempRoot, 'shader_forge_spatial');
 const spatialFixtures = path.join(animationRoot, 'fixtures', 'spatial');
+const foundationPath = path.join(spatialFixtures, 'data', 'foundation', 'engine-data-layout.toml');
+const contentRoot = path.join(tempRoot, 'spatial content');
+const rifleBox = {
+  procgeoId: 'weapon_rifle_mk1',
+  width: 0.125,
+  height: 0.25,
+  depth: 1,
+};
+const rifleLocalCorners = [
+  [-rifleBox.width / 2, -rifleBox.height / 2, -rifleBox.depth / 2],
+  [rifleBox.width / 2, -rifleBox.height / 2, -rifleBox.depth / 2],
+  [rifleBox.width / 2, rifleBox.height / 2, -rifleBox.depth / 2],
+  [-rifleBox.width / 2, rifleBox.height / 2, -rifleBox.depth / 2],
+  [-rifleBox.width / 2, -rifleBox.height / 2, rifleBox.depth / 2],
+  [rifleBox.width / 2, -rifleBox.height / 2, rifleBox.depth / 2],
+  [rifleBox.width / 2, rifleBox.height / 2, rifleBox.depth / 2],
+  [-rifleBox.width / 2, rifleBox.height / 2, rifleBox.depth / 2],
+];
 
 for (const directory of ['skeletons', 'clips', 'graphs']) {
   fs.cpSync(path.join(animationRoot, directory), path.join(fixtureRoot, directory), { recursive: true });
@@ -117,6 +143,20 @@ for (const directory of ['skeletons', 'clips', 'graphs']) {
 for (const directory of ['skeletons', 'clips', 'attachments']) {
   fs.cpSync(path.join(spatialFixtures, directory), path.join(fixtureRoot, directory), { recursive: true });
 }
+for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
+  fs.mkdirSync(path.join(contentRoot, directory), { recursive: true });
+}
+fs.cpSync(
+  path.join(spatialFixtures, 'content', 'prefabs'),
+  path.join(contentRoot, 'prefabs'),
+  { recursive: true },
+);
+fs.cpSync(
+  path.join(spatialFixtures, 'content', 'procgeo'),
+  path.join(contentRoot, 'procgeo'),
+  { recursive: true },
+);
+fs.writeFileSync(path.join(contentRoot, 'prefabs', 'README.txt'), 'this is not authored TOML');
 fs.cpSync(fixtureRoot, invalidRoot, { recursive: true });
 fs.cpSync(fixtureRoot, invalidUtf8Root, { recursive: true });
 const invalidAttachment = path.join(invalidRoot, 'attachments', 'rifle_mk1_humanoid.attachment.toml');
@@ -155,7 +195,8 @@ try {
     if (compiler.status === 0) {
       compile = run('wsl.exe', [
         'g++', '-std=c++20', '-I', toWslPath(includeRoot),
-        toWslPath(toolSource), toWslPath(animationSource), '-o', toWslPath(executablePath),
+        toWslPath(toolSource), toWslPath(animationSource), toWslPath(dataFoundationSource),
+        '-o', toWslPath(executablePath),
       ]);
       invoke = (args) => run('wsl.exe', [
         toWslPath(executablePath),
@@ -169,7 +210,7 @@ try {
     }
     if (compiler.status === 0) {
       compile = run('g++', [
-        '-std=c++20', '-I', includeRoot, toolSource, animationSource, '-o', executablePath,
+        '-std=c++20', '-I', includeRoot, toolSource, animationSource, dataFoundationSource, '-o', executablePath,
       ]);
       invoke = (args) => run(executablePath, args);
     }
@@ -272,17 +313,63 @@ try {
     assert.equal(firstCookBytes.includes(Buffer.from(fixtureRoot)), false, 'cooked payload must not contain the host absolute animation root');
     assert.equal(firstCookBytes.includes(Buffer.from('generation')), false, 'cooked payload must not serialize typed handles');
 
+    const withContent = (args) => [
+      ...args,
+      '--content-root', contentRoot,
+      '--data-foundation', foundationPath,
+    ];
     const evaluate = (...args) => {
-      const result = invoke(['evaluate-rest', ...args]);
+      const result = invoke(withContent(['evaluate-rest', ...args]));
       assert.equal(result.status, 0, result.stderr || result.stdout);
       return result;
     };
+    for (const [name, unsafePrefabSubdir] of [
+      ['traversal', '../prefabs'],
+      ['absolute', process.platform === 'win32' ? toWslPath(contentRoot) : contentRoot],
+    ]) {
+      const unsafeFoundationPath = path.join(tempRoot, `${name} foundation.toml`);
+      fs.writeFileSync(
+        unsafeFoundationPath,
+        fs.readFileSync(foundationPath, 'utf8')
+          .replace('prefab_subdir = "prefabs"', `prefab_subdir = "${unsafePrefabSubdir}"`),
+      );
+      const unsafeFoundationResult = invoke([
+        'evaluate-rest', '--animation-root', fixtureRoot,
+        '--attachment', 'weapon.rifle.mk1.humanoid',
+        '--content-root', contentRoot,
+        '--data-foundation', unsafeFoundationPath,
+      ]);
+      assert.notEqual(unsafeFoundationResult.status, 0, `${name} content subdirectory must be rejected`);
+      assert.equal(unsafeFoundationResult.stdout, '');
+      assert.match(unsafeFoundationResult.stderr, /Content subdirectory must stay under content root/);
+    }
     const findById = (entries, id) => entries.find((entry) => entry.id === id);
     const assertVectorClose = (actual, expected, message = 'vector mismatch') => {
       assert.equal(actual.length, expected.length, message);
       actual.forEach((value, index) => {
         assert.ok(Math.abs(value - expected[index]) <= 1e-12, `${message} at ${index}: ${value}`);
       });
+    };
+    const transformBoxCorner = (local, world) => [
+      world.translation[0] + local[0] * world.axes.x[0] + local[1] * world.axes.y[0] + local[2] * world.axes.z[0],
+      world.translation[1] + local[0] * world.axes.x[1] + local[1] * world.axes.y[1] + local[2] * world.axes.z[1],
+      world.translation[2] + local[0] * world.axes.x[2] + local[1] * world.axes.y[2] + local[2] * world.axes.z[2],
+    ];
+    const assertAuthoredVisualBox = (evaluation, message) => {
+      const geometry = evaluation.item.geometry;
+      assert.equal(geometry.status, 'available', message);
+      assert.equal(geometry.kind, 'authored_visual_box', message);
+      assert.equal(geometry.procgeoId, rifleBox.procgeoId, message);
+      assert.deepEqual(Object.keys(geometry), [
+        'status', 'kind', 'procgeoId', 'dimensionsMeters', 'worldCorners',
+      ]);
+      assertVectorClose(geometry.dimensionsMeters, [rifleBox.width, rifleBox.height, rifleBox.depth], `${message} dimensions`);
+      assert.equal(geometry.worldCorners.length, 8, `${message} corner count`);
+      const expectedCorners = rifleLocalCorners.map((local) => transformBoxCorner(local, evaluation.item.world));
+      expectedCorners.forEach((expected, index) => {
+        assertVectorClose(geometry.worldCorners[index], expected, `${message} corner ${index}`);
+      });
+      assert.equal(JSON.stringify(geometry).includes('collision'), false, `${message} must not call the box collision geometry`);
     };
     const firstRest = evaluate('--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid');
     const secondRest = evaluate('--attachment', 'weapon.rifle.mk1.humanoid', '--animation-root', fixtureRoot);
@@ -295,7 +382,11 @@ try {
       units: 'meters', handedness: 'right', up: '+Y', forward: '+Z', quaternionOrder: 'xyzw',
     });
     assert.equal(rest.attachment.id, 'weapon.rifle.mk1.humanoid');
-    assert.equal(rest.item.geometry.status, 'unavailable');
+    assertAuthoredVisualBox(rest, 'rifle rest visual box');
+    assert.deepEqual(rest.diagnostics.clipping, {
+      status: 'unavailable',
+      reason: 'item_and_capsule_geometry_not_integrated',
+    });
     assertVectorClose(findById(rest.bones, 'hand_r').world.translation, [-0.78, 1.47, 0], 'hand_r world');
     assertVectorClose(findById(rest.sockets, 'socket.hand_r.primary').world.translation, [-0.78, 1.47, 0.08], 'primary socket world');
     assertVectorClose(rest.item.world.translation, [-0.78, 1.455, 0.1], 'item world');
@@ -318,8 +409,77 @@ try {
     assert.equal(rest.limitations.includes('rest_pose_only'), true);
     assert.equal(rest.limitations.includes('pre_ik_only'), false);
 
+    const pistolRest = JSON.parse(evaluate(
+      '--animation-root', fixtureRoot, '--attachment', 'weapon.pistol.mk1.humanoid',
+    ).stdout);
+    assert.deepEqual(pistolRest.item.geometry, {
+      status: 'unavailable',
+      reason: 'item_prefab_visual_geometry_not_box',
+    });
+    assert.ok(pistolRest.bones.length > 0, 'pistol rest must keep compatible skeletal evidence');
+    assert.ok(pistolRest.limitations.includes('item_mesh_unavailable'));
+    assert.ok(pistolRest.limitations.includes('not_review_evidence'));
+    assert.deepEqual(pistolRest.diagnostics.clipping, {
+      status: 'unavailable',
+      reason: 'item_and_capsule_geometry_not_integrated',
+    });
+    const missingItemRoot = path.join(tempRoot, 'missing item animation');
+    fs.cpSync(fixtureRoot, missingItemRoot, { recursive: true });
+    const missingItemAttachment = path.join(
+      missingItemRoot, 'attachments', 'pistol_mk1_humanoid.attachment.toml',
+    );
+    fs.writeFileSync(
+      missingItemAttachment,
+      fs.readFileSync(missingItemAttachment, 'utf8')
+        .replace('item_prefab = "weapon.pistol.mk1"', 'item_prefab = "weapon.missing"'),
+    );
+    const missingItemRest = JSON.parse(evaluate(
+      '--animation-root', missingItemRoot, '--attachment', 'weapon.pistol.mk1.humanoid',
+    ).stdout);
+    assert.deepEqual(missingItemRest.item.geometry, {
+      status: 'unavailable',
+      reason: 'item_prefab_not_found',
+    });
+    const duplicateContentRoot = path.join(tempRoot, 'duplicate prefab content');
+    fs.cpSync(contentRoot, duplicateContentRoot, { recursive: true });
+    fs.copyFileSync(
+      path.join(duplicateContentRoot, 'prefabs', 'weapon_rifle_mk1.prefab.toml'),
+      path.join(duplicateContentRoot, 'prefabs', 'weapon_rifle_duplicate.prefab.toml'),
+    );
+    const duplicatePrefabResult = invoke([
+      'evaluate-rest', '--animation-root', fixtureRoot,
+      '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--content-root', duplicateContentRoot,
+      '--data-foundation', foundationPath,
+    ]);
+    assert.equal(duplicatePrefabResult.status, 0, duplicatePrefabResult.stderr || duplicatePrefabResult.stdout);
+    assert.deepEqual(JSON.parse(duplicatePrefabResult.stdout).item.geometry, {
+      status: 'unavailable',
+      reason: 'item_prefab_ambiguous',
+    });
+    const nonFiniteContentRoot = path.join(tempRoot, 'non-finite procgeo content');
+    fs.cpSync(contentRoot, nonFiniteContentRoot, { recursive: true });
+    const nonFiniteProcgeo = path.join(
+      nonFiniteContentRoot, 'procgeo', 'weapon_rifle_mk1.procgeo.toml',
+    );
+    fs.writeFileSync(
+      nonFiniteProcgeo,
+      fs.readFileSync(nonFiniteProcgeo, 'utf8').replace('width = 0.125', 'width = nan'),
+    );
+    const nonFiniteResult = invoke([
+      'evaluate-rest', '--animation-root', fixtureRoot,
+      '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--content-root', nonFiniteContentRoot,
+      '--data-foundation', foundationPath,
+    ]);
+    assert.equal(nonFiniteResult.status, 0, nonFiniteResult.stderr || nonFiniteResult.stdout);
+    assert.deepEqual(JSON.parse(nonFiniteResult.stdout).item.geometry, {
+      status: 'unavailable',
+      reason: 'item_prefab_visual_geometry_unavailable',
+    });
+
     const sample = (...args) => {
-      const result = invoke(['evaluate-sample', ...args]);
+      const result = invoke(withContent(['evaluate-sample', ...args]));
       assert.equal(result.status, 0, result.stderr || result.stdout);
       return result;
     };
@@ -347,7 +507,9 @@ try {
     });
     assert.deepEqual(sampled.coordinateSystem, rest.coordinateSystem);
     assert.deepEqual(sampled.attachment, rest.attachment);
-    assert.equal(sampled.item.geometry.status, 'unavailable');
+    assertAuthoredVisualBox(sampled, 'rifle sampled visual box');
+    assert.deepEqual(sampled.item.geometry.dimensionsMeters, rest.item.geometry.dimensionsMeters);
+    assert.notDeepEqual(sampled.item.geometry.worldCorners, rest.item.geometry.worldCorners);
     assert.notDeepEqual(sampled.item.world.translation, rest.item.world.translation, 'sampled item must move at idle 0.5');
     assert.notDeepEqual(
       findById(sampled.sockets, 'socket.hand_r.primary').world.translation,
@@ -498,10 +660,10 @@ try {
       fs.readFileSync(collinearAttachmentPath, 'utf8')
         .replace('translation = [0.8, -0.2, 0.15]', 'translation = [1.0, 0.0, 0.11]'),
     );
-    const collinear = invoke([
+    const collinear = invoke(withContent([
       'evaluate-sample', '--animation-root', collinearRoot,
       '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5',
-    ]);
+    ]));
     assert.notEqual(collinear.status, 0);
     assert.equal(collinear.stdout, '');
     assert.match(collinear.stderr, /pole is collinear with the shoulder-target line/);
@@ -514,10 +676,10 @@ try {
       fs.readFileSync(zeroLengthSkeletonPath, 'utf8')
         .replace('translation = [0.28, 0.0, 0.0]', 'translation = [0.0, 0.0, 0.0]'),
     );
-    const zeroLength = invoke([
+    const zeroLength = invoke(withContent([
       'evaluate-sample', '--animation-root', zeroLengthRoot,
       '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5',
-    ]);
+    ]));
     assert.notEqual(zeroLength.status, 0);
     assert.equal(zeroLength.stdout, '');
     assert.match(zeroLength.stderr, /segment length is zero or non-finite/);
@@ -528,16 +690,21 @@ try {
       path.join(oneHandRoot, 'attachments', 'pistol_mk1_humanoid.attachment.toml'),
       '\n[motion_envelope.idle]\nclip = "rifle_ready"\nnormalized_times = [0.5]\n',
     );
-    const oneHandSample = invoke([
+    const oneHandSample = invoke(withContent([
       'evaluate-sample', '--animation-root', oneHandRoot, '--attachment', 'weapon.pistol.mk1.humanoid',
       '--phase', 'idle', '--normalized-time', '0.5',
-    ]);
+    ]));
     assert.equal(oneHandSample.status, 0, oneHandSample.stderr || oneHandSample.stdout);
     const oneHandSampled = JSON.parse(oneHandSample.stdout);
     assert.deepEqual(oneHandSampled.pose.proceduralLayersRequested, ['primary_attachment']);
     assert.deepEqual(oneHandSampled.pose.proceduralLayersApplied, ['primary_attachment']);
     assert.deepEqual(oneHandSampled.pose.proceduralLayersUnavailable, []);
     assert.equal(oneHandSampled.diagnostics.secondaryIk.status, 'not_applicable');
+    assert.deepEqual(oneHandSampled.item.geometry, {
+      status: 'unavailable',
+      reason: 'item_prefab_visual_geometry_not_box',
+    });
+    assert.ok(oneHandSampled.bones.length > 0, 'pistol sample must keep compatible skeletal evidence');
     assert.deepEqual(oneHandSampled.limitations, [
       'sampled_attachment_schematic_only',
       'not_review_evidence',
@@ -548,29 +715,32 @@ try {
       [['evaluate-sample'], /evaluate-sample/],
       [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle'], /evaluate-sample/],
       [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time'], /evaluate-sample/],
-      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalised-time', '0.5'], /unknown or duplicate evaluate-sample flag/],
-      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--phase', 'aim'], /unknown or duplicate evaluate-sample flag/],
-      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5', '--phase', 'aim'], /evaluate-sample/],
-      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0,5'], /locale-independent finite number/],
-      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', 'nan'], /locale-independent finite number/],
-      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', 'inf'], /locale-independent finite number/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5'], /evaluate-sample/],
+      [['evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid'], /evaluate-rest/],
+      [['evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--content-root', contentRoot], /evaluate-rest/],
+      [withContent(['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalised-time', '0.5']), /unknown or duplicate evaluate-sample flag/],
+      [withContent(['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0,5']), /locale-independent finite number/],
+      [withContent(['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', 'nan']), /locale-independent finite number/],
+      [withContent(['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', 'inf']), /locale-independent finite number/],
+      [['evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--content-root', contentRoot, '--content-root', contentRoot], /unknown or duplicate evaluate-rest flag/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5', '--content-root', contentRoot, '--content-root', contentRoot], /unknown or duplicate evaluate-sample flag/],
     ]) {
       const invalidSample = invoke(argumentsList);
       assert.notEqual(invalidSample.status, 0, `evaluate-sample flags should be rejected: ${argumentsList.join(' ')}`);
       assert.equal(invalidSample.stdout, '');
       assert.match(invalidSample.stderr, expectedError);
     }
-    const unknownPhase = invoke([
+    const unknownPhase = invoke(withContent([
       'evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
       '--phase', 'sprint', '--normalized-time', '0.5',
-    ]);
+    ]));
     assert.notEqual(unknownPhase.status, 0);
     assert.equal(unknownPhase.stdout, '');
     assert.match(unknownPhase.stderr, /Unknown motion-envelope phase "sprint"|Unknown motion-envelope phase 'sprint'/);
-    const unlistedTime = invoke([
+    const unlistedTime = invoke(withContent([
       'evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
       '--phase', 'idle', '--normalized-time', '0.25',
-    ]);
+    ]));
     assert.notEqual(unlistedTime.status, 0);
     assert.equal(unlistedTime.stdout, '');
     assert.match(unlistedTime.stderr, /not an authored sample/);
@@ -616,7 +786,7 @@ try {
       'name = "Rotation Compose"',
       'owner_system = "animation_system"',
       'skeleton = "rotation.compose.v2"',
-      'item_prefab = "rotation.compose.item"',
+      'item_prefab = "weapon.rifle.mk1"',
       'dominant_hand = "right"',
       'mode = "one_hand"',
       'perspective = "third_person"',
@@ -641,6 +811,9 @@ try {
     assertVectorClose(findById(rotated.sockets, 'socket.child.primary').world.rotation, [0.7071067811865476, 0, 0, 0.7071067811865476], 'socket quaternion order');
     assertVectorClose(rotated.item.world.translation, [0.8, 1.25, -0.75], 'rotated item world');
     assertVectorClose(rotated.item.world.rotation, [0.5, 0.5, 0.5, 0.5], 'item quaternion order and sign');
+    assertAuthoredVisualBox(rotated, 'rotated visual box');
+    assertVectorClose(rotated.item.geometry.worldCorners[0], [0.3, 1.1875, -0.875], 'rotated visual box corner 0');
+    assertVectorClose(rotated.item.geometry.worldCorners[6], [1.3, 1.3125, -0.625], 'rotated visual box corner 6');
     assert.equal(rotated.hands.secondary, null);
     assert.equal(rotated.diagnostics.secondaryIk.status, 'not_applicable');
     assert.equal(rotated.limitations.includes('secondary_hand_ik_unavailable'), false);
@@ -675,16 +848,16 @@ try {
       '[secondary_hand.tolerances]', 'reach_meters = 0.0', 'angle_degrees = 0.0',
       'contact_meters = 0.0', '',
     ].join('\n'));
-    const overflowRest = invoke([
+    const overflowRest = invoke(withContent([
       'evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'large.coordinates.two_hand',
-    ]);
+    ]));
     assert.notEqual(overflowRest.status, 0, 'non-finite evaluated diagnostics must fail closed');
     assert.equal(overflowRest.stdout, '');
     assert.match(overflowRest.stderr, /non-finite secondary-hand distance/);
 
-    const unknownRest = invoke([
+    const unknownRest = invoke(withContent([
       'evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'weapon.missing',
-    ]);
+    ]));
     assert.notEqual(unknownRest.status, 0);
     assert.equal(unknownRest.stdout, '');
     assert.match(unknownRest.stderr, /unknown attachment "weapon\.missing"/);
@@ -722,6 +895,7 @@ console.log('Engine spatial validation tool passed.');
 console.log('- Verified deterministic validation JSON and precise invalid-input diagnostics');
 console.log('- Verified byte-stable complete cooking and invalid-input output preservation');
 console.log('- Verified rest-pose geometry, fixture invariants, and parent-rotated composition');
+console.log('- Verified authored visual-box evidence from DataFoundation procgeo in rest and sample');
 console.log('- Verified v1 pre-IK compatibility and v2 sampled two-bone IK truth');
 console.log('- Verified CLI strict flags, help, and build-first behavior');
 assert.equal(nativeChecked, true, 'native spatial execution is required');

@@ -26,6 +26,14 @@ const sampledLayerMaxCount = 8;
 const sampledNormalizedTimePattern = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 const primaryAttachmentLayer = 'primary_attachment';
 const secondaryHandIkLayer = 'secondary_hand_ik';
+const dataFoundationRelativePath = 'data/foundation/engine-data-layout.toml';
+const itemGeometryUnavailableReasons = new Set([
+  'item_prefab_not_found',
+  'item_prefab_ambiguous',
+  'item_prefab_visual_geometry_unavailable',
+  'item_prefab_visual_geometry_ambiguous',
+  'item_prefab_visual_geometry_not_box',
+]);
 const appliedSecondaryIkKeys = Object.freeze([
   'status',
   'solved',
@@ -309,6 +317,54 @@ function requireStatusReason(value, status, reason) {
   if (result.status !== status || result.reason !== reason) evaluationProtocolError();
 }
 
+function requireItemGeometry(value, itemWorld) {
+  if (isPlainObject(value) && value.status === 'unavailable') {
+    const unavailable = requireExactObject(value, ['status', 'reason']);
+    if (!itemGeometryUnavailableReasons.has(unavailable.reason)) evaluationProtocolError();
+    return;
+  }
+  const geometry = requireExactObject(
+    value,
+    ['status', 'kind', 'procgeoId', 'dimensionsMeters', 'worldCorners'],
+  );
+  if (
+    geometry.status !== 'available'
+    || geometry.kind !== 'authored_visual_box'
+    || typeof geometry.procgeoId !== 'string'
+    || !geometry.procgeoId
+  ) {
+    evaluationProtocolError();
+  }
+  const dimensions = requireFiniteTuple(geometry.dimensionsMeters, 3);
+  if (dimensions.some((entry) => entry <= 0)) evaluationProtocolError();
+  if (!Array.isArray(geometry.worldCorners) || geometry.worldCorners.length !== 8) {
+    evaluationProtocolError();
+  }
+  const half = dimensions.map((entry) => entry * 0.5);
+  const localCorners = [
+    [-half[0], -half[1], -half[2]],
+    [half[0], -half[1], -half[2]],
+    [half[0], half[1], -half[2]],
+    [-half[0], half[1], -half[2]],
+    [-half[0], -half[1], half[2]],
+    [half[0], -half[1], half[2]],
+    [half[0], half[1], half[2]],
+    [-half[0], half[1], half[2]],
+  ];
+  const axes = itemWorld.axes;
+  for (let index = 0; index < localCorners.length; index += 1) {
+    const actual = requireFiniteTuple(geometry.worldCorners[index], 3);
+    const local = localCorners[index];
+    const expected = itemWorld.translation.map((entry, axisIndex) => (
+      entry
+      + local[0] * axes.x[axisIndex]
+      + local[1] * axes.y[axisIndex]
+      + local[2] * axes.z[axisIndex]
+    ));
+    if (!vectorClose(actual, expected)) evaluationProtocolError();
+  }
+}
+
 function requireFiniteNumber(value, { min = -Infinity, max = Infinity } = {}) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
     evaluationProtocolError();
@@ -448,7 +504,7 @@ function requireEvaluationGeometry(evaluation, expectedProfile) {
   );
   if (requireString(item.prefabId) !== attachment.itemPrefabId) evaluationProtocolError();
   requireTransform(item.world);
-  requireStatusReason(item.geometry, 'unavailable', 'item_prefab_geometry_not_integrated');
+  requireItemGeometry(item.geometry, item.world);
   requireOptionalTransform(item.primaryContactWorld);
   if (item.handleAxisWorld !== null) {
     const handle = requireExactObject(item.handleAxisWorld, ['origin', 'direction']);
@@ -780,11 +836,35 @@ function evaluationInputsChanged(difference) {
   return serviceError(
     409,
     'spatial_evaluation_inputs_changed',
-    'Authored animation inputs changed during spatial evaluation.',
+    'Authored spatial evaluation inputs changed during spatial evaluation.',
     {
       conflict: {
         code: 'spatial_evaluation_inputs_changed',
         ...difference,
+      },
+    },
+  );
+}
+
+function evaluationInputsChangedDuringSnapshot(sourcePath, fallbackPath) {
+  const candidate = typeof sourcePath === 'string' ? sourcePath.replaceAll('\\', '/') : '';
+  const components = candidate.split('/');
+  const safePath = candidate.length > 0
+    && candidate.length <= 512
+    && !candidate.startsWith('/')
+    && !/^[A-Za-z]:/.test(candidate)
+    && !/[\u0000-\u001f\u007f]/.test(candidate)
+    && components.every((component) => component && component !== '.' && component !== '..')
+    ? candidate
+    : fallbackPath;
+  return serviceError(
+    409,
+    'spatial_evaluation_inputs_changed',
+    'Authored spatial inputs changed while the evaluation snapshot was being read.',
+    {
+      conflict: {
+        code: 'spatial_evaluation_inputs_changed',
+        path: safePath,
       },
     },
   );
@@ -908,10 +988,21 @@ async function defaultValidateAnimationRoot(animationRoot) {
   );
 }
 
-async function defaultEvaluateRestAttachment(animationRoot, attachmentId) {
+async function defaultEvaluateRestAttachment(
+  animationRoot,
+  contentRoot,
+  foundationPath,
+  attachmentId,
+) {
   try {
     return await runSpatialJsonCommand(
-      ['evaluate-rest', '--animation-root', animationRoot, '--attachment', attachmentId],
+      [
+        'evaluate-rest',
+        '--animation-root', animationRoot,
+        '--attachment', attachmentId,
+        '--content-root', contentRoot,
+        '--data-foundation', foundationPath,
+      ],
       'spatial_evaluator_unavailable',
       'evaluator',
     );
@@ -927,7 +1018,14 @@ async function defaultEvaluateRestAttachment(animationRoot, attachmentId) {
   }
 }
 
-async function defaultEvaluateSampledAttachment(animationRoot, attachmentId, phase, normalizedTime) {
+async function defaultEvaluateSampledAttachment(
+  animationRoot,
+  contentRoot,
+  foundationPath,
+  attachmentId,
+  phase,
+  normalizedTime,
+) {
   try {
     return await runSpatialJsonCommand(
       [
@@ -936,6 +1034,8 @@ async function defaultEvaluateSampledAttachment(animationRoot, attachmentId, pha
         '--attachment', attachmentId,
         '--phase', phase,
         '--normalized-time', formatSampleNormalizedTime(normalizedTime),
+        '--content-root', contentRoot,
+        '--data-foundation', foundationPath,
       ],
       'spatial_evaluator_unavailable',
       'evaluator',
@@ -991,11 +1091,9 @@ export class SpatialAttachmentService {
 
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-preview-'));
     try {
-      const stagedAnimationRoot = path.join(temporaryRoot, 'animation');
-      const sourceRevisions = await this.#stageAuthoredAnimation(
-        normalized.sessionId,
-        stagedAnimationRoot,
-      );
+      const staged = await this.#stageAuthoredSpatialInputs(normalized.sessionId, temporaryRoot);
+      const stagedAnimationRoot = staged.animationRoot;
+      const sourceRevisions = staged.sourceRevisions;
       const stagedAttachmentPath = path.join(stagedAnimationRoot, normalized.stagedSource);
       const stagedBaselineContent = await readOptionalUtf8(stagedAttachmentPath);
       const stagedBaselineRevision = stagedBaselineContent === null
@@ -1069,19 +1167,19 @@ export class SpatialAttachmentService {
       if (oldAttachment) {
         await fs.writeFile(stagedAttachmentPath, stagedBaselineContent, 'utf8');
         evaluation.baseline = await this.#evaluateStagedAttachment(
-          stagedAnimationRoot,
+          staged,
           oldAttachment,
           'baseline',
         );
       }
       await fs.writeFile(stagedAttachmentPath, normalized.content, 'utf8');
       evaluation.candidate = await this.#evaluateStagedAttachment(
-        stagedAnimationRoot,
+        staged,
         newAttachment,
         'candidate',
       );
 
-      await this.#assertAnimationSourcesUnchanged(
+      await this.#assertSpatialSourcesUnchanged(
         normalized.sessionId,
         sourceRevisions,
         normalized.path,
@@ -1145,11 +1243,9 @@ export class SpatialAttachmentService {
 
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-evaluate-'));
     try {
-      const stagedAnimationRoot = path.join(temporaryRoot, 'animation');
-      const sourceRevisions = await this.#stageAuthoredAnimation(
-        normalized.sessionId,
-        stagedAnimationRoot,
-      );
+      const staged = await this.#stageAuthoredSpatialInputs(normalized.sessionId, temporaryRoot);
+      const stagedAnimationRoot = staged.animationRoot;
+      const sourceRevisions = staged.sourceRevisions;
       const stagedContent = await readOptionalUtf8(
         path.join(stagedAnimationRoot, normalized.stagedSource),
       );
@@ -1178,12 +1274,12 @@ export class SpatialAttachmentService {
         'Validator did not return the authored attachment source.',
       );
       const evaluation = await this.#evaluateStagedAttachment(
-        stagedAnimationRoot,
+        staged,
         attachment,
         'baseline',
       );
 
-      await this.#assertAnimationSourcesUnchanged(
+      await this.#assertSpatialSourcesUnchanged(
         normalized.sessionId,
         sourceRevisions,
         normalized.path,
@@ -1221,11 +1317,9 @@ export class SpatialAttachmentService {
 
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-evaluate-sample-'));
     try {
-      const stagedAnimationRoot = path.join(temporaryRoot, 'animation');
-      const sourceRevisions = await this.#stageAuthoredAnimation(
-        normalized.sessionId,
-        stagedAnimationRoot,
-      );
+      const staged = await this.#stageAuthoredSpatialInputs(normalized.sessionId, temporaryRoot);
+      const stagedAnimationRoot = staged.animationRoot;
+      const sourceRevisions = staged.sourceRevisions;
       const stagedContent = await readOptionalUtf8(
         path.join(stagedAnimationRoot, normalized.stagedSource),
       );
@@ -1254,13 +1348,13 @@ export class SpatialAttachmentService {
         'Validator did not return the authored attachment source.',
       );
       const evaluation = await this.#evaluateStagedSampledAttachment(
-        stagedAnimationRoot,
+        staged,
         attachment,
         normalized.phase,
         normalized.normalizedTime,
       );
 
-      await this.#assertAnimationSourcesUnchanged(
+      await this.#assertSpatialSourcesUnchanged(
         normalized.sessionId,
         sourceRevisions,
         normalized.path,
@@ -1277,10 +1371,15 @@ export class SpatialAttachmentService {
     }
   }
 
-  async #evaluateStagedAttachment(animationRoot, attachment, role) {
+  async #evaluateStagedAttachment(staged, attachment, role) {
     let report;
     try {
-      report = await this.#evaluateRestAttachment(animationRoot, attachment.id);
+      report = await this.#evaluateRestAttachment(
+        staged.animationRoot,
+        staged.contentRoot,
+        staged.foundationPath,
+        attachment.id,
+      );
     } catch (error) {
       if (error?.code === 'spatial_evaluator_unavailable' || error?.code === 'ENOENT') {
         throw serviceError(
@@ -1312,7 +1411,7 @@ export class SpatialAttachmentService {
   }
 
   async #evaluateStagedSampledAttachment(
-    animationRoot,
+    staged,
     attachment,
     phase,
     normalizedTime,
@@ -1320,7 +1419,9 @@ export class SpatialAttachmentService {
     let report;
     try {
       report = await this.#evaluateSampledAttachment(
-        animationRoot,
+        staged.animationRoot,
+        staged.contentRoot,
+        staged.foundationPath,
         attachment.id,
         phase,
         normalizedTime,
@@ -1404,25 +1505,129 @@ export class SpatialAttachmentService {
     ));
   }
 
-  async #stageAuthoredAnimation(sessionId, stagedAnimationRoot) {
-    const sources = await this.#readAuthoredAnimationSources(sessionId);
-    await fs.mkdir(stagedAnimationRoot, { recursive: true });
-    for (const directory of Object.keys(animationDirectories)) {
-      await fs.mkdir(path.join(stagedAnimationRoot, directory), { recursive: true });
-    }
-    for (const source of sources) {
-      await fs.writeFile(
-        path.join(stagedAnimationRoot, source.directory, source.name),
-        source.content,
-        'utf8',
-      );
-    }
-    return publicSourceRevisions(sources);
+  async #readAuthoredTomlTree(sessionId, relativeRoot) {
+    const sources = [];
+    const directories = [relativeRoot];
+    const visit = async (relativePath) => {
+      let listing;
+      try {
+        listing = await this.#sessionStore.listFiles(
+          sessionId,
+          relativePath,
+          { rejectSymbolicPath: true },
+        );
+      } catch (error) {
+        if (error?.code === 'ENOENT') {
+          throw evaluationInputsChangedDuringSnapshot(relativePath, relativeRoot);
+        }
+        throw error;
+      }
+      for (const entry of listing.entries) {
+        if (entry.kind === 'symlink') {
+          throw serviceError(
+            400,
+            'spatial_source_symlink_rejected',
+            `Symbolic links are not allowed in ${relativeRoot}: ${entry.path}`,
+          );
+        }
+        if (entry.kind === 'directory') {
+          directories.push(entry.path);
+          await visit(entry.path);
+          continue;
+        }
+        if (entry.kind !== 'file' || !entry.name.endsWith('.toml')) continue;
+        let source;
+        try {
+          source = await this.#sessionStore.readFile(
+            sessionId,
+            entry.path,
+            { rejectSymbolicPath: true },
+          );
+        } catch (error) {
+          if (error?.code === 'ENOENT') {
+            throw evaluationInputsChangedDuringSnapshot(entry.path, relativeRoot);
+          }
+          throw error;
+        }
+        sources.push({
+          path: entry.path,
+          revision: source.revision,
+          content: source.content,
+        });
+      }
+    };
+    await visit(relativeRoot);
+    return { sources, directories };
   }
 
-  async #assertAnimationSourcesUnchanged(sessionId, expected, selectedPath) {
+  async #readDataFoundationSources(sessionId) {
+    let foundation;
+    try {
+      foundation = await this.#sessionStore.readFile(
+        sessionId,
+        dataFoundationRelativePath,
+        { rejectSymbolicPath: true },
+      );
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw evaluationInputsChangedDuringSnapshot(
+          dataFoundationRelativePath,
+          dataFoundationRelativePath,
+        );
+      }
+      throw error;
+    }
+    const contentTree = await this.#readAuthoredTomlTree(sessionId, 'content');
+    return {
+      sources: [
+        {
+          path: foundation.path,
+          revision: foundation.revision,
+          content: foundation.content,
+        },
+        ...contentTree.sources,
+      ],
+      contentDirectories: contentTree.directories,
+    };
+  }
+
+  async #readSpatialSources(sessionId) {
+    const [animationSources, dataSources] = await Promise.all([
+      this.#readAuthoredAnimationSources(sessionId),
+      this.#readDataFoundationSources(sessionId),
+    ]);
+    return {
+      sources: [...animationSources, ...dataSources.sources].sort((left, right) => (
+        left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+      )),
+      contentDirectories: dataSources.contentDirectories,
+    };
+  }
+
+  async #stageAuthoredSpatialInputs(sessionId, stagedRoot) {
+    const snapshot = await this.#readSpatialSources(sessionId);
+    for (const directory of Object.keys(animationDirectories)) {
+      await fs.mkdir(path.join(stagedRoot, 'animation', directory), { recursive: true });
+    }
+    for (const directory of snapshot.contentDirectories) {
+      await fs.mkdir(path.join(stagedRoot, ...directory.split('/')), { recursive: true });
+    }
+    for (const source of snapshot.sources) {
+      const stagedPath = path.join(stagedRoot, ...source.path.split('/'));
+      await fs.mkdir(path.dirname(stagedPath), { recursive: true });
+      await fs.writeFile(stagedPath, source.content, 'utf8');
+    }
+    return {
+      animationRoot: path.join(stagedRoot, 'animation'),
+      contentRoot: path.join(stagedRoot, 'content'),
+      foundationPath: path.join(stagedRoot, ...dataFoundationRelativePath.split('/')),
+      sourceRevisions: publicSourceRevisions(snapshot.sources),
+    };
+  }
+
+  async #assertSpatialSourcesUnchanged(sessionId, expected, selectedPath) {
     await this.#sessionStore.runSerializedFileMutation(async () => {
-      const actual = publicSourceRevisions(await this.#readAuthoredAnimationSources(sessionId));
+      const actual = publicSourceRevisions((await this.#readSpatialSources(sessionId)).sources);
       const difference = firstSourceRevisionDifference(expected, actual);
       if (!difference) return;
       if (difference.path === selectedPath) {

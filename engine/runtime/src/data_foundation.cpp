@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -634,8 +635,10 @@ std::optional<std::string> validateAsset(
     if (asset.bakeOutput != "generated_mesh") {
       return "bake_output must be 'generated_mesh'";
     }
-    if (asset.width <= 0.0F || asset.height <= 0.0F || asset.depth <= 0.0F) {
-      return "width, height, and depth must be positive";
+    if (
+      !std::isfinite(asset.width) || !std::isfinite(asset.height) || !std::isfinite(asset.depth)
+      || asset.width <= 0.0F || asset.height <= 0.0F || asset.depth <= 0.0F) {
+      return "width, height, and depth must be finite positive numbers";
     }
     if (asset.generator == "plane_grid" && (asset.rows < 1 || asset.columns < 1)) {
       return "plane_grid requires rows and columns >= 1";
@@ -713,7 +716,28 @@ struct DataFoundation::Impl {
   }
 
   bool scanKind(DataAssetKind kind, const std::filesystem::path& subdir, std::string* errorMessage) {
-    const std::filesystem::path directory = config.contentRoot / subdir;
+    const std::filesystem::path normalizedSubdir = subdir.lexically_normal();
+    bool unsafeSubdir = normalizedSubdir.empty() || normalizedSubdir.is_absolute() || normalizedSubdir.has_root_name();
+    for (const auto& component : normalizedSubdir) {
+      unsafeSubdir = unsafeSubdir || component == "." || component == "..";
+    }
+
+    std::error_code rootError;
+    std::error_code directoryError;
+    std::error_code relativeError;
+    const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(config.contentRoot, rootError);
+    const std::filesystem::path directory = std::filesystem::weakly_canonical(config.contentRoot / normalizedSubdir, directoryError);
+    const std::filesystem::path relativeDirectory = std::filesystem::relative(directory, canonicalRoot, relativeError);
+    for (const auto& component : relativeDirectory) {
+      unsafeSubdir = unsafeSubdir || component == "..";
+    }
+    if (unsafeSubdir || rootError || directoryError || relativeError) {
+      if (errorMessage) {
+        *errorMessage = "Content subdirectory must stay under content root: " + subdir.generic_string();
+      }
+      return false;
+    }
+
     if (!std::filesystem::exists(directory)) {
       if (errorMessage) {
         *errorMessage = "Expected content directory is missing: " + directory.string();
@@ -722,7 +746,7 @@ struct DataFoundation::Impl {
     }
 
     for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-      if (!entry.is_regular_file()) {
+      if (!entry.is_regular_file() || entry.path().extension() != ".toml") {
         continue;
       }
       if (!recordAsset(kind, entry.path(), errorMessage)) {
