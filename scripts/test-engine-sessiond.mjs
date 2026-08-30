@@ -12,6 +12,23 @@ const sessionStorePath = path.join(sessionStateDir, 'sessions.json');
 const coordinationClock = { nowMs: Date.parse('2026-08-30T12:00:00.000Z') };
 const coordinationHeartbeatTimeoutMs = 10_000;
 
+async function tryCreateDirectoryLink(targetPath, linkPath) {
+  try {
+    await fs.symlink(targetPath, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+    return true;
+  } catch (error) {
+    if (
+      error
+      && typeof error === 'object'
+      && 'code' in error
+      && ['EACCES', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'UNKNOWN'].includes(error.code)
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 function runtimeLaunchFactory({ scene, sessionId, workspaceRoot }) {
   return {
     command: process.execPath,
@@ -306,6 +323,45 @@ try {
   assert.equal(persistedListPayload.sessions[0].id, createPayload.session.id);
   assert.equal(persistedListPayload.sessions[0].name, 'repo-root-renamed');
 
+  const dedupeContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-session-root-'));
+  const dedupeRoot = path.join(dedupeContainer, 'WorkspaceRoot');
+  const dedupeAlias = path.join(dedupeContainer, 'WorkspaceAlias');
+  await fs.mkdir(dedupeRoot);
+  const dedupeAliasCreated = await tryCreateDirectoryLink(dedupeRoot, dedupeAlias);
+  const rootSpellings = [
+    dedupeRoot,
+    path.join(dedupeRoot, '.'),
+    ...(process.platform === 'win32' ? [dedupeRoot.toUpperCase(), dedupeRoot.toLowerCase()] : []),
+    ...(dedupeAliasCreated ? [dedupeAlias] : []),
+  ];
+  const concurrentSessions = await Promise.all(
+    Array.from({ length: 12 }, (_, index) => requestJsonNoAuth(
+      `${service.baseUrl}/api/sessions`,
+      'POST',
+      {
+        name: `concurrent-root-${index}`,
+        rootPath: rootSpellings[index % rootSpellings.length],
+      },
+    )),
+  );
+  const concurrentSessionIds = new Set(concurrentSessions.map((payload) => payload.session.id));
+  assert.equal(concurrentSessionIds.size, 1);
+  assert.equal(concurrentSessions[0].session.rootPath, await fs.realpath(dedupeRoot));
+  const concurrentRootId = concurrentSessions[0].session.id;
+  const afterConcurrentCreate = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`);
+  assert.equal(
+    afterConcurrentCreate.sessions.filter((session) => session.id === concurrentRootId).length,
+    1,
+  );
+  await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${encodeURIComponent(concurrentRootId)}`,
+    'DELETE',
+  );
+  if (dedupeAliasCreated) {
+    await fs.unlink(dedupeAlias);
+  }
+  await fs.rm(dedupeContainer, { recursive: true, force: true });
+
   const fileListPayload = await requestJsonNoAuth(
     `${service.baseUrl}/api/files/list?sessionId=${encodeURIComponent(createPayload.session.id)}&path=${encodeURIComponent('.')}`,
   );
@@ -333,6 +389,73 @@ try {
     `${service.baseUrl}/api/files/read?sessionId=${encodeURIComponent(createPayload.session.id)}&path=${encodeURIComponent('tmp/sessiond-write-check.txt')}`,
   );
   assert.equal(writtenFileReadPayload.content, 'sessiond write ok\n');
+
+  const boundaryContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-session-boundary-'));
+  const boundaryWorkspace = path.join(boundaryContainer, 'workspace');
+  const boundaryOutside = path.join(boundaryContainer, 'outside');
+  const boundaryLink = path.join(boundaryWorkspace, 'outside-link');
+  const boundarySafeTarget = path.join(boundaryWorkspace, 'safe-target');
+  const boundarySafeLink = path.join(boundaryWorkspace, 'safe-link');
+  await fs.mkdir(boundaryWorkspace);
+  await fs.mkdir(boundaryOutside);
+  await fs.mkdir(boundarySafeTarget);
+  await fs.writeFile(path.join(boundaryOutside, 'secret.txt'), 'outside\n', 'utf8');
+  await fs.writeFile(path.join(boundarySafeTarget, 'inside.txt'), 'inside\n', 'utf8');
+  const boundaryLinkCreated = await tryCreateDirectoryLink(boundaryOutside, boundaryLink);
+  const boundarySafeLinkCreated = boundaryLinkCreated
+    ? await tryCreateDirectoryLink(boundarySafeTarget, boundarySafeLink)
+    : false;
+  const boundarySession = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
+    name: 'physical-boundary',
+    rootPath: boundaryWorkspace,
+  });
+  if (boundaryLinkCreated) {
+    const escapedList = await requestJsonNoAuth(
+      `${service.baseUrl}/api/files/list?sessionId=${encodeURIComponent(boundarySession.session.id)}&path=${encodeURIComponent('outside-link')}`,
+    );
+    assert.match(escapedList.error, /escapes physical session root/i);
+
+    const escapedRead = await requestJsonNoAuth(
+      `${service.baseUrl}/api/files/read?sessionId=${encodeURIComponent(boundarySession.session.id)}&path=${encodeURIComponent('outside-link/secret.txt')}`,
+    );
+    assert.match(escapedRead.error, /escapes physical session root/i);
+
+    const escapedWrite = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
+      sessionId: boundarySession.session.id,
+      path: 'outside-link/created.txt',
+      content: 'must not escape\n',
+    });
+    assert.match(escapedWrite.error, /escapes physical session root/i);
+    await assert.rejects(fs.stat(path.join(boundaryOutside, 'created.txt')), { code: 'ENOENT' });
+
+    if (boundarySafeLinkCreated) {
+      const safeLinkedRead = await requestJsonNoAuth(
+        `${service.baseUrl}/api/files/read?sessionId=${encodeURIComponent(boundarySession.session.id)}&path=${encodeURIComponent('safe-link/inside.txt')}`,
+      );
+      assert.equal(safeLinkedRead.content, 'inside\n');
+      const safeLinkedWrite = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
+        sessionId: boundarySession.session.id,
+        path: 'safe-link/created.txt',
+        content: 'inside write\n',
+      });
+      assert.equal(safeLinkedWrite.content, 'inside write\n');
+      assert.equal(
+        await fs.readFile(path.join(boundarySafeTarget, 'created.txt'), 'utf8'),
+        'inside write\n',
+      );
+    }
+  }
+  await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${encodeURIComponent(boundarySession.session.id)}`,
+    'DELETE',
+  );
+  if (boundaryLinkCreated) {
+    await fs.unlink(boundaryLink);
+  }
+  if (boundarySafeLinkCreated) {
+    await fs.unlink(boundarySafeLink);
+  }
+  await fs.rm(boundaryContainer, { recursive: true, force: true });
 
   const hostFsPayload = await requestJsonNoAuth(
     `${service.baseUrl}/api/hostfs/list?path=${encodeURIComponent(path.dirname(repoRoot))}`,

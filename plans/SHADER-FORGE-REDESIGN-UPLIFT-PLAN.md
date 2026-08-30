@@ -1,9 +1,17 @@
 # Shader Forge Redesign and Uplift Plan
 
 Date: 2026-08-30  
-Status: Proposed  
+Status: In execution
 Scope: Product direction, engine shell UX, external-agent integration, implementation sequence, and acceptance gates  
 Scheduling: Deliberately omitted. Work is ordered by dependency and proof, not calendar estimates.
+
+Current execution status:
+
+- the React shell now uses World, Code, Playtest, and Assets as its primary workspaces, with Guide kept under Help
+- the main shell no longer presents a built-in development assistant or provider controls
+- `engine_sessiond` now owns workspace-scoped agent registration, private credentials, hierarchical leases, writer fairness, expiry, disconnect cleanup, and build/runtime exclusivity
+- Shader Forge MCP (`sf-mcp`) is the current process-scoped stdio adapter for external clients
+- the first `sf-mcp` surface is deliberately read-and-coordinate only; broad mutation and exclusive operation tools remain gated on preview, revision, atomicity, approval, and recovery contracts
 
 ## 1. Executive Decision
 
@@ -79,7 +87,7 @@ External AI clients
               |
               | MCP: resources, tools, events
               v
-Shader Forge MCP adapter
+Shader Forge MCP adapter (`sf-mcp`)
               |
               | engine-owned typed operations
               v
@@ -116,11 +124,17 @@ The coordinator does not run or chat with agents. It provides the concurrency, i
 
 ### 4.2 MCP Boundary
 
-Prefer a process-scoped stdio MCP server launched by the client. If an HTTP transport is required, bind to loopback, require an unguessable session credential, restrict origins, and expose only the MCP operation surface.
+Shader Forge MCP, shortened to `sf-mcp`, starts as a process-scoped stdio MCP server launched by each client. It accepts stable `--root`, `--session`, `--base-url`, and `--name` startup inputs, registers one coordinator agent per process, keeps its credential private, heartbeats while connected, and disconnects on shutdown.
+
+The first surface exposes `shaderforge://project`, `shaderforge://coordination`, project/file inspection, coordination inspection, lease request/status/release, and explicit heartbeat. It is read-and-coordinate only.
+
+HTTP transport, file or scene writes, build/runtime mutation, and arbitrary command execution are excluded until the shared preview, revision, structured diff, atomic apply, approval, provenance, validation, conflict, and recovery contracts exist. If HTTP transport later becomes required, bind it to loopback, require an unguessable session credential, restrict origins, and expose only the MCP operation surface.
 
 Do not expose the current broad `engine_sessiond` filesystem and PTY authority directly as the public MCP boundary.
 
-### 4.3 Initial MCP Resources
+### 4.3 Target MCP Resources After Safety Gates
+
+These widen beyond the first `sf-mcp` read-and-coordinate surface only as the underlying engine contracts become safe and shared:
 
 - project identity, configuration, and revision
 - scene graph and selected entity
@@ -134,7 +148,9 @@ Do not expose the current broad `engine_sessiond` filesystem and PTY authority d
 - pending change sets, approvals, and operation history
 - connected agent sessions, active leases, declared scopes, and queued operations
 
-### 4.4 Initial MCP Tools
+### 4.4 Target MCP Tools After Safety Gates
+
+The following is the intended product surface, not the currently exposed first slice:
 
 - `project_open`, `project_validate`, `project_build`, `project_package`
 - `scene_query`, `scene_create`, `scene_patch_preview`, `scene_patch_apply`
@@ -699,6 +715,8 @@ Exit criteria:
 
 ### Gate 6: Expose the MCP Control Plane
 
+Current status: the process-scoped stdio adapter and its read-and-coordinate surface are the active first slice. Mutation, build/runtime tools, Activity/Changes integration, approvals, undo, and full parity scenarios remain open.
+
 Actions:
 
 - implement the process-scoped MCP adapter
@@ -850,15 +868,15 @@ Deliberately defer until proven necessary:
 
 ## 18. First Execution Slice
 
-Start with the smallest slice that changes the product direction without creating another temporary shell:
+The direction-setting shell and coordination work is now implemented. Continue with the smallest slices that widen the product without creating another temporary shell:
 
-1. amend the canonical specs to external-agent MCP architecture
-2. define the typed mutation preview, revision, diff, approval, and operation-event contracts
-3. make React/Vite the documented default shell
-4. replace current top-level navigation with World, Code, Playtest, and Assets
-5. remove built-in assistant/provider surfaces from the main workspace
-6. add the Activity and Changes state model using deterministic fixture events
-7. migrate the real Code editor and inline search into the new shell
-8. add rendered interaction and accessibility checks for this path
+1. completed: amend the canonical specs to external-agent MCP architecture
+2. completed: make React/Vite the documented shell and replace top-level navigation with World, Code, Playtest, and Assets
+3. completed: remove built-in assistant/provider surfaces from the main workspace while preserving the real Code editor and inline search
+4. completed: establish engine-owned multi-agent registration, heartbeat, leases, conflict queues, fairness, and cleanup
+5. completed: expose the first Shader Forge MCP (`sf-mcp`) read-and-coordinate surface over process-scoped stdio
+6. next: define and implement the typed mutation preview, revision, diff, approval, and operation-event contracts
+7. next: add the Activity and Changes state model and connect it to real operation events
+8. next: widen MCP only through shared safe mutation contracts, then add rendered interaction and accessibility checks for the complete path
 
 Do not begin visual polish, a real viewport, or broad MCP mutation tools before the operation and revision contracts are safe. That ordering prevents a polished shell from becoming a façade over unreliable engine state.

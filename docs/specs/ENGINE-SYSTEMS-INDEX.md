@@ -14,6 +14,7 @@ Major system specs:
 - [Engine Physics Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-PHYSICS-SPEC.md)
 - [Engine Renderer Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-RENDERER-SPEC.md)
 - [Engine Sessiond Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SESSIOND-SPEC.md)
+- [Shader Forge MCP Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-MCP-SPEC.md)
 - [Engine CLI Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-CLI-SPEC.md)
 - [Engine Save System Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SAVE-SYSTEM-SPEC.md)
 - [Engine Packaging Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-PACKAGING-SPEC.md)

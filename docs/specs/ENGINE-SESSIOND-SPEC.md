@@ -63,7 +63,10 @@ This gives the shell and harnesses a real backend-owned session and file model b
 ## Current Behavior
 
 - persistent project sessions stored in a local JSON record and restored on `engine_sessiond` startup
-- safe path resolution inside each session root
+- concurrent session creation is serialized by the session store, and physical-root identity is canonicalized so case aliases and symlink/junction aliases resolve to one workspace session ID
+- existing persisted session IDs remain loadable; available roots are canonicalized when restored, while temporarily unavailable roots retain their persisted record
+- file list/read/write operations enforce the canonical physical workspace boundary: existing targets are resolved with `realpath`, created targets use a verified physical parent, and symlinks or junctions cannot escape the session root
+- directory listings inspect link entries without following them; a link may be listed from its safe parent, but using an outside-target link as the list/read/write target is rejected
 - UTF-8 file reads
 - UTF-8 file writes inside the active session root, with parent-directory creation for authored asset workflows
 - directory listing with stable relative paths and timestamps

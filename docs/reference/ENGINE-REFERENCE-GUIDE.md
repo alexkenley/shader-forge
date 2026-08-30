@@ -11,6 +11,7 @@ Primary searchable sources:
 - `shell/engine-shell/src/reference-guide.ts`
 - `plans/ENGINE-IMPLEMENTATION-PLAN.md`
 - `docs/specs/ENGINE-SYSTEMS-INDEX.md`
+- `docs/specs/ENGINE-MCP-SPEC.md`
 - `AGENTS.md`
 
 Assistant entry points:
@@ -20,6 +21,7 @@ Assistant entry points:
 - `AGENTS.md`
 - `plans/ENGINE-IMPLEMENTATION-PLAN.md`
 - `docs/specs/ENGINE-SYSTEMS-INDEX.md`
+- `docs/specs/ENGINE-MCP-SPEC.md`
 
 ## Getting Started
 
@@ -83,7 +85,7 @@ Assistant entry points:
 - If `Build` or `Build + Run` fails because `cmake` is missing, the shell now surfaces that as setup guidance; the clean-start scripts also auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible, while plain `Run` still depends on an already-built runtime binary under `build/runtime/bin`.
 - A successful native build can still be a stub runtime if SDL3 or Vulkan are missing; the shell now surfaces that separately as native dependency setup rather than another CMake problem.
 - Use `Help` to open the Guide as a secondary searchable reference surface.
-- External development agents connect through the planned MCP control plane; the shell does not contain provider selection, prompts, or an assistant chat surface.
+- External development agents connect through Shader Forge MCP (`sf-mcp`); the shell does not contain provider selection, prompts, or an assistant chat surface.
 
 ## Session Backend And CLI
 
@@ -105,9 +107,25 @@ Assistant entry points:
 - Host filesystem directory listing is already used by the workspace-root picker.
 - Git status and repository initialization are already used by the `Source Control` rail.
 - PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces.
-- `/api/coordination` now provides workspace-scoped agent registration, credential-protected heartbeat/disconnect, hierarchical read/write leases, FIFO conflict queues, writer fairness, expiry cleanup, and state inspection for future MCP clients.
+- `/api/coordination` provides workspace-scoped agent registration, credential-protected heartbeat/disconnect, hierarchical read/write leases, FIFO conflict queues, writer fairness, expiry cleanup, and state inspection for `sf-mcp` clients.
 - Non-overlapping resources and separate workspaces can proceed concurrently; overlapping writes plus `build` or `runtime` exclusivity are coordinated without one global bridge lock.
 - Coordination credentials are returned only at registration and are excluded from state, lease, SSE event, log, and error views.
+
+### Shader Forge MCP
+
+- Shader Forge MCP is the external-agent adapter; use `sf-mcp` as its short name.
+- The current adapter is a process-scoped stdio server. Each Codex, Grok CLI, or other MCP client launches its own process, while stdout remains reserved for MCP protocol messages and diagnostics go to stderr.
+- Start it with a stable project selection using `--root <path>`, or attach to an existing backend session with `--session <id>`. `--base-url <url>` selects `engine_sessiond`, and `--name <client-name>` identifies the client process.
+- Each `sf-mcp` process registers one workspace-scoped coordinator agent, keeps the returned credential private in process memory, heartbeats while connected, and disconnects on shutdown so held leases do not strand other agents.
+- The current resources are `shaderforge://project` and `shaderforge://coordination`.
+- Current read tools are `project_status`, `project_files_list`, `project_file_read`, and `coordination_state`.
+- Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.
+- Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical writes queue through `engine_sessiond` instead of running over each other.
+- This first version is read-and-coordinate only. It does not expose file or scene writes, build/runtime mutation, arbitrary commands, or HTTP transport.
+- Mutation, build, and runtime tools remain blocked until shared preview, revision, structured diff, atomic apply, approval, provenance, validation, conflict, and recovery contracts exist.
+- Shader Forge MCP does not contain a built-in assistant, model execution, provider picker, or prompt UI. External clients own the AI experience.
+- Run `npm run test:mcp` for the deterministic stdio, resource, tool, file-boundary, coordination, and disconnect-cleanup harness.
+- See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and current widening gate.
 
 ### Engine CLI Surfaces
 

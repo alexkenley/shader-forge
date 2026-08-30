@@ -6,6 +6,7 @@
     "docs/reference/ENGINE-REFERENCE-GUIDE.json",
     "plans/ENGINE-IMPLEMENTATION-PLAN.md",
     "docs/specs/ENGINE-SYSTEMS-INDEX.md",
+    "docs/specs/ENGINE-MCP-SPEC.md",
     "AGENTS.md"
   ],
   "assistantEntryPoints": [
@@ -13,7 +14,8 @@
     "docs/reference/ENGINE-REFERENCE-GUIDE.json",
     "AGENTS.md",
     "plans/ENGINE-IMPLEMENTATION-PLAN.md",
-    "docs/specs/ENGINE-SYSTEMS-INDEX.md"
+    "docs/specs/ENGINE-SYSTEMS-INDEX.md",
+    "docs/specs/ENGINE-MCP-SPEC.md"
   ],
   "categories": [
     {
@@ -154,7 +156,7 @@
                 "If `Build` or `Build + Run` fails because `cmake` is missing, the shell now surfaces that as setup guidance; the clean-start scripts also auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible, while plain `Run` still depends on an already-built runtime binary under `build/runtime/bin`.",
                 "A successful native build can still be a stub runtime if SDL3 or Vulkan are missing; the shell now surfaces that separately as native dependency setup rather than another CMake problem.",
                 "Use `Help` to open the Guide as a secondary searchable reference surface.",
-                "External development agents connect through the planned MCP control plane; the shell does not contain provider selection, prompts, or an assistant chat surface."
+                "External development agents connect through Shader Forge MCP (`sf-mcp`); the shell does not contain provider selection, prompts, or an assistant chat surface."
               ],
               "note": "The shell is still the primary workspace even though the native SDL3/Vulkan runtime renders in an external window."
             }
@@ -165,8 +167,8 @@
     {
       "id": "session-backend-and-cli",
       "title": "Session Backend And CLI",
-      "description": "The shell is backed by `engine_sessiond` and the `engine` CLI, so sessions, files, git, build, runtime, and first-slice AI inspection operations all share the same local control plane.",
-      "keywords": ["sessiond", "cli", "backend", "git", "pty", "files", "ai"],
+      "description": "The shell, `engine` CLI, and Shader Forge MCP (`sf-mcp`) share the `engine_sessiond` control plane for project state and multi-agent coordination.",
+      "keywords": ["sessiond", "cli", "backend", "git", "pty", "files", "ai", "mcp", "sf-mcp", "coordination"],
       "pages": [
         {
           "id": "sessiond-and-files",
@@ -200,7 +202,7 @@
                 "Host filesystem directory listing is already used by the workspace-root picker.",
                 "Git status and repository initialization are already used by the `Source Control` rail.",
                 "PTY terminal lifecycle is already wired into the bottom-dock terminal surfaces.",
-                "`/api/coordination` now provides workspace-scoped agent registration, credential-protected heartbeat/disconnect, hierarchical read/write leases, FIFO conflict queues, writer fairness, expiry cleanup, and state inspection for future MCP clients.",
+                "`/api/coordination` provides workspace-scoped agent registration, credential-protected heartbeat/disconnect, hierarchical read/write leases, FIFO conflict queues, writer fairness, expiry cleanup, and state inspection for `sf-mcp` clients.",
                 "Non-overlapping resources and separate workspaces can proceed concurrently; overlapping writes plus `build` or `runtime` exclusivity are coordinated without one global bridge lock.",
                 "Coordination credentials are returned only at registration and are excluded from state, lease, SSE event, log, and error views."
               ]
@@ -212,6 +214,51 @@
                 "Create or edit workspaces from the `Workspaces` rail.",
                 "Browse files and preview text content from the `Explorer` rail.",
                 "Inspect branch state and working tree changes from `Source Control`."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "shader-forge-mcp",
+          "title": "Shader Forge MCP",
+          "summary": "Shader Forge MCP (`sf-mcp`) is the process-scoped stdio adapter that gives external clients read access and engine-owned multi-agent lease coordination without embedding an assistant in the editor.",
+          "keywords": ["shader forge mcp", "sf-mcp", "mcp", "stdio", "codex", "grok", "multi-agent", "lease", "coordination", "heartbeat"],
+          "references": [
+            "tools/engine-mcp/server.mjs",
+            "docs/specs/ENGINE-MCP-SPEC.md",
+            "docs/specs/ENGINE-SESSIOND-SPEC.md",
+            "scripts/test-engine-mcp.mjs"
+          ],
+          "sections": [
+            {
+              "title": "Startup And Lifecycle",
+              "keywords": ["root", "session", "base url", "name", "credential", "disconnect"],
+              "items": [
+                "The current adapter is a process-scoped stdio server. Each Codex, Grok CLI, or other MCP client launches its own `sf-mcp` process.",
+                "Start it with `--root <path>` for stable project selection or `--session <id>` for an existing backend session; `--base-url <url>` selects `engine_sessiond`, and `--name <client-name>` identifies the client process.",
+                "Stdout is reserved for MCP protocol messages and diagnostics go to stderr.",
+                "Each process registers one workspace-scoped coordinator agent, keeps the returned credential private in process memory, heartbeats while connected, and disconnects on shutdown."
+              ]
+            },
+            {
+              "title": "Resources And Tools",
+              "keywords": ["project", "files", "coordination state", "work lease"],
+              "items": [
+                "The current resources are `shaderforge://project` and `shaderforge://coordination`.",
+                "Current read tools are `project_status`, `project_files_list`, `project_file_read`, and `coordination_state`.",
+                "Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.",
+                "Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical work queues through `engine_sessiond`."
+              ]
+            },
+            {
+              "title": "Current Safety Boundary",
+              "keywords": ["read only", "mutation", "approval", "revision", "http", "assistant"],
+              "items": [
+                "This first version is read-and-coordinate only; it does not expose file or scene writes, build/runtime mutation, arbitrary commands, or HTTP transport.",
+                "Mutation, build, and runtime tools remain blocked until shared preview, revision, structured diff, atomic apply, approval, provenance, validation, conflict, and recovery contracts exist.",
+                "A granted lease coordinates ownership but does not grant authority to bypass engine mutation policy.",
+                "Shader Forge MCP does not contain model execution, provider selection, assistant chat, or prompt UI; external clients own the AI experience.",
+                "Run `npm run test:mcp` for the deterministic stdio, resource, tool, file-boundary, coordination, and disconnect-cleanup harness."
               ]
             }
           ]
