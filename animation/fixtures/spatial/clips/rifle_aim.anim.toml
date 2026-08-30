@@ -1,0 +1,13 @@
+schema = "shader_forge.animation_clip"
+schema_version = 1
+name = "rifle_aim"
+owner_system = "animation_system"
+skeleton = "humanoid.standard.v2"
+duration_seconds = 0.8
+loop = true
+root_motion_meters = 0.0
+
+[event.aim_settled]
+time_seconds = 0.4
+type = "marker"
+target = "rifle_aim_settled"

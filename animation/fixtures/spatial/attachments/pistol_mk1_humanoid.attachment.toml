@@ -1,0 +1,19 @@
+schema = "shader_forge.attachment_profile"
+schema_version = 1
+id = "weapon.pistol.mk1.humanoid"
+name = "Pistol Mk1 Humanoid"
+owner_system = "animation_system"
+skeleton = "humanoid.standard.v2"
+item_prefab = "weapon.pistol.mk1"
+dominant_hand = "right"
+mode = "one_hand"
+perspective = "third_person"
+
+[primary_grip]
+socket = "socket.hand_r.primary"
+space = "socket"
+translation = [0.0, -0.01, 0.015]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[secondary_hand]
+enabled = false

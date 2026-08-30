@@ -1,0 +1,50 @@
+schema = "shader_forge.attachment_profile"
+schema_version = 1
+id = "weapon.rifle.mk1.humanoid"
+name = "Rifle Mk1 Humanoid"
+owner_system = "animation_system"
+skeleton = "humanoid.standard.v2"
+item_prefab = "weapon.rifle.mk1"
+dominant_hand = "right"
+mode = "two_hand"
+perspective = "both"
+
+[primary_grip]
+socket = "socket.hand_r.primary"
+space = "socket"
+translation = [0.0, -0.015, 0.02]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[primary_contact]
+translation = [0.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[handle_axis]
+origin = [0.0, 0.0, 0.0]
+direction = [0.0, 0.0, 1.0]
+
+[secondary_hand]
+enabled = true
+joint_limit_policy = "clamp_and_diagnose"
+
+[secondary_hand.target]
+translation = [0.0, 0.0, 0.42]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[secondary_hand.pole]
+translation = [0.0, -0.2, 0.25]
+
+[secondary_hand.tolerances]
+reach_meters = 0.04
+angle_degrees = 8.0
+contact_meters = 0.015
+
+[motion_envelope.idle]
+clip = "rifle_ready"
+normalized_times = [0.0, 0.5, 1.0]
+procedural_layers = ["primary_attachment", "secondary_hand_ik"]
+
+[motion_envelope.aim]
+clip = "rifle_aim"
+normalized_times = [0.0, 0.5, 1.0]
+procedural_layers = ["primary_attachment", "secondary_hand_ik"]

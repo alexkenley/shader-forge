@@ -34,7 +34,7 @@ Assistant entry points:
 - Use `shell/engine-shell/src/reference-guide.ts` as the shell adapter that imports the structured guide data.
 - Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.
 - Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.
-- Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the planned skeleton-socket and attachment-tuning contract. It is specified, not implemented.
+- Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query slice and the deferred attachment-tuning workflow.
 - Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline.
 
 ### Assistant Lookup Workflow
@@ -217,7 +217,7 @@ Assistant entry points:
 - `content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.
 - `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.
 - `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes.
-- `animation/attachments/*.attachment.toml` is the planned spatial-authoring attachment-profile lane. It is specified, not present in the repo.
+- `AnimationSystem` supports an optional `animation/attachments/*.attachment.toml` project lane; current attachment profiles remain isolated validation fixtures under `animation/fixtures/spatial/attachments/`.
 - `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml` are the initial authored physics lanes.
 - `saved/runtime/*.runtime-save.toml` is now the initial runtime-persistence lane and is intentionally separate from authored source assets.
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
@@ -261,18 +261,20 @@ Assistant entry points:
 - The current `debug_humanoid` skeleton is three-bone metadata only: `hips, spine, head`. There is no parent table, rest pose, semantic role map, or socket list.
 - `animation/clips/*.anim.toml` defines named clips with skeleton ownership, looping/root-motion metadata, and text-backed clip events.
 - `animation/graphs/*.animgraph.toml` defines named animation graphs with float parameters, named states, and explicit entry-state selection.
+- `AnimationSystem` now strictly validates v2 skeleton hierarchies, roles, sockets, and canonical quaternions plus v1 attachment profiles while keeping the existing v1 skeleton lane compatible.
+- Generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots.
 - The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet.
 
 ### Spatial Authoring And Attachment Tuning
 
-- Spatial authoring is a planned/foundational contract, not an implemented workbench. See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`.
+- Spatial authoring now has a native schema/query foundation, not yet a visual workbench. See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`.
 - Native engine code will own behavior, typed schemas, validation, and runtime execution. Source-controlled TOML will own tuning values. Shell, CLI, and `sf-mcp` will edit those same assets only through `engine_sessiond` revision-safe operations.
-- Planned authored roots are `animation/skeletons/*.skeleton.toml` schema version 2 with sockets, plus `animation/attachments/*.attachment.toml`.
+- V1 skeleton compatibility, strict v2 skeleton/socket validation, v1 attachment-profile validation, cross-references, canonical quaternions, and generation-safe query handles now exist.
+- Isolated humanoid/rifle/pistol fixtures under `animation/fixtures/spatial/` and `npm run test:spatial-authoring-scaffold` exercise the native parser through WSL without entering authored or cooked roots.
 - Humans and agents will share one `reviewId` and an immutable review packet with explicit cameras, resolution/framing, lighting, pose samples, source revisions, evaluated transforms/bounds, diagnostics, captures, operation id, and all lease ids. Do not scrape a live cursor or camera.
 - Preview candidates must be labelled. Cooked data is derived and non-editable. Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.
 - Two-hand weapons use dominant-hand item drive then off-hand IK. VLM or visual scores never apply.
-- Current projected debug-proxy cards and the three-bone metadata skeleton are not spatial-review evidence.
-- `sf-mcp` spatial tools are adapter-only and wait until engine operations exist.
+- Prefab existence, joint/capsule parsing, sampling, IK, rendering/capture, review packets, cooker and sessiond integration, shell tuning, and `sf-mcp` spatial tools remain deferred.
 - Implementation is ordered after the existing operation layer and before broad World/Assets visual polish.
 
 ### Physics Foundation
@@ -306,6 +308,7 @@ Assistant entry points:
 - `npm run test:code-trust-scaffold` validates the shared code-trust policy summary, artifact hashes plus verification state, promote/quarantine transitions, approval queue listing/decision flows, allowed authored-content hot reload, approved deferred apply/compile operations, and rejected assistant-triggered engine load paths.
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
 - `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.
+- `npm run test:spatial-authoring-scaffold` compiles and executes the native v1/v2 skeleton, socket, attachment-profile, cross-reference, quaternion, reload, and typed-handle validation harness; WSL `g++` is required on Windows.
 - `npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
@@ -325,6 +328,7 @@ Assistant entry points:
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
 - A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.
 - A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. MCP exposure of that workflow is still the next credential/lease gate. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+- A first native spatial schema/query slice with compatible v1 skeletons, strict v2 skeleton/socket and v1 attachment validation, generation-safe handles, isolated fixtures, and executable native coverage.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
 ### What Still Needs Widening
@@ -337,6 +341,7 @@ Assistant entry points:
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
+- Spatial authoring still needs prefab-catalog and joint/capsule integration, cooking, sampling, IK, attachment rendering/capture, review packets, sessiond operations, shell tuning, and MCP tools on top of the native schema/query slice.
 - Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.

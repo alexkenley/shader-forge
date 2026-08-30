@@ -1,0 +1,13 @@
+schema = "shader_forge.animation_clip"
+schema_version = 1
+name = "rifle_ready"
+owner_system = "animation_system"
+skeleton = "humanoid.standard.v2"
+duration_seconds = 1.0
+loop = true
+root_motion_meters = 0.0
+
+[event.ready]
+time_seconds = 0.0
+type = "marker"
+target = "rifle_ready"

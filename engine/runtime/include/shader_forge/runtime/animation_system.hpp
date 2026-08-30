@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -8,6 +9,30 @@
 #include <vector>
 
 namespace shader_forge::runtime {
+
+struct SkeletonId {
+  std::uint64_t generation = 0;
+  std::uint64_t index = 0;
+  bool operator==(const SkeletonId&) const = default;
+};
+
+struct BoneId {
+  std::uint64_t generation = 0;
+  std::uint64_t index = 0;
+  bool operator==(const BoneId&) const = default;
+};
+
+struct SocketId {
+  std::uint64_t generation = 0;
+  std::uint64_t index = 0;
+  bool operator==(const SocketId&) const = default;
+};
+
+struct AttachmentProfileId {
+  std::uint64_t generation = 0;
+  std::uint64_t index = 0;
+  bool operator==(const AttachmentProfileId&) const = default;
+};
 
 struct AnimationConfig {
   std::filesystem::path rootPath = "animation";
@@ -21,11 +46,102 @@ struct AnimationClipEventSnapshot {
   bool valid = false;
 };
 
+struct SpatialVector3Snapshot {
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+};
+
+struct SpatialQuaternionSnapshot {
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+  double w = 1.0;
+};
+
+struct SkeletonBoneSnapshot {
+  BoneId handle;
+  std::string id;
+  std::string parent;
+  std::string role;
+  SpatialVector3Snapshot translation;
+  SpatialQuaternionSnapshot rotation;
+};
+
+struct SkeletonSocketSnapshot {
+  SocketId handle;
+  std::string id;
+  std::string bone;
+  std::string role;
+  SpatialVector3Snapshot translation;
+  SpatialQuaternionSnapshot rotation;
+};
+
 struct SkeletonDefinitionSnapshot {
+  SkeletonId handle;
+  int schemaVersion = 0;
+  std::string id;
   std::string name;
   std::string rootBone;
   int boneCount = 0;
   std::vector<std::string> bones;
+  std::vector<SkeletonBoneSnapshot> boneDefinitions;
+  std::vector<SkeletonSocketSnapshot> sockets;
+  std::filesystem::path sourcePath;
+  bool valid = false;
+};
+
+struct AttachmentPrimaryGripSnapshot {
+  SocketId socketHandle;
+  std::string socket;
+  std::string space;
+  SpatialVector3Snapshot translation;
+  SpatialQuaternionSnapshot rotation;
+};
+
+struct AttachmentContactFrameSnapshot {
+  SpatialVector3Snapshot translation;
+  SpatialQuaternionSnapshot rotation;
+};
+
+struct AttachmentHandleAxisSnapshot {
+  SpatialVector3Snapshot origin;
+  SpatialVector3Snapshot direction;
+};
+
+struct AttachmentSecondaryHandSnapshot {
+  bool enabled = false;
+  SpatialVector3Snapshot targetTranslation;
+  SpatialQuaternionSnapshot targetRotation;
+  SpatialVector3Snapshot poleTranslation;
+  double reachMeters = 0.0;
+  double angleDegrees = 0.0;
+  double contactMeters = 0.0;
+  std::string jointLimitPolicy;
+};
+
+struct AttachmentMotionEnvelopeSnapshot {
+  std::string phase;
+  std::string clip;
+  std::vector<double> normalizedTimes;
+  std::vector<std::string> proceduralLayers;
+};
+
+struct AttachmentProfileSnapshot {
+  AttachmentProfileId handle;
+  SkeletonId skeletonHandle;
+  std::string id;
+  std::string name;
+  std::string skeletonId;
+  std::string itemPrefab;
+  std::string dominantHand;
+  std::string mode;
+  std::string perspective;
+  AttachmentPrimaryGripSnapshot primaryGrip;
+  std::optional<AttachmentContactFrameSnapshot> primaryContact;
+  std::optional<AttachmentHandleAxisSnapshot> handleAxis;
+  std::optional<AttachmentSecondaryHandSnapshot> secondaryHand;
+  std::vector<AttachmentMotionEnvelopeSnapshot> motionEnvelopes;
   std::filesystem::path sourcePath;
   bool valid = false;
 };
@@ -104,12 +220,20 @@ public:
   std::size_t skeletonCount() const;
   std::size_t clipCount() const;
   std::size_t graphCount() const;
+  std::size_t attachmentProfileCount() const;
 
   bool hasGraph(std::string_view graphName) const;
   std::optional<std::string> defaultGraphName() const;
   std::vector<SkeletonDefinitionSnapshot> snapshotSkeletons() const;
   std::vector<ClipDefinitionSnapshot> snapshotClips() const;
   std::vector<GraphDefinitionSnapshot> snapshotGraphs() const;
+  std::vector<AttachmentProfileSnapshot> snapshotAttachmentProfiles() const;
+  std::optional<SkeletonId> findSkeletonId(std::string_view id) const;
+  std::optional<AttachmentProfileId> findAttachmentProfileId(std::string_view id) const;
+  std::optional<SkeletonDefinitionSnapshot> snapshotSkeleton(SkeletonId id) const;
+  std::optional<AttachmentProfileSnapshot> snapshotAttachmentProfile(AttachmentProfileId id) const;
+  std::optional<SkeletonDefinitionSnapshot> findSkeleton(std::string_view idOrName) const;
+  std::optional<AttachmentProfileSnapshot> findAttachmentProfile(std::string_view id) const;
   std::optional<ResolvedAnimationGraphSnapshot> resolveGraph(std::string_view graphName) const;
   std::optional<ResolvedAnimationStateSnapshot> resolveGraphState(
     std::string_view graphName,

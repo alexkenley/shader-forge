@@ -1,0 +1,150 @@
+schema = "shader_forge.skeleton"
+schema_version = 2
+id = "humanoid.standard.v2"
+name = "spatial_humanoid"
+owner_system = "animation_system"
+root_bone = "hips"
+units = "meters"
+up = "y"
+forward = "z"
+handedness = "right"
+
+[bone.hips]
+id = "hips"
+parent = ""
+role = "hips"
+translation = [0.0, 0.95, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.spine]
+id = "spine"
+parent = "hips"
+role = "spine"
+translation = [0.0, 0.18, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.chest]
+id = "chest"
+parent = "spine"
+role = "chest"
+translation = [0.0, 0.22, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.upper_leg_r]
+id = "upper_leg_r"
+parent = "hips"
+role = "upper_leg_r"
+translation = [-0.09, -0.12, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.lower_leg_r]
+id = "lower_leg_r"
+parent = "upper_leg_r"
+role = "lower_leg_r"
+translation = [0.0, -0.43, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.foot_r]
+id = "foot_r"
+parent = "lower_leg_r"
+role = "foot_r"
+translation = [0.0, -0.42, 0.08]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.upper_leg_l]
+id = "upper_leg_l"
+parent = "hips"
+role = "upper_leg_l"
+translation = [0.09, -0.12, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.lower_leg_l]
+id = "lower_leg_l"
+parent = "upper_leg_l"
+role = "lower_leg_l"
+translation = [0.0, -0.43, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.foot_l]
+id = "foot_l"
+parent = "lower_leg_l"
+role = "foot_l"
+translation = [0.0, -0.42, 0.08]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.clavicle_r]
+id = "clavicle_r"
+parent = "chest"
+role = "clavicle_r"
+translation = [-0.12, 0.12, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.upper_arm_r]
+id = "upper_arm_r"
+parent = "clavicle_r"
+role = "upper_arm_r"
+translation = [-0.14, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.lower_arm_r]
+id = "lower_arm_r"
+parent = "upper_arm_r"
+role = "lower_arm_r"
+translation = [-0.28, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.hand_r]
+id = "hand_r"
+parent = "lower_arm_r"
+role = "hand_r"
+translation = [-0.24, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.clavicle_l]
+id = "clavicle_l"
+parent = "chest"
+role = "clavicle_l"
+translation = [0.12, 0.12, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.upper_arm_l]
+id = "upper_arm_l"
+parent = "clavicle_l"
+role = "upper_arm_l"
+translation = [0.14, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.lower_arm_l]
+id = "lower_arm_l"
+parent = "upper_arm_l"
+role = "lower_arm_l"
+translation = [0.28, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[bone.hand_l]
+id = "hand_l"
+parent = "lower_arm_l"
+role = "hand_l"
+translation = [0.24, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[socket.primary_grip]
+id = "socket.hand_r.primary"
+bone = "hand_r"
+role = "primary_grip"
+translation = [0.0, 0.0, 0.08]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[socket.palm_r]
+id = "socket.hand_r.palm"
+bone = "hand_r"
+role = "palm_contact"
+translation = [0.0, 0.0, 0.04]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[socket.palm_l]
+id = "socket.hand_l.palm"
+bone = "hand_l"
+role = "palm_contact"
+translation = [0.0, 0.0, 0.04]
+rotation = [0.0, 0.0, 0.0, 1.0]

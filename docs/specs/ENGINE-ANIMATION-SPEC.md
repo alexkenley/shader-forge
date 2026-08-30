@@ -91,10 +91,12 @@ The current Phase 5.72 slice now exists as a first engine-owned animation founda
 - `engine run` now forwards `--animation-root`
 - `engine bake` now scans the animation root and stages cooked skeleton, clip, and graph metadata under `build/cooked/animation/`
 - deterministic harness coverage now exists for the authored animation assets, runtime integration hooks, and staged animation cook lane
+- `AnimationSystem` now preserves v1 skeleton loading while also strictly parsing and validating v2 skeleton hierarchies, roles, socket frames, and canonical quaternions
+- optional v1 attachment profiles now parse and validate primary grips, contact/handle frames, two-hand targets and tolerances, motion-envelope samples, skeleton/socket references, and same-skeleton clip references
+- generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots
+- isolated humanoid and rifle/pistol fixtures plus `npm run test:spatial-authoring-scaffold` provide an executable native WSL validation lane without entering normal authored or cooked roots
 
-This is still a widening slice, not the final animation runtime. There is not yet a real sampling/blending backend, broader graph-parameter mutation from gameplay, root-motion application, retargeting, or native preview tooling.
-
-The current skeleton lane is three-bone metadata only: `debug_humanoid` stores `hips, spine, head` with no parent table, rest pose, semantic roles, or sockets. Attachment profiles, two-hand IK, review packets, and spatial capture are specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md) and are not implemented. That contract is planned/foundational. It must not be satisfied by presenting the current metadata skeleton or projected debug-proxy cards as an attachment tuner.
+This is still a widening slice, not the final animation runtime. The normal authored/runtime lane remains the compatible v1 `debug_humanoid` metadata path. V2 spatial assets currently live only in fixtures. Prefab existence validation, joint-limit and diagnostic-capsule parsing, sampling/blending, IK, attachment rendering, cooker integration, review capture, spatial `engine_sessiond` operations, native preview tooling, and `sf-mcp` spatial tools remain deferred.
 
 ## Later Scope
 
@@ -108,8 +110,7 @@ Later animation work should add:
 - keyframe/timeline editing UI
 - animation debugging overlays, scrubbers, and per-bone inspection
 - tighter shell/native-tool preview and edit workflows
-- skeleton schema version 2 with explicit bone hierarchy, semantic roles, and sockets
-- attachment-profile evaluation, dominant-hand item drive, secondary-hand IK, and spatial review packets as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
+- attachment-profile evaluation, dominant-hand item drive, secondary-hand IK, and spatial review packets on top of the implemented schema/query foundation, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
 
 ## Runtime Model
 
@@ -133,7 +134,7 @@ Source path:
 
 - text-backed animation assets under `animation/`
 - optional imported animation sources under project content roots
-- planned attachment profiles under `animation/attachments/` as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md); that root is not in the repo yet
+- optional project attachment profiles under `animation/attachments/`; current validation profiles remain isolated under `animation/fixtures/spatial/attachments/`
 
 Cook path:
 
@@ -175,7 +176,7 @@ The animation system should expose structured operations through CLI and future 
 
 - Phase 5.5 establishes the text-data and cook foundations animation depends on
 - Phase 5.72 introduces the engine animation subsystem
-- Phase 5.73 is the planned spatial-authoring and attachment-tuning contract; it is specified, not implemented, and depends on the existing operation layer plus later sampling
+- Phase 5.73 now has its first native schema/query slice; spatial operations and the visual tuning workflow still depend on later sampling, IK, rendering, and capture work
 - Phase 5.75 and later authoring work should expose animation preview and asset editing, but broad World/Assets visual polish must not invent a second attachment-truth path
 - Phase 6 integrates animation deeply with gameplay, audio, VFX, and runtime tools
 

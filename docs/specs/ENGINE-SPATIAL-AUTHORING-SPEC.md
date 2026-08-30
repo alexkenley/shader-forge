@@ -1,6 +1,6 @@
 # Engine Spatial Authoring And Attachment Tuning Spec
 
-Status: planned foundational contract; not implemented
+Status: first native schema and query slice implemented; authoring workflow deferred
 
 Date: 2026-08-30
 
@@ -10,7 +10,7 @@ Shader Forge spatial authoring is the engine-owned contract for skeleton sockets
 
 It exists so a weapon, tool, or held item has one authored truth that native runtime code, cooked data, the React shell, the CLI, and `sf-mcp` all share. It is the product answer to Unreal's split truth, where Blueprint or editor presentation can drift from native C++ behavior.
 
-This document specifies the contract. It does not describe a shipped workbench. The current repo still has a three-bone metadata skeleton, no sockets, no attachment profiles, no pose sampling, and projected debug-proxy cards rather than skinned attachment rendering.
+This document specifies the complete target contract. The first native slice now implements compatible skeleton/attachment parsing, validation, and typed query access, but it does not yet provide a spatial workbench, pose sampling, IK, rendering, capture, or mutation workflow.
 
 ## Authored-Truth Contract
 
@@ -24,20 +24,21 @@ One contract, five owners of distinct jobs:
 
 If a value affects how an item sits in a hand, it lives in an attachment profile or a skeleton socket. It does not live in a hidden editor database, a duplicated C++ constant, generated code that humans edit, or a prefab copy of the profile.
 
-## Current Reality
+## Current Native Schema Slice
 
-The current animation and scene slices are not this system:
+`AnimationSystem` now provides:
 
-- `animation/skeletons/debug_humanoid.skeleton.toml` is a schema-version-1 metadata file with `root_bone = "hips"` and `bones = "hips, spine, head"`. There is no parent table, rest pose, semantic role map, or socket list.
-- `AnimationSystem` loads and validates skeleton, clip, and graph metadata. It does not sample poses, blend, retarget, or evaluate IK.
-- The native window projects authored prefab render components as debug-proxy cards. That is not a skinned mesh, not a weapon in a hand, and not a spatial-review capture.
-- Shell `Review` in the current World authoring slice is a discard-only scene stance. It is not a spatial `reviewId` packet.
-- Embedded viewer transport and screenshot capture are still deferred.
-- `engine_sessiond` already owns revision-safe text-file preview/approve/apply/undo. Spatial operations are not implemented on top of that journal.
-- `sf-mcp` is read-and-coordinate only. It must not grow spatial mutation tools until the engine operations below exist.
-- There is no `animation/attachments/` root, no `build/spatial-reviews/` output, and no spatial harness.
+- unchanged schema-version-1 skeleton loading for the current authored `debug_humanoid` lane
+- strict, section-aware schema-version-2 skeleton parsing with stable dotted IDs, bone hierarchy, semantic roles, sockets, finite vectors, canonical unit quaternions, graph validation, and capability checks
+- optional schema-version-1 attachment-profile loading from an `attachments/` directory, including primary grip, contact/handle frames, two-hand target/pole/tolerances, and motion-envelope sample metadata
+- cross-reference validation for v2 skeleton IDs, primary sockets, dominant-hand roles, and animation clips on the same skeleton
+- generation-tagged `SkeletonId`, `BoneId`, `SocketId`, and `AttachmentProfileId` handles plus snapshot/query APIs; successful reloads invalidate older handles, while failed reloads retain the last valid generation
+- isolated humanoid, rifle, and pistol fixtures under `animation/fixtures/spatial/`, outside normal authored and cooked roots
+- `npm run test:spatial-authoring-scaffold`, which compiles and executes a native C++ validation driver; WSL `g++` is required on Windows
 
-Later implementation must widen from this metadata/proxy-card baseline. It must not present the current three-bone skeleton or proxy cards as a completed attachment tuner.
+The loader retains `item_prefab` as a stable reference but does not yet validate prefab existence because `AnimationSystem` does not own the prefab catalogue. Bone joint limits and diagnostic capsules are also not parsed in this slice.
+
+Still deferred: sampling, blending, IK, attachment rendering, spatial diagnostics, workbench capture and review packets, spatial `engine_sessiond` operations, cooker integration, the shell tuner, and `sf-mcp` spatial resources or tools.
 
 ## Goals
 
@@ -54,12 +55,12 @@ Later implementation must widen from this metadata/proxy-card baseline. It must 
 
 ## Non-Goals
 
-- Implementing the workbench, UI, cooker, or harness in this documentation pass.
+- Treating the implemented parser/query slice as a completed workbench, runtime attachment system, or tuning workflow.
 - Adding a new daemon, sidecar process, or provider-specific capture service.
 - Adding a built-in AI assistant, VLM panel, prompt composer, or provider picker to the shell.
 - Treating visual-language-model scores, screenshot hashes, or operator taste as apply authority.
 - Requiring cross-GPU exact PNG hashes as a pass/fail invariant.
-- Replacing the current three-bone `debug_humanoid` metadata slice before a real sampling backend exists.
+- Replacing the current three-bone `debug_humanoid` metadata asset; v1 compatibility remains required while v2 fixtures prove the new schema.
 - Building a general cinematic sequencer, full rig editor, or animation DCC replacement.
 - Allowing live gameplay objects to be mutated and then serialized back as authored attachment truth.
 - Copying attachment fields into prefabs, Blueprints, generated C++, or editor user-settings files.
@@ -83,18 +84,19 @@ Later implementation must widen from this metadata/proxy-card baseline. It must 
 
 ## Dependencies
 
-Required before spatial implementation starts:
+Already available foundations:
 
 - The existing `engine_sessiond` revision-safe text-file operation contract. Spatial apply/undo must be another operation kind on that journal, not a second writer.
 - The existing hierarchical lease coordinator, including FIFO overlapping-write queues and workspace-scoped `runtime` exclusivity.
 - The authored animation root under `animation/` and the current `AnimationSystem` load/validate path, widened rather than replaced.
 - The shared code-trust evaluate/review-queue path used by file-write apply.
+- The first native v1/v2 skeleton and v1 attachment-profile parser, validator, generation-safe query handles, isolated fixtures, and executable native harness.
 
 Required before capture, IK diagnostics, and review packets can pass:
 
 - Real animation sampling and a procedural IK layer in native runtime. Metadata-only graph resolution is not enough.
 - A runtime capture path that can render the staging workbench to image files. The current projected debug-proxy cards are not an acceptable stand-in.
-- A humanoid fixture with a real arm/hand bone chain. `debug_humanoid`'s hips/spine/head list cannot host a two-hand rifle.
+- Promotion of the isolated humanoid/rifle fixture into a real authored/cooked runtime lane only when sampling and rendering can consume it; `debug_humanoid` remains the compatible v1 metadata asset.
 
 Required before `sf-mcp` spatial tools:
 
@@ -297,13 +299,15 @@ Rules:
 
 ## Typed Native Handles
 
-Native code exposes typed, non-string handles after validation. The names below are the contract; they are not present in the current `AnimationSystem`.
+Native code now exposes generation-tagged, non-string `SkeletonId`, `BoneId`, `SocketId`, and `AttachmentProfileId` handles after validation. Query APIs resolve authored IDs to handles and handles to snapshots. A successful reload advances the generation so stale handles cannot resolve into reordered data; a failed reload retains the last valid generation and snapshots.
+
+Pose and review types in the example below remain target APIs. They are not part of the current schema/query slice.
 
 ```cpp
-struct SkeletonId { std::uint64_t value = 0; };
-struct BoneId { std::uint64_t value = 0; };
-struct SocketId { std::uint64_t value = 0; };
-struct AttachmentProfileId { std::uint64_t value = 0; };
+struct SkeletonId { std::uint64_t generation = 0; std::uint64_t index = 0; };
+struct BoneId { std::uint64_t generation = 0; std::uint64_t index = 0; };
+struct SocketId { std::uint64_t generation = 0; std::uint64_t index = 0; };
+struct AttachmentProfileId { std::uint64_t generation = 0; std::uint64_t index = 0; };
 struct ReviewId { std::uint64_t value = 0; };
 
 struct GripFrame {
@@ -333,11 +337,11 @@ After load, gameplay and tooling call handles, not path strings. String ids rema
 Flow:
 
 1. Read TOML from `animation/skeletons/` and `animation/attachments/`.
-2. Native validator checks schema, ids, tree, required capability roles, quaternion canonicalization, authored joint/palm/capsule/handle inputs, prefab collision geometry, clip existence, and envelope sample ranges.
-3. Loader intern ids into typed handles and keeps the source path plus content hash.
-4. `engine bake` writes deterministic cooked tables under `build/cooked/animation/skeletons/` and `build/cooked/animation/attachments/`.
-5. Runtime prefers cooked tables when present, and otherwise may load validated source during uncooked development exactly as other animation metadata currently does.
-6. Cooked files are not an edit target. A harness must fail if a test edits cooked bytes and expects the change to round-trip as authored truth.
+2. The implemented native validator checks supported schema versions, strict section/key shapes, stable IDs, the bone tree, required capability roles, vectors, quaternion canonicalization, socket and clip references, contact/handle inputs, attachment modes, tolerances, and envelope sample ranges.
+3. The implemented loader assigns generation-tagged query handles and commits a new generation only after the whole load succeeds.
+4. Prefab existence, joint limits, and diagnostic capsules remain deferred because their owning catalogues/data are not integrated into this loader yet.
+5. The target cooker will later write deterministic socket and attachment tables under `build/cooked/animation/`; that integration does not exist in the current slice.
+6. Cooked files remain derived outputs rather than edit targets.
 
 SQLite may store index rows for search. Deleting the tooling DB must not delete sockets or attachment tuning.
 
@@ -623,7 +627,7 @@ These tools must send coordinator credentials and hold the resource keys in this
 Authored, source-controlled:
 
 - `animation/skeletons/*.skeleton.toml`
-- `animation/attachments/*.attachment.toml`
+- future project attachment profiles under `animation/attachments/*.attachment.toml`; the current profiles are isolated harness fixtures under `animation/fixtures/spatial/attachments/`
 
 Derived, reproducible, non-editable:
 
@@ -650,7 +654,7 @@ Forbidden storage:
 
 ## Rifle Attachment Example
 
-The following is the canonical schema example. It is not in the repo yet. `debug_humanoid` cannot satisfy it.
+The following illustrates the full canonical profile contract. The isolated rifle fixture exercises the parser-supported subset; the normal authored `debug_humanoid` remains v1 and cannot satisfy the matching v2 skeleton requirements.
 
 ```toml
 schema = "shader_forge.attachment_profile"
@@ -710,7 +714,7 @@ normalized_times = [0.20, 0.35, 0.50]
 procedural_layers = ["primary_attachment", "secondary_hand_ik"]
 ```
 
-Matching skeleton socket fragment, also planned:
+Matching v2 skeleton socket fragment, represented by the isolated spatial fixture:
 
 ```toml
 [socket.right_hand.primary_grip]
@@ -752,16 +756,16 @@ Gameplay reads the profile through the animation system. It does not keep a para
 
 ## Deterministic Harness
 
-Planned harness, not present today. Command shape should follow existing Node `.mjs` harnesses and be runnable without a GPU-hash oracle.
+`npm run test:spatial-authoring-scaffold` now builds a temporary animation root from the normal v1 assets plus isolated v2 humanoid and weapon-profile fixtures under `animation/fixtures/spatial/`. It compiles and runs a native C++ driver; WSL `g++` is required on Windows.
 
-Required fixture:
+Current assertions cover:
 
-- a real humanoid bone chain with hips through hands and feet, not `debug_humanoid`'s three-bone list
-- a two-hand rifle prefab referenced by ID
-- `idle` and `aim` envelope phases, with `sprint` optional but recommended
-- the rifle attachment profile in the example above, with known numeric values
+- unchanged v1 loading alongside strict v2 skeleton/socket and v1 attachment-profile loading
+- dotted IDs, section isolation, tree/cycle/role/socket validation, quaternion validation and sign canonicalization
+- attachment skeleton/socket/clip cross-references, two-hand requirements, ranges, duplicate keys/IDs, deterministic ordering, optional attachment-root behavior, and failed-load state retention
+- generation-safe typed handle invalidation after successful reload
 
-Required assertions:
+Later workflow assertions still required:
 
 - exact numeric invariants on rest bone translations, socket-local grip, baked world grip, secondary target, and diagnostic meters/degrees at each named phase
 - quaternion canonicalization: `w >= 0` and unit length after every apply
@@ -775,14 +779,14 @@ Required assertions:
 - annotated captures are optional and must not be required for packet completeness
 - clean PNGs are present and readable, but exact cross-GPU PNG hashes are not an invariant
 
-The current `test:animation-scaffold` remains the metadata harness for three-bone `debug_humanoid`. It must not be silently retargeted as this spatial harness.
+The fixtures remain outside `animation/skeletons/`, `animation/clips/`, `animation/graphs/`, and all cooked roots, so normal runtime startup and bake behavior are unchanged. `test:animation-scaffold` continues to cover the authored v1 animation lane.
 
 ## Acceptance Gates
 
-A slice may be called spatial authoring only when all of the following hold for that slice:
+A complete spatial-authoring workflow requires all gates below. The implemented schema/query slice satisfies the native parsing, validation, handle, and fixture portions only.
 
-1. Skeleton schema version 2 with hierarchy, roles, and sockets validates natively.
-2. Attachment profiles validate, load to typed handles, and cook deterministically.
+1. Skeleton schema version 2 with hierarchy, roles, and sockets validates natively. **Implemented.**
+2. Attachment profiles validate and load to generation-safe typed handles. **Implemented.** Deterministic cooker integration remains deferred.
 3. Prefabs are referenced by ID and do not contain copied grip fields.
 4. Preview candidates are labelled and persist only through `engine_sessiond` operations.
 5. Approve/apply/undo use the existing journal; stale revisions conflict; denied approvals do not write.
@@ -791,20 +795,20 @@ A slice may be called spatial authoring only when all of the following hold for 
 8. Diagnostics are numeric and profile-driven.
 9. Unrelated profiles concurrent; overlapping keys queue; capture lease is short and exclusive.
 10. `sf-mcp` tools, if exposed, call those operations and no other write path.
-11. The deterministic harness above passes without a cross-GPU PNG hash check.
+11. The native schema harness passes; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema portion implemented.**
 12. Current three-bone metadata and proxy-card rendering are still described honestly wherever they remain.
 
-Failing any gate means the slice is still animation metadata or scene authoring, not spatial authoring.
+Until the remaining workflow gates pass, the implementation is a spatial schema/query foundation rather than a complete authoring and review workbench.
 
 ## Staged Implementation Order
 
 Dependency order, with no calendar estimates. This work starts after the operation layer, which already exists, and finishes its contract-sensitive slices before broad World/Assets visual polish.
 
-1. **Schema and validator.** Skeleton version 2 and attachment profile version 1, including closed role enums and quaternion canonicalization. Keep schema version 1 `debug_humanoid` loading as metadata.
-2. **Typed loader handles.** Native `findAttachment` / snapshot APIs with no sampling yet.
+1. **Schema and validator — implemented.** V1 skeleton compatibility, strict v2 skeleton/socket parsing, v1 attachment profiles, role and graph validation, quaternion canonicalization, and supported cross-references. Prefab existence plus joint/capsule parsing remain deferred.
+2. **Typed loader handles — implemented.** Generation-tagged skeleton, bone, socket, and attachment handles plus snapshot/query APIs, with transactional reload behavior and no sampling.
 3. **Cooker.** Stage attachment and socket tables under `build/cooked/animation/`.
 4. **Spatial operations.** Preview/validate/apply/undo over `engine_sessiond` for attachment TOML only. Label candidates. No fake captures.
-5. **Humanoid fixture.** Add the real bone-chain skeleton, two-hand rifle prefab, and rifle profile used by the harness. Do not pretend `debug_humanoid` is that fixture.
+5. **Humanoid fixture — implemented for validation only.** Isolated humanoid, rifle, pistol, and clip fixtures plus the executable native harness now prove the schema without entering authored or cooked roots.
 6. **Sampling and procedural layers.** Native sampler, primary attachment, secondary-hand IK, diagnostics. This is the animation-runtime widening spatial authoring depends on.
 7. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.
 8. **Constrained tuner.** Shell inspector plus native overlay for single-axis, numeric, snap, reset, and probe edits over the operation kinds.
