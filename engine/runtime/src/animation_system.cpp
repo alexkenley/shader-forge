@@ -1205,6 +1205,8 @@ bool loadAttachmentProfileFile(
   if (schema != "shader_forge.attachment_profile" || schemaVersion != 1 || ownerSystem != "animation_system") {
     return fail(errorMessage, "Invalid attachment profile header in " + context);
   }
+
+  profile->schemaVersion = schemaVersion;
   if (profile->dominantHand != "right" && profile->dominantHand != "left") {
     return fail(errorMessage, "Attachment dominant_hand must be right or left in " + context);
   }

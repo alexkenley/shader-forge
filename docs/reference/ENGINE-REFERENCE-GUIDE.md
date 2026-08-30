@@ -166,7 +166,8 @@ Assistant entry points:
 - `engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal.
 - `engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact through `engine_sessiond` and refreshes its trusted hash.
 - `engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now quarantines a tracked artifact through that same sessiond mutation authority so later risky transitions keep denying it until it is explicitly promoted again.
-- `engine build runtime` configures and builds the native runtime with CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`.
+- `engine build runtime` configures and builds the native runtime with CMake; `engine build spatial` builds the dependency-free native spatial validator. Both resolve CMake from `SHADER_FORGE_CMAKE` first and then `cmake` on `PATH`.
+- `engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs the already-built validator and prints deterministic JSON. It gives a build-first error when absent and does not compile, cook, or start a daemon.
 - `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.
 - `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
 - `engine migrate detect|unity|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
@@ -271,6 +272,7 @@ Assistant entry points:
 - Native engine code will own behavior, typed schemas, validation, and runtime execution. Source-controlled TOML will own tuning values. Shell, CLI, and `sf-mcp` will edit those same assets only through `engine_sessiond` revision-safe operations.
 - V1 skeleton compatibility, strict v2 skeleton/socket validation, v1 attachment-profile validation, cross-references, canonical quaternions, and generation-safe query handles now exist.
 - Isolated humanoid/rifle/pistol fixtures under `animation/fixtures/spatial/` and `npm run test:spatial-authoring-scaffold` exercise the native parser through WSL without entering authored or cooked roots.
+- `shader_forge_spatial validate --animation-root <path>` now reuses that exact `AnimationSystem` loader and reports deterministic JSON counts plus skeleton/profile metadata. `engine build spatial` builds it and `engine spatial validate` runs it read-only.
 - Humans and agents will share one `reviewId` and an immutable review packet with explicit cameras, resolution/framing, lighting, pose samples, source revisions, evaluated transforms/bounds, diagnostics, captures, operation id, and all lease ids. Do not scrape a live cursor or camera.
 - Preview candidates must be labelled. Cooked data is derived and non-editable. Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.
 - Two-hand weapons use dominant-hand item drive then off-hand IK. VLM or visual scores never apply.
@@ -309,6 +311,7 @@ Assistant entry points:
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
 - `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.
 - `npm run test:spatial-authoring-scaffold` compiles and executes the native v1/v2 skeleton, socket, attachment-profile, cross-reference, quaternion, reload, and typed-handle validation harness; WSL `g++` is required on Windows.
+- `npm run test:spatial-tool` compiles and runs the production native validator against isolated valid/invalid fixtures, checking deterministic JSON, loader diagnostics, and CLI help/build-first behavior; WSL `g++` is required on Windows.
 - `npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.

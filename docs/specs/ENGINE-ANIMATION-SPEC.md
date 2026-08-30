@@ -95,8 +95,9 @@ The current Phase 5.72 slice now exists as a first engine-owned animation founda
 - optional v1 attachment profiles now parse and validate primary grips, contact/handle frames, two-hand targets and tolerances, motion-envelope samples, skeleton/socket references, and same-skeleton clip references
 - generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots
 - isolated humanoid and rifle/pistol fixtures plus `npm run test:spatial-authoring-scaffold` provide an executable native WSL validation lane without entering normal authored or cooked roots
+- `shader_forge_spatial validate --animation-root <path>` now reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts and stable skeleton/profile metadata; `engine build spatial` and `engine spatial validate` expose that read-only path without a daemon or cooker
 
-This is still a widening slice, not the final animation runtime. The normal authored/runtime lane remains the compatible v1 `debug_humanoid` metadata path. V2 spatial assets currently live only in fixtures. Prefab existence validation, joint-limit and diagnostic-capsule parsing, sampling/blending, IK, attachment rendering, cooker integration, review capture, spatial `engine_sessiond` operations, native preview tooling, and `sf-mcp` spatial tools remain deferred.
+This is still a widening slice, not the final animation runtime. The normal authored/runtime lane remains the compatible v1 `debug_humanoid` metadata path. V2 spatial assets currently live only in fixtures. The validator is read-only and does not cook, sample, solve IK, capture, preview, or call `engine_sessiond`. Prefab existence validation, joint-limit and diagnostic-capsule parsing, sampling/blending, IK, attachment rendering, cooker integration, review capture, spatial operations, native preview tooling, and `sf-mcp` spatial tools remain deferred.
 
 ## Later Scope
 

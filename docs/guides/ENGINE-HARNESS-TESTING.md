@@ -28,6 +28,7 @@ Rules:
 | `scripts/test-engine-audio-scaffold.mjs` | Validates authored audio buses/sounds/events, runtime audio integration hooks, and fallback syntax-only compilation of the native audio slice | deterministic |
 | `scripts/test-engine-animation-scaffold.mjs` | Validates authored animation skeletons/clips/graphs, runtime animation integration hooks, and fallback syntax-only compilation of the native animation slice | deterministic |
 | `scripts/test-engine-spatial-authoring-scaffold.mjs` | Builds an isolated animation root, compiles the native parser, and validates v1/v2 skeleton, socket, attachment-profile, cross-reference, transactional reload, and typed-handle behavior; WSL `g++` is required on Windows | deterministic native |
+| `scripts/test-engine-spatial-tool.mjs` | Compiles the production `shader_forge_spatial` command, runs isolated valid and invalid roots, checks byte-stable JSON and diagnostics, and validates CLI help/build-first behavior; WSL `g++` is required on Windows | deterministic native |
 | `scripts/test-engine-physics-scaffold.mjs` | Validates authored physics layers/materials/bodies, runtime physics integration hooks, and fallback syntax-only compilation of the native physics slice | deterministic |
 | `scripts/test-engine-input-scaffold.mjs` | Validates the native input subsystem sources plus text-backed action/context assets and runs a fallback syntax-only compile | deterministic |
 | `scripts/test-engine-tooling-ui-scaffold.mjs` | Validates the native tooling registry/layout substrate, runtime integration hooks, and runs a fallback syntax-only compile | deterministic |
@@ -56,6 +57,8 @@ npm run test:animation-scaffold
 node scripts/test-engine-animation-scaffold.mjs
 npm run test:spatial-authoring-scaffold
 node scripts/test-engine-spatial-authoring-scaffold.mjs
+npm run test:spatial-tool
+node scripts/test-engine-spatial-tool.mjs
 npm run test:physics-scaffold
 node scripts/test-engine-physics-scaffold.mjs
 node scripts/test-engine-input-scaffold.mjs

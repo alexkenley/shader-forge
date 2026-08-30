@@ -328,7 +328,8 @@
                 "`engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal.",
                 "`engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact through `engine_sessiond` and refreshes its trusted hash.",
                 "`engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now quarantines a tracked artifact through that same sessiond mutation authority so later risky transitions keep denying it until it is explicitly promoted again.",
-                "`engine build runtime` configures and builds the native runtime with CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`.",
+                "`engine build runtime` configures and builds the native runtime with CMake; `engine build spatial` builds the dependency-free native spatial validator. Both resolve CMake from `SHADER_FORGE_CMAKE` first and then `cmake` on `PATH`.",
+                "`engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs the already-built validator and prints deterministic JSON. It gives a build-first error when absent and does not compile, cook, or start a daemon.",
                 "`engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.",
                 "`engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.",
                 "`engine migrate detect|unity|godot <path>` now emits normalized migration manifests plus report/warning outputs for supported source-engine project shapes.",
@@ -573,7 +574,7 @@
         {
           "id": "spatial-authoring",
           "title": "Spatial Authoring And Attachment Tuning",
-          "summary": "Spatial authoring now has a native schema/query foundation for compatible skeletons, sockets, attachment profiles, and typed handles; the visual tuning and review workflow remains deferred.",
+          "summary": "Spatial authoring now has a native schema/query foundation and a read-only deterministic JSON validator for compatible skeletons, sockets, attachment profiles, and typed handles; the visual tuning and review workflow remains deferred.",
           "keywords": [
             "spatial authoring",
             "attachment",
@@ -583,7 +584,9 @@
             "grip",
             "two-hand",
             "IK",
-            "preview-candidate"
+            "preview-candidate",
+            "shader_forge_spatial",
+            "engine spatial validate"
           ],
           "references": [
             "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
@@ -597,10 +600,13 @@
             "docs/specs/ENGINE-SCENE-SPEC.md",
             "engine/runtime/include/shader_forge/runtime/animation_system.hpp",
             "engine/runtime/src/animation_system.cpp",
+            "engine/runtime/src/spatial_authoring_tool.cpp",
+            "tools/engine-cli/shaderforge.mjs",
             "animation/skeletons/debug_humanoid.skeleton.toml",
             "animation/fixtures/spatial/skeletons/spatial_humanoid.skeleton.toml",
             "animation/fixtures/spatial/attachments/rifle_mk1_humanoid.attachment.toml",
             "scripts/test-engine-spatial-authoring-scaffold.mjs",
+            "scripts/test-engine-spatial-tool.mjs",
             "plans/ENGINE-IMPLEMENTATION-PLAN.md",
             "plans/SHADER-FORGE-REDESIGN-UPLIFT-PLAN.md"
           ],
@@ -624,6 +630,7 @@
                 "Generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots.",
                 "Isolated humanoid/rifle/pistol fixtures live under `animation/fixtures/spatial/`, outside authored and cooked roots.",
                 "`npm run test:spatial-authoring-scaffold` compiles and executes the native parser harness; WSL `g++` is required on Windows.",
+                "`shader_forge_spatial validate --animation-root <path>` reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts plus skeleton/profile metadata; `engine build spatial` and `engine spatial validate` expose that read-only lane.",
                 "Prefab existence, joint/capsule parsing, sampling, IK, rendering/capture, review packets, cooking, sessiond operations, shell tuning, and MCP tools remain deferred."
               ]
             },
@@ -712,6 +719,7 @@
             "scripts/test-engine-audio-scaffold.mjs",
             "scripts/test-engine-animation-scaffold.mjs",
             "scripts/test-engine-spatial-authoring-scaffold.mjs",
+            "scripts/test-engine-spatial-tool.mjs",
             "scripts/test-engine-physics-scaffold.mjs",
             "scripts/test-engine-input-scaffold.mjs",
             "scripts/test-engine-tooling-ui-scaffold.mjs",
@@ -733,6 +741,7 @@
                 "`npm run test:scene-authoring` validates the shell scene-authoring surface plus deterministic scene/prefab file writes inside a session root.",
                 "`npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.",
                 "`npm run test:spatial-authoring-scaffold` compiles and executes the native v1/v2 skeleton, socket, attachment-profile, cross-reference, quaternion, reload, and typed-handle validation harness; WSL `g++` is required on Windows.",
+                "`npm run test:spatial-tool` compiles and runs the production native validator against isolated valid/invalid fixtures, checking deterministic JSON, loader diagnostics, and CLI help/build-first behavior; WSL `g++` is required on Windows.",
                 "`npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
               ]
             },

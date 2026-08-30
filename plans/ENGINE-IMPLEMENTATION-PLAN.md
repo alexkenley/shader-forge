@@ -546,6 +546,7 @@ Status:
 - canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md)
 - v1-compatible skeleton loading, strict v2 skeleton/socket parsing, v1 attachment-profile parsing, and generation-safe query handles now exist in `AnimationSystem`
 - isolated humanoid/rifle/pistol fixtures and `npm run test:spatial-authoring-scaffold` validate the native slice without entering authored or cooked roots
+- `shader_forge_spatial validate`, `engine build spatial`, `engine spatial validate`, and `npm run test:spatial-tool` now provide a read-only deterministic JSON validation lane over that same `AnimationSystem`; there is no cooker, daemon, preview, or operation integration in this command slice
 - must land its contract-sensitive slices before broad World/Assets visual polish invents a second grip path
 
 Scope:
@@ -565,7 +566,7 @@ Current boundary this phase must not paper over:
 - `AnimationSystem` does not sample poses, evaluate IK, render attachments, or produce diagnostics
 - the runtime still draws projected debug-proxy cards, which are not spatial-review captures
 - shell `Review` is still a discard-only scene stance, not a spatial review packet
-- cooker integration, spatial sessiond operations, screenshot capture, shell tuning, and `sf-mcp` spatial tools are still deferred
+- sampling/IK, cooker integration, spatial sessiond operations, screenshot capture, shell tuning, and `sf-mcp` spatial tools are still deferred
 
 Exit criteria:
 - the acceptance gates in the spatial-authoring spec pass for the implemented slice

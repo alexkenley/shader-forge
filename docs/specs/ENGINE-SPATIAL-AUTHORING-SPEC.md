@@ -35,6 +35,9 @@ If a value affects how an item sits in a hand, it lives in an attachment profile
 - generation-tagged `SkeletonId`, `BoneId`, `SocketId`, and `AttachmentProfileId` handles plus snapshot/query APIs; successful reloads invalidate older handles, while failed reloads retain the last valid generation
 - isolated humanoid, rifle, and pistol fixtures under `animation/fixtures/spatial/`, outside normal authored and cooked roots
 - `npm run test:spatial-authoring-scaffold`, which compiles and executes a native C++ validation driver; WSL `g++` is required on Windows
+- a dependency-free `shader_forge_spatial validate --animation-root <path>` executable that calls the same `AnimationSystem::loadFromDisk` path and emits deterministic JSON with normalized root, collection counts, stable IDs, schema versions, bone/socket counts, attachment references/mode/perspective, and motion-envelope phase/sample counts
+- `engine build spatial`, plus `engine spatial validate` for running an already-built validator; validation is read-only and never auto-builds, cooks, starts a daemon, or creates review artifacts
+- `npm run test:spatial-tool`, which compiles and runs the command against isolated valid and invalid fixtures and checks deterministic output, diagnostics, CLI help, and build-first behavior; WSL `g++` is required on Windows
 
 The loader retains `item_prefab` as a stable reference but does not yet validate prefab existence because `AnimationSystem` does not own the prefab catalogue. Bone joint limits and diagnostic capsules are also not parsed in this slice.
 
@@ -756,7 +759,9 @@ Gameplay reads the profile through the animation system. It does not keep a para
 
 ## Deterministic Harness
 
-`npm run test:spatial-authoring-scaffold` now builds a temporary animation root from the normal v1 assets plus isolated v2 humanoid and weapon-profile fixtures under `animation/fixtures/spatial/`. It compiles and runs a native C++ driver; WSL `g++` is required on Windows.
+`npm run test:spatial-authoring-scaffold` builds a temporary animation root from the normal v1 assets plus isolated v2 humanoid and weapon-profile fixtures under `animation/fixtures/spatial/`. It compiles and runs a native C++ driver; WSL `g++` is required on Windows.
+
+`npm run test:spatial-tool` compiles the production `shader_forge_spatial` source with `AnimationSystem`, runs valid fixtures twice to require byte-stable JSON, rejects an invalid attachment with a precise loader diagnostic, and checks the CLI help/build-first contract. On Windows it executes the Linux test binary through WSL and does not pretend that binary is a Windows executable.
 
 Current assertions cover:
 
@@ -795,7 +800,7 @@ A complete spatial-authoring workflow requires all gates below. The implemented 
 8. Diagnostics are numeric and profile-driven.
 9. Unrelated profiles concurrent; overlapping keys queue; capture lease is short and exclusive.
 10. `sf-mcp` tools, if exposed, call those operations and no other write path.
-11. The native schema harness passes; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema portion implemented.**
+11. The native schema and production validator command harnesses pass; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema and read-only validator portions implemented.**
 12. Current three-bone metadata and proxy-card rendering are still described honestly wherever they remain.
 
 Until the remaining workflow gates pass, the implementation is a spatial schema/query foundation rather than a complete authoring and review workbench.
@@ -806,14 +811,15 @@ Dependency order, with no calendar estimates. This work starts after the operati
 
 1. **Schema and validator — implemented.** V1 skeleton compatibility, strict v2 skeleton/socket parsing, v1 attachment profiles, role and graph validation, quaternion canonicalization, and supported cross-references. Prefab existence plus joint/capsule parsing remain deferred.
 2. **Typed loader handles — implemented.** Generation-tagged skeleton, bone, socket, and attachment handles plus snapshot/query APIs, with transactional reload behavior and no sampling.
-3. **Cooker.** Stage attachment and socket tables under `build/cooked/animation/`.
-4. **Spatial operations.** Preview/validate/apply/undo over `engine_sessiond` for attachment TOML only. Label candidates. No fake captures.
-5. **Humanoid fixture — implemented for validation only.** Isolated humanoid, rifle, pistol, and clip fixtures plus the executable native harness now prove the schema without entering authored or cooked roots.
-6. **Sampling and procedural layers.** Native sampler, primary attachment, secondary-hand IK, diagnostics. This is the animation-runtime widening spatial authoring depends on.
-7. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.
-8. **Constrained tuner.** Shell inspector plus native overlay for single-axis, numeric, snap, reset, and probe edits over the operation kinds.
-9. **`sf-mcp` adapter.** Resources and tools from this spec, only after shell and CLI already use the operations.
-10. **World/Assets visual polish.** Gizmos and viewport chrome may then consume the same candidate/operation contract. They must not introduce a second persistence path.
+3. **Read-only native validation command — implemented.** One `shader_forge_spatial` executable reuses `AnimationSystem`, emits deterministic JSON, and is exposed by CLI build and validate commands without auto-build or daemon state.
+4. **Cooker.** Stage attachment and socket tables under `build/cooked/animation/`.
+5. **Spatial operations.** Preview/validate/apply/undo over `engine_sessiond` for attachment TOML only. Label candidates. No fake captures.
+6. **Humanoid fixture — implemented for validation only.** Isolated humanoid, rifle, pistol, and clip fixtures plus the executable native harness now prove the schema without entering authored or cooked roots.
+7. **Sampling and procedural layers.** Native sampler, primary attachment, secondary-hand IK, diagnostics. This is the animation-runtime widening spatial authoring depends on.
+8. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.
+9. **Constrained tuner.** Shell inspector plus native overlay for single-axis, numeric, snap, reset, and probe edits over the operation kinds.
+10. **`sf-mcp` adapter.** Resources and tools from this spec, only after shell and CLI already use the operations.
+11. **World/Assets visual polish.** Gizmos and viewport chrome may then consume the same candidate/operation contract. They must not introduce a second persistence path.
 
 If World/Assets polish starts first, it must not ship free-drag attachment editing, proxy-card reviews, or prefab-copied grips.
 

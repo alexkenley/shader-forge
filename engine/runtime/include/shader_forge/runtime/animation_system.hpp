@@ -130,6 +130,7 @@ struct AttachmentMotionEnvelopeSnapshot {
 struct AttachmentProfileSnapshot {
   AttachmentProfileId handle;
   SkeletonId skeletonHandle;
+  int schemaVersion = 0;
   std::string id;
   std::string name;
   std::string skeletonId;

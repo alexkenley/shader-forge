@@ -34,6 +34,7 @@ const DEFAULT_BASE_URL = process.env.SHADER_FORGE_SESSIOND_URL?.trim() || 'http:
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const defaultRuntimeBuildDir = path.join(repoRoot, 'build', 'runtime');
 const runtimeBinaryName = process.platform === 'win32' ? 'shader_forge_runtime.exe' : 'shader_forge_runtime';
+const spatialBinaryName = process.platform === 'win32' ? 'shader_forge_spatial.exe' : 'shader_forge_spatial';
 
 function printHelp() {
   console.log(`Shader Forge CLI
@@ -60,8 +61,9 @@ Usage:
   engine profile list [--root <path>] [--session <id>] [--base-url <url>] [--limit <count>]
   engine profile live [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>]
   engine profile capture [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>] [--label <name>] [--output <path>]
-  engine build [runtime] [--config Debug] [--build-dir build/runtime]
+  engine build [runtime|spatial] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
+  engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
   engine migrate detect <path> [--output-root migration] [--run-id detect-unity]
   engine migrate unity <path> [--output-root migration] [--run-id unity-project]
@@ -176,6 +178,10 @@ function runtimeBinaryPath(buildDir) {
   return path.join(buildDir, 'bin', runtimeBinaryName);
 }
 
+function spatialBinaryPath(buildDir) {
+  return path.join(buildDir, 'bin', spatialBinaryName);
+}
+
 async function runCommand(command, args, options = {}) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -198,8 +204,8 @@ async function runCommand(command, args, options = {}) {
   });
 }
 
-async function buildRuntime(flags) {
-  const cmakeCommand = requireCMakeCommand('runtime build');
+async function buildNativeTarget(target, flags) {
+  const cmakeCommand = requireCMakeCommand(`${target} build`);
   const buildDir = resolveBuildDirectory(flags);
   const config = normalizeBuildConfig(flags);
   const generator = process.env.CMAKE_GENERATOR?.trim() || '';
@@ -215,17 +221,18 @@ async function buildRuntime(flags) {
   }
 
   await runCommand(cmakeCommand, configureArgs);
-  await runCommand(cmakeCommand, ['--build', buildDir, '--config', config, '--target', 'shader_forge_runtime']);
+  const binaryPath = target === 'runtime' ? runtimeBinaryPath(buildDir) : spatialBinaryPath(buildDir);
+  await runCommand(cmakeCommand, ['--build', buildDir, '--config', config, '--target', `shader_forge_${target}`]);
 
   return {
     buildDir,
     config,
-    binaryPath: runtimeBinaryPath(buildDir),
+    binaryPath,
   };
 }
 
 async function runRuntime(sceneName, flags) {
-  const buildResult = await buildRuntime(flags);
+  const buildResult = await buildNativeTarget('runtime', flags);
   if (!fs.existsSync(buildResult.binaryPath)) {
     throw new Error(`Runtime binary was not produced at ${buildResult.binaryPath}`);
   }
@@ -259,6 +266,20 @@ async function runRuntime(sceneName, flags) {
     args.push('--tooling-layout-save', String(flags['tooling-layout-save']));
   }
   await runCommand(buildResult.binaryPath, args, { cwd: repoRoot });
+}
+
+async function runSpatialValidate(flags) {
+  const buildDir = resolveBuildDirectory(flags);
+  const binaryPath = spatialBinaryPath(buildDir);
+  if (!fs.existsSync(binaryPath)) {
+    throw new Error(`Spatial validator was not found at ${binaryPath}. Build it first with \`engine build spatial --build-dir ${buildDir}\`.`);
+  }
+
+  const requestedRoot = String(flags['animation-root'] || 'animation');
+  const animationRoot = path.isAbsolute(requestedRoot)
+    ? path.normalize(requestedRoot)
+    : path.resolve(process.cwd(), requestedRoot);
+  await runCommand(binaryPath, ['validate', '--animation-root', animationRoot], { cwd: repoRoot });
 }
 
 async function bakeAssets(flags) {
@@ -644,10 +665,10 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (command === 'build') {
     const { positionals, flags } = parseFlags(argv.slice(1));
     const buildTarget = positionals[0] || 'runtime';
-    if (buildTarget !== 'runtime') {
+    if (!['runtime', 'spatial'].includes(buildTarget)) {
       throw new Error(`Unknown build target: ${buildTarget}`);
     }
-    await buildRuntime(flags);
+    await buildNativeTarget(buildTarget, flags);
     return;
   }
 
@@ -655,6 +676,31 @@ export async function runCli(argv = process.argv.slice(2)) {
     const { positionals, flags } = parseFlags(argv.slice(1));
     const sceneName = positionals[0] || 'sandbox';
     await runRuntime(sceneName, flags);
+    return;
+  }
+
+  if (command === 'spatial') {
+    const spatialSubcommand = argv[1];
+    const { positionals, flags } = parseFlags(argv.slice(2));
+    if (spatialSubcommand !== 'validate') {
+      throw new Error(spatialSubcommand
+        ? `Unknown spatial subcommand: ${spatialSubcommand}`
+        : 'engine spatial requires the validate subcommand.');
+    }
+    if (positionals.length) {
+      throw new Error(`engine spatial validate does not accept positional arguments: ${positionals.join(' ')}`);
+    }
+    const supportedFlags = new Set(['animation-root', 'build-dir', 'config']);
+    const unknownFlags = Object.keys(flags).filter((flag) => !supportedFlags.has(flag));
+    if (unknownFlags.length) {
+      throw new Error(`Unknown engine spatial validate flag: --${unknownFlags[0]}`);
+    }
+    for (const flag of supportedFlags) {
+      if (Object.hasOwn(flags, flag) && typeof flags[flag] !== 'string') {
+        throw new Error(`engine spatial validate requires a value for --${flag}.`);
+      }
+    }
+    await runSpatialValidate(flags);
     return;
   }
 
