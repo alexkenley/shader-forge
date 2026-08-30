@@ -1,6 +1,6 @@
 # Engine Operations Spec
 
-Status: hardened text-file write slice plus spatial attachment preview context implemented in `engine_sessiond`
+Status: hardened text-file write slice plus spatial attachment preview context and CLI adapter implemented
 
 Date: 2026-08-30
 
@@ -170,6 +170,12 @@ The event log is append-only. Apply/undo failure and recovery never replace or d
 The bind-host and Origin checks are a local trust boundary. They are not cryptographic client authentication and do not attribute actors.
 
 MCP mutation tools remain disabled until coordinator credentials and leases are wired through the same operation contract.
+
+## Spatial CLI Adapter
+
+The implemented `engine spatial preview|approve|reject|apply|undo` commands are thin clients of these HTTP routes. Preview reads a strict BOM-free UTF-8 `--content-file` and sends full candidate content; it never writes the source file. Preview/apply/undo read the coordinator credential only from `SHADER_FORGE_AGENT_CREDENTIAL`, while agent and lease IDs remain explicit arguments. Approve/reject are lease-free review transitions. Every command uses the fixed CLI actor and prints the returned JSON.
+
+The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. The shell Activity/Changes surface, MCP mutations, operation-scoped spatial validation, capture, diagnostics, and review packets remain deferred.
 
 ## Events
 

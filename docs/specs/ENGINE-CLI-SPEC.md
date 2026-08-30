@@ -34,6 +34,12 @@ Current implemented commands:
 - `engine build`
 - `engine run`
 - `engine spatial validate`
+- `engine spatial cook`
+- `engine spatial preview`
+- `engine spatial approve`
+- `engine spatial reject`
+- `engine spatial apply`
+- `engine spatial undo`
 - `engine bake`
 - `engine migrate detect`
 - `engine migrate unity`
@@ -57,6 +63,10 @@ The initial build/run/bake command family now targets the native runtime and coo
 - `engine build spatial` configures the same native tree and builds only the dependency-free `shader_forge_spatial` validate/cook executable
 - `engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs an already-built validator and prints deterministic JSON for valid skeleton/socket and attachment-profile data; it fails with a build-first diagnostic rather than compiling implicitly
 - `engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]` runs the same already-built tool, validates through `AnimationSystem`, and atomically stages one deterministic derived payload at `<output-root>/animation/spatial-authoring.bin`; it rejects unknown, missing, duplicate, or positional arguments and does not auto-build or join the generic `engine bake` lane yet
+- `engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]` decodes the candidate file as strict BOM-free UTF-8 and sends the full candidate to the semantic sessiond preview route without writing authored data
+- `engine spatial approve|reject <operation-id> [--base-url <url>]` performs the lease-free review transition through sessiond
+- `engine spatial apply|undo <operation-id> --agent <id> --lease <id> [--base-url <url>]` sends the coordinator identity and lease through sessiond; the credential comes only from `SHADER_FORGE_AGENT_CREDENTIAL` and is never accepted as a flag or printed
+- all spatial operation commands record actor `{kind: "cli", id: "engine-cli", name: "Shader Forge CLI"}`, reject unknown/duplicate/missing arguments, print the returned JSON, and never auto-register, acquire a lease, approve, build, or bypass sessiond
 - `engine run sandbox` builds and launches the native runtime target
 - `engine run` now forwards `--input-root`, `--content-root`, `--audio-root`, `--animation-root`, `--physics-root`, `--data-foundation`, `--save-root`, `--tooling-layout`, and `--tooling-layout-save` so native bring-up can inspect text-backed engine assets and configuration directly while keeping runtime persistence under the active project root
 - `engine bake` now scans the text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report plus generated-mesh preview payloads for procedural geometry assets

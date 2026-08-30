@@ -585,13 +585,18 @@ Review artifacts live in the project under `build/spatial-reviews/` so they are 
 
 ### CLI
 
-Planned commands, calling sessiond rather than writing files:
+Implemented sessiond-backed operation commands:
 
-- `engine spatial preview`
-- `engine spatial validate`
+- `engine spatial preview` reads strict BOM-free UTF-8 candidate bytes from `--content-file` and sends the full semantic preview request
+- `engine spatial approve|reject <operation-id>` performs the review transition
+- `engine spatial apply|undo <operation-id>` requires explicit agent and lease IDs plus `SHADER_FORGE_AGENT_CREDENTIAL`
+
+These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook` commands remain separate and unchanged.
+
+Deferred commands:
+
+- operation-scoped `engine spatial validate <operation-id>`
 - `engine spatial recapture`
-- `engine spatial apply`
-- `engine spatial undo`
 - `engine spatial review read <review-id>`
 
 ### Shell

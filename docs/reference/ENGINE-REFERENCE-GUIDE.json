@@ -272,7 +272,7 @@
                 "The current resources are `shaderforge://project` and `shaderforge://coordination`.",
                 "Current read tools are `project_status`, `project_files_list`, `project_file_read`, and `coordination_state`.",
                 "Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.",
-                "Planned spatial resources and tools in `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` are adapter-only and must wait until engine spatial operations exist. They are not part of the current `sf-mcp` surface.",
+                "Planned spatial resources and tools in `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` remain adapter-only and must wire coordinator credentials and leases through the implemented spatial operations. They are not part of the current `sf-mcp` surface.",
                 "Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical work queues through `engine_sessiond`."
               ]
             },
@@ -331,6 +331,8 @@
                 "`engine build runtime` configures and builds the native runtime with CMake; `engine build spatial` builds the dependency-free native spatial validate/cook tool. Both resolve CMake from `SHADER_FORGE_CMAKE` first and then `cmake` on `PATH`.",
                 "`engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs the already-built validator and prints deterministic JSON. It gives a build-first error when absent and does not compile, cook, or start a daemon.",
                 "`engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]` validates through the same `AnimationSystem` and atomically stages one byte-stable derived payload at `<output-root>/animation/spatial-authoring.bin`. It does not auto-build, start a daemon, or join generic `engine bake` yet.",
+                "`engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]` sends a strict BOM-free UTF-8 full-content candidate to sessiond without mutating authored bytes.",
+                "`engine spatial approve|reject <operation-id>` and `engine spatial apply|undo <operation-id> --agent <id> --lease <id>` call the existing operation transitions. Apply/undo require the credential in `SHADER_FORGE_AGENT_CREDENTIAL`; no command performs implicit coordination or approval.",
                 "`engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.",
                 "`engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.",
                 "`engine migrate detect|unity|godot <path>` now emits normalized migration manifests plus report/warning outputs for supported source-engine project shapes.",
@@ -639,8 +641,10 @@
                 "`shader_forge_spatial cook` validates through the same loader and atomically stages complete socket/profile tables with relative source paths and no query handles or absolute machine paths; `engine spatial cook` exposes that already-built lane.",
                 "`POST /api/operations/spatial-attachment/preview` stages authored animation inputs through SessionStore, validates baseline and candidate, maps the stable source path to old/new profile IDs, requires exact write-lease coverage, and only then records a labelled generic file-write candidate with durable public spatial context.",
                 "Spatial apply and undo require a currently granted matching lease and credential; a renewed lease is accepted when it covers every persisted resource key.",
+                "`engine spatial preview|approve|reject|apply|undo` are strict adapters over that same sessiond contract. Preview consumes a strict BOM-free UTF-8 content file; preview/apply/undo use only the environment-provided coordinator credential and never acquire coordination or bypass sessiond.",
                 "`npm run test:spatial-operations` covers no-write preview, staging, context restart, contention and rename leases, apply/undo renewal and revisions, CORS, and temp cleanup.",
-                "Prefab existence, joint/capsule parsing, generic bake/runtime consumption, sampling, IK, rendering/capture, review packets, shell tuning, CLI preview, and MCP tools remain deferred."
+                "`npm run test:spatial-cli` drives the real CLI against an injected-validator sessiond and validates preview/review/apply/undo, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction.",
+                "Prefab existence, joint/capsule parsing, generic bake/runtime consumption, sampling, IK, rendering/capture, review packets, operation-scoped validation/recapture, shell tuning, and MCP tools remain deferred."
               ]
             },
             {
@@ -751,6 +755,7 @@
                 "`npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.",
                 "`npm run test:spatial-authoring-scaffold` compiles and executes the native v1/v2 skeleton, socket, attachment-profile, cross-reference, quaternion, reload, and typed-handle validation harness; WSL `g++` is required on Windows.",
                 "`npm run test:spatial-tool` requires a native compiler and runs the production validate/cook tool against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, checking deterministic validation, byte-stable complete cooking, relative paths, invalid-input output preservation, loader diagnostics, and CLI strict/help/build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere.",
+                "`npm run test:spatial-cli` drives the real CLI against an injected-validator sessiond and validates preview/review/apply/undo, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction.",
                 "`npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
               ]
             },

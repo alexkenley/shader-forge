@@ -65,6 +65,11 @@ Usage:
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]
+  engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]
+  engine spatial approve <operation-id> [--base-url <url>]
+  engine spatial reject <operation-id> [--base-url <url>]
+  engine spatial apply <operation-id> --agent <id> --lease <id> [--base-url <url>]
+  engine spatial undo <operation-id> --agent <id> --lease <id> [--base-url <url>]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
   engine migrate detect <path> [--output-root migration] [--run-id detect-unity]
   engine migrate unity <path> [--output-root migration] [--run-id unity-project]
@@ -109,7 +114,7 @@ function parseFlags(tokens) {
 
 async function requestJson(baseUrl, pathname, options = {}) {
   const target = new URL(pathname, baseUrl);
-  const requestBody = options.body ? JSON.stringify(options.body) : '';
+  const requestBody = options.body !== undefined ? JSON.stringify(options.body) : '';
   const transport = target.protocol === 'https:' ? https : http;
 
   return new Promise((resolve, reject) => {
@@ -118,12 +123,15 @@ async function requestJson(baseUrl, pathname, options = {}) {
       hostname: target.hostname,
       port: target.port || (target.protocol === 'https:' ? 443 : 80),
       path: `${target.pathname}${target.search}`,
-      headers: requestBody
-        ? {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(requestBody),
-          }
-        : undefined,
+      headers: {
+        ...(requestBody
+          ? {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(requestBody),
+            }
+          : {}),
+        ...(options.headers || {}),
+      },
     }, (response) => {
       let rawBody = '';
       response.setEncoding('utf8');
@@ -140,7 +148,14 @@ async function requestJson(baseUrl, pathname, options = {}) {
         }
 
         if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
-          reject(new Error(payload.error || `Request failed with status ${response.statusCode || 0}`));
+          const details = [payload.code, payload.error, payload.diagnostic]
+            .filter((value, index, values) => typeof value === 'string' && value.trim() && values.indexOf(value) === index)
+            .join(': ') || `Request failed with status ${response.statusCode || 0}`;
+          const redacted = (options.redact || []).reduce(
+            (message, secret) => secret ? message.replaceAll(secret, '[redacted]') : message,
+            details,
+          );
+          reject(new Error(redacted));
           return;
         }
 
@@ -293,6 +308,85 @@ async function runSpatialCommand(subcommand, flags) {
     args.push('--output-root', outputRoot);
   }
   await runCommand(binaryPath, args, { cwd: repoRoot });
+}
+
+const spatialOperationActor = Object.freeze({
+  kind: 'cli',
+  id: 'engine-cli',
+  name: 'Shader Forge CLI',
+});
+
+function requireSpatialAgentCredential(subcommand) {
+  const credential = process.env.SHADER_FORGE_AGENT_CREDENTIAL?.trim() || '';
+  if (!credential) {
+    throw new Error(`engine spatial ${subcommand} requires SHADER_FORGE_AGENT_CREDENTIAL.`);
+  }
+  return credential;
+}
+
+function readStrictUtf8File(filePath) {
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+  try {
+    const bytes = fs.readFileSync(resolvedPath);
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      throw new Error(`Spatial preview content file must not begin with a UTF-8 BOM: ${resolvedPath}`);
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(`Spatial preview content file is not valid UTF-8: ${resolvedPath}`);
+    }
+    throw error;
+  }
+}
+
+async function runSpatialOperation(subcommand, positionals, flags) {
+  const baseUrl = resolvedBaseUrl(flags);
+  if (subcommand === 'preview') {
+    const credential = requireSpatialAgentCredential(subcommand);
+    const payload = await requestJson(baseUrl, '/api/operations/spatial-attachment/preview', {
+      method: 'POST',
+      headers: { 'X-Shader-Forge-Agent-Credential': credential },
+      redact: [credential],
+      body: {
+        sessionId: flags.session,
+        path: flags.path,
+        content: readStrictUtf8File(flags['content-file']),
+        baseRevision: flags['base-revision'],
+        label: flags.label,
+        actor: spatialOperationActor,
+        agentId: flags.agent,
+        leaseId: flags.lease,
+      },
+    });
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  const operationId = positionals[0].trim();
+  const credential = ['apply', 'undo'].includes(subcommand)
+    ? requireSpatialAgentCredential(subcommand)
+    : '';
+  const payload = await requestJson(
+    baseUrl,
+    `/api/operations/${encodeURIComponent(operationId)}/${subcommand}`,
+    {
+      method: 'POST',
+      ...(credential
+        ? {
+            headers: { 'X-Shader-Forge-Agent-Credential': credential },
+            redact: [credential],
+          }
+        : {}),
+      body: {
+        actor: spatialOperationActor,
+        ...(['apply', 'undo'].includes(subcommand)
+          ? { agentId: flags.agent, leaseId: flags.lease }
+          : {}),
+      },
+    },
+  );
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 async function bakeAssets(flags) {
@@ -695,23 +789,40 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (command === 'spatial') {
     const spatialSubcommand = argv[1];
     const { positionals, flags, duplicateFlags } = parseFlags(argv.slice(2));
-    if (!['validate', 'cook'].includes(spatialSubcommand)) {
+    const nativeSubcommands = ['validate', 'cook'];
+    const operationSubcommands = ['preview', 'approve', 'reject', 'apply', 'undo'];
+    if (![...nativeSubcommands, ...operationSubcommands].includes(spatialSubcommand)) {
       throw new Error(spatialSubcommand
         ? `Unknown spatial subcommand: ${spatialSubcommand}`
-        : 'engine spatial requires the validate or cook subcommand.');
-    }
-    if (positionals.length) {
-      throw new Error(`engine spatial ${spatialSubcommand} does not accept positional arguments: ${positionals.join(' ')}`);
+        : 'engine spatial requires a subcommand.');
     }
     if (duplicateFlags.length) {
       throw new Error(`Duplicate engine spatial ${spatialSubcommand} flag: --${duplicateFlags[0]}`);
     }
-    const supportedFlags = new Set([
-      'animation-root',
-      'build-dir',
-      'config',
-      ...(spatialSubcommand === 'cook' ? ['output-root'] : []),
-    ]);
+    const positionalCount = ['approve', 'reject', 'apply', 'undo'].includes(spatialSubcommand) ? 1 : 0;
+    if (positionals.length !== positionalCount) {
+      throw new Error(positionalCount === 0
+        ? `engine spatial ${spatialSubcommand} does not accept positional arguments.`
+        : `engine spatial ${spatialSubcommand} requires exactly one operation id.`);
+    }
+    if (positionalCount === 1 && !positionals[0].trim()) {
+      throw new Error(`engine spatial ${spatialSubcommand} requires a non-empty operation id.`);
+    }
+    const flagsBySubcommand = {
+      validate: ['animation-root', 'build-dir', 'config'],
+      cook: ['animation-root', 'output-root', 'build-dir', 'config'],
+      preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease', 'base-url'],
+      approve: ['base-url'],
+      reject: ['base-url'],
+      apply: ['agent', 'lease', 'base-url'],
+      undo: ['agent', 'lease', 'base-url'],
+    };
+    const requiredFlagsBySubcommand = {
+      preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease'],
+      apply: ['agent', 'lease'],
+      undo: ['agent', 'lease'],
+    };
+    const supportedFlags = new Set(flagsBySubcommand[spatialSubcommand]);
     const unknownFlags = Object.keys(flags).filter((flag) => !supportedFlags.has(flag));
     if (unknownFlags.length) {
       throw new Error(`Unknown engine spatial ${spatialSubcommand} flag: --${unknownFlags[0]}`);
@@ -721,7 +832,27 @@ export async function runCli(argv = process.argv.slice(2)) {
         throw new Error(`engine spatial ${spatialSubcommand} requires a value for --${flag}.`);
       }
     }
-    await runSpatialCommand(spatialSubcommand, flags);
+    for (const flag of requiredFlagsBySubcommand[spatialSubcommand] || []) {
+      if (!Object.hasOwn(flags, flag) || !String(flags[flag]).trim()) {
+        throw new Error(`engine spatial ${spatialSubcommand} requires --${flag} <value>.`);
+      }
+    }
+    if (spatialSubcommand === 'preview') {
+      const requestedPath = String(flags.path).replaceAll('\\', '/');
+      if (!/^animation\/attachments\/[^/]+\.attachment\.toml$/.test(requestedPath)) {
+        throw new Error('engine spatial preview --path must match animation/attachments/*.attachment.toml.');
+      }
+      flags.path = requestedPath;
+      const baseRevision = String(flags['base-revision']);
+      if (baseRevision !== 'missing' && !/^sha256:[a-f0-9]{64}$/.test(baseRevision)) {
+        throw new Error('engine spatial preview --base-revision must be missing or a lowercase SHA-256 revision.');
+      }
+    }
+    if (nativeSubcommands.includes(spatialSubcommand)) {
+      await runSpatialCommand(spatialSubcommand, flags);
+    } else {
+      await runSpatialOperation(spatialSubcommand, positionals, flags);
+    }
     return;
   }
 
