@@ -166,6 +166,13 @@ try {
       report.attachmentProfiles.map((entry) => entry.id),
       ['weapon.pistol.mk1.humanoid', 'weapon.rifle.mk1.humanoid'],
     );
+    assert.deepEqual(
+      report.attachmentProfiles.map((entry) => entry.source),
+      [
+        'attachments/pistol_mk1_humanoid.attachment.toml',
+        'attachments/rifle_mk1_humanoid.attachment.toml',
+      ],
+    );
     assert.equal(report.attachmentProfiles[1].schemaVersion, 1);
     assert.equal(report.attachmentProfiles[1].skeleton, 'humanoid.standard.v2');
     assert.equal(report.attachmentProfiles[1].itemPrefab, 'weapon.rifle.mk1');

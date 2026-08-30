@@ -76,6 +76,15 @@ const CODE_TRUST_EFFECT_STATUSES = new Set([
 ]);
 const CODE_TRUST_EFFECT_PHASES = new Set(['apply', 'undo']);
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const SPATIAL_SUBJECT_ID = /^[a-z0-9][a-z0-9._-]*$/;
+const RESOURCE_KEY = /^[a-z0-9._-]+(?:\/[a-z0-9._-]+)*$/;
+const SPATIAL_CONTEXT_FIELDS = new Set([
+  'type',
+  'label',
+  'subjectId',
+  'resourceKeys',
+  'leaseId',
+]);
 
 function createStoreError(statusCode, message, extras = {}) {
   const error = new Error(message);
@@ -117,6 +126,56 @@ function normalizeRevision(value, fieldName) {
     );
   }
   return revision;
+}
+
+function normalizeOperationContext(value) {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw createStoreError(400, 'context must be an object.');
+  }
+  for (const key of Object.keys(value)) {
+    if (!SPATIAL_CONTEXT_FIELDS.has(key)) {
+      throw createStoreError(400, `Unsupported operation context field: ${key}`);
+    }
+  }
+  if (value.type !== 'spatial_attachment') {
+    throw createStoreError(400, 'context.type must be spatial_attachment.');
+  }
+  const label = requireTrimmedString(value.label, 'context.label');
+  const subjectId = requireTrimmedString(value.subjectId, 'context.subjectId').toLowerCase();
+  const leaseId = requireTrimmedString(value.leaseId, 'context.leaseId');
+  if (!SPATIAL_SUBJECT_ID.test(subjectId)) {
+    throw createStoreError(400, 'context.subjectId is not a canonical spatial attachment id.');
+  }
+  if (!Array.isArray(value.resourceKeys) || value.resourceKeys.length === 0) {
+    throw createStoreError(400, 'context.resourceKeys must be a non-empty array.');
+  }
+  const resourceKeys = [...new Set(value.resourceKeys.map((resource) => {
+    const normalized = requireTrimmedString(resource, 'context.resourceKeys entry')
+      .replaceAll('\\', '/')
+      .toLowerCase();
+    if (!RESOURCE_KEY.test(normalized)) {
+      throw createStoreError(400, `Invalid context resource key: ${normalized}`);
+    }
+    return normalized;
+  }))].sort();
+  return {
+    type: 'spatial_attachment',
+    label,
+    subjectId,
+    resourceKeys,
+    leaseId,
+  };
+}
+
+function tryNormalizeOperationContext(value) {
+  try {
+    return normalizeOperationContext(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeActor(value) {
@@ -680,6 +739,7 @@ function operationView(record) {
     workspaceRoot: record.workspaceRoot,
     workspaceIdentity: record.workspaceIdentity ? structuredClone(record.workspaceIdentity) : null,
     actor: structuredClone(record.actor),
+    context: record.context ? structuredClone(record.context) : null,
     state: record.state,
     baseRevision: record.baseRevision,
     proposedRevision: record.proposedRevision,
@@ -706,6 +766,7 @@ function persistableRecord(record) {
       id: record.actor.id,
       name: record.actor.name,
     },
+    context: record.context ? structuredClone(record.context) : null,
     state: record.state,
     baseRevision: record.baseRevision,
     proposedRevision: record.proposedRevision,
@@ -824,6 +885,7 @@ function normalizePersistedOperation(record) {
     workspaceRoot = '',
     workspaceIdentity,
     actor,
+    context = null,
     state = '',
     baseRevision = '',
     proposedRevision = '',
@@ -859,6 +921,10 @@ function normalizePersistedOperation(record) {
 
   const normalizedActor = tryNormalizeActor(actor);
   if (!normalizedActor) {
+    return null;
+  }
+  const normalizedContext = tryNormalizeOperationContext(context);
+  if (normalizedContext === undefined) {
     return null;
   }
 
@@ -963,6 +1029,7 @@ function normalizePersistedOperation(record) {
     workspaceRoot: workspaceRoot.trim(),
     workspaceIdentity: normalizedIdentity,
     actor: normalizedActor,
+    context: normalizedContext,
     state,
     baseRevision,
     proposedRevision,
@@ -1100,6 +1167,7 @@ export class OperationStore {
     content = '',
     baseRevision,
     actor,
+    context = null,
   } = {}) {
     return this.#serializeMutation(async () => {
       if (!this.#sessionStore) {
@@ -1111,6 +1179,7 @@ export class OperationStore {
       const proposedContent = typeof content === 'string' ? content : '';
       const expectedBase = normalizeRevision(baseRevision, 'baseRevision');
       const resolvedActor = normalizeActor(actor);
+      const resolvedContext = normalizeOperationContext(context);
       const workspaceIdentity = await this.#sessionStore.captureWorkspaceIdentity(resolvedSessionId);
       const workspaceRoot = workspaceIdentity.canonicalPath;
       const inspection = await this.#sessionStore.inspectTextFile(resolvedSessionId, requestedPath);
@@ -1134,6 +1203,7 @@ export class OperationStore {
         workspaceRoot,
         workspaceIdentity: structuredClone(workspaceIdentity),
         actor: resolvedActor,
+        context: resolvedContext,
         state: 'previewed',
         baseRevision: expectedBase,
         proposedRevision: textContentRevision(proposedContent),
@@ -1180,12 +1250,15 @@ export class OperationStore {
     });
   }
 
-  async apply(operationId, { actor, codeTrust } = {}) {
+  async apply(operationId, { actor, codeTrust, authorize } = {}) {
     return this.#serializeMutation(async () => {
       const resolvedActor = normalizeActor(actor);
       const incomingTrust = normalizeCodeTrustInput(codeTrust);
       let record = this.#requireOperation(operationId);
       await this.#assertWorkspaceIdentity(record);
+      if (typeof authorize === 'function') {
+        await authorize(structuredClone(operationView(record)));
+      }
       if (record.state === 'applying') {
         record = await this.#reconcileRecord(record);
         if (record.state === 'applied') {
@@ -1297,11 +1370,14 @@ export class OperationStore {
     });
   }
 
-  async undo(operationId, { actor } = {}) {
+  async undo(operationId, { actor, authorize } = {}) {
     return this.#serializeMutation(async () => {
       const resolvedActor = normalizeActor(actor);
       let record = this.#requireOperation(operationId);
       await this.#assertWorkspaceIdentity(record);
+      if (typeof authorize === 'function') {
+        await authorize(structuredClone(operationView(record)));
+      }
       if (record.state === 'undoing') {
         record = await this.#reconcileRecord(record);
         if (record.state === 'undone') {

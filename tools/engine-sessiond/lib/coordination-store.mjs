@@ -89,6 +89,10 @@ function resourceKeysOverlap(left, right) {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
+function resourceKeyCovers(held, required) {
+  return held === required || required.startsWith(`${held}/`);
+}
+
 // Reads may share a key. A write conflicts with any overlapping read or write,
 // including ancestor and descendant keys. Same-agent leases do not block each other.
 function leasesConflict(left, right) {
@@ -278,6 +282,65 @@ export class CoordinationStore {
     this.#finishLease(record, 'released');
     this.#promoteReadyLeases();
     return this.#publicLease(record);
+  }
+
+  assertGrantedWriteLease({ sessionId, agentId, credential, leaseId, resources } = {}) {
+    this.sweepExpired();
+    const agent = this.#requireConnectedAgent(agentId, credential);
+    const resolvedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!resolvedSessionId) {
+      throw createStoreError(400, 'sessionId is required.', { code: 'lease_session_required' });
+    }
+    if (agent.sessionId !== resolvedSessionId) {
+      throw createStoreError(403, 'Agent is registered to a different workspace session.', {
+        code: 'lease_agent_session_mismatch',
+      });
+    }
+
+    const resolvedLeaseId = typeof leaseId === 'string' ? leaseId.trim() : '';
+    if (!resolvedLeaseId) {
+      throw createStoreError(400, 'leaseId is required.', { code: 'lease_id_required' });
+    }
+    const lease = this.#findLease(resolvedLeaseId);
+    if (!lease) {
+      throw createStoreError(404, `Unknown lease: ${resolvedLeaseId}`, { code: 'lease_not_found' });
+    }
+    if (lease.status !== 'granted') {
+      throw createStoreError(409, `Lease ${resolvedLeaseId} is ${lease.status}, not granted.`, {
+        code: 'lease_not_granted',
+        lease: this.#publicLease(lease),
+      });
+    }
+    if (lease.agentId !== agent.id) {
+      throw createStoreError(403, 'Lease is owned by a different agent.', {
+        code: 'lease_owner_mismatch',
+        lease: this.#publicLease(lease),
+      });
+    }
+    if (lease.sessionId !== resolvedSessionId) {
+      throw createStoreError(403, 'Lease belongs to a different workspace session.', {
+        code: 'lease_session_mismatch',
+        lease: this.#publicLease(lease),
+      });
+    }
+    if (lease.mode !== 'write') {
+      throw createStoreError(409, 'A granted write lease is required.', {
+        code: 'lease_write_required',
+        lease: this.#publicLease(lease),
+      });
+    }
+
+    const requiredResources = normalizeResourceKeys(resources);
+    const uncovered = requiredResources.filter((required) => (
+      !lease.resources.some((held) => resourceKeyCovers(held, required))
+    ));
+    if (uncovered.length) {
+      throw createStoreError(409, `Lease does not cover required resources: ${uncovered.join(', ')}`, {
+        code: 'lease_resource_mismatch',
+        lease: this.#publicLease(lease),
+      });
+    }
+    return this.#publicLease(lease);
   }
 
   clearWorkspaceSession(sessionId) {

@@ -1,6 +1,6 @@
 # Engine Operations Spec
 
-Status: hardened text-file write slice implemented in `engine_sessiond`
+Status: hardened text-file write slice plus spatial attachment preview context implemented in `engine_sessiond`
 
 Date: 2026-08-30
 
@@ -26,6 +26,8 @@ MCP exposure remains disabled until coordinator credentials and leases are wired
 - a line-oriented preview summary
 - journaled code-trust effect status (`idle`, `pending`, `recorded`, `reverted`, `skipped`, `failed`) with coherent applying/apply and undoing/undo shapes
 - append-only lifecycle events, including `apply_failed`, `undo_failed`, and `recovered`
+
+Spatial attachment previews remain `kind: "file_write"` and add only this normalized public context: `type: "spatial_attachment"`, non-empty `label`, authoritative candidate `subjectId`, sorted `resourceKeys`, and the preview `leaseId`. The context survives restart. Credentials and staged validation paths do not enter the journal.
 
 Approve, reject, apply, and undo require an explicit valid actor object. The backend never defaults a missing actor to anonymous `human`. Credentials are stripped and are never stored, returned, or streamed.
 
@@ -62,6 +64,7 @@ A stale base revision returns HTTP 409 with a structured conflict:
 ## HTTP Surface
 
 - `POST /api/operations/file-write/preview`
+- `POST /api/operations/spatial-attachment/preview`
 - `GET /api/operations`
 - `GET /api/operations/:id`
 - `POST /api/operations/:id/approve`
@@ -78,6 +81,8 @@ Preview body:
 - `actor.kind` / `actor.id` / `actor.name`
 
 Preview does not mutate the workspace file.
+
+Spatial attachment preview accepts only `animation/attachments/*.attachment.toml`. It requires full `content`, `baseRevision`, non-empty `label`, `actor`, `agentId`, `leaseId`, and `X-Shader-Forge-Agent-Credential`. Sessiond rejects a stale revision before validation, stages a fresh temporary animation root exclusively through `SessionStore.listFiles` / `readFile`, rejects symbolic-link sources, runs the native validator over baseline and candidate, maps the source path to authoritative old/new profile IDs, and requires one granted write lease covering `spatial/attachment/<id>` for both IDs on rename. Only then does it create the generic operation. The temporary root is always removed.
 
 ## State Machine
 
@@ -106,6 +111,8 @@ This covers cooperative engine clients (shell, CLI, sessiond, and later MCP call
 ## Apply And Undo
 
 Apply requires `approved` state and an explicit actor. It reuses the existing code-trust policy/evaluation/review-queue path used by `POST /api/files/write`: `evaluateCodeTrustAction` with action `apply` and the same review/deny queue. Operation actor kinds `human`, `shell`, and `cli` evaluate as code-trust `human`. `mcp` evaluates as code-trust `assistant`. This is not a second policy model.
+
+Apply and undo for a spatial-context operation also require a currently granted matching write lease. `agentId` and `leaseId` are supplied in the mutation body and the credential header authenticates the agent. A renewed lease may replace the preview lease when it covers every persisted resource key. Sessiond rechecks immediately before mutation admission; approval/reject remain lease-free review transitions.
 
 Code-trust artifact recording is a journaled operation effect, not a post-apply side effect. The apply path:
 

@@ -8,6 +8,7 @@ import { initGitRepository, readGitStatus } from './lib/git-service.mjs';
 import { getPlatformInfo, listHostDirectory } from './lib/host-fs-service.mjs';
 import { OperationStore } from './lib/operation-store.mjs';
 import { SessionStore } from './lib/session-store.mjs';
+import { SpatialAttachmentService } from './lib/spatial-attachment-service.mjs';
 import { RuntimeStore } from './lib/runtime-store.mjs';
 import { TerminalStore } from './lib/terminal-store.mjs';
 import {
@@ -113,7 +114,7 @@ function isRequestOriginAllowed(request) {
 function corsHeaders(request) {
   const origin = requestOrigin(request);
   const headers = {
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Shader-Forge-Agent-Credential',
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
   };
   if (origin && isLoopbackBrowserOrigin(origin)) {
@@ -407,6 +408,19 @@ function readAgentCredential(request) {
   return Array.isArray(value) ? value[0] || '' : typeof value === 'string' ? value.trim() : '';
 }
 
+function assertSpatialMutationLease(coordinationStore, operation, body, request) {
+  if (operation?.context?.type !== 'spatial_attachment') {
+    return null;
+  }
+  return coordinationStore.assertGrantedWriteLease({
+    sessionId: operation.sessionId,
+    agentId: requireTrimmedString(body?.agentId, 'agentId'),
+    credential: readAgentCredential(request),
+    leaseId: requireTrimmedString(body?.leaseId, 'leaseId'),
+    resources: operation.context.resourceKeys,
+  });
+}
+
 function normalizeFileWriteRequest(body = {}) {
   return {
     sessionId: requireTrimmedString(body.sessionId, 'sessionId'),
@@ -531,7 +545,11 @@ async function executeRuntimeRestart({ sessionStore, runtimeStore, request }) {
   });
 }
 
-async function executeApprovedOperation({ sessionStore, runtimeStore, buildStore, operationStore }, approvalRecord) {
+async function executeApprovedOperation(
+  { sessionStore, runtimeStore, buildStore, operationStore },
+  approvalRecord,
+  { authorizeMutation } = {},
+) {
   if (!approvalRecord) {
     throw createHttpError(404, 'Approval record is required.');
   }
@@ -556,6 +574,7 @@ async function executeApprovedOperation({ sessionStore, runtimeStore, buildStore
         origin: approvalRecord.codeTrust?.effectiveOrigin || '',
         evaluation: approvalRecord.codeTrust,
       },
+      authorize: authorizeMutation,
     });
     return {
       operation,
@@ -632,6 +651,7 @@ function createRouter({
   approvalStore,
   coordinationStore,
   operationStore,
+  spatialAttachmentService,
   eventHub,
   diagnosticsRecorder,
 }) {
@@ -686,6 +706,7 @@ function createRouter({
           'coordination',
           'operations',
           'operations:file-write',
+          'operations:spatial-attachment',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -1022,9 +1043,18 @@ function createRouter({
         }
 
         try {
+          if (approvalRecord.operationType === 'operation_apply') {
+            const current = operationStore.getOperation(approvalRecord.request.operationId);
+            assertSpatialMutationLease(coordinationStore, current, body, request);
+          }
           const outcome = await executeApprovedOperation(
             { sessionStore, runtimeStore, buildStore, operationStore },
             approvalRecord,
+            {
+              authorizeMutation: (operation) => (
+                assertSpatialMutationLease(coordinationStore, operation, body, request)
+              ),
+            },
           );
           const approval = approvalStore.resolveApproval(approvalId, {
             status: 'approved',
@@ -1153,6 +1183,16 @@ function createRouter({
         return;
       }
 
+      if (request.method === 'POST' && pathname === '/api/operations/spatial-attachment/preview') {
+        const body = await readJsonBody(request);
+        const result = await spatialAttachmentService.previewAttachment({
+          ...body,
+          credential: readAgentCredential(request),
+        });
+        writeJson(response, 201, result);
+        return;
+      }
+
       if (request.method === 'GET' && pathname === '/api/operations') {
         const sessionId = searchParams.get('sessionId') || '';
         const state = searchParams.get('state') || 'all';
@@ -1177,6 +1217,7 @@ function createRouter({
           operation = await operationStore.reject(operationId, { actor });
         } else if (action === 'apply') {
           const current = operationStore.getOperation(operationId);
+          assertSpatialMutationLease(coordinationStore, current, body, request);
           if (current.state === 'approved' || current.state === 'applying') {
             const rootPath = resolveCodeTrustRoot(sessionStore, current.sessionId);
             const codeTrustActor = mapOperationActorToCodeTrustActor(actor);
@@ -1197,6 +1238,7 @@ function createRouter({
               },
               codeTrust,
             });
+            assertSpatialMutationLease(coordinationStore, current, body, request);
             operation = await operationStore.apply(operationId, {
               actor,
               codeTrust: {
@@ -1204,13 +1246,28 @@ function createRouter({
                 origin: readCodeTrustOrigin(body) || codeTrust.effectiveOrigin || '',
                 evaluation: codeTrust,
               },
+              authorize: (operationRecord) => (
+                assertSpatialMutationLease(coordinationStore, operationRecord, body, request)
+              ),
             });
             writeJson(response, 200, { operation, codeTrust });
             return;
           }
-          operation = await operationStore.apply(operationId, { actor });
+          operation = await operationStore.apply(operationId, {
+            actor,
+            authorize: (operationRecord) => (
+              assertSpatialMutationLease(coordinationStore, operationRecord, body, request)
+            ),
+          });
         } else {
-          operation = await operationStore.undo(operationId, { actor });
+          const current = operationStore.getOperation(operationId);
+          assertSpatialMutationLease(coordinationStore, current, body, request);
+          operation = await operationStore.undo(operationId, {
+            actor,
+            authorize: (operationRecord) => (
+              assertSpatialMutationLease(coordinationStore, operationRecord, body, request)
+            ),
+          });
         }
         writeJson(response, 200, { operation });
         return;
@@ -1429,6 +1486,12 @@ function createRouter({
       if (typeof error === 'object' && error && 'operation' in error && error.operation) {
         payload.operation = error.operation;
       }
+      if (typeof error === 'object' && error && typeof error.code === 'string') {
+        payload.code = error.code;
+      }
+      if (typeof error === 'object' && error && typeof error.diagnostic === 'string') {
+        payload.diagnostic = error.diagnostic;
+      }
       writeJson(response, statusCode, payload);
     }
   };
@@ -1443,6 +1506,8 @@ export async function startEngineSessiond({
   approvalStore,
   coordinationStore,
   operationStore,
+  spatialAttachmentService,
+  validateAnimationRoot,
   now,
   heartbeatTimeoutMs,
 } = {}) {
@@ -1485,6 +1550,12 @@ export async function startEngineSessiond({
     },
     finalizeEffect: finalizeOperationCodeTrustEffect,
   });
+  const resolvedSpatialAttachmentService = spatialAttachmentService || new SpatialAttachmentService({
+    sessionStore,
+    coordinationStore: resolvedCoordinationStore,
+    operationStore: resolvedOperationStore,
+    validateAnimationRoot,
+  });
   if (typeof sessionStore.loadSessions === 'function') {
     await sessionStore.loadSessions();
   }
@@ -1499,6 +1570,7 @@ export async function startEngineSessiond({
     approvalStore: resolvedApprovalStore,
     coordinationStore: resolvedCoordinationStore,
     operationStore: resolvedOperationStore,
+    spatialAttachmentService: resolvedSpatialAttachmentService,
     eventHub,
     diagnosticsRecorder,
   }));

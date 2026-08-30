@@ -389,9 +389,12 @@ export class SessionStore {
     return liveIdentity.canonicalPath;
   }
 
-  async listFiles(sessionId, relativePath = '.') {
+  async listFiles(sessionId, relativePath = '.', { rejectSymbolicPath = false } = {}) {
     const session = this.#requireSession(sessionId);
     const displayPath = this.#resolveWithinSession(session, relativePath);
+    if (rejectSymbolicPath) {
+      await this.#assertNoSymbolicPath(session, displayPath, relativePath);
+    }
     const targetPath = await this.#resolveExistingPhysicalPath(session, displayPath, relativePath);
     const stat = await fs.stat(targetPath);
     if (!stat.isDirectory()) {
@@ -408,7 +411,11 @@ export class SessionStore {
           return {
             name: entry.name,
             path: normalizeDisplayPath(session.rootPath, path.join(displayPath, entry.name)),
-            kind: entryStat.isDirectory() ? 'directory' : 'file',
+            kind: entryStat.isSymbolicLink()
+              ? 'symlink'
+              : entryStat.isDirectory()
+                ? 'directory'
+                : 'file',
             size: entryStat.isDirectory() ? 0 : entryStat.size,
             modifiedAt: entryStat.mtime.toISOString(),
           };
@@ -422,13 +429,16 @@ export class SessionStore {
     };
   }
 
-  async readFile(sessionId, relativePath) {
+  async readFile(sessionId, relativePath, { rejectSymbolicPath = false } = {}) {
     if (!relativePath) {
       throw new Error('File path is required.');
     }
 
     const session = this.#requireSession(sessionId);
     const displayPath = this.#resolveWithinSession(session, relativePath);
+    if (rejectSymbolicPath) {
+      await this.#assertNoSymbolicPath(session, displayPath, relativePath);
+    }
     const targetPath = await this.#resolveExistingPhysicalPath(session, displayPath, relativePath);
     const stat = await fs.stat(targetPath);
     if (!stat.isFile()) {
@@ -714,6 +724,20 @@ export class SessionStore {
       throw new Error(`Path escapes session root: ${relativePath}`);
     }
     return resolvedPath;
+  }
+
+  async #assertNoSymbolicPath(session, displayPath, relativePath) {
+    const relative = path.relative(session.rootPath, displayPath);
+    let current = session.rootPath;
+    for (const segment of relative.split(path.sep).filter(Boolean)) {
+      current = path.join(current, segment);
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw createSessionError(400, `Symbolic paths are not allowed: ${relativePath}`, {
+          code: 'symbolic_path_rejected',
+        });
+      }
+    }
   }
 
   async #resolvePhysicalSessionRoot(session) {

@@ -48,6 +48,7 @@ Current implemented surfaces:
 - `GET /api/coordination/leases/:id`
 - `POST /api/coordination/leases/:id/release`
 - `POST /api/operations/file-write/preview`
+- `POST /api/operations/spatial-attachment/preview`
 - `GET /api/operations`
 - `GET /api/operations/:id`
 - `POST /api/operations/:id/approve`
@@ -77,6 +78,7 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - legacy session records that lack `rootIdentity` are migrated during load with the existing atomic session-store persist before load returns
 - file list/read/write operations enforce the canonical physical workspace boundary: existing targets are resolved with `realpath`, created targets use a verified physical parent, and symlinks or junctions cannot escape the session root
 - directory listings inspect link entries without following them; a link may be listed from its safe parent, but using an outside-target link as the list/read/write target is rejected
+- directory listings identify symbolic-link entries explicitly so isolated staging workflows can reject them without following them
 - strict UTF-8 file reads that reject invalid byte sequences instead of inserting replacement characters
 - UTF-8 file writes inside the active session root, with parent-directory creation for authored asset workflows and atomic same-directory replacement that preserves the original on failure
 - directory listing with stable relative paths and timestamps
@@ -142,9 +144,11 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - the initial released operation-store format is internally consistent; operation records were unshipped on main `37b862c`, so this slice does not migrate intermediate WIP operation schemas
 - non-loopback browser Origins are rejected at the HTTP boundary; no-Origin native CLI/MCP requests and loopback shell Origins remain allowed. This is a local trust boundary, not client authentication
 - operation lifecycle events stream through the existing SSE bus; credentials and file contents are not persisted in public views
+- spatial attachment preview validates an exact authored attachment path against native baseline/candidate reports in a fresh `SessionStore`-staged temporary animation root, then records authoritative profile resource keys as context on the generic file-write operation
+- attachment ID renames require one granted write lease covering both old and new `spatial/attachment/<id>` keys; apply and undo accept a renewed matching lease but re-authenticate and recheck it immediately before mutation
 - MCP mutation tools remain disabled until coordinator credentials and leases are wired through this same contract
 - the canonical contract lives in [ENGINE-OPERATIONS-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-OPERATIONS-SPEC.md)
-- planned spatial-authoring operations, specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) and not implemented, reuse this same journal, actor, revision, conflict, and lease model. They do not add a daemon. Capture holds the spatial keys plus the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers, then rechecks source revisions before publishing. Review artifacts belong under project `build/spatial-reviews/<review-id>/`, not provider-specific Saved/Codex paths.
+- the first spatial-authoring operation is implemented as attachment preview; validate/recapture/review-packet operations specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) remain deferred and reuse this same journal, actor, revision, conflict, and lease model. They do not add a daemon. Capture holds the spatial keys plus the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers, then rechecks source revisions before publishing. Review artifacts belong under project `build/spatial-reviews/<review-id>/`, not provider-specific Saved/Codex paths.
 
 ## Future AI APIs
 

@@ -1,6 +1,6 @@
 # Engine Spatial Authoring And Attachment Tuning Spec
 
-Status: native schema, query, validation-command, and deterministic cooker slice implemented; authoring workflow deferred
+Status: native schema/query/cook plus semantic attachment preview operation implemented; visual review workflow deferred
 
 Date: 2026-08-30
 
@@ -10,7 +10,7 @@ Shader Forge spatial authoring is the engine-owned contract for skeleton sockets
 
 It exists so a weapon, tool, or held item has one authored truth that native runtime code, cooked data, the React shell, the CLI, and `sf-mcp` all share. It is the product answer to Unreal's split truth, where Blueprint or editor presentation can drift from native C++ behavior.
 
-This document specifies the complete target contract. The native slice now implements compatible skeleton/attachment parsing, validation, typed query access, and a deterministic derived cooker, but it does not yet provide runtime cooked-data consumption, a spatial workbench, pose sampling, IK, rendering, capture, or mutation workflow.
+This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, validation, typed query access, a deterministic derived cooker, and lease-gated no-write attachment preview over the generic operation journal. It does not yet provide runtime cooked-data consumption, a spatial workbench, pose sampling, IK, rendering, capture, or review packets.
 
 ## Authored-Truth Contract
 
@@ -563,18 +563,21 @@ Concurrency:
 
 Review packets are read-mostly after creation. A write lease on `spatial/review/<review-id>` is only for the creating capture. After the packet is immutable, further writes are rejected.
 
-## Planned Engine Surfaces
-
-None of the following are implemented. They are the adapter and UI shapes to build after the native validator and operation kinds exist.
+## Engine Surfaces
 
 ### `engine_sessiond`
 
-Planned routes, all workspace-scoped and loopback-only:
+Implemented:
 
 - `POST /api/operations/spatial-attachment/preview`
+- existing approve/reject/apply/undo, with a live matching write lease recheck on spatial apply/undo
+
+Preview accepts only `animation/attachments/*.attachment.toml`. Sessiond stages skeletons, `.anim.toml` clips, `.animgraph.toml` graphs, and attachments through `SessionStore` list/read APIs into a fresh temporary root, rejects links, validates baseline and candidate through `shader_forge_spatial`, maps stable relative source paths to old/new profile IDs, requires both resource keys on rename, and creates the normal `file_write` operation only after all checks pass. The operation context stores label, subject ID, resource keys, and preview lease ID; it never stores credentials. No authored bytes or cooked output change during preview.
+
+Deferred routes:
+
 - `POST /api/operations/:id/validate`
 - `POST /api/operations/:id/recapture`
-- existing approve/reject/apply/undo
 - `GET /api/spatial/reviews/:reviewId`
 - `GET /api/spatial/reviews/:reviewId/captures/:name`
 

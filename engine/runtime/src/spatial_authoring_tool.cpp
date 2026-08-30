@@ -419,11 +419,18 @@ int main(int argc, char** argv) {
   out << ",\"attachmentProfiles\":[";
   for (std::size_t index = 0; index < profiles.size(); ++index) {
     const auto& profile = profiles[index];
+    const std::string source = relativeSourcePath(profile.sourcePath, animationRoot);
+    if (source.empty()) {
+      std::cerr << "shader_forge_spatial: attachment profile source is outside the animation root: "
+                << profile.sourcePath.string() << '\n';
+      return 1;
+    }
     std::size_t sampleCount = 0;
     for (const auto& envelope : profile.motionEnvelopes) sampleCount += envelope.normalizedTimes.size();
     if (index != 0) out << ',';
     out << "{\"id\":" << jsonString(profile.id)
         << ",\"schemaVersion\":" << profile.schemaVersion
+        << ",\"source\":" << jsonString(source)
         << ",\"skeleton\":" << jsonString(profile.skeletonId)
         << ",\"itemPrefab\":" << jsonString(profile.itemPrefab)
         << ",\"mode\":" << jsonString(profile.mode)

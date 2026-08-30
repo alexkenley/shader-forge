@@ -50,7 +50,7 @@
                 "Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and future native assistants.",
                 "Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.",
                 "Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.",
-                "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook slice and the deferred attachment-tuning workflow.",
+                "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook and attachment-preview operation slices plus the deferred visual tuning workflow.",
                 "Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline."
               ]
             },
@@ -576,7 +576,7 @@
         {
           "id": "spatial-authoring",
           "title": "Spatial Authoring And Attachment Tuning",
-          "summary": "Spatial authoring now has a native schema/query/cook foundation with deterministic validation and one atomic complete derived socket/profile payload; the visual tuning and review workflow remains deferred.",
+          "summary": "Spatial authoring now has a native schema/query/cook foundation plus a lease-gated semantic attachment preview operation; the visual tuning and review workflow remains deferred.",
           "keywords": [
             "spatial authoring",
             "attachment",
@@ -604,12 +604,14 @@
             "engine/runtime/include/shader_forge/runtime/animation_system.hpp",
             "engine/runtime/src/animation_system.cpp",
             "engine/runtime/src/spatial_authoring_tool.cpp",
+            "tools/engine-sessiond/lib/spatial-attachment-service.mjs",
             "tools/engine-cli/shaderforge.mjs",
             "animation/skeletons/debug_humanoid.skeleton.toml",
             "animation/fixtures/spatial/skeletons/spatial_humanoid.skeleton.toml",
             "animation/fixtures/spatial/attachments/rifle_mk1_humanoid.attachment.toml",
             "scripts/test-engine-spatial-authoring-scaffold.mjs",
             "scripts/test-engine-spatial-tool.mjs",
+            "scripts/test-engine-spatial-operations.mjs",
             "plans/ENGINE-IMPLEMENTATION-PLAN.md",
             "plans/SHADER-FORGE-REDESIGN-UPLIFT-PLAN.md"
           ],
@@ -626,16 +628,19 @@
               ]
             },
             {
-              "title": "Current Native Slice",
+              "title": "Current Implemented Slice",
               "keywords": ["v1 compatible", "v2 skeleton", "attachment profile", "typed handles", "native harness"],
               "items": [
                 "V1 skeleton loading remains compatible while strict v2 skeleton/socket and v1 attachment-profile parsing and validation now exist in `AnimationSystem`.",
                 "Generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots.",
                 "Isolated humanoid/rifle/pistol fixtures live under `animation/fixtures/spatial/`, outside authored and cooked roots.",
                 "`npm run test:spatial-authoring-scaffold` compiles and executes the native parser harness; WSL `g++` is required on Windows.",
-                "`shader_forge_spatial validate --animation-root <path>` reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts plus skeleton/profile metadata.",
+                "`shader_forge_spatial validate --animation-root <path>` reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts plus skeleton/profile metadata with stable relative attachment source paths.",
                 "`shader_forge_spatial cook` validates through the same loader and atomically stages complete socket/profile tables with relative source paths and no query handles or absolute machine paths; `engine spatial cook` exposes that already-built lane.",
-                "Prefab existence, joint/capsule parsing, generic bake/runtime consumption, sampling, IK, rendering/capture, review packets, sessiond operations, shell tuning, and MCP tools remain deferred."
+                "`POST /api/operations/spatial-attachment/preview` stages authored animation inputs through SessionStore, validates baseline and candidate, maps the stable source path to old/new profile IDs, requires exact write-lease coverage, and only then records a labelled generic file-write candidate with durable public spatial context.",
+                "Spatial apply and undo require a currently granted matching lease and credential; a renewed lease is accepted when it covers every persisted resource key.",
+                "`npm run test:spatial-operations` covers no-write preview, staging, context restart, contention and rename leases, apply/undo renewal and revisions, CORS, and temp cleanup.",
+                "Prefab existence, joint/capsule parsing, generic bake/runtime consumption, sampling, IK, rendering/capture, review packets, shell tuning, CLI preview, and MCP tools remain deferred."
               ]
             },
             {
@@ -647,7 +652,7 @@
                 "Do not scrape a live cursor or camera to invent a packet.",
                 "Two-hand weapons use dominant-hand item drive, then off-hand IK. VLM or visual scores never apply.",
                 "Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.",
-                "`sf-mcp` spatial tools are adapter-only and wait until engine operations exist.",
+                "`sf-mcp` spatial tools are adapter-only and wait until the remaining engine validation/review operations and client credential flow exist.",
                 "Implementation is ordered after the existing operation layer and before broad World/Assets visual polish."
               ],
               "note": "See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the full schema, rifle example, native handle example, harness gates, and staged implementation order."

@@ -35,6 +35,7 @@
     "test:animation-scaffold": "node scripts/test-engine-animation-scaffold.mjs",
     "test:spatial-authoring-scaffold": "node scripts/test-engine-spatial-authoring-scaffold.mjs",
     "test:spatial-tool": "node scripts/test-engine-spatial-tool.mjs",
+    "test:spatial-operations": "node scripts/test-engine-spatial-operations.mjs",
     "test:physics-scaffold": "node scripts/test-engine-physics-scaffold.mjs",
     "test:input-scaffold": "node scripts/test-engine-input-scaffold.mjs",
     "test:save-system-scaffold": "node scripts/test-engine-save-system-scaffold.mjs",
