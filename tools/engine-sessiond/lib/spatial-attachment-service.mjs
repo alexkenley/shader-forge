@@ -22,6 +22,29 @@ const revisionPattern = /^sha256:[a-f0-9]{64}$/;
 const actorKinds = new Set(['human', 'shell', 'cli', 'mcp']);
 const restEvaluationSchema = 'shader_forge.spatial_attachment_evaluation';
 const restEvaluationMaxBytes = 8 * 1024 * 1024;
+const sampledLayerMaxCount = 8;
+const sampledNormalizedTimePattern = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+const primaryAttachmentLayer = 'primary_attachment';
+const secondaryHandIkLayer = 'secondary_hand_ik';
+const appliedSecondaryIkKeys = Object.freeze([
+  'status',
+  'solved',
+  'reachable',
+  'preSolveDistanceMeters',
+  'targetDistanceMeters',
+  'minReachMeters',
+  'maxReachMeters',
+  'reachResidualMeters',
+  'reachToleranceMeters',
+  'reachWithinTolerance',
+  'postSolveDistanceMeters',
+  'contactToleranceMeters',
+  'contactWithinTolerance',
+  'postSolveAngleDegrees',
+  'angleToleranceDegrees',
+  'angleWithinTolerance',
+  'withinTolerance',
+]);
 const unitTolerance = 1e-6;
 
 function serviceError(statusCode, code, message, extras = {}) {
@@ -107,6 +130,55 @@ function normalizeEvaluateRequest(request = {}) {
   };
 }
 
+function parseSamplePhase(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw serviceError(400, 'spatial_request_invalid', 'phase is required.');
+  }
+  return value;
+}
+
+function parseSampleNormalizedTime(value) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Object.is(value, -0) || value < 0 || value > 1) {
+      throw serviceError(400, 'spatial_request_invalid', 'normalizedTime is invalid.');
+    }
+    return value;
+  }
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) {
+    throw serviceError(400, 'spatial_request_invalid', 'normalizedTime is required.');
+  }
+  if (!sampledNormalizedTimePattern.test(raw)) {
+    throw serviceError(400, 'spatial_request_invalid', 'normalizedTime is invalid.');
+  }
+  const normalizedTime = Number(raw);
+  if (
+    !Number.isFinite(normalizedTime)
+    || Object.is(normalizedTime, -0)
+    || normalizedTime < 0
+    || normalizedTime > 1
+  ) {
+    throw serviceError(400, 'spatial_request_invalid', 'normalizedTime is invalid.');
+  }
+  return normalizedTime;
+}
+
+function formatSampleNormalizedTime(value) {
+  return Number(value).toString();
+}
+
+function normalizeEvaluateSampleRequest(request = {}) {
+  const parsedPath = parseAttachmentPath(request.path);
+  return {
+    sessionId: requiredString(request.sessionId, 'sessionId'),
+    path: parsedPath.path,
+    stagedSource: parsedPath.stagedSource,
+    baseRevision: parseBaseRevision(request.baseRevision),
+    phase: parseSamplePhase(request.phase),
+    normalizedTime: parseSampleNormalizedTime(request.normalizedTime),
+  };
+}
+
 function boundedDiagnostic(error) {
   const diagnostic = typeof error?.diagnostic === 'string' && error.diagnostic.trim()
     ? error.diagnostic.trim()
@@ -134,7 +206,7 @@ function evaluationProtocolError() {
   throw serviceError(
     500,
     'spatial_evaluator_protocol_error',
-    'Spatial evaluator returned an invalid rest-pose evaluation.',
+    'Spatial evaluator returned an invalid evaluation.',
   );
 }
 
@@ -237,7 +309,46 @@ function requireStatusReason(value, status, reason) {
   if (result.status !== status || result.reason !== reason) evaluationProtocolError();
 }
 
-function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchemaVersion) {
+function requireFiniteNumber(value, { min = -Infinity, max = Infinity } = {}) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    evaluationProtocolError();
+  }
+  return value;
+}
+
+function requireBoolean(value) {
+  if (typeof value !== 'boolean') evaluationProtocolError();
+  return value;
+}
+
+function requireExactStringArray(value, expected) {
+  if (
+    !Array.isArray(value)
+    || value.length !== expected.length
+    || value.some((entry, index) => entry !== expected[index])
+  ) {
+    evaluationProtocolError();
+  }
+  return value;
+}
+
+function requireLayerArray(value) {
+  if (!Array.isArray(value) || value.length > sampledLayerMaxCount) evaluationProtocolError();
+  const seen = new Set();
+  for (const layer of value) {
+    if (
+      typeof layer !== 'string'
+      || (layer !== primaryAttachmentLayer && layer !== secondaryHandIkLayer)
+      || seen.has(layer)
+    ) {
+      evaluationProtocolError();
+    }
+    seen.add(layer);
+  }
+  return value;
+}
+
+function requireSerializedEvaluation(report, expectedSchemaVersion) {
   let serialized;
   try {
     serialized = JSON.stringify(report);
@@ -261,10 +372,10 @@ function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchema
   ) {
     evaluationProtocolError();
   }
+  return evaluation;
+}
 
-  const pose = requireExactObject(evaluation.pose, ['kind', 'sampled']);
-  if (pose.kind !== 'rest' || pose.sampled !== false) evaluationProtocolError();
-
+function requireEvaluationGeometry(evaluation, expectedProfile) {
   const coordinateSystem = requireExactObject(
     evaluation.coordinateSystem,
     ['units', 'handedness', 'up', 'forward', 'quaternionOrder'],
@@ -280,7 +391,7 @@ function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchema
   }
 
   const skeleton = requireExactObject(evaluation.skeleton, ['id', 'name', 'rootBone']);
-  requireString(skeleton.id);
+  if (requireString(skeleton.id) !== expectedProfile.skeleton) evaluationProtocolError();
   requireString(skeleton.name);
   requireString(skeleton.rootBone);
 
@@ -288,7 +399,10 @@ function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchema
     'id', 'name', 'itemPrefabId', 'dominantHand', 'mode', 'perspective', 'primaryGripSocket',
   ]);
   if (
-    requireString(attachment.id) !== expectedAttachmentId
+    requireString(attachment.id) !== expectedProfile.id
+    || attachment.itemPrefabId !== expectedProfile.itemPrefab
+    || attachment.mode !== expectedProfile.mode
+    || attachment.perspective !== expectedProfile.perspective
     || !['left', 'right'].includes(attachment.dominantHand)
     || !['one_hand', 'two_hand'].includes(attachment.mode)
     || !['first_person', 'third_person', 'both'].includes(attachment.perspective)
@@ -343,6 +457,7 @@ function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchema
   }
 
   const hands = requireExactObject(evaluation.hands, ['dominant', 'secondary']);
+  if (hands.dominant === null) evaluationProtocolError();
   if (hands.dominant !== null) {
     const dominant = requireExactObject(hands.dominant, ['boneId', 'role', 'world', 'palmWorld']);
     requireString(dominant.boneId);
@@ -387,17 +502,22 @@ function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchema
       evaluationProtocolError();
     }
   }
+  if (attachment.mode === 'one_hand' && hands.secondary !== null) evaluationProtocolError();
+  if (attachment.mode === 'two_hand') {
+    if (
+      hands.secondary === null
+      || hands.secondary.enabled !== true
+      || hands.secondary.palmWorld === null
+      || hands.secondary.targetWorld === null
+      || hands.secondary.pole === null
+    ) {
+      evaluationProtocolError();
+    }
+  }
 
   const diagnostics = requireExactObject(
     evaluation.diagnostics,
     ['secondaryIk', 'jointLimits', 'clipping'],
-  );
-  requireStatusReason(
-    diagnostics.secondaryIk,
-    attachment.mode === 'two_hand' ? 'unavailable' : 'not_applicable',
-    attachment.mode === 'two_hand'
-      ? (evaluation.schemaVersion === 2 ? 'rest_pose_unsolved' : 'secondary_hand_ik_not_implemented')
-      : 'one_hand_attachment',
   );
   requireStatusReason(diagnostics.jointLimits, 'unavailable', 'joint_limits_not_authored');
   requireStatusReason(
@@ -405,13 +525,10 @@ function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchema
     'unavailable',
     'item_and_capsule_geometry_not_integrated',
   );
+  return { attachment, diagnostics, hands };
+}
 
-  const expectedLimitations = [
-    'rest_pose_only',
-    'not_review_evidence',
-    'item_mesh_unavailable',
-    ...(attachment.mode === 'two_hand' ? ['secondary_hand_ik_unavailable'] : []),
-  ];
+function requireLimitations(evaluation, expectedLimitations) {
   if (
     !Array.isArray(evaluation.limitations)
     || evaluation.limitations.length !== expectedLimitations.length
@@ -419,6 +536,201 @@ function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchema
   ) {
     evaluationProtocolError();
   }
+}
+
+function requireRestEvaluationShape(report, expectedProfile) {
+  const evaluation = requireSerializedEvaluation(report, expectedProfile.schemaVersion);
+  const pose = requireExactObject(evaluation.pose, ['kind', 'sampled']);
+  if (pose.kind !== 'rest' || pose.sampled !== false) evaluationProtocolError();
+
+  const { attachment, diagnostics } = requireEvaluationGeometry(evaluation, expectedProfile);
+  requireStatusReason(
+    diagnostics.secondaryIk,
+    attachment.mode === 'two_hand' ? 'unavailable' : 'not_applicable',
+    attachment.mode === 'two_hand'
+      ? (evaluation.schemaVersion === 2 ? 'rest_pose_unsolved' : 'secondary_hand_ik_not_implemented')
+      : 'one_hand_attachment',
+  );
+  requireLimitations(evaluation, [
+    'rest_pose_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+    ...(attachment.mode === 'two_hand' ? ['secondary_hand_ik_unavailable'] : []),
+  ]);
+}
+
+function requireAppliedSecondaryIk(value, secondaryHand) {
+  const diagnostic = requireExactObject(value, appliedSecondaryIkKeys);
+  if (diagnostic.status !== 'applied' || diagnostic.solved !== true) evaluationProtocolError();
+  requireBoolean(diagnostic.reachable);
+  requireFiniteNumber(diagnostic.preSolveDistanceMeters, { min: 0 });
+  const targetDistanceMeters = requireFiniteNumber(diagnostic.targetDistanceMeters, { min: 0 });
+  const minReachMeters = requireFiniteNumber(diagnostic.minReachMeters, { min: 0 });
+  const maxReachMeters = requireFiniteNumber(diagnostic.maxReachMeters, { min: minReachMeters });
+  const reachResidualMeters = requireFiniteNumber(diagnostic.reachResidualMeters, { min: 0 });
+  const reachToleranceMeters = requireFiniteNumber(diagnostic.reachToleranceMeters, { min: 0 });
+  const reachWithinTolerance = requireBoolean(diagnostic.reachWithinTolerance);
+  const postSolveDistanceMeters = requireFiniteNumber(diagnostic.postSolveDistanceMeters, { min: 0 });
+  const contactToleranceMeters = requireFiniteNumber(diagnostic.contactToleranceMeters, { min: 0 });
+  const contactWithinTolerance = requireBoolean(diagnostic.contactWithinTolerance);
+  const postSolveAngleDegrees = requireFiniteNumber(diagnostic.postSolveAngleDegrees, { min: 0 });
+  const angleToleranceDegrees = requireFiniteNumber(diagnostic.angleToleranceDegrees, { min: 0 });
+  const angleWithinTolerance = requireBoolean(diagnostic.angleWithinTolerance);
+  const withinTolerance = requireBoolean(diagnostic.withinTolerance);
+  if (reachWithinTolerance !== (reachResidualMeters <= reachToleranceMeters)) {
+    evaluationProtocolError();
+  }
+  if (contactWithinTolerance !== (postSolveDistanceMeters <= contactToleranceMeters)) {
+    evaluationProtocolError();
+  }
+  if (angleWithinTolerance !== (postSolveAngleDegrees <= angleToleranceDegrees)) {
+    evaluationProtocolError();
+  }
+  if (
+    withinTolerance
+    !== (reachWithinTolerance && contactWithinTolerance && angleWithinTolerance)
+  ) {
+    evaluationProtocolError();
+  }
+  const reachableByDistance = targetDistanceMeters >= minReachMeters
+    && targetDistanceMeters <= maxReachMeters;
+  if (diagnostic.reachable !== reachableByDistance) evaluationProtocolError();
+  const expectedReachResidual = targetDistanceMeters < minReachMeters
+    ? minReachMeters - targetDistanceMeters
+    : targetDistanceMeters > maxReachMeters
+      ? targetDistanceMeters - maxReachMeters
+      : 0;
+  if (Math.abs(reachResidualMeters - expectedReachResidual) > unitTolerance) {
+    evaluationProtocolError();
+  }
+  if (
+    secondaryHand.preSolveDistanceMeters === null
+    || Math.abs(secondaryHand.preSolveDistanceMeters - diagnostic.preSolveDistanceMeters)
+      > unitTolerance
+  ) {
+    evaluationProtocolError();
+  }
+  const palm = secondaryHand.palmWorld;
+  const target = secondaryHand.targetWorld;
+  const geometryDistance = Math.hypot(
+    target.translation[0] - palm.translation[0],
+    target.translation[1] - palm.translation[1],
+    target.translation[2] - palm.translation[2],
+  );
+  const rotationDot = Math.min(1, Math.abs(
+    palm.rotation[0] * target.rotation[0]
+    + palm.rotation[1] * target.rotation[1]
+    + palm.rotation[2] * target.rotation[2]
+    + palm.rotation[3] * target.rotation[3]
+  ));
+  const geometryAngleDegrees = 2 * Math.acos(rotationDot) * 180 / Math.PI;
+  if (
+    Math.abs(postSolveDistanceMeters - geometryDistance) > unitTolerance
+    || Math.abs(postSolveAngleDegrees - geometryAngleDegrees) > unitTolerance
+  ) {
+    evaluationProtocolError();
+  }
+}
+
+function requireSampledPose(pose, attachment, expectedSchemaVersion, expectedPhase, expectedNormalizedTime) {
+  const sampledPose = requireExactObject(pose, [
+    'kind',
+    'sampled',
+    'phase',
+    'clip',
+    'normalizedTime',
+    'proceduralLayersRequested',
+    'proceduralLayersApplied',
+    'proceduralLayersUnavailable',
+  ]);
+  if (
+    sampledPose.kind !== 'clip_sample'
+    || sampledPose.sampled !== true
+    || requireString(sampledPose.phase) !== expectedPhase
+    || requireString(sampledPose.clip).length === 0
+    || sampledPose.normalizedTime !== expectedNormalizedTime
+  ) {
+    evaluationProtocolError();
+  }
+  requireFiniteNumber(sampledPose.normalizedTime, { min: 0, max: 1 });
+  requireLayerArray(sampledPose.proceduralLayersRequested);
+  requireLayerArray(sampledPose.proceduralLayersApplied);
+  requireLayerArray(sampledPose.proceduralLayersUnavailable);
+
+  if (attachment.mode === 'two_hand' && expectedSchemaVersion === 2) {
+    requireExactStringArray(
+      sampledPose.proceduralLayersRequested,
+      [primaryAttachmentLayer, secondaryHandIkLayer],
+    );
+    requireExactStringArray(
+      sampledPose.proceduralLayersApplied,
+      [primaryAttachmentLayer, secondaryHandIkLayer],
+    );
+    requireExactStringArray(sampledPose.proceduralLayersUnavailable, []);
+    return;
+  }
+  if (attachment.mode === 'two_hand') {
+    requireExactStringArray(
+      sampledPose.proceduralLayersRequested,
+      [primaryAttachmentLayer, secondaryHandIkLayer],
+    );
+    requireExactStringArray(sampledPose.proceduralLayersApplied, [primaryAttachmentLayer]);
+    requireExactStringArray(sampledPose.proceduralLayersUnavailable, [secondaryHandIkLayer]);
+    return;
+  }
+  requireExactStringArray(sampledPose.proceduralLayersRequested, [primaryAttachmentLayer]);
+  requireExactStringArray(sampledPose.proceduralLayersApplied, [primaryAttachmentLayer]);
+  requireExactStringArray(sampledPose.proceduralLayersUnavailable, []);
+}
+
+function requireSampledEvaluationShape(
+  report,
+  expectedProfile,
+  expectedPhase,
+  expectedNormalizedTime,
+) {
+  const evaluation = requireSerializedEvaluation(report, expectedProfile.schemaVersion);
+  const { attachment, diagnostics, hands } = requireEvaluationGeometry(
+    evaluation,
+    expectedProfile,
+  );
+  requireSampledPose(
+    evaluation.pose,
+    attachment,
+    expectedProfile.schemaVersion,
+    expectedPhase,
+    expectedNormalizedTime,
+  );
+
+  if (expectedProfile.mode === 'two_hand' && expectedProfile.schemaVersion === 2) {
+    requireAppliedSecondaryIk(diagnostics.secondaryIk, hands.secondary);
+    requireLimitations(evaluation, [
+      'sampled_attachment_schematic_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+    ]);
+    return;
+  }
+  if (expectedProfile.mode === 'two_hand') {
+    requireStatusReason(
+      diagnostics.secondaryIk,
+      'unavailable',
+      'secondary_hand_ik_not_implemented',
+    );
+    requireLimitations(evaluation, [
+      'pre_ik_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+      'secondary_hand_ik_unavailable',
+    ]);
+    return;
+  }
+  requireStatusReason(diagnostics.secondaryIk, 'not_applicable', 'one_hand_attachment');
+  requireLimitations(evaluation, [
+    'sampled_attachment_schematic_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+  ]);
 }
 
 function isEvaluatorInfrastructureError(error) {
@@ -442,6 +754,40 @@ function revisionConflict(filePath, expectedRevision, actualRevision) {
       actualRevision,
     },
   });
+}
+
+function publicSourceRevisions(sources) {
+  return sources
+    .map((source) => ({ path: source.path.replaceAll('\\', '/'), revision: source.revision }))
+    .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+}
+
+function firstSourceRevisionDifference(expected, actual) {
+  const expectedByPath = new Map(expected.map((entry) => [entry.path, entry.revision]));
+  const actualByPath = new Map(actual.map((entry) => [entry.path, entry.revision]));
+  const paths = [...new Set([...expectedByPath.keys(), ...actualByPath.keys()])].sort();
+  for (const sourcePath of paths) {
+    const expectedRevision = expectedByPath.get(sourcePath) || MISSING_FILE_REVISION;
+    const actualRevision = actualByPath.get(sourcePath) || MISSING_FILE_REVISION;
+    if (expectedRevision !== actualRevision) {
+      return { path: sourcePath, expectedRevision, actualRevision };
+    }
+  }
+  return null;
+}
+
+function evaluationInputsChanged(difference) {
+  return serviceError(
+    409,
+    'spatial_evaluation_inputs_changed',
+    'Authored animation inputs changed during spatial evaluation.',
+    {
+      conflict: {
+        code: 'spatial_evaluation_inputs_changed',
+        ...difference,
+      },
+    },
+  );
 }
 
 async function readOptionalUtf8(filePath) {
@@ -481,11 +827,47 @@ function requiredProfileIdentity(profile, code, message) {
       'Spatial validator returned an unsupported attachment profile schema version.',
     );
   }
-  return { id: attachmentId, schemaVersion: profile.schemaVersion };
+  const skeleton = typeof profile.skeleton === 'string' ? profile.skeleton.trim() : '';
+  const itemPrefab = typeof profile.itemPrefab === 'string' ? profile.itemPrefab.trim() : '';
+  if (
+    !skeleton
+    || !itemPrefab
+    || !['one_hand', 'two_hand'].includes(profile.mode)
+    || !['first_person', 'third_person', 'both'].includes(profile.perspective)
+  ) {
+    throw serviceError(
+      500,
+      'spatial_validator_protocol_error',
+      'Spatial validator returned an invalid attachment profile contract.',
+    );
+  }
+  return {
+    id: attachmentId,
+    schemaVersion: profile.schemaVersion,
+    skeleton,
+    itemPrefab,
+    mode: profile.mode,
+    perspective: profile.perspective,
+  };
 }
 
-function publicEvaluation(report, expectedAttachmentId, expectedSchemaVersion) {
-  requireRestEvaluationShape(report, expectedAttachmentId, expectedSchemaVersion);
+function publicEvaluation(report, expectedProfile) {
+  requireRestEvaluationShape(report, expectedProfile);
+  return structuredClone(report);
+}
+
+function publicSampledEvaluation(
+  report,
+  expectedProfile,
+  expectedPhase,
+  expectedNormalizedTime,
+) {
+  requireSampledEvaluationShape(
+    report,
+    expectedProfile,
+    expectedPhase,
+    expectedNormalizedTime,
+  );
   return structuredClone(report);
 }
 
@@ -545,12 +927,38 @@ async function defaultEvaluateRestAttachment(animationRoot, attachmentId) {
   }
 }
 
+async function defaultEvaluateSampledAttachment(animationRoot, attachmentId, phase, normalizedTime) {
+  try {
+    return await runSpatialJsonCommand(
+      [
+        'evaluate-sample',
+        '--animation-root', animationRoot,
+        '--attachment', attachmentId,
+        '--phase', phase,
+        '--normalized-time', formatSampleNormalizedTime(normalizedTime),
+      ],
+      'spatial_evaluator_unavailable',
+      'evaluator',
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw serviceError(
+        500,
+        'spatial_evaluator_protocol_error',
+        'Spatial evaluator returned malformed JSON.',
+      );
+    }
+    throw error;
+  }
+}
+
 export class SpatialAttachmentService {
   #sessionStore;
   #coordinationStore;
   #operationStore;
   #validateAnimationRoot;
   #evaluateRestAttachment;
+  #evaluateSampledAttachment;
 
   constructor({
     sessionStore,
@@ -558,6 +966,7 @@ export class SpatialAttachmentService {
     operationStore,
     validateAnimationRoot,
     evaluateRestAttachment,
+    evaluateSampledAttachment,
   } = {}) {
     this.#sessionStore = sessionStore;
     this.#coordinationStore = coordinationStore;
@@ -568,6 +977,9 @@ export class SpatialAttachmentService {
     this.#evaluateRestAttachment = typeof evaluateRestAttachment === 'function'
       ? evaluateRestAttachment
       : defaultEvaluateRestAttachment;
+    this.#evaluateSampledAttachment = typeof evaluateSampledAttachment === 'function'
+      ? evaluateSampledAttachment
+      : defaultEvaluateSampledAttachment;
   }
 
   async previewAttachment(request = {}) {
@@ -580,7 +992,10 @@ export class SpatialAttachmentService {
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-preview-'));
     try {
       const stagedAnimationRoot = path.join(temporaryRoot, 'animation');
-      await this.#stageAuthoredAnimation(normalized.sessionId, stagedAnimationRoot);
+      const sourceRevisions = await this.#stageAuthoredAnimation(
+        normalized.sessionId,
+        stagedAnimationRoot,
+      );
       const stagedAttachmentPath = path.join(stagedAnimationRoot, normalized.stagedSource);
       const stagedBaselineContent = await readOptionalUtf8(stagedAttachmentPath);
       const stagedBaselineRevision = stagedBaselineContent === null
@@ -655,17 +1070,21 @@ export class SpatialAttachmentService {
         await fs.writeFile(stagedAttachmentPath, stagedBaselineContent, 'utf8');
         evaluation.baseline = await this.#evaluateStagedAttachment(
           stagedAnimationRoot,
-          oldAttachment.id,
-          oldAttachment.schemaVersion,
+          oldAttachment,
           'baseline',
         );
       }
       await fs.writeFile(stagedAttachmentPath, normalized.content, 'utf8');
       evaluation.candidate = await this.#evaluateStagedAttachment(
         stagedAnimationRoot,
-        newAttachment.id,
-        newAttachment.schemaVersion,
+        newAttachment,
         'candidate',
+      );
+
+      await this.#assertAnimationSourcesUnchanged(
+        normalized.sessionId,
+        sourceRevisions,
+        normalized.path,
       );
 
       this.#coordinationStore.assertGrantedWriteLease({
@@ -727,7 +1146,10 @@ export class SpatialAttachmentService {
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-evaluate-'));
     try {
       const stagedAnimationRoot = path.join(temporaryRoot, 'animation');
-      await this.#stageAuthoredAnimation(normalized.sessionId, stagedAnimationRoot);
+      const sourceRevisions = await this.#stageAuthoredAnimation(
+        normalized.sessionId,
+        stagedAnimationRoot,
+      );
       const stagedContent = await readOptionalUtf8(
         path.join(stagedAnimationRoot, normalized.stagedSource),
       );
@@ -757,42 +1179,108 @@ export class SpatialAttachmentService {
       );
       const evaluation = await this.#evaluateStagedAttachment(
         stagedAnimationRoot,
-        attachment.id,
-        attachment.schemaVersion,
+        attachment,
         'baseline',
       );
 
-      let current;
-      try {
-        current = await this.#sessionStore.readFile(
-          normalized.sessionId,
-          normalized.path,
-          { rejectSymbolicPath: true },
-        );
-      } catch (error) {
-        if (error?.code === 'ENOENT') {
-          throw revisionConflict(initial.path, normalized.baseRevision, MISSING_FILE_REVISION);
-        }
-        throw error;
-      }
-      if (current.revision !== normalized.baseRevision) {
-        throw revisionConflict(current.path, normalized.baseRevision, current.revision);
-      }
+      await this.#assertAnimationSourcesUnchanged(
+        normalized.sessionId,
+        sourceRevisions,
+        normalized.path,
+      );
 
       return {
         evaluation,
-        path: current.path,
-        revision: current.revision,
+        path: initial.path,
+        revision: normalized.baseRevision,
+        sourceRevisions,
       };
     } finally {
       await fs.rm(temporaryRoot, { recursive: true, force: true });
     }
   }
 
-  async #evaluateStagedAttachment(animationRoot, attachmentId, attachmentSchemaVersion, role) {
+  async evaluateSampledAttachment(request = {}) {
+    const normalized = normalizeEvaluateSampleRequest(request);
+    let initial;
+    try {
+      initial = await this.#sessionStore.readFile(
+        normalized.sessionId,
+        normalized.path,
+        { rejectSymbolicPath: true },
+      );
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw serviceError(404, 'spatial_attachment_missing', 'Authored spatial attachment does not exist.');
+      }
+      throw error;
+    }
+    if (initial.revision !== normalized.baseRevision) {
+      throw revisionConflict(initial.path, normalized.baseRevision, initial.revision);
+    }
+
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-evaluate-sample-'));
+    try {
+      const stagedAnimationRoot = path.join(temporaryRoot, 'animation');
+      const sourceRevisions = await this.#stageAuthoredAnimation(
+        normalized.sessionId,
+        stagedAnimationRoot,
+      );
+      const stagedContent = await readOptionalUtf8(
+        path.join(stagedAnimationRoot, normalized.stagedSource),
+      );
+      const stagedRevision = stagedContent === null
+        ? MISSING_FILE_REVISION
+        : textContentRevision(stagedContent);
+      if (stagedRevision !== normalized.baseRevision) {
+        throw revisionConflict(initial.path, normalized.baseRevision, stagedRevision);
+      }
+
+      let baseline;
+      try {
+        baseline = publicValidation(await this.#validateAnimationRoot(stagedAnimationRoot));
+      } catch (error) {
+        if (error?.code === 'spatial_validator_unavailable') throw error;
+        throw validationFailure(
+          'spatial_baseline_invalid',
+          'Authored spatial baseline is invalid.',
+          error,
+        );
+      }
+
+      const attachment = requiredProfileIdentity(
+        profileBySource(baseline, normalized.stagedSource),
+        'spatial_baseline_source_missing',
+        'Validator did not return the authored attachment source.',
+      );
+      const evaluation = await this.#evaluateStagedSampledAttachment(
+        stagedAnimationRoot,
+        attachment,
+        normalized.phase,
+        normalized.normalizedTime,
+      );
+
+      await this.#assertAnimationSourcesUnchanged(
+        normalized.sessionId,
+        sourceRevisions,
+        normalized.path,
+      );
+
+      return {
+        evaluation,
+        path: initial.path,
+        revision: normalized.baseRevision,
+        sourceRevisions,
+      };
+    } finally {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
+  async #evaluateStagedAttachment(animationRoot, attachment, role) {
     let report;
     try {
-      report = await this.#evaluateRestAttachment(animationRoot, attachmentId);
+      report = await this.#evaluateRestAttachment(animationRoot, attachment.id);
     } catch (error) {
       if (error?.code === 'spatial_evaluator_unavailable' || error?.code === 'ENOENT') {
         throw serviceError(
@@ -820,14 +1308,57 @@ export class SpatialAttachmentService {
         error,
       );
     }
-    return publicEvaluation(report, attachmentId, attachmentSchemaVersion);
+    return publicEvaluation(report, attachment);
   }
 
-  async #stageAuthoredAnimation(sessionId, stagedAnimationRoot) {
-    await fs.mkdir(stagedAnimationRoot, { recursive: true });
+  async #evaluateStagedSampledAttachment(
+    animationRoot,
+    attachment,
+    phase,
+    normalizedTime,
+  ) {
+    let report;
+    try {
+      report = await this.#evaluateSampledAttachment(
+        animationRoot,
+        attachment.id,
+        phase,
+        normalizedTime,
+      );
+    } catch (error) {
+      if (error?.code === 'spatial_evaluator_unavailable' || error?.code === 'ENOENT') {
+        throw serviceError(
+          503,
+          'spatial_evaluator_unavailable',
+          boundedDiagnostic(error) || 'Spatial evaluator was not found.',
+        );
+      }
+      if (error?.code === 'spatial_evaluator_protocol_error') throw error;
+      if (isEvaluatorInfrastructureError(error)) {
+        throw serviceError(
+          500,
+          'spatial_evaluator_infrastructure_error',
+          'Spatial evaluator could not complete.',
+          { diagnostic: boundedDiagnostic(error) },
+        );
+      }
+      throw evaluationFailure(
+        'spatial_sample_evaluation_invalid',
+        'Authored spatial sample evaluation is invalid.',
+        error,
+      );
+    }
+    return publicSampledEvaluation(
+      report,
+      attachment,
+      phase,
+      normalizedTime,
+    );
+  }
+
+  async #readAuthoredAnimationSources(sessionId) {
+    const sources = [];
     for (const [directory, suffix] of Object.entries(animationDirectories)) {
-      const destination = path.join(stagedAnimationRoot, directory);
-      await fs.mkdir(destination, { recursive: true });
       let listing;
       try {
         listing = await this.#sessionStore.listFiles(
@@ -848,13 +1379,60 @@ export class SpatialAttachmentService {
           );
         }
         if (entry.kind !== 'file' || !entry.name.endsWith(suffix)) continue;
-        const source = await this.#sessionStore.readFile(
-          sessionId,
-          entry.path,
-          { rejectSymbolicPath: true },
-        );
-        await fs.writeFile(path.join(destination, entry.name), source.content, 'utf8');
+        let source;
+        try {
+          source = await this.#sessionStore.readFile(
+            sessionId,
+            entry.path,
+            { rejectSymbolicPath: true },
+          );
+        } catch (error) {
+          if (error?.code === 'ENOENT') continue;
+          throw error;
+        }
+        sources.push({
+          path: entry.path,
+          directory,
+          name: entry.name,
+          revision: source.revision,
+          content: source.content,
+        });
       }
     }
+    return sources.sort((left, right) => (
+      left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+    ));
+  }
+
+  async #stageAuthoredAnimation(sessionId, stagedAnimationRoot) {
+    const sources = await this.#readAuthoredAnimationSources(sessionId);
+    await fs.mkdir(stagedAnimationRoot, { recursive: true });
+    for (const directory of Object.keys(animationDirectories)) {
+      await fs.mkdir(path.join(stagedAnimationRoot, directory), { recursive: true });
+    }
+    for (const source of sources) {
+      await fs.writeFile(
+        path.join(stagedAnimationRoot, source.directory, source.name),
+        source.content,
+        'utf8',
+      );
+    }
+    return publicSourceRevisions(sources);
+  }
+
+  async #assertAnimationSourcesUnchanged(sessionId, expected, selectedPath) {
+    await this.#sessionStore.runSerializedFileMutation(async () => {
+      const actual = publicSourceRevisions(await this.#readAuthoredAnimationSources(sessionId));
+      const difference = firstSourceRevisionDifference(expected, actual);
+      if (!difference) return;
+      if (difference.path === selectedPath) {
+        throw revisionConflict(
+          difference.path,
+          difference.expectedRevision,
+          difference.actualRevision,
+        );
+      }
+      throw evaluationInputsChanged(difference);
+    }, { sessionId });
   }
 }

@@ -1203,6 +1203,18 @@ function createRouter({
         return;
       }
 
+      if (request.method === 'GET' && pathname === '/api/spatial/attachment/evaluate-sample') {
+        const result = await spatialAttachmentService.evaluateSampledAttachment({
+          sessionId: searchParams.get('sessionId') || '',
+          path: searchParams.get('path') || '',
+          baseRevision: searchParams.get('baseRevision') || '',
+          phase: searchParams.get('phase') || '',
+          normalizedTime: searchParams.get('normalizedTime') || '',
+        });
+        writeJson(response, 200, result);
+        return;
+      }
+
       if (request.method === 'GET' && pathname === '/api/operations') {
         const sessionId = searchParams.get('sessionId') || '';
         const state = searchParams.get('state') || 'all';
@@ -1519,6 +1531,7 @@ export async function startEngineSessiond({
   spatialAttachmentService,
   validateAnimationRoot,
   evaluateRestAttachment,
+  evaluateSampledAttachment,
   now,
   heartbeatTimeoutMs,
 } = {}) {
@@ -1567,6 +1580,7 @@ export async function startEngineSessiond({
     operationStore: resolvedOperationStore,
     validateAnimationRoot,
     evaluateRestAttachment,
+    evaluateSampledAttachment,
   });
   if (typeof sessionStore.loadSessions === 'function') {
     await sessionStore.loadSessions();

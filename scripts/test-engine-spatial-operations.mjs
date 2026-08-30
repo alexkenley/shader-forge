@@ -12,8 +12,8 @@ const projectRoot = path.join(temporaryRoot, 'project');
 const secondProjectRoot = path.join(temporaryRoot, 'other-project');
 const statePath = path.join(temporaryRoot, 'state', 'sessions.json');
 const attachmentPath = 'animation/attachments/rifle.attachment.toml';
-const originalContent = 'schema_version = 1\nid = "weapon.rifle.old"\n';
-const candidateContent = 'schema_version = 1\nid = "weapon.rifle.new"\n';
+const originalContent = attachmentContent('weapon.rifle.old');
+const candidateContent = attachmentContent('weapon.rifle.new');
 
 for (const root of [projectRoot, secondProjectRoot]) {
   for (const directory of ['skeletons', 'clips', 'graphs', 'attachments']) {
@@ -31,6 +31,22 @@ function profileId(content) {
 
 function profileSchemaVersion(content) {
   return Number.parseInt(/^schema_version\s*=\s*(\d+)/m.exec(content)?.[1] || '', 10);
+}
+
+function attachmentContent(id, schemaVersion = 1, mode = 'one_hand') {
+  return [
+    `schema_version = ${schemaVersion}`,
+    `id = "${id}"`,
+    'skeleton = "test.skeleton"',
+    'item_prefab = "test.item"',
+    `mode = "${mode}"`,
+    'perspective = "third_person"',
+    '',
+  ].join('\n');
+}
+
+function profileString(content, key) {
+  return new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm').exec(content)?.[1] || '';
 }
 
 function identityTransform() {
@@ -136,6 +152,85 @@ function restEvaluationV2(attachmentId) {
   return evaluation;
 }
 
+function sampledEvaluation(
+  attachmentId,
+  {
+    schemaVersion = 1,
+    mode = 'one_hand',
+    phase = 'idle',
+    normalizedTime = 0.5,
+    reachable = true,
+  } = {},
+) {
+  const evaluation = mode === 'two_hand'
+    ? restEvaluationV2(attachmentId)
+    : restEvaluation(attachmentId);
+  evaluation.schemaVersion = schemaVersion;
+  evaluation.pose = {
+    kind: 'clip_sample',
+    sampled: true,
+    phase,
+    clip: 'test_clip',
+    normalizedTime,
+    proceduralLayersRequested: ['primary_attachment'],
+    proceduralLayersApplied: ['primary_attachment'],
+    proceduralLayersUnavailable: [],
+  };
+  evaluation.limitations = [
+    'sampled_attachment_schematic_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+  ];
+  if (mode !== 'two_hand') return evaluation;
+
+  evaluation.pose.proceduralLayersRequested.push('secondary_hand_ik');
+  if (schemaVersion === 1) {
+    evaluation.hands.secondary.pole = {
+      translation: [0, 0.2, 0.1],
+      space: 'unresolved',
+      world: null,
+      reason: 'pole_space_not_authored',
+    };
+    evaluation.pose.proceduralLayersUnavailable.push('secondary_hand_ik');
+    evaluation.diagnostics.secondaryIk = {
+      status: 'unavailable',
+      reason: 'secondary_hand_ik_not_implemented',
+    };
+    evaluation.limitations = [
+      'pre_ik_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+      'secondary_hand_ik_unavailable',
+    ];
+    return evaluation;
+  }
+
+  evaluation.pose.proceduralLayersApplied.push('secondary_hand_ik');
+  evaluation.diagnostics.secondaryIk = {
+    status: 'applied',
+    solved: true,
+    reachable,
+    preSolveDistanceMeters: 0.5,
+    targetDistanceMeters: reachable ? 0.5 : 0.8,
+    minReachMeters: 0.1,
+    maxReachMeters: 0.6,
+    reachResidualMeters: reachable ? 0 : 0.2,
+    reachToleranceMeters: 0.04,
+    reachWithinTolerance: reachable,
+    postSolveDistanceMeters: reachable ? 0 : 0.2,
+    contactToleranceMeters: 0.015,
+    contactWithinTolerance: reachable,
+    postSolveAngleDegrees: 0,
+    angleToleranceDegrees: 8,
+    angleWithinTolerance: true,
+    withinTolerance: reachable,
+  };
+  if (!reachable) {
+    evaluation.hands.secondary.targetWorld.translation = [0.2, 0, 0];
+  }
+  return evaluation;
+}
+
 function mutateRestEvaluation(attachmentId, mutate) {
   const evaluation = restEvaluation(attachmentId);
   mutate(evaluation);
@@ -144,6 +239,10 @@ function mutateRestEvaluation(attachmentId, mutate) {
 
 function attachmentEvaluatePath(query) {
   return `/api/spatial/attachment/evaluate?${new URLSearchParams(query).toString()}`;
+}
+
+function attachmentSampleEvaluatePath(query) {
+  return `/api/spatial/attachment/evaluate-sample?${new URLSearchParams(query).toString()}`;
 }
 
 const stagedRoots = [];
@@ -160,6 +259,25 @@ let evaluateImpl = async (animationRoot, attachmentId) => {
 
 async function evaluateRestAttachment(animationRoot, attachmentId) {
   return evaluateImpl(animationRoot, attachmentId);
+}
+
+const sampledCalls = [];
+let sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+  const contents = {};
+  for (const directory of ['skeletons', 'clips', 'graphs', 'attachments']) {
+    for (const name of (await fs.readdir(path.join(animationRoot, directory))).sort()) {
+      contents[`${directory}/${name}`] = await fs.readFile(
+        path.join(animationRoot, directory, name),
+        'utf8',
+      );
+    }
+  }
+  sampledCalls.push({ animationRoot, attachmentId, phase, normalizedTime, contents });
+  return sampledEvaluation(attachmentId, { phase, normalizedTime });
+};
+
+async function evaluateSampledAttachment(animationRoot, attachmentId, phase, normalizedTime) {
+  return sampleEvaluateImpl(animationRoot, attachmentId, phase, normalizedTime);
 }
 
 async function validateAnimationRoot(animationRoot) {
@@ -181,7 +299,15 @@ async function validateAnimationRoot(animationRoot) {
     }
     const id = profileId(content);
     if (!id) throw new Error('Attachment id is required.');
-    profiles.push({ id, source: `attachments/${name}`, schemaVersion: profileSchemaVersion(content) });
+    profiles.push({
+      id,
+      source: `attachments/${name}`,
+      schemaVersion: profileSchemaVersion(content),
+      skeleton: profileString(content, 'skeleton'),
+      itemPrefab: profileString(content, 'item_prefab'),
+      mode: profileString(content, 'mode'),
+      perspective: profileString(content, 'perspective'),
+    });
   }
   return {
     schema: 'shader_forge.spatial_validation',
@@ -310,6 +436,7 @@ try {
     sessionStore,
     validateAnimationRoot,
     evaluateRestAttachment,
+    evaluateSampledAttachment,
   });
   const firstSession = await sessionStore.createSession({ name: 'spatial', rootPath: projectRoot });
   const secondSession = await sessionStore.createSession({ name: 'other', rootPath: secondProjectRoot });
@@ -415,7 +542,7 @@ try {
   assert.equal(v1SourceV2Report.status, 500);
   assert.equal(v1SourceV2Report.payload.code, 'spatial_evaluator_protocol_error');
 
-  const v2Content = originalContent.replace('schema_version = 1', 'schema_version = 2');
+  const v2Content = attachmentContent('weapon.rifle.old', 2, 'two_hand');
   const v2Query = { ...evaluateQuery, baseRevision: textContentRevision(v2Content) };
   await fs.writeFile(path.join(projectRoot, attachmentPath), v2Content, 'utf8');
   const v2Evaluate = await request(service.baseUrl, attachmentEvaluatePath(v2Query));
@@ -439,6 +566,26 @@ try {
   const wrongIdEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
   assert.equal(wrongIdEvaluate.status, 500);
   assert.equal(wrongIdEvaluate.payload.code, 'spatial_evaluator_protocol_error');
+
+  for (const [label, mutate] of [
+    ['wrong item prefab', (evaluation) => {
+      evaluation.attachment.itemPrefabId = 'wrong.item';
+      evaluation.item.prefabId = 'wrong.item';
+    }],
+    ['wrong perspective', (evaluation) => {
+      evaluation.attachment.perspective = 'first_person';
+    }],
+  ]) {
+    evaluateImpl = async (_animationRoot, attachmentId) => (
+      mutateRestEvaluation(attachmentId, mutate)
+    );
+    const wrongProfileContract = await request(
+      service.baseUrl,
+      attachmentEvaluatePath(evaluateQuery),
+    );
+    assert.equal(wrongProfileContract.status, 500, label);
+    assert.equal(wrongProfileContract.payload.code, 'spatial_evaluator_protocol_error', label);
+  }
 
   const malformedSemanticCases = [
     ['legacy empty nested objects', (id) => ({
@@ -542,6 +689,415 @@ try {
   assert.equal(revisionDrift.payload.conflict.actualRevision, textContentRevision(candidateContent));
   await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
   evaluateImpl = normalEvaluate;
+
+  const normalSampleEvaluate = sampleEvaluateImpl;
+  const sampleQuery = {
+    ...evaluateQuery,
+    phase: 'idle',
+    normalizedTime: '0.5',
+  };
+  const sampledCallsBeforeRequestGates = sampledCalls.length;
+  for (const [label, query] of [
+    ['missing phase', { ...sampleQuery, phase: '' }],
+    ['missing time', { ...sampleQuery, normalizedTime: '' }],
+    ['negative zero', { ...sampleQuery, normalizedTime: '-0' }],
+    ['locale comma', { ...sampleQuery, normalizedTime: '0,5' }],
+    ['not finite', { ...sampleQuery, normalizedTime: 'NaN' }],
+    ['outside envelope', { ...sampleQuery, normalizedTime: '1.1' }],
+  ]) {
+    const invalidSampleRequest = await request(
+      service.baseUrl,
+      attachmentSampleEvaluatePath(query),
+    );
+    assert.equal(invalidSampleRequest.status, 400, label);
+    assert.equal(invalidSampleRequest.payload.code, 'spatial_request_invalid', label);
+  }
+  assert.equal(sampledCalls.length, sampledCallsBeforeRequestGates);
+
+  for (const [label, query, expectedStatus, expectedCode] of [
+    [
+      'invalid path',
+      { ...sampleQuery, path: 'animation/rifle.attachment.toml' },
+      400,
+      'spatial_attachment_path_invalid',
+    ],
+    [
+      'stale revision',
+      { ...sampleQuery, baseRevision: textContentRevision('stale') },
+      409,
+      'revision_conflict',
+    ],
+    [
+      'missing attachment',
+      { ...sampleQuery, path: 'animation/attachments/missing.attachment.toml' },
+      404,
+      'spatial_attachment_missing',
+    ],
+    [
+      'other session',
+      { ...sampleQuery, sessionId: secondSession.id },
+      404,
+      'spatial_attachment_missing',
+    ],
+  ]) {
+    const gatedSample = await request(service.baseUrl, attachmentSampleEvaluatePath(query));
+    assert.equal(gatedSample.status, expectedStatus, label);
+    assert.equal(gatedSample.payload.code, expectedCode, label);
+  }
+  await fs.writeFile(path.join(secondProjectRoot, attachmentPath), originalContent, 'utf8');
+  const sampledSymlink = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath({ ...sampleQuery, sessionId: secondSession.id }),
+  );
+  assert.equal(sampledSymlink.status, 400);
+  assert.equal(sampledSymlink.payload.code, 'symbolic_path_rejected');
+  await fs.rm(path.join(secondProjectRoot, attachmentPath));
+  assert.equal(sampledCalls.length, sampledCallsBeforeRequestGates);
+
+  const sampledOneHand = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledOneHand.status, 200);
+  assert.equal(sampledOneHand.payload.path, attachmentPath);
+  assert.equal(sampledOneHand.payload.revision, originalRevision);
+  assert.deepEqual(sampledOneHand.payload.evaluation.pose, {
+    kind: 'clip_sample',
+    sampled: true,
+    phase: 'idle',
+    clip: 'test_clip',
+    normalizedTime: 0.5,
+    proceduralLayersRequested: ['primary_attachment'],
+    proceduralLayersApplied: ['primary_attachment'],
+    proceduralLayersUnavailable: [],
+  });
+  assert.deepEqual(sampledOneHand.payload.evaluation.diagnostics.secondaryIk, {
+    status: 'not_applicable', reason: 'one_hand_attachment',
+  });
+  assert.deepEqual(sampledOneHand.payload.sourceRevisions, [
+    { path: 'animation/attachments/rifle.attachment.toml', revision: originalRevision },
+    {
+      path: 'animation/clips/test.anim.toml',
+      revision: textContentRevision('name = "test"\n'),
+    },
+    {
+      path: 'animation/graphs/test.animgraph.toml',
+      revision: textContentRevision('name = "test"\n'),
+    },
+    {
+      path: 'animation/skeletons/test.skeleton.toml',
+      revision: textContentRevision('name = "test"\n'),
+    },
+  ]);
+  assert.deepEqual(sampledCalls.at(-1), {
+    animationRoot: sampledCalls.at(-1).animationRoot,
+    attachmentId: 'weapon.rifle.old',
+    phase: 'idle',
+    normalizedTime: 0.5,
+    contents: {
+      'attachments/rifle.attachment.toml': originalContent,
+      'clips/test.anim.toml': 'name = "test"\n',
+      'graphs/test.animgraph.toml': 'name = "test"\n',
+      'skeletons/test.skeleton.toml': 'name = "test"\n',
+    },
+  });
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
+
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    await normalSampleEvaluate(animationRoot, attachmentId, phase, normalizedTime);
+    return sampledEvaluation(attachmentId, {
+      schemaVersion: 1,
+      mode: 'two_hand',
+      phase,
+      normalizedTime,
+    });
+  };
+  const sampledV1TwoHandContent = attachmentContent('weapon.rifle.old', 1, 'two_hand');
+  const sampledV1TwoHandQuery = {
+    ...sampleQuery,
+    baseRevision: textContentRevision(sampledV1TwoHandContent),
+  };
+  await fs.writeFile(path.join(projectRoot, attachmentPath), sampledV1TwoHandContent, 'utf8');
+  const sampledV1TwoHand = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampledV1TwoHandQuery),
+  );
+  assert.equal(sampledV1TwoHand.status, 200);
+  assert.deepEqual(sampledV1TwoHand.payload.evaluation.pose.proceduralLayersUnavailable, [
+    'secondary_hand_ik',
+  ]);
+  assert.equal(sampledV1TwoHand.payload.evaluation.limitations[0], 'pre_ik_only');
+
+  sampleEvaluateImpl = async (_animationRoot, attachmentId, phase, normalizedTime) => (
+    sampledEvaluation(attachmentId, { phase, normalizedTime })
+  );
+  const sampledWrongMode = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampledV1TwoHandQuery),
+  );
+  assert.equal(sampledWrongMode.status, 500);
+  assert.equal(sampledWrongMode.payload.code, 'spatial_evaluator_protocol_error');
+
+  sampleEvaluateImpl = async (_animationRoot, attachmentId, phase, normalizedTime) => (
+    sampledEvaluation(attachmentId, {
+      schemaVersion: 2,
+      mode: 'two_hand',
+      phase,
+      normalizedTime,
+    })
+  );
+  const sampledV1SourceV2Report = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampledV1TwoHandQuery),
+  );
+  assert.equal(sampledV1SourceV2Report.status, 500);
+  assert.equal(sampledV1SourceV2Report.payload.code, 'spatial_evaluator_protocol_error');
+
+  const sampledV2Content = attachmentContent('weapon.rifle.old', 2, 'two_hand');
+  const sampledV2Query = {
+    ...sampleQuery,
+    baseRevision: textContentRevision(sampledV2Content),
+  };
+  await fs.writeFile(path.join(projectRoot, attachmentPath), sampledV2Content, 'utf8');
+  const sampledV2 = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampledV2Query),
+  );
+  assert.equal(sampledV2.status, 200);
+  assert.equal(sampledV2.payload.evaluation.schemaVersion, 2);
+  assert.equal(sampledV2.payload.evaluation.diagnostics.secondaryIk.status, 'applied');
+  assert.equal(sampledV2.payload.evaluation.diagnostics.secondaryIk.withinTolerance, true);
+  assert.deepEqual(sampledV2.payload.evaluation.pose.proceduralLayersApplied, [
+    'primary_attachment', 'secondary_hand_ik',
+  ]);
+
+  sampleEvaluateImpl = async (_animationRoot, attachmentId, phase, normalizedTime) => (
+    sampledEvaluation(attachmentId, {
+      schemaVersion: 2,
+      mode: 'two_hand',
+      phase,
+      normalizedTime,
+      reachable: false,
+    })
+  );
+  const sampledV2Unreachable = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampledV2Query),
+  );
+  assert.equal(sampledV2Unreachable.status, 200);
+  assert.equal(sampledV2Unreachable.payload.evaluation.diagnostics.secondaryIk.reachable, false);
+  assert.equal(sampledV2Unreachable.payload.evaluation.diagnostics.secondaryIk.withinTolerance, false);
+
+  sampleEvaluateImpl = async (_animationRoot, attachmentId, phase, normalizedTime) => (
+    sampledEvaluation(attachmentId, {
+      schemaVersion: 1,
+      mode: 'two_hand',
+      phase,
+      normalizedTime,
+    })
+  );
+  const sampledV2SourceV1Report = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampledV2Query),
+  );
+  assert.equal(sampledV2SourceV1Report.status, 500);
+  assert.equal(sampledV2SourceV1Report.payload.code, 'spatial_evaluator_protocol_error');
+
+  sampleEvaluateImpl = async (_animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = sampledEvaluation(attachmentId, {
+      schemaVersion: 2,
+      mode: 'two_hand',
+      phase,
+      normalizedTime,
+    });
+    evaluation.diagnostics.secondaryIk.withinTolerance = false;
+    return evaluation;
+  };
+  const contradictoryIk = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampledV2Query),
+  );
+  assert.equal(contradictoryIk.status, 500);
+  assert.equal(contradictoryIk.payload.code, 'spatial_evaluator_protocol_error');
+
+  for (const [label, mutate] of [
+    ['palm contact distance', (evaluation) => {
+      evaluation.hands.secondary.targetWorld.translation = [1, 0, 0];
+    }],
+    ['pre-solve distance', (evaluation) => {
+      evaluation.hands.secondary.preSolveDistanceMeters = 0.25;
+    }],
+    ['palm contact angle', (evaluation) => {
+      evaluation.hands.secondary.targetWorld.rotation = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+      evaluation.hands.secondary.targetWorld.axes = {
+        x: [0, 1, 0],
+        y: [-1, 0, 0],
+        z: [0, 0, 1],
+      };
+    }],
+  ]) {
+    sampleEvaluateImpl = async (_animationRoot, attachmentId, phase, normalizedTime) => {
+      const evaluation = sampledEvaluation(attachmentId, {
+        schemaVersion: 2,
+        mode: 'two_hand',
+        phase,
+        normalizedTime,
+      });
+      mutate(evaluation);
+      return evaluation;
+    };
+    const falseGeometry = await request(
+      service.baseUrl,
+      attachmentSampleEvaluatePath(sampledV2Query),
+    );
+    assert.equal(falseGeometry.status, 500, label);
+    assert.equal(falseGeometry.payload.code, 'spatial_evaluator_protocol_error', label);
+  }
+  await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
+
+  const sampledProtocolCases = [
+    ['rest report', (id) => restEvaluation(id)],
+    ['wrong phase', (id) => sampledEvaluation(id, { phase: 'aim' })],
+    ['wrong time', (id) => sampledEvaluation(id, { normalizedTime: 0.25 })],
+    ['wrong layers', (id) => {
+      const evaluation = sampledEvaluation(id);
+      evaluation.pose.proceduralLayersApplied = [];
+      return evaluation;
+    }],
+    ['wrong id', () => sampledEvaluation('weapon.wrong')],
+  ];
+  for (const [label, factory] of sampledProtocolCases) {
+    sampleEvaluateImpl = async (_animationRoot, attachmentId) => factory(attachmentId);
+    const invalidSample = await request(
+      service.baseUrl,
+      attachmentSampleEvaluatePath(sampleQuery),
+    );
+    assert.equal(invalidSample.status, 500, label);
+    assert.equal(invalidSample.payload.code, 'spatial_evaluator_protocol_error', label);
+    assert.equal('evaluation' in invalidSample.payload, false, label);
+  }
+
+  sampleEvaluateImpl = async () => {
+    throw new Error('Unknown motion-envelope phase.');
+  };
+  const sampledDomainFailure = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledDomainFailure.status, 422);
+  assert.equal(sampledDomainFailure.payload.code, 'spatial_sample_evaluation_invalid');
+
+  sampleEvaluateImpl = async () => {
+    const error = new Error('sample evaluator unavailable');
+    error.code = 'spatial_evaluator_unavailable';
+    error.diagnostic = 'u'.repeat(9000);
+    throw error;
+  };
+  const sampledUnavailable = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledUnavailable.status, 503);
+  assert.equal(sampledUnavailable.payload.code, 'spatial_evaluator_unavailable');
+  assert.equal(sampledUnavailable.payload.error.length, 8000);
+
+  sampleEvaluateImpl = async () => {
+    const error = new Error('sample spawn failed');
+    error.code = 'EACCES';
+    error.stderr = 'i'.repeat(9000);
+    throw error;
+  };
+  const sampledInfrastructure = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledInfrastructure.status, 500);
+  assert.equal(sampledInfrastructure.payload.code, 'spatial_evaluator_infrastructure_error');
+  assert.equal(sampledInfrastructure.payload.diagnostic.length, 8000);
+
+  const clipPath = path.join(projectRoot, 'animation', 'clips', 'test.anim.toml');
+  const originalClipContent = await fs.readFile(clipPath, 'utf8');
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    await fs.writeFile(clipPath, 'name = "changed"\n', 'utf8');
+    return evaluation;
+  };
+  const sampledClipDrift = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledClipDrift.status, 409);
+  assert.equal(sampledClipDrift.payload.code, 'spatial_evaluation_inputs_changed');
+  assert.equal(sampledClipDrift.payload.conflict.path, 'animation/clips/test.anim.toml');
+  await fs.writeFile(clipPath, originalClipContent, 'utf8');
+
+  const addedClipPath = path.join(projectRoot, 'animation', 'clips', 'added.anim.toml');
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    await fs.writeFile(addedClipPath, 'name = "added"\n', 'utf8');
+    return evaluation;
+  };
+  const sampledAddedInput = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledAddedInput.status, 409);
+  assert.equal(sampledAddedInput.payload.code, 'spatial_evaluation_inputs_changed');
+  assert.equal(sampledAddedInput.payload.conflict.path, 'animation/clips/added.anim.toml');
+  await fs.rm(addedClipPath);
+
+  const graphPath = path.join(projectRoot, 'animation', 'graphs', 'test.animgraph.toml');
+  const originalGraphContent = await fs.readFile(graphPath, 'utf8');
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    await fs.rm(graphPath);
+    return evaluation;
+  };
+  const sampledRemovedInput = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledRemovedInput.status, 409);
+  assert.equal(sampledRemovedInput.payload.code, 'spatial_evaluation_inputs_changed');
+  assert.equal(sampledRemovedInput.payload.conflict.path, 'animation/graphs/test.animgraph.toml');
+  await fs.writeFile(graphPath, originalGraphContent, 'utf8');
+
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    await fs.writeFile(path.join(projectRoot, attachmentPath), candidateContent, 'utf8');
+    return evaluation;
+  };
+  const sampledAttachmentDrift = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledAttachmentDrift.status, 409);
+  assert.equal(sampledAttachmentDrift.payload.code, 'revision_conflict');
+  await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
+  sampleEvaluateImpl = normalSampleEvaluate;
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
 
   const previousBinary = process.env.SHADER_FORGE_SPATIAL_BINARY;
   const previousCwd = process.cwd();
@@ -647,6 +1203,24 @@ try {
 
   evaluateImpl = async (animationRoot, attachmentId) => {
     const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    if (attachmentId === 'weapon.rifle.new') {
+      await fs.writeFile(clipPath, 'name = "preview drift"\n', 'utf8');
+    }
+    return evaluation;
+  };
+  const previewDependencyDrift = await request(
+    service.baseUrl,
+    '/api/operations/spatial-attachment/preview',
+    { method: 'POST', credential, body: { ...previewBody, leaseId: bothKeys.payload.lease.id } },
+  );
+  assert.equal(previewDependencyDrift.status, 409);
+  assert.equal(previewDependencyDrift.payload.code, 'spatial_evaluation_inputs_changed');
+  assert.equal(previewDependencyDrift.payload.conflict.path, 'animation/clips/test.anim.toml');
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  await fs.writeFile(clipPath, originalClipContent, 'utf8');
+
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
     if (attachmentId === 'weapon.rifle.old') evaluation.item.world.rotation = [0, 0, 0, 0.5];
     return evaluation;
   };
@@ -744,7 +1318,7 @@ try {
   assert.equal('evaluation' in journal.operations[0], false);
   assert.equal('evaluation' in journal.operations[0].context, false);
 
-  const v2CandidateContent = candidateContent.replace('schema_version = 1', 'schema_version = 2');
+  const v2CandidateContent = attachmentContent('weapon.rifle.new', 2, 'two_hand');
   evaluateImpl = async (animationRoot, attachmentId) => (
     attachmentId === 'weapon.rifle.new'
       ? restEvaluationV2(attachmentId)
@@ -783,7 +1357,7 @@ try {
   assert.equal(mismatchedV2CandidatePreview.payload.code, 'spatial_evaluator_protocol_error');
 
   const pistolPath = 'animation/attachments/pistol.attachment.toml';
-  const pistolContent = 'schema_version = 1\nid = "weapon.pistol"\n';
+  const pistolContent = attachmentContent('weapon.pistol');
   const pistolLease = await request(service.baseUrl, '/api/coordination/leases', {
     method: 'POST', credential,
     body: { agentId: agent.id, mode: 'write', resources: ['spatial/attachment/weapon.pistol'] },
@@ -908,6 +1482,7 @@ try {
     sessionStore: restartedStore,
     validateAnimationRoot,
     evaluateRestAttachment,
+    evaluateSampledAttachment,
   });
   const restored = await request(service.baseUrl, `/api/operations/${operationId}`);
   assert.equal(restored.status, 200);
@@ -920,4 +1495,4 @@ try {
 console.log('Engine spatial attachment operations passed.');
 console.log('- Verified native-backed no-write preview, durable context, revision safety, and temp cleanup');
 console.log('- Verified exact profile leases, rename coverage, contention, renewal, apply, and undo gates');
-console.log('- Verified read-only rest evaluation, exact staged IDs/bytes, and journal exclusion');
+console.log('- Verified read-only rest/sample evaluation, full-input revisions, exact staged truth, and journal exclusion');

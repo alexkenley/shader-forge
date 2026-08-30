@@ -51,6 +51,10 @@ async function validateAnimationRoot(animationRoot) {
       id: profileId(content),
       source: `attachments/${name}`,
       schemaVersion: 1,
+      skeleton: 'test.skeleton',
+      itemPrefab: 'test.item',
+      mode: 'one_hand',
+      perspective: 'third_person',
     });
   }
   return {

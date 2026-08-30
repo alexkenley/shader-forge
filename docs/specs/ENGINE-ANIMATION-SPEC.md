@@ -115,7 +115,7 @@ Later animation work should add:
 - keyframe/timeline editing UI
 - animation debugging overlays, scrubbers, and per-bone inspection
 - tighter shell/native-tool preview and edit workflows
-- sampled sessiond/shell evidence, joint/clipping diagnostics, and spatial review packets on top of the implemented v2 sampled two-bone IK evaluator, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
+- sampled shell/MCP evidence, joint/clipping diagnostics, and spatial review packets on top of the implemented native plus transient sessiond v2 sampled two-bone IK evaluator, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
 
 ## Runtime Model
 
@@ -181,7 +181,7 @@ The animation system should expose structured operations through CLI and future 
 
 - Phase 5.5 establishes the text-data and cook foundations animation depends on
 - Phase 5.72 introduces the engine animation subsystem
-- Phase 5.73 now has its native schema/query/cook/rest-schematic slice, deterministic clip sampling, compatible v1 pre-IK output, v2 sampled two-bone IK, and attachment mutation operations; the visual evidence workflow still depends on sampled sessiond/shell evidence, item rendering, joint/clipping diagnostics, and capture work
+- Phase 5.73 now has its native schema/query/cook/rest-schematic slice, deterministic clip sampling, compatible v1 pre-IK output, v2 sampled two-bone IK, transient full-input-bound sessiond sample evidence, and attachment mutation operations; the visual evidence workflow still depends on sampled shell/MCP consumption, item rendering, joint/clipping diagnostics, and capture work
 - Phase 5.75 and later authoring work should expose animation preview and asset editing, but broad World/Assets visual polish must not invent a second attachment-truth path
 - Phase 6 integrates animation deeply with gameplay, audio, VFX, and runtime tools
 

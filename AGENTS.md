@@ -17,7 +17,7 @@ Shader Forge is split between engine architecture docs and implementation scaffo
 - `npm run test:mcp`: run the deterministic real-stdio MCP harness, including coordination and lease-gated spatial mutation.
 - `npm run test:spatial-authoring-scaffold`: compile and execute the native spatial skeleton/socket, compatible v1/strict v2 attachment-profile, clip-sampling, and two-bone IK harness; WSL `g++` is required on Windows.
 - `npm run test:spatial-tool`: compile and execute the native `shader_forge_spatial validate`, deterministic v1/v2 `cook`, rest-pose evaluation, and exact sampled attachment-evaluation command harness, including motion-envelope, procedural-layer, reachable/unreachable IK, tolerance, and compatibility truth checks; WSL `g++` is required on Windows and `g++` is required elsewhere.
-- `npm run test:spatial-operations`: validate sessiond spatial attachment ID/schema binding, preview, lease, durable context, apply, undo, and temporary staging.
+- `npm run test:spatial-operations`: validate sessiond rest/sample attachment evidence, full-input revisions, validator-selected profile binding, preview, lease, durable context, apply, undo, and temporary staging.
 - `npm run test:spatial-cli`: validate the strict sessiond-backed spatial attachment CLI preview, review, apply, undo, UTF-8, and credential-redaction contract.
 - `npm run test:spatial-shell`: validate the Assets-only constrained primary-grip tuner, exact source rewrite, v1/v2 rest schematic, explicit lock workflow, and operation-only route.
 - `npm run test:activity-shell`: validate the global operation history and summary-review dock, public operation boundary, SSE refresh, review-only actions, and keyboard-resizable dock.

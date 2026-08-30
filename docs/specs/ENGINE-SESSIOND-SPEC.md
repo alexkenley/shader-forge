@@ -50,6 +50,7 @@ Current implemented surfaces:
 - `POST /api/operations/file-write/preview`
 - `POST /api/operations/spatial-attachment/preview`
 - `GET /api/spatial/attachment/evaluate`
+- `GET /api/spatial/attachment/evaluate-sample`
 - `GET /api/operations`
 - `GET /api/operations/:id`
 - `POST /api/operations/:id/approve`
@@ -145,14 +146,16 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - the initial released operation-store format is internally consistent; operation records were unshipped on main `37b862c`, so this slice does not migrate intermediate WIP operation schemas
 - non-loopback browser Origins are rejected at the HTTP boundary; no-Origin native CLI/MCP requests and loopback shell Origins remain allowed. This is a local trust boundary, not client authentication
 - operation lifecycle events stream through the existing SSE bus; credentials and file contents are not persisted in public views
-- `GET /api/spatial/attachment/evaluate` accepts an existing `animation/attachments/*.attachment.toml` path plus its exact SHA-256 `baseRevision`. It rejects links and stale revisions through strict `SessionStore` reads, stages the current authored animation tree, verifies the staged attachment bytes have that revision, maps the source path to its validator-selected profile ID, evaluates that exact ID, and rechecks the live file revision before returning `{ evaluation, path, revision }`
-- the GET evaluation is transient and read-only: it requires no agent or lease, creates no operation, writes no operation journal or authored/cooked file, persists no evaluation, and always removes its temporary staging root
+- `GET /api/spatial/attachment/evaluate` accepts an existing `animation/attachments/*.attachment.toml` path plus its exact SHA-256 `baseRevision`; `GET /api/spatial/attachment/evaluate-sample` additionally requires `phase` and finite `normalizedTime` in `[0,1]`
+- both routes reject links and stale revisions through strict `SessionStore` reads, stage the current authored animation tree, bind the selected source to its validator-selected profile ID, schema, skeleton, item prefab, mode, and perspective, validate the complete rest or sampled report, and compare a sorted revision manifest for every staged animation source against the live tree before returning `{ evaluation, path, revision, sourceRevisions }`
+- selected attachment drift returns `revision_conflict`; another added, removed, or changed animation input returns `spatial_evaluation_inputs_changed` with the first sorted differing path and expected/actual revision
+- both GET evaluations are transient and read-only: they require no agent or lease, create no operation, write no operation journal or authored/cooked file, persist no evaluation, emit no operation event, and always remove their temporary staging root
 - spatial attachment preview validates and evaluates exact baseline/candidate attachment bytes in a fresh `SessionStore`-staged temporary animation root, then records authoritative profile resource keys as context on the generic file-write operation. A new-file preview returns `evaluation.baseline: null`; evaluation results exist only in the immediate preview response and are not journaled
-- evaluator output is schema-checked as an unsampled rest pose and its `attachment.id` must equal the validator-selected baseline or candidate ID. `pose.sampled=false` remains schematic information, not operation validation or review evidence
+- rest evaluator output is schema-checked as an unsampled pose and sampled output is checked against the exact one-hand, v1 pre-IK, or v2 applied-IK branch; attachment identity, skeleton/item/mode/perspective, and sampled phase/time must equal validator/request authority. Neither report is operation validation or rendered review evidence
 - preview re-authenticates and rechecks the granted write lease after both evaluations and immediately before operation creation, so expiry or release during evaluator work cannot create an operation
 - attachment ID renames require one granted write lease covering both old and new `spatial/attachment/<id>` keys; apply and undo accept a renewed matching lease but re-authenticate and recheck it immediately before mutation
 - `sf-mcp` spatial attachment mutation tools now wire process-owned coordinator credentials and leases through this same contract; other MCP mutation families remain disabled until they persist resource keys and enforce equivalent leases
-- native `engine spatial evaluate-rest` remains the local command; sessiond invokes the same evaluator only through the transient GET and preview response paths. Neither path creates a review packet or supplies durable operation-validation evidence
+- native `engine spatial evaluate-rest|evaluate-sample` remain local commands; sessiond invokes them through transient GET paths while preview stays rest-only. None creates a review packet or supplies durable operation-validation evidence
 - the canonical contract lives in [ENGINE-OPERATIONS-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-OPERATIONS-SPEC.md)
 - the first spatial-authoring operation is implemented as attachment preview; validate/recapture/review-packet operations specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) remain deferred and reuse this same journal, actor, revision, conflict, and lease model. They do not add a daemon. Capture holds the spatial keys plus the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers, then rechecks source revisions before publishing. Review artifacts belong under project `build/spatial-reviews/<review-id>/`, not provider-specific Saved/Codex paths.
 

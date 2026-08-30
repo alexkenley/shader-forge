@@ -137,7 +137,15 @@ async function validateAnimationRoot(animationRoot) {
     }
     const id = profileId(content);
     if (!id) throw new Error('Attachment id is required.');
-    profiles.push({ id, source: `attachments/${name}`, schemaVersion: 1 });
+    profiles.push({
+      id,
+      source: `attachments/${name}`,
+      schemaVersion: 1,
+      skeleton: 'test.skeleton',
+      itemPrefab: 'test.item',
+      mode: 'one_hand',
+      perspective: 'third_person',
+    });
   }
   return {
     schema: 'shader_forge.spatial_validation',
