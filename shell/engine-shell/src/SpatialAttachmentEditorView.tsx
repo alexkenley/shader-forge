@@ -11,7 +11,8 @@ import {
   releaseCoordinationLease,
   requestCoordinationLease,
   SessiondRequestError,
-  transitionSpatialOperation,
+  engineShellActor,
+  transitionOperation,
   type CoordinationLease,
   type EngineOperation,
   type EngineSession,
@@ -327,14 +328,17 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
       const coordination = action === 'apply' || action === 'undo'
         ? await requireCurrentConnection(expectedSelection)
         : null;
-      const result = await transitionSpatialOperation(
+      const result = await transitionOperation(
         operation.id,
         action,
-        coordination ? {
-          agentId: coordination.agentId,
-          leaseId: coordination.lease.id,
-          credential: coordination.credential,
-        } : undefined,
+        {
+          actor: engineShellActor,
+          coordination: coordination ? {
+            agentId: coordination.agentId,
+            leaseId: coordination.lease.id,
+            credential: coordination.credential,
+          } : undefined,
+        },
       );
       if (selectionKeyRef.current !== expectedSelection) throw new Error('Attachment selection changed.');
       setOperation(result.operation);

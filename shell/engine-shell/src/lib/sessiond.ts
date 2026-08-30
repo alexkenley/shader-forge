@@ -70,12 +70,55 @@ export type CoordinationLease = {
   blockedBy: Array<{ id: string; agentId: string; resources: string[]; mode: 'read' | 'write'; status: string }>;
 };
 
+export type EngineOperationActor = {
+  kind: 'human' | 'shell' | 'cli' | 'mcp';
+  id: string;
+  name: string;
+};
+
+export type EngineOperationState =
+  | 'previewed'
+  | 'approved'
+  | 'rejected'
+  | 'applying'
+  | 'applied'
+  | 'undoing'
+  | 'undone'
+  | 'conflicted';
+
+export type EngineOperationEvent = {
+  type:
+    | 'previewed'
+    | 'approved'
+    | 'rejected'
+    | 'applying'
+    | 'applied'
+    | 'undoing'
+    | 'undone'
+    | 'conflicted'
+    | 'apply_failed'
+    | 'undo_failed'
+    | 'recovered';
+  at: string;
+  state: EngineOperationState;
+  actor: EngineOperationActor | null;
+  conflict?: {
+    code: 'revision_conflict' | 'code_trust_artifact_conflict';
+    path: string;
+    expectedRevision?: string;
+    actualRevision?: string;
+    operationId?: string;
+  };
+};
+
 export type EngineOperation = {
   id: string;
   kind: string;
   sessionId: string;
   path: string;
-  actor: { kind: string; id: string; name: string };
+  workspaceRoot: string;
+  workspaceIdentity: { canonicalPath: string; dev: string; ino: string } | null;
+  actor: EngineOperationActor;
   context: null | {
     type: 'spatial_attachment';
     label: string;
@@ -83,17 +126,34 @@ export type EngineOperation = {
     resourceKeys: string[];
     leaseId: string;
   };
-  state: 'previewed' | 'approved' | 'rejected' | 'applying' | 'applied' | 'undoing' | 'undone' | 'conflicted' | 'apply_failed' | 'undo_failed' | 'recovered';
+  state: EngineOperationState;
   baseRevision: string;
   proposedRevision: string;
   appliedRevision: string | null;
   resultingRevision: string | null;
-  preview: { summary: string; lineDiff: string[] };
+  preview: {
+    addedLines: number;
+    removedLines: number;
+    beforeLineCount: number;
+    afterLineCount: number;
+    created: boolean;
+    summary: string;
+  };
+  codeTrustEffect: {
+    status: 'idle' | 'pending' | 'recorded' | 'reverted' | 'skipped' | 'failed';
+    phase: 'apply' | 'undo' | null;
+    actor: string;
+    origin: string;
+    artifact: unknown;
+    error: string | null;
+    updatedAt: string | null;
+  };
   createdAt: string;
   updatedAt: string;
+  events: EngineOperationEvent[];
 };
 
-export const spatialShellActor = {
+export const engineShellActor = {
   kind: 'shell',
   id: 'engine-shell',
   name: 'Shader Forge Shell',
@@ -569,6 +629,16 @@ export type SessiondTerminalEvent =
         transition: 'promote' | 'quarantine';
         artifact: CodeTrustArtifactRecord;
       };
+    }
+  | {
+      type:
+        | 'operation.previewed'
+        | 'operation.approved'
+        | 'operation.rejected'
+        | 'operation.applied'
+        | 'operation.undone'
+        | 'operation.conflicted';
+      data: EngineOperation;
     };
 
 const DEFAULT_SESSIOND_BASE_URL = 'http://127.0.0.1:41741';
@@ -696,7 +766,7 @@ function credentialHeader(credential: string) {
 export async function registerCoordinationAgent(sessionId: string) {
   return requestJson<{ agent: CoordinationAgent; credential: string }>('/api/coordination/agents', {
     method: 'POST',
-    body: JSON.stringify({ sessionId, name: spatialShellActor.name }),
+    body: JSON.stringify({ sessionId, name: engineShellActor.name }),
   });
 }
 
@@ -762,29 +832,41 @@ export async function previewSpatialAttachment(options: {
       content: options.content,
       baseRevision: options.baseRevision,
       label: options.label,
-      actor: spatialShellActor,
+      actor: engineShellActor,
       agentId: options.agentId,
       leaseId: options.leaseId,
     }),
   });
 }
 
-export async function transitionSpatialOperation(
+export async function transitionOperation(
   operationId: string,
   action: 'approve' | 'reject' | 'apply' | 'undo',
-  coordination?: { agentId: string; leaseId: string; credential: string },
+  options: {
+    actor: EngineOperationActor;
+    coordination?: { agentId: string; leaseId: string; credential: string };
+  },
 ) {
   return requestJson<{ operation: EngineOperation }>(
     `/api/operations/${encodeURIComponent(operationId)}/${action}`,
     {
       method: 'POST',
-      ...(coordination ? { headers: credentialHeader(coordination.credential) } : {}),
+      ...(options.coordination ? { headers: credentialHeader(options.coordination.credential) } : {}),
       body: JSON.stringify({
-        actor: spatialShellActor,
-        ...(coordination ? { agentId: coordination.agentId, leaseId: coordination.leaseId } : {}),
+        actor: options.actor,
+        ...(options.coordination
+          ? { agentId: options.coordination.agentId, leaseId: options.coordination.leaseId }
+          : {}),
       }),
     },
   );
+}
+
+export async function listOperations(sessionId: string) {
+  const query = new URL('/api/operations', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  const payload = await requestJson<{ operations: EngineOperation[] }>(`${query.pathname}${query.search}`);
+  return payload.operations;
 }
 
 export async function fetchOperation(operationId: string) {
@@ -1125,6 +1207,21 @@ export function subscribeSessiondEvents(onEvent: (event: SessiondTerminalEvent) 
       data: JSON.parse(message.data) as Extract<SessiondTerminalEvent, { type: 'code-trust.approval.resolved' }>['data'],
     });
   };
+  const operationEventTypes = [
+    'operation.previewed',
+    'operation.approved',
+    'operation.rejected',
+    'operation.applied',
+    'operation.undone',
+    'operation.conflicted',
+  ] as const;
+  const operationHandlers = operationEventTypes.map((type) => {
+    const handler = (message: MessageEvent<string>) => {
+      onEvent({ type, data: JSON.parse(message.data) as EngineOperation });
+    };
+    eventSource.addEventListener(type, handler as EventListener);
+    return { type, handler };
+  });
 
   eventSource.addEventListener('terminal.output', outputHandler as EventListener);
   eventSource.addEventListener('terminal.exit', exitHandler as EventListener);
@@ -1152,6 +1249,9 @@ export function subscribeSessiondEvents(onEvent: (event: SessiondTerminalEvent) 
     eventSource.removeEventListener('build.completed', buildCompletedHandler as EventListener);
     eventSource.removeEventListener('code-trust.approval.created', approvalCreatedHandler as EventListener);
     eventSource.removeEventListener('code-trust.approval.resolved', approvalResolvedHandler as EventListener);
+    for (const { type, handler } of operationHandlers) {
+      eventSource.removeEventListener(type, handler as EventListener);
+    }
     eventSource.close();
   };
 }

@@ -175,13 +175,19 @@ MCP mutation tools remain disabled until coordinator credentials and leases are 
 
 The implemented `engine spatial preview|approve|reject|apply|undo` commands are thin clients of these HTTP routes. Preview reads a strict BOM-free UTF-8 `--content-file` and sends full candidate content; it never writes the source file. Preview/apply/undo read the coordinator credential only from `SHADER_FORGE_AGENT_CREDENTIAL`, while agent and lease IDs remain explicit arguments. Approve/reject are lease-free review transitions. Every command uses the fixed CLI actor and prints the returned JSON.
 
-The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. The shell Activity/Changes surface, MCP mutations, operation-scoped spatial validation, capture, diagnostics, and review packets remain deferred.
+The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. MCP mutations, operation-scoped spatial validation, capture, diagnostics, and review packets remain deferred.
 
 ## Spatial Shell Adapter
 
 The `Assets` workspace now adapts the same semantic spatial preview and generic transitions. It never calls `/api/files/write`. File selection is read-only; explicit `Begin tuning` registers the fixed shell actor and requests the exact attachment write lease. Source is reread after grant, and each preview/apply/undo heartbeats the agent and rechecks the live lease immediately before the request.
 
 Candidate values are labelled `NOT APPLIED`. Approve and Apply are separate buttons, Reject is available before apply, and editing locks after preview. Apply releases the lease and disconnects instead of holding coordination indefinitely. Undo explicitly reacquires a fresh lease covering the operation resource keys. The opaque credential exists only in memory and the credential header; client errors preserve status/code/diagnostic/conflict while redacting it.
+
+## Activity Shell Adapter
+
+The global shell `Activity` bottom-dock tab lists the active session through `GET /api/operations`, reads selected detail through `GET /api/operations/:id`, and refreshes from the public operation SSE notifications. It uses the fixed shell actor for lease-free approve/reject only. A 409 transition race causes an authoritative detail/list refetch.
+
+Activity renders only the public operation view: preview counts/summary, revisions, context, actor provenance, state, code-trust effect status, and lifecycle events. It never reads persisted `beforeContent` or `proposedContent` and does not claim an exact diff exists. Apply, Undo, agent registration, leases, and credentials are absent until a later explicit coordination workflow can safely own them.
 
 ## Events
 
@@ -200,7 +206,7 @@ Payloads are operation views. They do not include file contents or credentials.
 
 Operations reuse `SessionStore` path resolution. Symlinks and junctions cannot escape the session root. This slice does not introduce a second path resolver.
 
-`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, shell Activity/Changes UI, and MCP mutation tools are later slices.
+`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, exact public diffs, Activity apply/undo coordination, and MCP mutation tools are later slices.
 
 ## Persistence Validation
 

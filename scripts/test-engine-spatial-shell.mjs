@@ -74,7 +74,7 @@ assert.match(appSource, /activeTab === 'World'[\s\S]*SceneEditorView/);
 assert.match(viewSource, /Begin tuning/);
 assert.match(viewSource, /NOT APPLIED/);
 assert.match(viewSource, /previewSpatialAttachment/);
-assert.match(viewSource, /transitionSpatialOperation/);
+assert.match(viewSource, /transitionOperation/);
 assert.doesNotMatch(viewSource, /\bwriteFile\b/);
 assert.match(clientSource, /X-Shader-Forge-Agent-Credential/);
 assert.match(clientSource, /id: 'engine-shell'/);

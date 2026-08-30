@@ -113,6 +113,8 @@ Assistant entry points:
 - Operation lifecycle events stream on `/api/events`. MCP mutation tools remain disabled until coordinator credentials and leases are wired through this same contract.
 - `POST /api/operations/spatial-attachment/preview` creates a labelled generic file-write candidate only after a stale-revision precheck, isolated baseline/candidate native validation, stable source-to-profile mapping, and a granted write lease. Attachment-ID renames require both old and new canonical resource keys. Preview never writes authored or cooked data.
 - Spatial operation context (label, authoritative subject ID, resource keys, preview lease ID) survives sessiond restart; credentials never persist. Spatial apply/undo accept a renewed matching lease but re-authenticate and recheck it immediately before mutation.
+- The shell `Activity` bottom-dock tab now lists durable operations for the active workspace, reads selected public detail, refreshes from operation SSE events, and supports fixed-shell-actor Approve/Reject. It has no Apply, Undo, lease, registration, or credential path.
+- Activity shows only public preview counts/summary, revisions, context, actor provenance, code-trust effect status, and lifecycle. Exact before/proposed bytes, exact diff, and validation/test evidence are not public and are not claimed by the UI.
 - The CLI now exposes `engine spatial preview|approve|reject|apply|undo` as strict adapters over that same sessiond workflow. Preview reads full strict BOM-free UTF-8 content from `--content-file`; preview/apply/undo read credentials only from `SHADER_FORGE_AGENT_CREDENTIAL`. The CLI never auto-registers, leases, approves, builds, or writes around sessiond.
 - See `docs/specs/ENGINE-OPERATIONS-SPEC.md` for the canonical contract.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
@@ -355,10 +357,10 @@ Assistant entry points:
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
-- Spatial authoring still needs prefab-catalog and joint/capsule integration, generic bake/runtime consumption, sampling, IK, attachment rendering/capture, validate/recapture/review-packet operations, shell tuning, and MCP tools on top of the native and semantic-preview slices.
+- Spatial authoring still needs prefab-catalog and joint/capsule integration, generic bake/runtime consumption, sampling, IK, attachment rendering/capture, validate/recapture/review-packet operations, and MCP tools beyond the constrained shell tuner.
 - Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.
-- File-write operations exist in `engine_sessiond`, but shell Activity/Changes UI still needs to consume that contract, and MCP mutation tools still need coordinator credentials and leases before exposure. Scene and asset operations are not in this slice.
+- Activity still needs an explicit public exact-diff/evidence contract and safe coordination before it can apply or undo; MCP mutation tools likewise still need coordinator credentials and leases before exposure. Scene and asset operations are not in this slice.
 - Profiling still needs Tracy/RenderDoc integration, GPU and memory diagnostics, native profiling panels, and deeper performance-regression workflows beyond the current diagnostics snapshot lane.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

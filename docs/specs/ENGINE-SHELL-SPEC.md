@@ -101,6 +101,7 @@ Current implemented bridge surfaces:
 - the `Workspace` right-panel tab also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked trust-artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals with inline approve/deny actions for the selected workspace plus the shared engine lane
 - a real `World` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side authoring/review separation, surfaces explicit `Run Scene` plus `Build + Run` actions directly inside the editor, placed-entity hierarchy plus transform editing, first prefab component payload editing, writes deterministic save/reload/duplicate flows back through `engine_sessiond`, and uses a viewport-first level-editor layout with an adjacent resizable `Scenes`/`Outliner`/`Inspector`/`Assets` tool stack plus a compact bottom status bar
 - an `Assets` workspace with a constrained primary-grip tuner for `animation/attachments/*.attachment.toml`; selection is read-only until the operator chooses `Begin tuning`, then an exact attachment lease gates numeric translation/Euler-degree edits and explicit preview, approve, apply, reject, and undo transitions
+- a global `Activity` bottom-dock surface that lists durable operation history for the active workspace, refetches selected public operation detail, follows operation SSE events, and exposes lease-free Approve/Reject review actions without adding an Activity primary workspace
 - temporary harness sessions are not the intended user workflow and should be clearly separated from real repo-root workspaces in the `Workspaces` rail
 - the global right panel is currently reserved for runtime/build/workspace tools in `Code` and `Playtest` so World and Assets can use the center area directly
 - an in-app `Guide` opened from `Help`, backed by repo-native markdown and structured guide content so shell users and external assistants can resolve the same operator wiki without treating Guide as a primary workspace
@@ -122,6 +123,14 @@ This surface must not:
 - ship as part of broad World/Assets visual polish before the spatial operation kinds exist
 - add a built-in assistant, VLM apply button, or provider-specific Saved/Codex capture path
 - write attachment bytes through a private file-write path that bypasses operations once spatial operations exist
+
+## Activity And Changes Surface
+
+The first global Activity slice lives in the resizable bottom dock. It consumes `GET /api/operations`, `GET /api/operations/:id`, the generic approve/reject routes, and the existing operation SSE events. Sessiond remains authoritative: changing workspaces and manual refresh reload the durable list, event notifications trigger another list/detail read, and HTTP 409 review races refetch the current operation.
+
+Activity shows the public actor provenance, path, spatial context, resource keys, revisions, preview counts/summary, state, and append-only lifecycle. The public operation view does not expose `beforeContent`, `proposedContent`, or an exact diff, so the UI labels this evidence `Preview summary` and states that exact proposed content is unavailable. It must not claim content inspection or validation/test evidence that the journal does not publish.
+
+This slice may approve `previewed` operations and reject `previewed` or `approved` operations with the fixed shell actor. It deliberately has no Apply, Undo, lease, agent registration, credential, or automatic navigation flow. Spatial apply/undo remain in a client that explicitly acquires and rechecks a covering coordination lease.
 
 ## Preservation Rule
 

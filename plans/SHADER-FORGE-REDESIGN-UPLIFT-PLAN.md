@@ -11,6 +11,7 @@ Current execution status:
 - the main shell no longer presents a built-in development assistant or provider controls
 - `engine_sessiond` now owns workspace-scoped agent registration, private credentials, hierarchical leases, writer fairness, expiry, disconnect cleanup, and build/runtime exclusivity
 - `engine_sessiond` now also owns a hardened revision-safe text-file write operation workflow with preview, SHA-256 revisions, structured conflicts, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filtering, provenance, SSE events, and restart-safe history
+- the shell now exposes durable active-workspace operation provenance and lease-free summary review through the global Activity bottom dock; exact public diffs and Activity apply/undo remain gated
 - Shader Forge MCP (`sf-mcp`) is the current process-scoped stdio adapter for external clients
 - the first `sf-mcp` surface is deliberately read-and-coordinate only; MCP mutation tools remain disabled until coordinator credentials and leases are wired through that same operation contract
 
@@ -630,7 +631,7 @@ Exit criteria:
 
 ### Gate 1: Make Mutations Safe and Observable
 
-Current status: the hardened text-file write operation contract is implemented in `engine_sessiond`, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, and loopback-only bind. Scene/asset operations, shell Activity/Changes consumption, and authenticated MCP mutation tools remain open.
+Current status: the hardened text-file write operation contract is implemented in `engine_sessiond`, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, and loopback-only bind. The shell now consumes its durable list/detail and event views in a review-only Activity dock. Scene/asset operations, exact public diffs, Activity apply/undo coordination, and authenticated MCP mutation tools remain open.
 
 Actions:
 
@@ -747,7 +748,7 @@ Exit criteria:
 
 ### Gate 6: Expose the MCP Control Plane
 
-Current status: the process-scoped stdio adapter and its read-and-coordinate surface are the active first slice. Mutation, build/runtime tools, Activity/Changes integration, approvals, undo, and full parity scenarios remain open.
+Current status: the process-scoped stdio adapter and its read-and-coordinate surface are the active first slice. The shell Activity dock now consumes operation history and lease-free review events; MCP mutation, build/runtime tools, coordinated apply/undo, and full parity scenarios remain open.
 
 Actions:
 
@@ -910,7 +911,7 @@ The direction-setting shell and coordination work is now implemented. Continue w
 5. completed: expose the first Shader Forge MCP (`sf-mcp`) read-and-coordinate surface over process-scoped stdio
 6. completed: implement and harden the sessiond-owned text-file mutation preview, revision, line-oriented diff summary, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filter, and operation-event contract
 7. completed: add a constrained Assets primary-grip tuner over the semantic spatial operation, with explicit exact-profile locking, visible unapplied candidates, separate review/apply, and fresh-lease undo
-8. next: add the Activity and Changes state model and connect it to real operation events
+8. completed: add the global Activity history and summary-review state model over authoritative operation list/detail reads, public operation events, and lease-free approve/reject
 9. next: widen MCP only through that shared file-write operation contract after coordinator credentials and leases are the exposure gate, then later scene/asset operations, then rendered interaction and accessibility checks for the complete path
 
 Do not begin visual polish, a real viewport, or broad MCP mutation tools before the remaining operation consumers exist. Authenticated MCP actor/lease enforcement is still the next exposure gate. That ordering prevents a polished shell from becoming a façade over unreliable engine state.

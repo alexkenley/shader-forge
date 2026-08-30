@@ -38,6 +38,7 @@
     "test:spatial-operations": "node scripts/test-engine-spatial-operations.mjs",
     "test:spatial-cli": "node scripts/test-engine-spatial-cli.mjs",
     "test:spatial-shell": "node scripts/test-engine-spatial-shell.mjs",
+    "test:activity-shell": "node scripts/test-engine-activity-shell.mjs",
     "test:physics-scaffold": "node scripts/test-engine-physics-scaffold.mjs",
     "test:input-scaffold": "node scripts/test-engine-input-scaffold.mjs",
     "test:save-system-scaffold": "node scripts/test-engine-save-system-scaffold.mjs",

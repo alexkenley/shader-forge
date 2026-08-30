@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent as Reac
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
 import { SpatialAttachmentEditorView } from './SpatialAttachmentEditorView';
+import { ActivityDockView } from './ActivityDockView';
 import {
   captureProfile,
   closeTerminal,
@@ -14,6 +15,7 @@ import {
   fetchCodeTrustApprovals,
   fetchCodeTrustSummary,
   fetchGitStatus,
+  fetchOperation,
   fetchPackageInspect,
   fetchPlatformInfo,
   fetchProfileCaptures,
@@ -23,6 +25,7 @@ import {
   getSessiondBaseUrl,
   initGitRepository,
   listHostDirectories,
+  listOperations,
   listFiles,
   listSessions,
   openTerminal,
@@ -37,6 +40,7 @@ import {
   stopBuild,
   stopRuntime,
   subscribeSessiondEvents,
+  transitionOperation,
   transitionCodeTrustArtifact,
   updateSession,
   type CodeTrustApproval,
@@ -50,9 +54,12 @@ import {
   type SessionTerminalOpen,
   type SessiondTerminalEvent,
   type EngineSession,
+  type EngineOperation,
   type GitStatus,
   type HostDirectoryList,
   type RuntimeStatus,
+  SessiondRequestError,
+  engineShellActor,
   writeTerminalInput,
 } from './lib/sessiond';
 import { engineReferenceGuide } from './reference-guide';
@@ -60,7 +67,7 @@ import { engineReferenceGuide } from './reference-guide';
 const leftTabs = ['Workspaces', 'Explorer', 'Source Control'] as const;
 const centerTabs = ['World', 'Code', 'Playtest', 'Assets'] as const;
 const rightTabs = ['Runtime', 'Build', 'Workspace'] as const;
-const bottomTabs = ['Terminal', 'Logs', 'Output'] as const;
+const bottomTabs = ['Terminal', 'Logs', 'Output', 'Activity'] as const;
 const unixShells = ['bash', 'zsh', 'sh'] as const;
 const windowsShells = ['powershell.exe', 'cmd.exe'] as const;
 const terminalShells = [...unixShells, ...windowsShells] as const;
@@ -1388,6 +1395,7 @@ function renderBottomPanel(
   terminalDock: ReactNode,
   runtimeLog: string,
   buildLog: string,
+  activityDock: ReactNode,
 ) {
   if (activeTab === 'Terminal') {
     return terminalDock;
@@ -1397,6 +1405,10 @@ function renderBottomPanel(
     return (
       <pre className="dock-output">{runtimeLog}</pre>
     );
+  }
+
+  if (activeTab === 'Activity') {
+    return activityDock;
   }
 
   return (
@@ -1805,8 +1817,21 @@ export default function App() {
   const [buildDir, setBuildDir] = useState('build/runtime');
   const [pendingRunAfterBuild, setPendingRunAfterBuild] = useState(false);
   const [viewerBridgeEvents, setViewerBridgeEvents] = useState<ViewerBridgeEvent[]>([]);
+  const [operations, setOperations] = useState<EngineOperation[]>([]);
+  const [selectedOperationId, setSelectedOperationId] = useState('');
+  const [selectedOperation, setSelectedOperation] = useState<EngineOperation | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState('');
+  const [activityStatus, setActivityStatus] = useState('Select a workspace to review activity.');
+  const [activityPendingAction, setActivityPendingAction] = useState<'' | 'approve' | 'reject'>('');
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
+  const activeSessionIdRef = useRef('');
+  const selectedOperationIdRef = useRef('');
+  const activityListRequestRef = useRef(0);
+  const activityDetailRequestRef = useRef(0);
+  activeSessionIdRef.current = activeSessionId;
+  selectedOperationIdRef.current = selectedOperationId;
   const defaultShell: TerminalShell = platformInfo?.platform === 'win32' ? 'powershell.exe' : 'bash';
   const availableShells: TerminalShell[] = platformInfo?.platform === 'win32'
     ? [...windowsShells, ...unixShells]
@@ -1886,6 +1911,18 @@ export default function App() {
     setBottomPaneResizing(true);
   }
 
+  function handleBottomPaneResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    let nextHeight = bottomPaneHeight;
+    if (event.key === 'ArrowUp') nextHeight += 16;
+    else if (event.key === 'ArrowDown') nextHeight -= 16;
+    else if (event.key === 'Home') nextHeight = MIN_BOTTOM_PANE_HEIGHT;
+    else if (event.key === 'End') nextHeight = maxBottomPaneHeight();
+    else return;
+    event.preventDefault();
+    setBottomPaneCollapsed(false);
+    setBottomPaneHeight(clampBottomPaneHeight(nextHeight));
+  }
+
   function handleExpandBottomPane() {
     setBottomPaneCollapsed(false);
     setBottomPaneHeight(maxBottomPaneHeight());
@@ -1893,6 +1930,102 @@ export default function App() {
 
   function handleToggleBottomPane() {
     setBottomPaneCollapsed((current) => !current);
+  }
+
+  async function refreshOperations(sessionId = activeSessionIdRef.current, announce = true) {
+    const requestId = ++activityListRequestRef.current;
+    if (!sessionId) {
+      setActivityLoading(false);
+      setOperations([]);
+      setSelectedOperationId('');
+      selectedOperationIdRef.current = '';
+      setSelectedOperation(null);
+      setActivityStatus('Select a workspace to review activity.');
+      setActivityError('');
+      return;
+    }
+
+    setActivityLoading(true);
+    setActivityError('');
+    if (announce) setActivityStatus('Refreshing operation history...');
+    try {
+      const nextOperations = await listOperations(sessionId);
+      if (requestId !== activityListRequestRef.current || activeSessionIdRef.current !== sessionId) return;
+      setOperations(nextOperations);
+      const currentSelection = selectedOperationIdRef.current;
+      const nextSelection = nextOperations.some((operation) => operation.id === currentSelection)
+        ? currentSelection
+        : nextOperations[0]?.id || '';
+      setSelectedOperationId(nextSelection);
+      selectedOperationIdRef.current = nextSelection;
+      if (nextSelection) {
+        const detailRequestId = ++activityDetailRequestRef.current;
+        const detail = await fetchOperation(nextSelection);
+        if (
+          detailRequestId === activityDetailRequestRef.current
+          && selectedOperationIdRef.current === nextSelection
+          && activeSessionIdRef.current === sessionId
+        ) setSelectedOperation(detail);
+      } else {
+        setSelectedOperation(null);
+      }
+      if (announce) setActivityStatus(`Loaded ${nextOperations.length} operation${nextOperations.length === 1 ? '' : 's'}.`);
+    } catch (error) {
+      if (requestId !== activityListRequestRef.current || activeSessionIdRef.current !== sessionId) return;
+      setActivityError(error instanceof Error ? error.message : String(error));
+      setActivityStatus('Operation history could not be refreshed.');
+    } finally {
+      if (requestId === activityListRequestRef.current) setActivityLoading(false);
+    }
+  }
+
+  async function handleSelectOperation(operationId: string) {
+    setSelectedOperationId(operationId);
+    selectedOperationIdRef.current = operationId;
+    setSelectedOperation(operations.find((operation) => operation.id === operationId) || null);
+    setActivityError('');
+    const requestId = ++activityDetailRequestRef.current;
+    try {
+      const detail = await fetchOperation(operationId);
+      if (requestId === activityDetailRequestRef.current && selectedOperationIdRef.current === operationId) {
+        setSelectedOperation(detail);
+      }
+    } catch (error) {
+      if (requestId === activityDetailRequestRef.current) {
+        setActivityError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  async function handleOperationReview(action: 'approve' | 'reject') {
+    const operation = selectedOperation;
+    if (!operation || activityPendingAction) return;
+    setActivityPendingAction(action);
+    setActivityError('');
+    setActivityStatus(`${action === 'approve' ? 'Approving' : 'Rejecting'} ${operation.context?.label || operation.id}...`);
+    try {
+      const result = await transitionOperation(operation.id, action, { actor: engineShellActor });
+      if (activeSessionIdRef.current !== operation.sessionId) return;
+      setSelectedOperation(result.operation);
+      await refreshOperations(operation.sessionId, false);
+      setActivityStatus(`Operation ${action === 'approve' ? 'approved' : 'rejected'}.`);
+    } catch (error) {
+      if (activeSessionIdRef.current !== operation.sessionId) return;
+      const stateChanged = error instanceof SessiondRequestError && error.status === 409;
+      if (stateChanged) {
+        const authoritative = await fetchOperation(operation.id).catch(() => null);
+        if (authoritative && selectedOperationIdRef.current === operation.id) setSelectedOperation(authoritative);
+        await refreshOperations(operation.sessionId, false);
+      }
+      setActivityError(error instanceof Error ? error.message : String(error));
+      setActivityStatus(
+        stateChanged
+          ? 'The review action did not complete. Activity was refreshed from sessiond.'
+          : 'The review action did not complete.',
+      );
+    } finally {
+      setActivityPendingAction('');
+    }
   }
 
   async function refreshSessions() {
@@ -2117,8 +2250,16 @@ export default function App() {
       setProfileCaptureList(null);
       setCodeTrustSummary(null);
       setCodeTrustApprovals([]);
+      void refreshOperations('');
       return;
     }
+
+    setOperations([]);
+    setSelectedOperationId('');
+    selectedOperationIdRef.current = '';
+    activityDetailRequestRef.current += 1;
+    setSelectedOperation(null);
+    void refreshOperations(activeSessionId);
 
     void Promise.all([
       refreshGit(activeSessionId),
@@ -2251,6 +2392,18 @@ export default function App() {
         if (!event.data.sessionId || event.data.sessionId === activeSessionId) {
           void refreshCodeTrust(activeSessionId);
         }
+        return;
+      }
+
+      if (
+        event.type === 'operation.previewed'
+        || event.type === 'operation.approved'
+        || event.type === 'operation.rejected'
+        || event.type === 'operation.applied'
+        || event.type === 'operation.undone'
+        || event.type === 'operation.conflicted'
+      ) {
+        if (event.data.sessionId === activeSessionId) void refreshOperations(activeSessionId, false);
       }
     });
 
@@ -3087,6 +3240,23 @@ export default function App() {
     />
   );
 
+  const activityDock = (
+    <ActivityDockView
+      activeSession={activeSession}
+      error={activityError}
+      loading={activityLoading}
+      onApprove={() => void handleOperationReview('approve')}
+      onRefresh={() => void refreshOperations()}
+      onReject={() => void handleOperationReview('reject')}
+      onSelect={(operationId) => void handleSelectOperation(operationId)}
+      operations={operations}
+      pendingAction={activityPendingAction}
+      selectedOperation={selectedOperation}
+      selectedOperationId={selectedOperationId}
+      status={activityStatus}
+    />
+  );
+
   const defaultBrowsePath = platformInfo?.defaultBrowsePath || '/';
   const workspaceRootPlaceholder = platformInfo?.isWSL
     ? platformInfo.defaultBrowsePath || '/mnt/c/Users'
@@ -3685,10 +3855,16 @@ export default function App() {
         style={{ height: `${bottomPaneVisibleHeight}px` }}
       >
         <div
+          aria-orientation="horizontal"
+          aria-valuemax={bottomPaneMaxHeight}
+          aria-valuemin={MIN_BOTTOM_PANE_HEIGHT}
+          aria-valuenow={bottomPaneHeight}
           aria-label="Resize bottom dock"
           className="bottom-pane__resize-handle"
+          onKeyDown={handleBottomPaneResizeKeyDown}
           onPointerDown={handleBottomPaneResizeStart}
           role="separator"
+          tabIndex={0}
         />
         <div className="bottom-pane__chrome">
           <div
@@ -3734,7 +3910,7 @@ export default function App() {
             id="bottom-dock-panel"
             role="tabpanel"
           >
-            {renderBottomPanel(activeBottomTab, terminalDock, runtimeLog, buildLog)}
+            {renderBottomPanel(activeBottomTab, terminalDock, runtimeLog, buildLog, activityDock)}
           </div>
         ) : null}
       </section>

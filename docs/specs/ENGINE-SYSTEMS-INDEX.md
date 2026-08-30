@@ -6,6 +6,8 @@ Date: 2026-08-30
 
 Spatial authoring now has a native schema/query/cook slice, semantic sessiond operation, strict CLI adapter, and an Assets-only constrained primary-grip tuner. The tuner reads exact source TOML revisions, takes an explicit profile lease only after `Begin tuning`, preserves unrelated source bytes, labels candidates `NOT APPLIED`, and uses separate preview/approve/apply/reject/undo transitions with fresh coordination checks. Generic `engine bake` integration, runtime consumption, sampling, IK, capture/review packets, and MCP remain deferred; see [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
+The shell now consumes the durable operation journal through a global `Activity` bottom-dock tab. It reloads active-workspace list/detail state through sessiond, follows the public operation SSE events, shows public provenance and preview summaries, and supports lease-free approve/reject. It deliberately cannot apply/undo, coordinate, or expose internal before/proposed bytes; exact review diffs and validation/test evidence need an explicit later public contract.
+
 Major system specs:
 
 - [Engine Shell Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SHELL-SPEC.md)
