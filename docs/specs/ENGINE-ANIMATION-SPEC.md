@@ -92,6 +92,8 @@ The current Phase 5.72 slice now exists as a first engine-owned animation founda
 - `engine bake` now scans the animation root and stages cooked skeleton, clip, and graph metadata under `build/cooked/animation/`
 - deterministic harness coverage now exists for the authored animation assets, runtime integration hooks, and staged animation cook lane
 - `AnimationSystem` now preserves v1 skeleton loading while also strictly parsing and validating v2 skeleton hierarchies, roles, socket frames, and canonical quaternions
+- schema-v1 clips remain compatible, while schema-v2 clips can author strict per-bone normalized-time translation/quaternion keyframes against v2 skeletons
+- `AnimationSystem::sampleClipPose` deterministically samples schema-v2 clips with linear translation, shortest-path normalized quaternion interpolation, rest-local fallback for untracked bones, stable skeleton order, parent-composed world transforms, and no root-motion accumulation
 - optional v1 attachment profiles now parse and validate primary grips, contact/handle frames, two-hand targets and tolerances, motion-envelope samples, skeleton/socket references, and same-skeleton clip references
 - generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots
 - animation source paths and file bytes must be valid UTF-8 before a successful load can commit a new generation; source files sort by explicit UTF-8 keys for cross-platform handle and cooked-table stability
@@ -99,7 +101,7 @@ The current Phase 5.72 slice now exists as a first engine-owned animation founda
 - `shader_forge_spatial validate --animation-root <path>` now reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts and stable skeleton/profile metadata; `shader_forge_spatial cook` reuses that same validated snapshot to atomically stage complete socket/profile tables at `<output-root>/animation/spatial-authoring.bin`; and `shader_forge_spatial evaluate-rest --animation-root <path> --attachment <id>` deterministically composes rest-pose bone/socket, item, hand, and segment frames. The CLI exposes all three already-built commands without a daemon or auto-build.
 - The rest evaluator is a schematic query, not clip sampling or rendered review evidence: `pose.sampled=false`; item mesh geometry plus IK, joint-limit, and clipping diagnostics are unavailable; and pole world space remains unresolved because the v1 attachment schema does not author a pole-space discriminator.
 
-This is still a widening slice, not the final animation runtime. The normal authored/runtime lane remains the compatible v1 `debug_humanoid` metadata path. V2 spatial assets currently live only in fixtures. The explicit spatial cooker emits derived metadata but is not integrated with generic `engine bake` or runtime loading. Prefab existence validation, joint-limit and diagnostic-capsule parsing, sampling/blending, IK, attachment rendering, review capture, operation-scoped validation/recapture, and native preview tooling remain deferred; attachment mutation operations and their first `sf-mcp` adapter are implemented.
+This is still a widening slice, not the final animation runtime. The normal authored/runtime lane remains the compatible v1 `debug_humanoid` metadata path. V2 spatial assets currently live only in fixtures. The explicit spatial cooker emits derived metadata but is not integrated with generic `engine bake` or runtime loading. The native sampler is a deterministic query and is not yet consumed by runtime graph playback or the spatial attachment evaluator. Prefab existence validation, joint-limit and diagnostic-capsule parsing, blending, IK, attachment rendering, review capture, operation-scoped validation/recapture, and native preview tooling remain deferred; attachment mutation operations and their first `sf-mcp` adapter are implemented.
 
 ## Later Scope
 
@@ -179,7 +181,7 @@ The animation system should expose structured operations through CLI and future 
 
 - Phase 5.5 establishes the text-data and cook foundations animation depends on
 - Phase 5.72 introduces the engine animation subsystem
-- Phase 5.73 now has its native schema/query/cook/rest-schematic slice and attachment mutation operations; the visual evidence workflow still depends on later sampling, IK, rendering, and capture work
+- Phase 5.73 now has its native schema/query/cook/rest-schematic slice, deterministic clip pose sampling, and attachment mutation operations; the visual evidence workflow still depends on sampled attachment integration, IK, rendering, and capture work
 - Phase 5.75 and later authoring work should expose animation preview and asset editing, but broad World/Assets visual polish must not invent a second attachment-truth path
 - Phase 6 integrates animation deeply with gameplay, audio, VFX, and runtime tools
 

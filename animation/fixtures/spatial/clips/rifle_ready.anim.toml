@@ -1,5 +1,5 @@
 schema = "shader_forge.animation_clip"
-schema_version = 1
+schema_version = 2
 name = "rifle_ready"
 owner_system = "animation_system"
 skeleton = "humanoid.standard.v2"
@@ -11,3 +11,33 @@ root_motion_meters = 0.0
 time_seconds = 0.0
 type = "marker"
 target = "rifle_ready"
+
+[track.upper_arm_r.key.0]
+normalized_time = 0.0
+translation = [-0.14, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[track.upper_arm_r.key.1]
+normalized_time = 0.5
+translation = [-0.14, 0.05, 0.10]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[track.upper_arm_r.key.2]
+normalized_time = 1.0
+translation = [-0.14, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[track.hand_r.key.0]
+normalized_time = 0.0
+translation = [-0.24, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[track.hand_r.key.1]
+normalized_time = 0.5
+translation = [-0.24, 0.03, 0.04]
+rotation = [0.0, 0.0, 0.0, 1.0]
+
+[track.hand_r.key.2]
+normalized_time = 1.0
+translation = [-0.24, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]

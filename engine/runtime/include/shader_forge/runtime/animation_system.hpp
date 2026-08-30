@@ -221,15 +221,35 @@ struct SpatialAttachmentEvaluationSnapshot {
   std::optional<EvaluatedSecondaryHandFrameSnapshot> secondaryHandFrame;
 };
 
+struct ClipKeyframeSnapshot {
+  double normalizedTime = 0.0;
+  SpatialVector3Snapshot translation;
+  SpatialQuaternionSnapshot rotation;
+};
+
+struct ClipTrackSnapshot {
+  std::string bone;
+  std::vector<ClipKeyframeSnapshot> keys;
+};
+
 struct ClipDefinitionSnapshot {
   std::string name;
   std::string skeletonName;
+  int schemaVersion = 0;
   double durationSeconds = 0.0;
   bool loop = false;
   double rootMotionMeters = 0.0;
   std::vector<AnimationClipEventSnapshot> events;
+  std::vector<ClipTrackSnapshot> tracks;
   std::filesystem::path sourcePath;
   bool valid = false;
+};
+
+struct SampledClipPoseSnapshot {
+  std::string clipName;
+  std::string skeletonName;
+  double normalizedTime = 0.0;
+  std::vector<EvaluatedBonePoseSnapshot> bones;
 };
 
 struct AnimationGraphParameterSnapshot {
@@ -315,6 +335,10 @@ public:
     std::string_view stateName) const;
   std::optional<SpatialAttachmentEvaluationSnapshot> evaluateRestAttachment(
     AttachmentProfileId id,
+    std::string* errorMessage = nullptr) const;
+  std::optional<SampledClipPoseSnapshot> sampleClipPose(
+    std::string_view clipName,
+    double normalizedTime,
     std::string* errorMessage = nullptr) const;
 
   std::string foundationSummary() const;

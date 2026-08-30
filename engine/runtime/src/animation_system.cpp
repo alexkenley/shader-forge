@@ -456,6 +456,22 @@ bool readInt(const StrictTable& table, std::string_view key, int* value, std::st
       : fail(errorMessage, "Invalid integer key '" + std::string(key) + "' in " + std::string(context)));
 }
 
+bool readDouble(const StrictTable& table, std::string_view key, double* value, std::string_view context, std::string* errorMessage) {
+  const std::string* raw = nullptr;
+  return getRequired(table, key, &raw, context, errorMessage)
+    && (parseStrictDouble(*raw, value)
+      ? true
+      : fail(errorMessage, "Invalid number key '" + std::string(key) + "' in " + std::string(context)));
+}
+
+bool readBool(const StrictTable& table, std::string_view key, bool* value, std::string_view context, std::string* errorMessage) {
+  const std::string* raw = nullptr;
+  return getRequired(table, key, &raw, context, errorMessage)
+    && (parseStrictBool(*raw, value)
+      ? true
+      : fail(errorMessage, "Invalid boolean key '" + std::string(key) + "' in " + std::string(context)));
+}
+
 std::string relativePathString(const std::filesystem::path& path) {
   std::error_code error;
   const std::filesystem::path currentPath = std::filesystem::current_path(error);
@@ -821,11 +837,235 @@ bool loadSkeletonFile(
   return true;
 }
 
+bool readTopLevelClipSchemaVersion(
+  const std::filesystem::path& path,
+  int* schemaVersion,
+  std::string* errorMessage) {
+  std::ifstream stream(path);
+  if (!stream.is_open()) {
+    return fail(errorMessage, "Could not open animation clip file at " + path.string());
+  }
+
+  std::string line;
+  std::size_t lineNumber = 0;
+  bool inSection = false;
+  bool found = false;
+  int parsedVersion = 0;
+  while (std::getline(stream, line)) {
+    lineNumber += 1;
+    const std::string cleaned = stripComment(line);
+    if (cleaned.empty()) {
+      continue;
+    }
+    if (cleaned.front() == '[') {
+      inSection = true;
+      continue;
+    }
+    if (inSection) {
+      continue;
+    }
+
+    std::string key;
+    std::string value;
+    if (!parseKeyValue(cleaned, &key, &value)) {
+      return fail(errorMessage, "Invalid animation clip line " + std::to_string(lineNumber) + " in " + path.string());
+    }
+    if (key == "schema_version") {
+      if (!parseIntValue(value, &parsedVersion)) {
+        return fail(errorMessage, "Invalid schema_version in " + path.string());
+      }
+      found = true;
+    }
+  }
+  if (!found || parsedVersion <= 0) {
+    return fail(errorMessage, "Animation clip schema_version must be a positive integer in " + path.string());
+  }
+  *schemaVersion = parsedVersion;
+  return true;
+}
+
+bool parseTrackKeySection(const std::string& section, std::string* boneId, int* keyIndex) {
+  static constexpr std::string_view prefix = "track.";
+  static constexpr std::string_view marker = ".key.";
+  if (!section.starts_with(prefix)) {
+    return false;
+  }
+  const std::size_t markerOffset = section.rfind(marker);
+  if (markerOffset == std::string::npos || markerOffset <= prefix.size()) {
+    return false;
+  }
+  *boneId = section.substr(prefix.size(), markerOffset - prefix.size());
+  const std::string indexToken = section.substr(markerOffset + marker.size());
+  int parsedIndex = 0;
+  if (boneId->empty() || indexToken.empty() || !parseStrictInt(indexToken, &parsedIndex)
+      || parsedIndex < 0 || indexToken != std::to_string(parsedIndex)) {
+    return false;
+  }
+  *keyIndex = parsedIndex;
+  return true;
+}
+
+bool loadClipV2File(
+  const std::filesystem::path& path,
+  const std::vector<SkeletonDefinitionSnapshot>& skeletons,
+  ClipDefinitionSnapshot* clip,
+  std::string* errorMessage) {
+  StrictDocument document;
+  if (!parseStrictDocument(path, &document, errorMessage)) {
+    return false;
+  }
+  const std::string context = path.string();
+  if (!requireOnlyKeys(
+        document.top,
+        {"schema", "schema_version", "name", "owner_system", "skeleton", "duration_seconds", "loop", "root_motion_meters"},
+        context,
+        errorMessage)) {
+    return false;
+  }
+
+  std::string schema;
+  std::string ownerSystem;
+  if (!readString(document.top, "schema", &schema, context, errorMessage)
+      || !readInt(document.top, "schema_version", &clip->schemaVersion, context, errorMessage)
+      || !readString(document.top, "name", &clip->name, context, errorMessage)
+      || !readString(document.top, "owner_system", &ownerSystem, context, errorMessage)
+      || !readString(document.top, "skeleton", &clip->skeletonName, context, errorMessage)
+      || !readDouble(document.top, "duration_seconds", &clip->durationSeconds, context, errorMessage)
+      || !readBool(document.top, "loop", &clip->loop, context, errorMessage)
+      || !readDouble(document.top, "root_motion_meters", &clip->rootMotionMeters, context, errorMessage)) {
+    return false;
+  }
+  if (schema != "shader_forge.animation_clip" || clip->schemaVersion != 2 || ownerSystem != "animation_system") {
+    return fail(errorMessage, "Invalid animation clip v2 header in " + context);
+  }
+  if (clip->durationSeconds <= 0.0) {
+    return fail(errorMessage, "Animation clip '" + clip->name + "' duration_seconds must be > 0.");
+  }
+
+  const SkeletonDefinitionSnapshot* clipSkeleton = findSkeletonByName(skeletons, clip->skeletonName);
+  if (clipSkeleton == nullptr) {
+    return fail(errorMessage, "Animation clip '" + clip->name + "' references missing skeleton '" + clip->skeletonName + "'.");
+  }
+  if (clipSkeleton->schemaVersion != 2) {
+    return fail(errorMessage, "Animation clip '" + clip->name + "' schema_version 2 requires a v2 skeleton.");
+  }
+  if (clip->skeletonName != clipSkeleton->id) {
+    return fail(errorMessage, "Animation clip '" + clip->name + "' must reference its v2 skeleton by stable id.");
+  }
+
+  std::set<std::string> boneIds;
+  for (const auto& bone : clipSkeleton->boneDefinitions) {
+    boneIds.insert(bone.id);
+  }
+
+  struct PendingKey {
+    int index = 0;
+    ClipKeyframeSnapshot key;
+  };
+  std::map<std::string, std::vector<PendingKey>> pendingTracks;
+
+  for (const auto& [section, table] : document.sections) {
+    if (section.starts_with("event.")) {
+      AnimationClipEventSnapshot eventSnapshot;
+      eventSnapshot.name = section.substr(6);
+      if (eventSnapshot.name.empty()
+          || !requireOnlyKeys(table, {"time_seconds", "type", "target"}, section, errorMessage)
+          || !readDouble(table, "time_seconds", &eventSnapshot.timeSeconds, section, errorMessage)
+          || !readString(table, "type", &eventSnapshot.type, section, errorMessage)
+          || !readString(table, "target", &eventSnapshot.target, section, errorMessage)) {
+        return false;
+      }
+      if (eventSnapshot.timeSeconds < 0.0 || eventSnapshot.timeSeconds > clip->durationSeconds) {
+        return fail(errorMessage, "Animation clip event '" + eventSnapshot.name + "' is out of range in clip '" + clip->name + "'.");
+      }
+      if (eventSnapshot.type != "audio_event" && eventSnapshot.type != "marker" && eventSnapshot.type != "vfx_event") {
+        return fail(errorMessage, "Animation clip event '" + eventSnapshot.name + "' has unsupported type '" + eventSnapshot.type + "'.");
+      }
+      eventSnapshot.valid = true;
+      clip->events.push_back(std::move(eventSnapshot));
+      continue;
+    }
+
+    std::string boneId;
+    int keyIndex = 0;
+    if (!section.starts_with("track.") || !parseTrackKeySection(section, &boneId, &keyIndex)) {
+      return fail(errorMessage, "Unknown animation clip section '" + section + "' in " + context);
+    }
+    if (!boneIds.contains(boneId)) {
+      return fail(errorMessage, "Animation clip '" + clip->name + "' track references missing bone '" + boneId + "'.");
+    }
+    if (!requireOnlyKeys(table, {"normalized_time", "translation", "rotation"}, section, errorMessage)) {
+      return false;
+    }
+    ClipKeyframeSnapshot keyframe;
+    if (!readDouble(table, "normalized_time", &keyframe.normalizedTime, section, errorMessage)
+        || !readVector3(table, "translation", &keyframe.translation, section, errorMessage)
+        || !readQuaternion(table, "rotation", &keyframe.rotation, section, errorMessage)) {
+      return false;
+    }
+    auto& keys = pendingTracks[boneId];
+    if (std::any_of(keys.begin(), keys.end(), [&](const PendingKey& existing) { return existing.index == keyIndex; })) {
+      return fail(errorMessage, "Duplicate key index in animation clip track '" + boneId + "' in " + context);
+    }
+    keys.push_back(PendingKey{keyIndex, std::move(keyframe)});
+  }
+
+  std::map<std::string, ClipTrackSnapshot> tracksByBone;
+  for (auto& [boneId, keys] : pendingTracks) {
+    std::sort(keys.begin(), keys.end(), [](const PendingKey& left, const PendingKey& right) {
+      return left.index < right.index;
+    });
+    if (keys.size() < 2) {
+      return fail(errorMessage, "Animation clip track '" + boneId + "' must contain at least two keys.");
+    }
+    ClipTrackSnapshot track;
+    track.bone = boneId;
+    for (std::size_t index = 0; index < keys.size(); ++index) {
+      if (keys[index].index != static_cast<int>(index)) {
+        return fail(errorMessage, "Animation clip track '" + boneId + "' key indices must be consecutive and zero-based.");
+      }
+      if (index == 0 && keys[index].key.normalizedTime != 0.0) {
+        return fail(errorMessage, "Animation clip track '" + boneId + "' must start at normalized_time 0.0.");
+      }
+      if (index + 1 == keys.size() && keys[index].key.normalizedTime != 1.0) {
+        return fail(errorMessage, "Animation clip track '" + boneId + "' must end at normalized_time 1.0.");
+      }
+      if (index > 0 && !(keys[index].key.normalizedTime > keys[index - 1].key.normalizedTime)) {
+        return fail(errorMessage, "Animation clip track '" + boneId + "' normalized_time values must be strictly increasing.");
+      }
+      track.keys.push_back(std::move(keys[index].key));
+    }
+    tracksByBone.emplace(boneId, std::move(track));
+  }
+
+  for (const auto& bone : clipSkeleton->boneDefinitions) {
+    const auto found = tracksByBone.find(bone.id);
+    if (found != tracksByBone.end()) {
+      clip->tracks.push_back(std::move(found->second));
+    }
+  }
+
+  clip->sourcePath = path;
+  clip->valid = true;
+  return true;
+}
+
 bool loadClipFile(
   const std::filesystem::path& path,
   const std::vector<SkeletonDefinitionSnapshot>& skeletons,
   ClipDefinitionSnapshot* clip,
   std::string* errorMessage) {
+  int schemaVersionPeek = 0;
+  if (!readTopLevelClipSchemaVersion(path, &schemaVersionPeek, errorMessage)) {
+    return false;
+  }
+  if (schemaVersionPeek == 2) {
+    return loadClipV2File(path, skeletons, clip, errorMessage);
+  }
+  if (schemaVersionPeek != 1) {
+    return fail(errorMessage, "Unsupported animation clip schema_version in " + path.string());
+  }
+
   std::ifstream stream(path);
   if (!stream.is_open()) {
     if (errorMessage) {
@@ -1001,6 +1241,7 @@ bool loadClipFile(
     eventSnapshot.valid = true;
   }
 
+  clip->schemaVersion = 1;
   clip->valid = true;
   return true;
 }
@@ -1581,6 +1822,98 @@ bool composeTransforms(
     errorMessage);
 }
 
+SpatialVector3Snapshot lerpVectors(
+  const SpatialVector3Snapshot& start,
+  const SpatialVector3Snapshot& end,
+  double t) {
+  return cleanVector({
+    start.x + (end.x - start.x) * t,
+    start.y + (end.y - start.y) * t,
+    start.z + (end.z - start.z) * t,
+  });
+}
+
+bool nlerpQuaternions(
+  const SpatialQuaternionSnapshot& start,
+  const SpatialQuaternionSnapshot& end,
+  double t,
+  SpatialQuaternionSnapshot* result,
+  std::string* errorMessage) {
+  SpatialQuaternionSnapshot target = end;
+  const double dot = start.x * end.x + start.y * end.y + start.z * end.z + start.w * end.w;
+  if (dot < 0.0) {
+    target.x = -end.x;
+    target.y = -end.y;
+    target.z = -end.z;
+    target.w = -end.w;
+  }
+  SpatialQuaternionSnapshot mixed{
+    start.x + (target.x - start.x) * t,
+    start.y + (target.y - start.y) * t,
+    start.z + (target.z - start.z) * t,
+    start.w + (target.w - start.w) * t,
+  };
+  if (!canonicalizeQuaternion(&mixed, errorMessage)) {
+    return false;
+  }
+  *result = mixed;
+  return true;
+}
+
+bool sampleClipTrack(
+  const ClipTrackSnapshot& track,
+  double normalizedTime,
+  SpatialVector3Snapshot* translation,
+  SpatialQuaternionSnapshot* rotation,
+  std::string* errorMessage) {
+  if (track.keys.size() < 2) {
+    return fail(errorMessage, "Animation clip track '" + track.bone + "' is missing keyframes.");
+  }
+  const auto& first = track.keys.front();
+  const auto& last = track.keys.back();
+  if (normalizedTime <= first.normalizedTime) {
+    *translation = first.translation;
+    *rotation = first.rotation;
+    return true;
+  }
+  if (normalizedTime >= last.normalizedTime) {
+    *translation = last.translation;
+    *rotation = last.rotation;
+    return true;
+  }
+  for (std::size_t index = 0; index + 1 < track.keys.size(); ++index) {
+    const auto& left = track.keys[index];
+    const auto& right = track.keys[index + 1];
+    if (normalizedTime < left.normalizedTime || normalizedTime > right.normalizedTime) {
+      continue;
+    }
+    if (normalizedTime == left.normalizedTime) {
+      *translation = left.translation;
+      *rotation = left.rotation;
+      return true;
+    }
+    if (normalizedTime == right.normalizedTime) {
+      *translation = right.translation;
+      *rotation = right.rotation;
+      return true;
+    }
+    const double span = right.normalizedTime - left.normalizedTime;
+    if (!(span > 0.0) || !std::isfinite(span)) {
+      return fail(errorMessage, "Animation clip track '" + track.bone + "' has an invalid key interval.");
+    }
+    const double t = (normalizedTime - left.normalizedTime) / span;
+    if (!std::isfinite(t) || t < 0.0 || t > 1.0) {
+      return fail(errorMessage, "Animation clip sampling produced a non-finite interpolation weight.");
+    }
+    *translation = lerpVectors(left.translation, right.translation, t);
+    if (!std::isfinite(translation->x) || !std::isfinite(translation->y) || !std::isfinite(translation->z)) {
+      return fail(errorMessage, "Animation clip sampling produced a non-finite translation.");
+    }
+    return nlerpQuaternions(left.rotation, right.rotation, t, rotation, errorMessage);
+  }
+  return fail(errorMessage, "Animation clip track '" + track.bone + "' could not be sampled.");
+}
+
 bool resolveBoneWorld(
   std::string_view boneId,
   const std::map<std::string, const SkeletonBoneSnapshot*>& bonesById,
@@ -2049,6 +2382,77 @@ std::optional<SpatialAttachmentEvaluationSnapshot> AnimationSystem::evaluateRest
   SpatialAttachmentEvaluationSnapshot evaluation;
   if (!evaluateRestAttachmentSnapshot(*profile, *skeleton, &evaluation, errorMessage)) return std::nullopt;
   return evaluation;
+}
+
+std::optional<SampledClipPoseSnapshot> AnimationSystem::sampleClipPose(
+  std::string_view clipName,
+  double normalizedTime,
+  std::string* errorMessage) const {
+  if (!std::isfinite(normalizedTime) || normalizedTime < 0.0 || normalizedTime > 1.0) {
+    fail(errorMessage, "Clip sample time must be a finite value in [0, 1].");
+    return std::nullopt;
+  }
+
+  const ClipDefinitionSnapshot* clip = findClipByName(impl_->clips, clipName);
+  if (clip == nullptr) {
+    fail(errorMessage, "Unknown animation clip '" + std::string(clipName) + "'.");
+    return std::nullopt;
+  }
+  if (clip->schemaVersion != 2) {
+    fail(errorMessage, "Animation clip '" + clip->name + "' does not support pose sampling.");
+    return std::nullopt;
+  }
+
+  const SkeletonDefinitionSnapshot* skeleton = findSkeletonByName(impl_->skeletons, clip->skeletonName);
+  if (skeleton == nullptr || skeleton->schemaVersion != 2) {
+    fail(errorMessage, "Animation clip '" + clip->name + "' references a missing v2 skeleton.");
+    return std::nullopt;
+  }
+
+  std::map<std::string, const ClipTrackSnapshot*> tracksByBone;
+  for (const auto& track : clip->tracks) {
+    tracksByBone.emplace(track.bone, &track);
+  }
+
+  std::vector<SkeletonBoneSnapshot> posedBones = skeleton->boneDefinitions;
+  for (auto& bone : posedBones) {
+    const auto found = tracksByBone.find(bone.id);
+    if (found == tracksByBone.end()) {
+      continue;
+    }
+    if (!sampleClipTrack(*found->second, normalizedTime, &bone.translation, &bone.rotation, errorMessage)) {
+      return std::nullopt;
+    }
+  }
+
+  std::map<std::string, const SkeletonBoneSnapshot*> bonesById;
+  for (const auto& bone : posedBones) {
+    bonesById.emplace(bone.id, &bone);
+  }
+
+  std::map<std::string, SpatialTransformSnapshot> locals;
+  std::map<std::string, SpatialTransformSnapshot> worlds;
+  std::set<std::string> visiting;
+  for (const auto& bone : posedBones) {
+    if (!resolveBoneWorld(bone.id, bonesById, &locals, &worlds, &visiting, errorMessage)) {
+      return std::nullopt;
+    }
+  }
+
+  SampledClipPoseSnapshot pose;
+  pose.clipName = clip->name;
+  pose.skeletonName = clip->skeletonName;
+  pose.normalizedTime = withoutSignedZero(normalizedTime);
+  for (const auto& bone : posedBones) {
+    pose.bones.push_back({
+      bone.id,
+      bone.parent,
+      bone.role,
+      locals.at(bone.id),
+      worlds.at(bone.id),
+    });
+  }
+  return pose;
 }
 
 std::optional<ResolvedAnimationGraphSnapshot> AnimationSystem::resolveGraph(std::string_view graphName) const {
