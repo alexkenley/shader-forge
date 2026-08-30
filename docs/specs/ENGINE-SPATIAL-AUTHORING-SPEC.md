@@ -1,6 +1,6 @@
 # Engine Spatial Authoring And Attachment Tuning Spec
 
-Status: native schema/query/cook/rest-schematic evaluation, semantic operation, CLI adapter, and constrained Assets tuner implemented; visual review workflow deferred
+Status: native schema/query/cook/rest-schematic evaluation, revision-safe transient sessiond evaluation, semantic operation, CLI adapter, and constrained Assets tuner implemented; visual review workflow deferred
 
 Date: 2026-08-31
 
@@ -10,7 +10,7 @@ Shader Forge spatial authoring is the engine-owned contract for skeleton sockets
 
 It exists so a weapon, tool, or held item has one authored truth that native runtime code, cooked data, the React shell, the CLI, and `sf-mcp` all share. It is the product answer to Unreal's split truth, where Blueprint or editor presentation can drift from native C++ behavior.
 
-This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, validation, typed query access, a deterministic derived cooker, deterministic rest-pose schematic evaluation, and lease-gated no-write attachment preview over the generic operation journal. It does not yet provide runtime cooked-data consumption, a spatial workbench, pose sampling, IK, rendering, capture, or review packets.
+This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, validation, typed query access, a deterministic derived cooker, deterministic rest-pose schematic evaluation, a revision-safe transient sessiond query, and lease-gated no-write attachment preview with transient baseline/candidate evaluation over the generic operation journal. It does not yet provide runtime cooked-data consumption, a spatial workbench, pose sampling, IK, rendering, capture, or review packets.
 
 ## Authored-Truth Contract
 
@@ -39,13 +39,14 @@ If a value affects how an item sits in a hand, it lives in an attachment profile
 - a dependency-free `shader_forge_spatial validate --animation-root <path>` executable that calls the same `AnimationSystem::loadFromDisk` path and emits deterministic JSON with normalized root, collection counts, stable IDs, schema versions, bone/socket counts, attachment references/mode/perspective, and motion-envelope phase/sample counts
 - `shader_forge_spatial cook --animation-root <path> --output-root <path>`, which validates through that same loader and stages exactly one deterministic UTF-8 JSON payload at `<output-root>/animation/spatial-authoring.bin`; it includes complete snapshot-backed bone/socket/profile tables, relative source paths, canonical quaternions, and no generation handles or absolute machine paths
 - `shader_forge_spatial evaluate-rest --animation-root <path> --attachment <id>`, which composes the selected v2 skeleton rest pose, sockets, dominant/item frames, contact/handle frames, secondary target, unresolved pole input, and joint-segment endpoints into deterministic machine-readable geometry
+- `GET /api/spatial/attachment/evaluate`, which stages exact current authored animation bytes through `SessionStore`, binds the selected source path and SHA-256 revision to the validator-selected attachment ID, runs that same rest evaluator, and rechecks the source revision before returning
 - sibling temporary-file replacement after a successful close, so invalid input and failed writes do not overwrite an existing final payload
 - `engine build spatial`, plus strict `engine spatial validate`, `engine spatial cook`, and `engine spatial evaluate-rest --attachment <id>` adapters for running an already-built tool; none auto-builds or starts a daemon, and evaluate-rest creates no review artifact
 - `npm run test:spatial-tool`, which requires a native compiler, compiles and runs all three commands against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, and checks deterministic validation, byte-stable cooking, representative field completeness, relative paths, sentinel preservation, rest geometry invariants, non-commuting transform composition, canonical quaternion sign, unresolved pole space, non-finite failure, CLI strictness, help, and build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere
 
 The loader retains `item_prefab` as a stable reference but does not yet validate prefab existence because `AnimationSystem` does not own the prefab catalogue. Bone joint limits and diagnostic capsules are also not parsed in this slice.
 
-The rest evaluator is a schematic geometry query only: `pose.sampled` is false, item mesh geometry is unavailable, and IK, joint-limit, and clipping diagnostics are explicitly unavailable. It is not rendered review evidence. Still deferred: generic `engine bake` integration, cooked-runtime loading, sampling, blending, IK, attachment rendering, spatial diagnostics, workbench capture and review packets, operation-scoped validation/recapture, native overlay tuning, and typed `sf-mcp` validation/review resources. The semantic attachment mutation operation, constrained shell tuner, and `sf-mcp` preview/review/apply/undo adapter are implemented.
+The rest evaluator is a schematic geometry query only: `pose.sampled` is false, item mesh geometry is unavailable, and IK, joint-limit, and clipping diagnostics are explicitly unavailable. Native CLI, sessiond GET, and preview evaluations are not rendered review evidence. Sessiond evaluation reports are transient and never become operation validation or persisted review artifacts. Still deferred: generic `engine bake` integration, cooked-runtime loading, sampling, blending, IK, attachment rendering, spatial diagnostics, workbench capture and review packets, operation-scoped validation/recapture, native overlay tuning, and typed `sf-mcp` validation/review resources. The semantic attachment mutation operation, constrained shell tuner, and `sf-mcp` preview/review/apply/undo adapter are implemented.
 
 ## Goals
 
@@ -571,10 +572,15 @@ Review packets are read-mostly after creation. A write lease on `spatial/review/
 
 Implemented:
 
+- `GET /api/spatial/attachment/evaluate?sessionId=<id>&path=animation/attachments/<file>.attachment.toml&baseRevision=sha256:<hex>`
 - `POST /api/operations/spatial-attachment/preview`
 - existing approve/reject/apply/undo, with a live matching write lease recheck on spatial apply/undo
 
-Preview accepts only `animation/attachments/*.attachment.toml`. Sessiond stages skeletons, `.anim.toml` clips, `.animgraph.toml` graphs, and attachments through `SessionStore` list/read APIs into a fresh temporary root, rejects links, validates baseline and candidate through `shader_forge_spatial`, maps stable relative source paths to old/new profile IDs, requires both resource keys on rename, and creates the normal `file_write` operation only after all checks pass. The operation context stores label, subject ID, resource keys, and preview lease ID; it never stores credentials. No authored bytes or cooked output change during preview.
+GET accepts only an existing attachment path and a non-`missing` SHA-256 base revision. It rejects symbolic paths, stages skeletons, `.anim.toml` clips, `.animgraph.toml` graphs, and attachments through strict `SessionStore` reads, requires the staged attachment bytes to match that revision, validates the staged tree, evaluates the profile ID mapped to the selected source, and re-reads the live source after evaluation to catch drift. It returns `{ evaluation, path, revision }`. It requires no lease and creates no operation, journal entry, SSE event, authored/cooked write, or persisted evaluation.
+
+Preview accepts the same attachment path family. Sessiond stages the authored animation tree into a fresh temporary root, rejects links, validates baseline and candidate through `shader_forge_spatial`, maps stable relative source paths to old/new profile IDs, evaluates the exact staged baseline and candidate bytes under those expected IDs, requires both resource keys on rename, and rechecks the granted write lease after evaluation immediately before operation creation. A new-file preview returns `evaluation.baseline: null`. The immediate response contains the transient evaluations, while the durable operation context stores only label, subject ID, resource keys, and preview lease ID; it never stores credentials or evaluation reports. No authored bytes or cooked output change during preview. Both GET and preview always remove their temporary staging roots.
+
+Evaluator responses must match the public rest-evaluation schema, remain `pose.sampled=false`, and return the attachment ID selected by validation. Wrong IDs or malformed output fail closed. These reports help humans and machines compare exact authored candidates, but they are not sampled-pose or rendered review evidence and cannot satisfy a later review-packet gate.
 
 Deferred routes:
 
@@ -593,7 +599,7 @@ Implemented sessiond-backed operation commands:
 - `engine spatial approve|reject <operation-id>` performs the review transition
 - `engine spatial apply|undo <operation-id>` requires explicit agent and lease IDs plus `SHADER_FORGE_AGENT_CREDENTIAL`
 
-These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook|evaluate-rest` commands remain separate from the sessiond operation adapter. `evaluate-rest` is read-only and process-local; it emits a rest-pose schematic with `pose.sampled=false`, not operation validation or review evidence.
+These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook|evaluate-rest` commands remain separate from the sessiond operation adapter. `evaluate-rest` is read-only; sessiond also invokes it in isolated transient staging for GET and preview responses. Every result has `pose.sampled=false` and is not durable operation validation or review evidence.
 
 Deferred commands:
 
@@ -785,6 +791,8 @@ Gameplay reads the profile through the animation system. It does not keep a para
 
 `npm run test:spatial-tool` compiles the production `shader_forge_spatial` source with `AnimationSystem`, runs valid fixtures twice to require byte-stable validation, cook, and rest-evaluation JSON, rejects invalid input with precise diagnostics, and checks the CLI help/build-first contract. On Windows it executes the Linux test binary through WSL and does not pretend that binary is a Windows executable.
 
+`npm run test:spatial-operations` starts sessiond with deterministic validator/evaluator injection. It exercises the revision-safe GET and transient preview evaluation contract without requiring a native build.
+
 Current assertions cover:
 
 - unchanged v1 loading alongside strict v2 skeleton/socket and v1 attachment-profile loading
@@ -795,6 +803,11 @@ Current assertions cover:
 - parent-first translation/rotation composition with non-commuting rotations, `xyzw` quaternion output, canonical non-negative `w`, and deterministic repeated output
 - explicit `pose.sampled=false`, unavailable item geometry/IK/joint-limit/clipping diagnostics, unresolved pole world space, and `not_review_evidence`
 - fail-closed behavior when evaluated numeric diagnostics are non-finite
+- GET path, symlink, session, revision, exact staged-byte, expected-ID, and final revision-drift checks before returning an evaluation
+- GET success without a lease, operation, journal entry, authored write, or persisted evaluation
+- preview baseline/candidate evaluation against exact staged bytes, including `baseline: null` for new files and no evaluation fields in the durable journal
+- evaluator protocol and infrastructure failures, including wrong IDs, malformed JSON, bounded unavailable diagnostics, and temporary-root cleanup
+- preview lease loss during evaluation rejected before operation creation
 
 Later workflow assertions still required:
 
@@ -819,8 +832,8 @@ A complete spatial-authoring workflow requires all gates below. The implemented 
 1. Skeleton schema version 2 with hierarchy, roles, and sockets validates natively. **Implemented.**
 2. Attachment profiles validate and load to generation-safe typed handles, then cook with skeleton sockets into a deterministic derived payload. **Implemented.** Generic bake and runtime-consumption integration remain deferred.
 3. Prefabs are referenced by ID and do not contain copied grip fields.
-4. Preview candidates are labelled and persist only through `engine_sessiond` operations.
-5. Approve/apply/undo use the existing journal; stale revisions conflict; denied approvals do not write.
+4. Preview candidates are labelled and persist only through `engine_sessiond` operations. **Implemented for attachment TOML; transient GET/preview evaluations are never persisted.**
+5. Approve/apply/undo use the existing journal; stale revisions conflict; denied approvals do not write. **Implemented for attachment TOML, including preview lease recheck after evaluation.**
 6. Review packets are immutable, identified by `reviewId`, and complete without viewport scraping.
 7. Two-hand evaluation order is sampled pose, primary grip, secondary IK.
 8. Diagnostics are numeric and profile-driven.
@@ -839,8 +852,8 @@ Dependency order, with no calendar estimates. This work starts after the operati
 2. **Typed loader handles — implemented.** Generation-tagged skeleton, bone, socket, and attachment handles plus snapshot/query APIs, with transactional reload behavior and no sampling.
 3. **Read-only native validation command — implemented.** One `shader_forge_spatial` executable reuses `AnimationSystem`, emits deterministic JSON, and is exposed by CLI build and validate commands without auto-build or daemon state.
 4. **Deterministic cooker — implemented as an explicit spatial command.** `shader_forge_spatial cook` validates through `AnimationSystem` and atomically stages one complete socket/profile payload under `build/cooked/animation/`. Generic `engine bake` integration and runtime consumption remain deferred.
-5. **Rest-pose schematic evaluation — implemented.** `shader_forge_spatial evaluate-rest` composes deterministic rest bone/socket, item, hand, and joint-segment frames. It is explicitly unsampled, has no mesh/IK/joint/clipping evidence, leaves the v1 pole space unresolved, and is not a review packet.
-6. **Spatial operations — attachment mutation implemented.** Preview/apply/undo over `engine_sessiond` for attachment TOML only, with separate review transitions and labelled candidates. Operation-scoped validate/recapture/review packets remain deferred. No fake captures.
+5. **Rest-pose schematic evaluation — implemented.** `shader_forge_spatial evaluate-rest` composes deterministic rest bone/socket, item, hand, and joint-segment frames. A revision-safe sessiond GET now evaluates exact current authored bytes, and preview returns transient exact baseline/candidate evaluations. All are explicitly unsampled, have no mesh/IK/joint/clipping evidence, and are not review packets.
+6. **Spatial operations — attachment mutation implemented.** Preview/apply/undo over `engine_sessiond` for attachment TOML only, with separate review transitions, labelled candidates, expected-ID binding, and a lease recheck after evaluator work. Operation-scoped validate/recapture/review packets remain deferred. No fake captures.
 7. **Humanoid fixture — implemented for validation and rest evaluation only.** Isolated humanoid, rifle, pistol, and clip fixtures plus the executable native harness now prove the schema and transform composition without entering authored or cooked roots.
 8. **Sampling and procedural layers.** Native sampler, primary attachment, secondary-hand IK, diagnostics. This is the animation-runtime widening spatial authoring depends on.
 9. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.

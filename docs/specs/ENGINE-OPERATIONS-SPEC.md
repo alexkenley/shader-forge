@@ -1,8 +1,8 @@
 # Engine Operations Spec
 
-Status: hardened text-file write slice plus spatial attachment preview context and CLI adapter implemented
+Status: hardened text-file write slice plus transient spatial evaluation, attachment preview context, and CLI adapter implemented
 
-Date: 2026-08-30
+Date: 2026-08-31
 
 ## Purpose
 
@@ -28,6 +28,8 @@ This spec is the canonical contract for engine-owned operations. The implemented
 - append-only lifecycle events, including `apply_failed`, `undo_failed`, and `recovered`
 
 Spatial attachment previews remain `kind: "file_write"` and add only this normalized public context: `type: "spatial_attachment"`, non-empty `label`, authoritative candidate `subjectId`, sorted `resourceKeys`, and the preview `leaseId`. The context survives restart. Credentials and staged validation paths do not enter the journal.
+
+The immediate spatial preview response also contains transient `evaluation.baseline` and `evaluation.candidate` rest-pose schematics. Baseline is `null` for a new file. These reports are not operation fields: they do not enter `operations.json`, public operation views, SSE, restart state, or later apply/undo responses.
 
 Approve, reject, apply, and undo require an explicit valid actor object. The backend never defaults a missing actor to anonymous `human`. Credentials are stripped and are never stored, returned, or streamed.
 
@@ -65,6 +67,7 @@ A stale base revision returns HTTP 409 with a structured conflict:
 
 - `POST /api/operations/file-write/preview`
 - `POST /api/operations/spatial-attachment/preview`
+- `GET /api/spatial/attachment/evaluate`
 - `GET /api/operations`
 - `GET /api/operations/:id`
 - `POST /api/operations/:id/approve`
@@ -82,7 +85,11 @@ Preview body:
 
 Preview does not mutate the workspace file.
 
-Spatial attachment preview accepts only `animation/attachments/*.attachment.toml`. It requires full `content`, `baseRevision`, non-empty `label`, `actor`, `agentId`, `leaseId`, and `X-Shader-Forge-Agent-Credential`. Sessiond rejects a stale revision before validation, stages a fresh temporary animation root exclusively through `SessionStore.listFiles` / `readFile`, rejects symbolic-link sources, runs the native validator over baseline and candidate, maps the source path to authoritative old/new profile IDs, and requires one granted write lease covering `spatial/attachment/<id>` for both IDs on rename. Only then does it create the generic operation. The temporary root is always removed.
+Spatial attachment preview accepts only `animation/attachments/*.attachment.toml`. It requires full `content`, `baseRevision`, non-empty `label`, `actor`, `agentId`, `leaseId`, and `X-Shader-Forge-Agent-Credential`. Sessiond rejects a stale revision before validation, stages a fresh temporary animation root exclusively through `SessionStore.listFiles` / `readFile`, rejects symbolic-link sources, and runs the native validator over baseline and candidate. The validator's stable source mapping selects the authoritative old/new profile IDs. Sessiond evaluates the exact staged baseline bytes under the old ID and exact candidate bytes under the new ID, with a `null` baseline for a new file. Evaluator output must satisfy the rest-evaluation schema and return the expected ID. One granted write lease must cover `spatial/attachment/<id>` for both IDs on rename; sessiond rechecks that lease after evaluation and immediately before creating the generic operation. The temporary root is always removed.
+
+`GET /api/spatial/attachment/evaluate` accepts `sessionId`, an existing attachment `path`, and a non-`missing` SHA-256 `baseRevision`. Strict `SessionStore` reads reject symbolic paths and stale revisions. Sessiond stages the current authored animation tree, requires the staged attachment bytes to match the requested revision, validates the staged tree, binds evaluation to the profile ID selected for that source path, and re-reads the source after evaluation to catch revision drift. It returns `{ evaluation, path, revision }`. The route requires no lease because it is read-only and creates no operation, journal entry, persisted evaluation, SSE event, authored write, or cooked output.
+
+Both GET and preview evaluation reports retain `pose.sampled=false`. They are schematic geometry for collaboration and comparison, not sampled-pose, rendered, diagnostic, or review-packet evidence.
 
 ## State Machine
 
@@ -274,3 +281,5 @@ Invalid records are skipped. They cannot be listed as applicable operations.
 - applying+recorded and undoing+reverted crash windows that finalize without repeating the effect
 - persisted legacy session `rootIdentity` migration plus same-path root replacement
 - malformed persisted records skipped on load, including preview-schema, event-sequence, and final-event/state corruption
+
+`npm run test:spatial-operations` additionally covers the revision-safe GET, strict path/symlink and source-ID binding, exact staged baseline/candidate bytes, new-file `baseline: null`, final-read revision drift, malformed or wrong-ID evaluator output, bounded unavailable/infrastructure errors, temporary cleanup, journal absence for GET, non-persistence of preview evaluations, and the post-evaluation preview lease recheck.

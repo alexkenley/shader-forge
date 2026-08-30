@@ -29,7 +29,41 @@ function profileId(content) {
   return /^id\s*=\s*"([^"]+)"/m.exec(content)?.[1] || '';
 }
 
+function restEvaluation(attachmentId) {
+  return {
+    schema: 'shader_forge.spatial_attachment_evaluation',
+    schemaVersion: 1,
+    pose: { kind: 'rest', sampled: false },
+    attachment: { id: attachmentId },
+    bones: [],
+    segments: [],
+    sockets: [],
+    item: {},
+    hands: {},
+    diagnostics: {},
+  };
+}
+
+function attachmentEvaluatePath(query) {
+  return `/api/spatial/attachment/evaluate?${new URLSearchParams(query).toString()}`;
+}
+
 const stagedRoots = [];
+const evaluatedCalls = [];
+let evaluateImpl = async (animationRoot, attachmentId) => {
+  const contents = {};
+  for (const name of (await fs.readdir(path.join(animationRoot, 'attachments'))).sort()) {
+    if (!name.endsWith('.attachment.toml')) continue;
+    contents[name] = await fs.readFile(path.join(animationRoot, 'attachments', name), 'utf8');
+  }
+  evaluatedCalls.push({ animationRoot, attachmentId, contents });
+  return restEvaluation(attachmentId);
+};
+
+async function evaluateRestAttachment(animationRoot, attachmentId) {
+  return evaluateImpl(animationRoot, attachmentId);
+}
+
 async function validateAnimationRoot(animationRoot) {
   stagedRoots.push(animationRoot);
   for (const directory of ['skeletons', 'clips', 'graphs', 'attachments']) {
@@ -177,6 +211,7 @@ try {
     port: 0,
     sessionStore,
     validateAnimationRoot,
+    evaluateRestAttachment,
   });
   const firstSession = await sessionStore.createSession({ name: 'spatial', rootPath: projectRoot });
   const secondSession = await sessionStore.createSession({ name: 'other', rootPath: secondProjectRoot });
@@ -198,6 +233,145 @@ try {
   assert.equal(registration.status, 201);
   const { agent, credential } = registration.payload;
 
+  const operationsPath = path.join(path.dirname(statePath), 'operations.json');
+  const originalRevision = textContentRevision(originalContent);
+  const evaluateQuery = {
+    sessionId: firstSession.id,
+    path: attachmentPath,
+    baseRevision: originalRevision,
+  };
+  const callsBeforeEvaluateGates = evaluatedCalls.length;
+
+  const invalidEvaluatePath = await request(service.baseUrl, attachmentEvaluatePath({
+    ...evaluateQuery,
+    path: 'animation/rifle.attachment.toml',
+  }));
+  assert.equal(invalidEvaluatePath.status, 400);
+  assert.equal(invalidEvaluatePath.payload.code, 'spatial_attachment_path_invalid');
+
+  const missingRevision = await request(service.baseUrl, attachmentEvaluatePath({
+    ...evaluateQuery,
+    baseRevision: 'missing',
+  }));
+  assert.equal(missingRevision.status, 400);
+  assert.equal(missingRevision.payload.code, 'spatial_request_invalid');
+
+  const staleEvaluate = await request(service.baseUrl, attachmentEvaluatePath({
+    ...evaluateQuery,
+    baseRevision: textContentRevision('stale'),
+  }));
+  assert.equal(staleEvaluate.status, 409);
+  assert.equal(staleEvaluate.payload.code, 'revision_conflict');
+
+  const missingEvaluate = await request(service.baseUrl, attachmentEvaluatePath({
+    ...evaluateQuery,
+    path: 'animation/attachments/missing.attachment.toml',
+  }));
+  assert.equal(missingEvaluate.status, 404);
+  assert.equal(missingEvaluate.payload.code, 'spatial_attachment_missing');
+
+  const crossSessionEvaluate = await request(service.baseUrl, attachmentEvaluatePath({
+    ...evaluateQuery,
+    sessionId: secondSession.id,
+  }));
+  assert.equal(crossSessionEvaluate.status, 404);
+  assert.equal(crossSessionEvaluate.payload.code, 'spatial_attachment_missing');
+  assert.equal(evaluatedCalls.length, callsBeforeEvaluateGates);
+  await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
+
+  await fs.writeFile(path.join(secondProjectRoot, attachmentPath), originalContent, 'utf8');
+  const sourceSymlinkEvaluate = await request(service.baseUrl, attachmentEvaluatePath({
+    ...evaluateQuery,
+    sessionId: secondSession.id,
+  }));
+  assert.equal(sourceSymlinkEvaluate.status, 400);
+  assert.equal(sourceSymlinkEvaluate.payload.code, 'symbolic_path_rejected');
+  assert.equal(evaluatedCalls.length, callsBeforeEvaluateGates);
+  await fs.rm(path.join(secondProjectRoot, attachmentPath));
+
+  const baselineEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(baselineEvaluate.status, 200);
+  assert.equal(baselineEvaluate.payload.path, attachmentPath);
+  assert.equal(baselineEvaluate.payload.revision, originalRevision);
+  assert.equal(baselineEvaluate.payload.evaluation.schema, 'shader_forge.spatial_attachment_evaluation');
+  assert.deepEqual(baselineEvaluate.payload.evaluation.pose, { kind: 'rest', sampled: false });
+  assert.equal(baselineEvaluate.payload.evaluation.attachment.id, 'weapon.rifle.old');
+  assert.equal('operation' in baselineEvaluate.payload, false);
+  assert.equal('capture' in baselineEvaluate.payload, false);
+  assert.equal(evaluatedCalls.at(-1).attachmentId, 'weapon.rifle.old');
+  assert.equal(evaluatedCalls.at(-1).contents['rifle.attachment.toml'], originalContent);
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
+
+  const normalEvaluate = evaluateImpl;
+  evaluateImpl = async () => restEvaluation('weapon.wrong');
+  const wrongIdEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(wrongIdEvaluate.status, 500);
+  assert.equal(wrongIdEvaluate.payload.code, 'spatial_evaluator_protocol_error');
+
+  evaluateImpl = async () => {
+    const error = new Error('unavailable');
+    error.code = 'spatial_evaluator_unavailable';
+    error.statusCode = 503;
+    error.diagnostic = 'u'.repeat(9000);
+    throw error;
+  };
+  const boundedUnavailable = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(boundedUnavailable.status, 503);
+  assert.equal(boundedUnavailable.payload.code, 'spatial_evaluator_unavailable');
+  assert.equal(boundedUnavailable.payload.error.length, 8000);
+
+  evaluateImpl = async () => {
+    const error = new Error('spawn failed');
+    error.code = 'EACCES';
+    error.stderr = 'i'.repeat(9000);
+    throw error;
+  };
+  const infrastructureFailure = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(infrastructureFailure.status, 500);
+  assert.equal(infrastructureFailure.payload.code, 'spatial_evaluator_infrastructure_error');
+  assert.equal(infrastructureFailure.payload.diagnostic.length, 8000);
+
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    await fs.writeFile(path.join(projectRoot, attachmentPath), candidateContent, 'utf8');
+    return evaluation;
+  };
+  const revisionDrift = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(revisionDrift.status, 409);
+  assert.equal(revisionDrift.payload.code, 'revision_conflict');
+  assert.equal(revisionDrift.payload.conflict.actualRevision, textContentRevision(candidateContent));
+  await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
+  evaluateImpl = normalEvaluate;
+
+  const previousBinary = process.env.SHADER_FORGE_SPATIAL_BINARY;
+  const previousCwd = process.cwd();
+  let malformedService;
+  try {
+    await fs.writeFile(
+      path.join(temporaryRoot, 'evaluate-rest'),
+      "process.stdout.write('{not-json');\n",
+      'utf8',
+    );
+    process.chdir(temporaryRoot);
+    process.env.SHADER_FORGE_SPATIAL_BINARY = process.execPath;
+    malformedService = await startEngineSessiond({
+      port: 0,
+      sessionStore,
+      validateAnimationRoot,
+    });
+    const malformedJson = await request(malformedService.baseUrl, attachmentEvaluatePath(evaluateQuery));
+    assert.equal(malformedJson.status, 500);
+    assert.equal(malformedJson.payload.code, 'spatial_evaluator_protocol_error');
+  } finally {
+    if (malformedService) await malformedService.close();
+    process.chdir(previousCwd);
+    if (previousBinary === undefined) delete process.env.SHADER_FORGE_SPATIAL_BINARY;
+    else process.env.SHADER_FORGE_SPATIAL_BINARY = previousBinary;
+  }
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
+
   const oldOnly = await request(service.baseUrl, '/api/coordination/leases', {
     method: 'POST', credential,
     body: {
@@ -218,12 +392,14 @@ try {
   };
 
   const callsBeforePathGate = stagedRoots.length;
+  const evalsBeforePathGate = evaluatedCalls.length;
   const invalidPath = await request(service.baseUrl, '/api/operations/spatial-attachment/preview', {
     method: 'POST', credential, body: { ...previewBody, path: 'animation/rifle.attachment.toml' },
   });
   assert.equal(invalidPath.status, 400);
   assert.equal(invalidPath.payload.code, 'spatial_attachment_path_invalid');
   assert.equal(stagedRoots.length, callsBeforePathGate);
+  assert.equal(evaluatedCalls.length, evalsBeforePathGate);
 
   const stale = await request(service.baseUrl, '/api/operations/spatial-attachment/preview', {
     method: 'POST', credential, body: { ...previewBody, baseRevision: textContentRevision('stale') },
@@ -231,7 +407,9 @@ try {
   assert.equal(stale.status, 409);
   assert.equal(stale.payload.code, 'revision_conflict');
   assert.equal(stagedRoots.length, callsBeforePathGate);
+  assert.equal(evaluatedCalls.length, evalsBeforePathGate);
 
+  const evalsBeforeLeaseGate = evaluatedCalls.length;
   const renameWithoutBothKeys = await request(service.baseUrl, '/api/operations/spatial-attachment/preview', {
     method: 'POST', credential, body: previewBody,
   });
@@ -239,7 +417,9 @@ try {
   assert.equal(renameWithoutBothKeys.payload.code, 'lease_resource_mismatch');
   assert.deepEqual(service.operationStore.listOperations(), []);
   assert.equal(await fs.readFile(path.join(projectRoot, attachmentPath), 'utf8'), originalContent);
+  assert.equal(evaluatedCalls.length, evalsBeforeLeaseGate);
 
+  const evalsBeforeInvalidCandidate = evaluatedCalls.length;
   const invalid = await request(service.baseUrl, '/api/operations/spatial-attachment/preview', {
     method: 'POST', credential,
     body: { ...previewBody, content: `${originalContent}INVALID\n` },
@@ -248,11 +428,12 @@ try {
   assert.equal(invalid.payload.code, 'spatial_candidate_invalid');
   assert.match(invalid.payload.diagnostic, /native diagnostic/);
   assert.deepEqual(service.operationStore.listOperations(), []);
+  assert.equal(evaluatedCalls.length, evalsBeforeInvalidCandidate);
 
   await request(service.baseUrl, `/api/coordination/leases/${oldOnly.payload.lease.id}/release`, {
     method: 'POST', credential, body: { agentId: agent.id },
   });
-  const bothKeys = await request(service.baseUrl, '/api/coordination/leases', {
+  let bothKeys = await request(service.baseUrl, '/api/coordination/leases', {
     method: 'POST', credential,
     body: {
       agentId: agent.id,
@@ -265,6 +446,35 @@ try {
   });
   assert.equal(bothKeys.payload.lease.status, 'granted');
 
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    if (attachmentId === 'weapon.rifle.new') {
+      service.coordinationStore.releaseLease(bothKeys.payload.lease.id, { agentId: agent.id, credential });
+    }
+    return evaluation;
+  };
+  const lostDuringEvaluation = await request(service.baseUrl, '/api/operations/spatial-attachment/preview', {
+    method: 'POST', credential,
+    body: { ...previewBody, leaseId: bothKeys.payload.lease.id },
+  });
+  assert.equal(lostDuringEvaluation.status, 409);
+  assert.equal(lostDuringEvaluation.payload.code, 'lease_not_granted');
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  evaluateImpl = normalEvaluate;
+  bothKeys = await request(service.baseUrl, '/api/coordination/leases', {
+    method: 'POST', credential,
+    body: {
+      agentId: agent.id,
+      mode: 'write',
+      resources: [
+        'spatial/attachment/weapon.rifle.old',
+        'spatial/attachment/weapon.rifle.new',
+      ],
+    },
+  });
+  assert.equal(bothKeys.payload.lease.status, 'granted');
+
+  const evalsBeforePreview = evaluatedCalls.length;
   const preview = await request(service.baseUrl, '/api/operations/spatial-attachment/preview', {
     method: 'POST', credential,
     body: { ...previewBody, leaseId: bothKeys.payload.lease.id },
@@ -284,14 +494,70 @@ try {
   assert.equal(preview.payload.validation.previousSubjectId, 'weapon.rifle.old');
   assert.equal(preview.payload.validation.subjectId, 'weapon.rifle.new');
   assert.equal('animationRoot' in preview.payload.validation.baseline, false);
+  assert.equal(preview.payload.evaluation.baseline.attachment.id, 'weapon.rifle.old');
+  assert.equal(preview.payload.evaluation.candidate.attachment.id, 'weapon.rifle.new');
+  assert.deepEqual(preview.payload.evaluation.baseline.pose, { kind: 'rest', sampled: false });
+  assert.deepEqual(preview.payload.evaluation.candidate.pose, { kind: 'rest', sampled: false });
+  assert.equal('evaluation' in preview.payload.operation, false);
+  assert.equal('evaluation' in preview.payload.operation.context, false);
   assert.equal(await fs.readFile(path.join(projectRoot, attachmentPath), 'utf8'), originalContent);
+  const previewEvaluations = evaluatedCalls.slice(evalsBeforePreview);
+  assert.equal(previewEvaluations.length, 2);
+  const previewById = Object.fromEntries(
+    previewEvaluations.map((entry) => [entry.attachmentId, entry]),
+  );
+  assert.equal(previewById['weapon.rifle.old'].contents['rifle.attachment.toml'], originalContent);
+  assert.equal(previewById['weapon.rifle.new'].contents['rifle.attachment.toml'], candidateContent);
   const journal = JSON.parse(await fs.readFile(path.join(path.dirname(statePath), 'operations.json'), 'utf8'));
   assert.deepEqual(Object.keys(journal.operations[0].context).sort(), [
     'label', 'leaseId', 'resourceKeys', 'subjectId', 'type',
   ]);
   assert.equal(JSON.stringify(journal).includes(credential), false, 'agent credentials must never persist');
+  assert.equal(JSON.stringify(journal).includes('shader_forge.spatial_attachment_evaluation'), false);
+  assert.equal('evaluation' in journal.operations[0], false);
+  assert.equal('evaluation' in journal.operations[0].context, false);
+
+  const pistolPath = 'animation/attachments/pistol.attachment.toml';
+  const pistolContent = 'schema_version = 1\nid = "weapon.pistol"\n';
+  const pistolLease = await request(service.baseUrl, '/api/coordination/leases', {
+    method: 'POST', credential,
+    body: { agentId: agent.id, mode: 'write', resources: ['spatial/attachment/weapon.pistol'] },
+  });
+  assert.equal(pistolLease.payload.lease.status, 'granted');
+  const evalsBeforeNewFile = evaluatedCalls.length;
+  const newFilePreview = await request(service.baseUrl, '/api/operations/spatial-attachment/preview', {
+    method: 'POST', credential,
+    body: {
+      sessionId: firstSession.id,
+      path: pistolPath,
+      content: pistolContent,
+      baseRevision: 'missing',
+      label: 'Add pistol',
+      actor,
+      agentId: agent.id,
+      leaseId: pistolLease.payload.lease.id,
+    },
+  });
+  assert.equal(newFilePreview.status, 201);
+  assert.equal(newFilePreview.payload.evaluation.baseline, null);
+  assert.equal(newFilePreview.payload.evaluation.candidate.attachment.id, 'weapon.pistol');
+  assert.equal(evaluatedCalls.length, evalsBeforeNewFile + 1);
+  assert.equal(evaluatedCalls.at(-1).contents['pistol.attachment.toml'], pistolContent);
+  await assert.rejects(fs.stat(path.join(projectRoot, pistolPath)), { code: 'ENOENT' });
+  await request(service.baseUrl, `/api/coordination/leases/${pistolLease.payload.lease.id}/release`, {
+    method: 'POST', credential, body: { agentId: agent.id },
+  });
+  const journalAfterNewFile = JSON.parse(await fs.readFile(operationsPath, 'utf8'));
+  assert.equal(
+    journalAfterNewFile.operations.some((operation) => 'evaluation' in operation),
+    false,
+  );
+
   for (const stagedRoot of stagedRoots) {
     await assert.rejects(fs.stat(path.dirname(stagedRoot)), { code: 'ENOENT' });
+  }
+  for (const evaluated of evaluatedCalls) {
+    await assert.rejects(fs.stat(path.dirname(evaluated.animationRoot)), { code: 'ENOENT' });
   }
 
   const operationId = preview.payload.operation.id;
@@ -372,7 +638,12 @@ try {
   await service.close();
   service = null;
   const restartedStore = new SessionStore({ storageFilePath: statePath });
-  service = await startEngineSessiond({ port: 0, sessionStore: restartedStore, validateAnimationRoot });
+  service = await startEngineSessiond({
+    port: 0,
+    sessionStore: restartedStore,
+    validateAnimationRoot,
+    evaluateRestAttachment,
+  });
   const restored = await request(service.baseUrl, `/api/operations/${operationId}`);
   assert.equal(restored.status, 200);
   assert.deepEqual(restored.payload.operation.context, preview.payload.operation.context);
@@ -384,3 +655,4 @@ try {
 console.log('Engine spatial attachment operations passed.');
 console.log('- Verified native-backed no-write preview, durable context, revision safety, and temp cleanup');
 console.log('- Verified exact profile leases, rename coverage, contention, renewal, apply, and undo gates');
+console.log('- Verified read-only rest evaluation, exact staged IDs/bytes, and journal exclusion');

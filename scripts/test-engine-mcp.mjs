@@ -148,6 +148,21 @@ async function validateAnimationRoot(animationRoot) {
   };
 }
 
+async function evaluateRestAttachment(_animationRoot, attachmentId) {
+  return {
+    schema: 'shader_forge.spatial_attachment_evaluation',
+    schemaVersion: 1,
+    pose: { kind: 'rest', sampled: false },
+    attachment: { id: attachmentId },
+    bones: [],
+    segments: [],
+    sockets: [],
+    item: {},
+    hands: {},
+    diagnostics: {},
+  };
+}
+
 async function main() {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-mcp-'));
   const workspaceRoot = path.join(tempRoot, 'workspace');
@@ -173,6 +188,7 @@ async function main() {
     port: 0,
     sessionStore,
     validateAnimationRoot,
+    evaluateRestAttachment,
   });
   let child;
   try {

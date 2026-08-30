@@ -62,6 +62,21 @@ async function validateAnimationRoot(animationRoot) {
   };
 }
 
+async function evaluateRestAttachment(_animationRoot, attachmentId) {
+  return {
+    schema: 'shader_forge.spatial_attachment_evaluation',
+    schemaVersion: 1,
+    pose: { kind: 'rest', sampled: false },
+    attachment: { id: attachmentId },
+    bones: [],
+    segments: [],
+    sockets: [],
+    item: {},
+    hands: {},
+    diagnostics: {},
+  };
+}
+
 async function request(baseUrl, pathname, { method = 'GET', body, credential } = {}) {
   const response = await fetch(new URL(pathname, baseUrl), {
     method,
@@ -105,7 +120,12 @@ try {
   const sessionStore = new SessionStore({
     storageFilePath: path.join(temporaryRoot, 'state', 'sessions.json'),
   });
-  service = await startEngineSessiond({ port: 0, sessionStore, validateAnimationRoot });
+  service = await startEngineSessiond({
+    port: 0,
+    sessionStore,
+    validateAnimationRoot,
+    evaluateRestAttachment,
+  });
   const baseUrlArgs = ['--base-url', service.baseUrl];
 
   const sessionResponse = await request(service.baseUrl, '/api/sessions', {
