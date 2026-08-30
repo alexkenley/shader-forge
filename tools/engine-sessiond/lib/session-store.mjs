@@ -452,6 +452,7 @@ export class SessionStore {
       path: normalizeDisplayPath(session.rootPath, displayPath),
       size: stat.size,
       modifiedAt: stat.mtime.toISOString(),
+      revision: textContentRevision(content),
       content,
     };
   }

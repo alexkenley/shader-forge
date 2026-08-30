@@ -6,7 +6,7 @@ import path from 'node:path';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
 import { OperationStore } from '../tools/engine-sessiond/lib/operation-store.mjs';
-import { SessionStore } from '../tools/engine-sessiond/lib/session-store.mjs';
+import { SessionStore, textContentRevision } from '../tools/engine-sessiond/lib/session-store.mjs';
 import {
   recordCodeTrustArtifact,
   restoreCodeTrustArtifact,
@@ -403,6 +403,7 @@ try {
   assert.equal(fileReadPayload.path, 'README.md');
   assert.match(fileReadPayload.content, /Shader Forge/);
   assert.ok(fileReadPayload.size > 0);
+  assert.equal(fileReadPayload.revision, textContentRevision(fileReadPayload.content));
 
   const fileWritePayload = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
     sessionId: createPayload.session.id,

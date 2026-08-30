@@ -542,13 +542,14 @@ Goal:
 - establish one authored-truth contract for skeleton sockets, attachment profiles, pose-stable review packets, and constrained attachment tuning so native runtime, cooked data, shell, CLI, and `sf-mcp` share the same assets
 
 Status:
-- native schema/query/cook plus semantic attachment preview operation implemented; visual tuning/review workflow deferred
+- native schema/query/cook, semantic attachment operations, CLI adapter, and constrained Assets tuner implemented; visual capture/review workflow deferred
 - canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md)
 - v1-compatible skeleton loading, strict v2 skeleton/socket parsing, v1 attachment-profile parsing, and generation-safe query handles now exist in `AnimationSystem`
 - isolated humanoid/rifle/pistol fixtures and `npm run test:spatial-authoring-scaffold` validate the native slice without entering authored or cooked roots
 - `shader_forge_spatial validate|cook`, `engine build spatial`, `engine spatial validate|cook`, and `npm run test:spatial-tool` provide deterministic validation and one atomic complete derived socket/profile payload over that same `AnimationSystem`
 - `POST /api/operations/spatial-attachment/preview` now stages authored animation inputs through SessionStore, validates baseline/candidate through the native contract, requires exact old/new profile leases, and journals a labelled generic file-write candidate with durable spatial context; apply/undo require a current matching lease
 - `engine spatial preview|approve|reject|apply|undo` now adapts that same sessiond contract with strict arguments, fatal UTF-8 candidate input, environment-only credentials, and no implicit coordination or write bypass
+- the Assets workspace now tunes only primary-grip translation/rotation through an explicit exact-profile lease and the same preview/approve/apply/reject/undo contract; it preserves unrelated TOML bytes, labels candidates `NOT APPLIED`, releases after apply, and reacquires for undo
 - must land its contract-sensitive slices before broad World/Assets visual polish invents a second grip path
 
 Scope:
@@ -568,7 +569,7 @@ Current boundary this phase must not paper over:
 - `AnimationSystem` does not sample poses, evaluate IK, render attachments, or produce diagnostics
 - the runtime still draws projected debug-proxy cards, which are not spatial-review captures
 - shell `Review` is still a discard-only scene stance, not a spatial review packet
-- generic bake/runtime consumption, sampling/IK, operation-scoped validate/recapture/review packets, screenshot capture, shell tuning, and `sf-mcp` spatial tools are still deferred
+- generic bake/runtime consumption, sampling/IK, operation-scoped validate/recapture/review packets, screenshot capture, rendered spatial tuning, and `sf-mcp` spatial tools are still deferred
 
 Exit criteria:
 - the acceptance gates in the spatial-authoring spec pass for the implemented slice

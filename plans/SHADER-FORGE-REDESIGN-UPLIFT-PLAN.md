@@ -909,7 +909,8 @@ The direction-setting shell and coordination work is now implemented. Continue w
 4. completed: establish engine-owned multi-agent registration, heartbeat, leases, conflict queues, fairness, and cleanup
 5. completed: expose the first Shader Forge MCP (`sf-mcp`) read-and-coordinate surface over process-scoped stdio
 6. completed: implement and harden the sessiond-owned text-file mutation preview, revision, line-oriented diff summary, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filter, and operation-event contract
-7. next: add the Activity and Changes state model and connect it to real operation events
-8. next: widen MCP only through that shared file-write operation contract after coordinator credentials and leases are the exposure gate, then later scene/asset operations, then rendered interaction and accessibility checks for the complete path
+7. completed: add a constrained Assets primary-grip tuner over the semantic spatial operation, with explicit exact-profile locking, visible unapplied candidates, separate review/apply, and fresh-lease undo
+8. next: add the Activity and Changes state model and connect it to real operation events
+9. next: widen MCP only through that shared file-write operation contract after coordinator credentials and leases are the exposure gate, then later scene/asset operations, then rendered interaction and accessibility checks for the complete path
 
 Do not begin visual polish, a real viewport, or broad MCP mutation tools before the remaining operation consumers exist. Authenticated MCP actor/lease enforcement is still the next exposure gate. That ordering prevents a polished shell from becoming a façade over unreliable engine state.

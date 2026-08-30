@@ -1,6 +1,6 @@
 # Engine Spatial Authoring And Attachment Tuning Spec
 
-Status: native schema/query/cook plus semantic attachment preview operation implemented; visual review workflow deferred
+Status: native schema/query/cook, semantic operation, CLI adapter, and constrained Assets tuner implemented; visual review workflow deferred
 
 Date: 2026-08-30
 
@@ -601,14 +601,18 @@ Deferred commands:
 
 ### Shell
 
-Planned surface: an Assets-adjacent attachment inspector and a labelled preview candidate. It consumes the same operations and review packets as CLI/MCP.
+Implemented first surface: the `Assets` workspace lists exact source-owned attachment profiles and provides a constrained primary-grip tuner. Identity, skeleton, socket, and item references are read-only. Numeric translation XYZ is authored in meters; numeric rotation XYZ is displayed in degrees and written back as a canonical quaternion. The source helper accepts only an unambiguous single-line layout and replaces only those two primary-grip value lines, preserving comments, order, unrelated sections, and newline style.
+
+Browsing is read-only. Explicit `Begin tuning` registers the fixed shell actor in memory and requests the exact profile write lease. Queued/lost leases disable editing with text explanations. Preview, Approve, and Apply are separate; candidates display `NOT APPLIED`; Reject is available before apply. Apply releases/disconnects. Undo reacquires a fresh covering lease. Source rereads provide an authoritative SHA-256 revision, and preview/apply/undo heartbeat and recheck coordination before mutation. Credentials never enter JSX, storage, logs, or JSON bodies.
+
+The current shell does not yet consume review packets because capture/review operations do not exist.
 
 It does not:
 
 - scrape World viewport cameras
 - embed an assistant
 - treat proxy-card Playtest frames as spatial evidence
-- land as part of broad World/Assets visual polish before the operation kinds exist
+- treat numeric source tuning as visual spatial evidence before capture/review operations exist
 
 ### Native tooling overlay
 

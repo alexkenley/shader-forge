@@ -100,18 +100,22 @@ Current implemented bridge surfaces:
 - the `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the current workspace, including runtime/build state, packaging readiness, stored capture history, and first profiling recommendations
 - the `Workspace` right-panel tab also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked trust-artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals with inline approve/deny actions for the selected workspace plus the shared engine lane
 - a real `World` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side authoring/review separation, surfaces explicit `Run Scene` plus `Build + Run` actions directly inside the editor, placed-entity hierarchy plus transform editing, first prefab component payload editing, writes deterministic save/reload/duplicate flows back through `engine_sessiond`, and uses a viewport-first level-editor layout with an adjacent resizable `Scenes`/`Outliner`/`Inspector`/`Assets` tool stack plus a compact bottom status bar
-- an `Assets` workspace entry that opens the existing authoring asset tool directly while the fuller asset browser is developed
+- an `Assets` workspace with a constrained primary-grip tuner for `animation/attachments/*.attachment.toml`; selection is read-only until the operator chooses `Begin tuning`, then an exact attachment lease gates numeric translation/Euler-degree edits and explicit preview, approve, apply, reject, and undo transitions
 - temporary harness sessions are not the intended user workflow and should be clearly separated from real repo-root workspaces in the `Workspaces` rail
 - the global right panel is currently reserved for runtime/build/workspace tools in `Code` and `Playtest` so World and Assets can use the center area directly
 - an in-app `Guide` opened from `Help`, backed by repo-native markdown and structured guide content so shell users and external assistants can resolve the same operator wiki without treating Guide as a primary workspace
 
 The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.
 
-## Planned Spatial Authoring Surface
+## Spatial Authoring Surface
 
-Spatial authoring is a planned/foundational contract, not a current shell workspace. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).
+The first constrained spatial authoring surface is implemented in `Assets`. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
-When it lands, the shell inspects and tunes the same `animation/skeletons/*.skeleton.toml` and `animation/attachments/*.attachment.toml` files as CLI and `sf-mcp`, only through `engine_sessiond` revision-safe operations. Preview candidates must be visibly labelled. Humans and agents share a `reviewId` and an immutable review packet with explicit cameras; the shell must not scrape the live World camera, cursor, or selection to invent that packet.
+The shell lists and reads the exact attachment root through sessiond, exposes identity/skeleton/socket/item references read-only, and edits only primary-grip translation plus display Euler degrees. A strict source helper rewrites only the primary-grip translation and quaternion lines while preserving all other bytes and newline style. Missing, duplicate, multiline, or otherwise unsupported layouts fail closed. Session file reads include the authoritative text revision used by preview.
+
+Browsing never registers an agent or takes a lease. `Begin tuning` registers the fixed shell actor in memory, requests `spatial/attachment/<id>`, refreshes source after grant, and disables mutations while queued or lost. Preview is visibly `NOT APPLIED`; approval and apply remain separate. Apply releases the lease and disconnects. Undo explicitly reacquires a fresh covering lease. Credentials remain memory-only headers and are redacted from client errors.
+
+Pose sampling, diagnostics, render/capture, and immutable review packets remain deferred. When those land, humans and agents share a `reviewId` with explicit cameras; the shell must not scrape the World camera, cursor, or selection to invent that packet.
 
 This surface must not:
 
@@ -154,6 +158,6 @@ The shell should eventually talk to:
 - `engine_runtime` through structured runtime control and viewer protocols
 - `engine_cli` through normal shell terminals and explicit command surfaces
 - a process-scoped MCP adapter backed by engine-owned multi-agent coordination, revision checks, change previews, validation, and approval policies
-- later spatial-authoring inspection and constrained tuning over the same `engine_sessiond` operations used by CLI and `sf-mcp`, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). That surface is planned, not implemented.
+- the implemented constrained attachment tuner and later spatial capture/review tooling over the same `engine_sessiond` operations used by CLI and `sf-mcp`, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
 
 The shell should not be reused as the native tooling UI layer or the shipped in-game UI framework.

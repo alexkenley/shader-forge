@@ -24,7 +24,7 @@ export type EngineSession = {
 export type SessionFileEntry = {
   name: string;
   path: string;
-  kind: 'file' | 'directory';
+  kind: 'file' | 'directory' | 'symlink';
   size: number;
   modifiedAt: string;
 };
@@ -40,10 +40,82 @@ export type SessionFileRead = {
   path: string;
   size: number;
   modifiedAt: string;
+  revision: string;
   content: string;
 };
 
-export type SessionFileWrite = SessionFileRead;
+export type SessionFileWrite = Omit<SessionFileRead, 'revision'> & { revision?: string };
+
+export type CoordinationAgent = {
+  id: string;
+  sessionId: string;
+  name: string;
+  status: 'connected' | 'disconnected' | 'expired';
+  connectedAt: string;
+  lastHeartbeatAt: string;
+  expiresAt: string;
+};
+
+export type CoordinationLease = {
+  id: string;
+  agentId: string;
+  sessionId: string;
+  resources: string[];
+  mode: 'read' | 'write';
+  status: 'queued' | 'granted' | 'released' | 'expired';
+  createdAt: string;
+  grantedAt: string | null;
+  releasedAt: string | null;
+  queuePosition: number | null;
+  blockedBy: Array<{ id: string; agentId: string; resources: string[]; mode: 'read' | 'write'; status: string }>;
+};
+
+export type EngineOperation = {
+  id: string;
+  kind: string;
+  sessionId: string;
+  path: string;
+  actor: { kind: string; id: string; name: string };
+  context: null | {
+    type: 'spatial_attachment';
+    label: string;
+    subjectId: string;
+    resourceKeys: string[];
+    leaseId: string;
+  };
+  state: 'previewed' | 'approved' | 'rejected' | 'applying' | 'applied' | 'undoing' | 'undone' | 'conflicted' | 'apply_failed' | 'undo_failed' | 'recovered';
+  baseRevision: string;
+  proposedRevision: string;
+  appliedRevision: string | null;
+  resultingRevision: string | null;
+  preview: { summary: string; lineDiff: string[] };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export const spatialShellActor = {
+  kind: 'shell',
+  id: 'engine-shell',
+  name: 'Shader Forge Shell',
+} as const;
+
+export class SessiondRequestError extends Error {
+  status: number;
+  code: string;
+  diagnostic: string;
+  conflict: unknown;
+  operation: EngineOperation | null;
+
+  constructor(message: string, options: { status: number; code?: string; diagnostic?: string; conflict?: unknown; operation?: EngineOperation | null }) {
+    super(message);
+    this.name = 'SessiondRequestError';
+    this.status = options.status;
+    this.code = options.code || '';
+    this.diagnostic = options.diagnostic || '';
+    this.conflict = options.conflict;
+    this.operation = options.operation || null;
+  }
+}
 
 export type HostDirectoryList = {
   path: string;
@@ -514,13 +586,43 @@ async function requestJson<T>(pathname: string, options: RequestInit = {}) {
     },
   });
 
-  const payload = (await response.json()) as T | { error?: string };
+  const payload = (await response.json()) as T | {
+    error?: string;
+    code?: string;
+    diagnostic?: string;
+    conflict?: unknown;
+    operation?: EngineOperation;
+  };
   if (!response.ok) {
-    const message =
-      typeof payload === 'object' && payload && 'error' in payload && payload.error
-        ? String(payload.error)
-        : `Request failed with status ${response.status}`;
-    throw new Error(message);
+    const record = typeof payload === 'object' && payload ? payload : {};
+    const credential = new Headers(options.headers).get('X-Shader-Forge-Agent-Credential') || '';
+    const redact = (value: unknown) => {
+      const text = value == null ? '' : String(value);
+      return credential ? text.replaceAll(credential, '[redacted]') : text;
+    };
+    const redactValue = (value: unknown) => {
+      if (!credential || value == null) return value;
+      try {
+        return JSON.parse(JSON.stringify(value).replaceAll(credential, '[redacted]')) as unknown;
+      } catch {
+        return undefined;
+      }
+    };
+    const code = 'code' in record ? redact(record.code) : '';
+    const diagnostic = 'diagnostic' in record ? redact(record.diagnostic) : '';
+    const baseMessage = 'error' in record && record.error
+      ? redact(record.error)
+      : `Request failed with status ${response.status}`;
+    throw new SessiondRequestError(
+      [code, baseMessage, diagnostic].filter(Boolean).join(': '),
+      {
+        status: response.status,
+        code,
+        diagnostic,
+        conflict: 'conflict' in record ? redactValue(record.conflict) : undefined,
+        operation: 'operation' in record ? redactValue(record.operation) as EngineOperation || null : null,
+      },
+    );
   }
 
   return payload as T;
@@ -585,6 +687,111 @@ export async function readFile(sessionId: string, relativePath: string) {
   query.searchParams.set('sessionId', sessionId);
   query.searchParams.set('path', relativePath);
   return requestJson<SessionFileRead>(`${query.pathname}${query.search}`);
+}
+
+function credentialHeader(credential: string) {
+  return { 'X-Shader-Forge-Agent-Credential': credential };
+}
+
+export async function registerCoordinationAgent(sessionId: string) {
+  return requestJson<{ agent: CoordinationAgent; credential: string }>('/api/coordination/agents', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, name: spatialShellActor.name }),
+  });
+}
+
+export async function heartbeatCoordinationAgent(agentId: string, credential: string) {
+  const payload = await requestJson<{ agent: CoordinationAgent }>(
+    `/api/coordination/agents/${encodeURIComponent(agentId)}/heartbeat`,
+    { method: 'POST', headers: credentialHeader(credential) },
+  );
+  return payload.agent;
+}
+
+export async function disconnectCoordinationAgent(agentId: string, credential: string) {
+  return requestJson<{ ok: boolean; agent: CoordinationAgent }>(
+    `/api/coordination/agents/${encodeURIComponent(agentId)}/disconnect`,
+    { method: 'POST', headers: credentialHeader(credential) },
+  );
+}
+
+export async function requestCoordinationLease(agentId: string, credential: string, resources: string | string[]) {
+  const payload = await requestJson<{ lease: CoordinationLease; status: CoordinationLease['status'] }>('/api/coordination/leases', {
+    method: 'POST',
+    headers: credentialHeader(credential),
+    body: JSON.stringify({ agentId, mode: 'write', resources: Array.isArray(resources) ? resources : [resources] }),
+  });
+  return payload.lease;
+}
+
+export async function fetchCoordinationLease(leaseId: string) {
+  const payload = await requestJson<{ lease: CoordinationLease; status: CoordinationLease['status'] }>(
+    `/api/coordination/leases/${encodeURIComponent(leaseId)}`,
+  );
+  return payload.lease;
+}
+
+export async function releaseCoordinationLease(leaseId: string, agentId: string, credential: string) {
+  const payload = await requestJson<{ lease: CoordinationLease; status: CoordinationLease['status'] }>(
+    `/api/coordination/leases/${encodeURIComponent(leaseId)}/release`,
+    {
+      method: 'POST',
+      headers: credentialHeader(credential),
+      body: JSON.stringify({ agentId }),
+    },
+  );
+  return payload.lease;
+}
+
+export async function previewSpatialAttachment(options: {
+  sessionId: string;
+  path: string;
+  content: string;
+  baseRevision: string;
+  label: string;
+  agentId: string;
+  leaseId: string;
+  credential: string;
+}) {
+  return requestJson<{ operation: EngineOperation; validation: unknown }>('/api/operations/spatial-attachment/preview', {
+    method: 'POST',
+    headers: credentialHeader(options.credential),
+    body: JSON.stringify({
+      sessionId: options.sessionId,
+      path: options.path,
+      content: options.content,
+      baseRevision: options.baseRevision,
+      label: options.label,
+      actor: spatialShellActor,
+      agentId: options.agentId,
+      leaseId: options.leaseId,
+    }),
+  });
+}
+
+export async function transitionSpatialOperation(
+  operationId: string,
+  action: 'approve' | 'reject' | 'apply' | 'undo',
+  coordination?: { agentId: string; leaseId: string; credential: string },
+) {
+  return requestJson<{ operation: EngineOperation }>(
+    `/api/operations/${encodeURIComponent(operationId)}/${action}`,
+    {
+      method: 'POST',
+      ...(coordination ? { headers: credentialHeader(coordination.credential) } : {}),
+      body: JSON.stringify({
+        actor: spatialShellActor,
+        ...(coordination ? { agentId: coordination.agentId, leaseId: coordination.leaseId } : {}),
+      }),
+    },
+  );
+}
+
+export async function fetchOperation(operationId: string) {
+  const payload = await requestJson<{ operation: EngineOperation }>(
+    `/api/operations/${encodeURIComponent(operationId)}`,
+  );
+  return payload.operation;
 }
 
 export async function writeFile(sessionId: string, relativePath: string, content: string) {

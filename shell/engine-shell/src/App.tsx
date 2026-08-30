@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
+import { SpatialAttachmentEditorView } from './SpatialAttachmentEditorView';
 import {
   captureProfile,
   closeTerminal,
@@ -1523,7 +1524,11 @@ function renderCenterContent(
     return renderCodeBridge(showLegacyBridge, onToggleLegacyBridge);
   }
 
-  if (activeTab === 'World' || activeTab === 'Assets') {
+  if (activeTab === 'Assets') {
+    return <SpatialAttachmentEditorView activeSession={activeSession} />;
+  }
+
+  if (activeTab === 'World') {
     return (
       <SceneEditorView
         activeSession={activeSession}
@@ -1536,7 +1541,7 @@ function renderCenterContent(
         onRestartRuntime={onRestartRuntime}
         onRunScene={onStartRuntime}
         onStopRuntime={onStopRuntime}
-        preferredSidebarTab={activeTab === 'Assets' ? 'assets' : 'outliner'}
+        preferredSidebarTab="outliner"
         runtimeStatus={runtimeStatus}
       />
     );
@@ -3554,7 +3559,7 @@ export default function App() {
             ) : activeCenterTab === 'World' ? (
               <div className="guide-toolbar-meta">Level editor workspace: author in the viewport, then use the visible Run controls inside World to launch the same scene in the native runtime.</div>
             ) : activeCenterTab === 'Assets' ? (
-              <div className="guide-toolbar-meta">Prefab and scene assets for the active workspace. Placement and inspection reuse the existing authoring tools.</div>
+              <div className="guide-toolbar-meta">Tune source-owned attachment profiles through lock, preview, approval, apply, and undo operations.</div>
             ) : (
               <div className="guide-toolbar-meta">Playtest shows and controls the external native runtime. The browser does not embed a renderer.</div>
             )}

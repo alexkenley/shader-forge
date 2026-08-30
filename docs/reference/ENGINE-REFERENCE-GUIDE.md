@@ -275,7 +275,7 @@ Assistant entry points:
 
 ### Spatial Authoring And Attachment Tuning
 
-- Spatial authoring now has a native schema/query/cook foundation and semantic attachment preview operation, not yet a visual workbench. See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`.
+- Spatial authoring now has a native schema/query/cook foundation, semantic operations, CLI adapter, and constrained Assets primary-grip tuner. It is not yet a rendered spatial workbench. See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`.
 - Native engine code will own behavior, typed schemas, validation, and runtime execution. Source-controlled TOML will own tuning values. Shell, CLI, and `sf-mcp` will edit those same assets only through `engine_sessiond` revision-safe operations.
 - V1 skeleton compatibility, strict v2 skeleton/socket validation, v1 attachment-profile validation, cross-references, canonical quaternions, and generation-safe query handles now exist.
 - Isolated humanoid/rifle/pistol fixtures under `animation/fixtures/spatial/` and `npm run test:spatial-authoring-scaffold` exercise the native parser through WSL without entering authored or cooked roots.
@@ -283,7 +283,8 @@ Assistant entry points:
 - Humans and agents will share one `reviewId` and an immutable review packet with explicit cameras, resolution/framing, lighting, pose samples, source revisions, evaluated transforms/bounds, diagnostics, captures, operation id, and all lease ids. Do not scrape a live cursor or camera.
 - Preview candidates must be labelled. Cooked data is derived and non-editable. Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.
 - Two-hand weapons use dominant-hand item drive then off-hand IK. VLM or visual scores never apply.
-- Prefab existence, joint/capsule parsing, generic `engine bake` and runtime-consumption integration, sampling, IK, rendering/capture, review packets, shell tuning, and `sf-mcp` spatial tools remain deferred. The semantic sessiond attachment-preview operation is implemented.
+- In `Assets`, profile selection is read-only until `Begin tuning` requests `spatial/attachment/<id>`. The source is refreshed after grant; only primary-grip translation and degree-displayed rotation are editable. Preview is visibly `NOT APPLIED`, Approve and Apply are separate, Apply releases coordination, and Undo reacquires a fresh lease. All writes use the semantic operation path, never raw file write.
+- Prefab existence, joint/capsule parsing, generic `engine bake` and runtime-consumption integration, sampling, IK, rendering/capture, review packets, and `sf-mcp` spatial tools remain deferred.
 - Implementation is ordered after the existing operation layer and before broad World/Assets visual polish.
 
 ### Physics Foundation
@@ -321,6 +322,7 @@ Assistant entry points:
 - `npm run test:spatial-tool` requires a native compiler and runs the production validate/cook tool against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, checking deterministic validation, byte-stable complete cooking, relative paths, invalid-input output preservation, loader diagnostics, and CLI strict/help/build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere.
 - `npm run test:spatial-operations` validates isolated full animation staging, no-write native-backed attachment preview, durable context, lease contention and rename coverage, apply/undo lease renewal and revision checks, CORS, and temporary cleanup.
 - `npm run test:spatial-cli` drives the real CLI against an injected-validator sessiond and validates preview/review/apply/undo, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction.
+- `npm run test:spatial-shell` validates exact primary-grip source rewriting, strict unsupported-layout rejection, Assets-only mounting, explicit lease intent, operation-only routing, and credential redaction markers.
 - `npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.

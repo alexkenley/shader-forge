@@ -31,6 +31,7 @@ Rules:
 | `scripts/test-engine-spatial-tool.mjs` | Requires a native compiler, compiles the production `shader_forge_spatial` command, and checks deterministic validation, UTF-8 input enforcement, byte-stable complete cooking, relative source paths, invalid-input output preservation, and CLI help/strict/build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere | deterministic native |
 | `scripts/test-engine-spatial-operations.mjs` | Starts sessiond with an injected deterministic validator and verifies no-write attachment preview, full safe staging, durable operation context, exact/rename lease coverage, contention, apply/undo lease rechecks, revision safety, CORS, and temp cleanup | deterministic |
 | `scripts/test-engine-spatial-cli.mjs` | Starts sessiond with an injected validator and drives the real CLI through preview/review/apply/undo, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction | deterministic |
+| `scripts/test-engine-spatial-shell.mjs` | Executes the pure primary-grip source transformer and verifies exact-byte preservation, strict layout rejection, Assets-only mounting, operation-only routing, explicit locking, and credential-redaction markers | deterministic |
 | `scripts/test-engine-physics-scaffold.mjs` | Validates authored physics layers/materials/bodies, runtime physics integration hooks, and fallback syntax-only compilation of the native physics slice | deterministic |
 | `scripts/test-engine-input-scaffold.mjs` | Validates the native input subsystem sources plus text-backed action/context assets and runs a fallback syntax-only compile | deterministic |
 | `scripts/test-engine-tooling-ui-scaffold.mjs` | Validates the native tooling registry/layout substrate, runtime integration hooks, and runs a fallback syntax-only compile | deterministic |
@@ -65,6 +66,8 @@ npm run test:spatial-operations
 node scripts/test-engine-spatial-operations.mjs
 npm run test:spatial-cli
 node scripts/test-engine-spatial-cli.mjs
+npm run test:spatial-shell
+node scripts/test-engine-spatial-shell.mjs
 npm run test:physics-scaffold
 node scripts/test-engine-physics-scaffold.mjs
 node scripts/test-engine-input-scaffold.mjs

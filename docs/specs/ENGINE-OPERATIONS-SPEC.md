@@ -177,6 +177,12 @@ The implemented `engine spatial preview|approve|reject|apply|undo` commands are 
 
 The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. The shell Activity/Changes surface, MCP mutations, operation-scoped spatial validation, capture, diagnostics, and review packets remain deferred.
 
+## Spatial Shell Adapter
+
+The `Assets` workspace now adapts the same semantic spatial preview and generic transitions. It never calls `/api/files/write`. File selection is read-only; explicit `Begin tuning` registers the fixed shell actor and requests the exact attachment write lease. Source is reread after grant, and each preview/apply/undo heartbeats the agent and rechecks the live lease immediately before the request.
+
+Candidate values are labelled `NOT APPLIED`. Approve and Apply are separate buttons, Reject is available before apply, and editing locks after preview. Apply releases the lease and disconnects instead of holding coordination indefinitely. Undo explicitly reacquires a fresh lease covering the operation resource keys. The opaque credential exists only in memory and the credential header; client errors preserve status/code/diagnostic/conflict while redacting it.
+
 ## Events
 
 Lifecycle events stream on the existing `/api/events` SSE bus:
