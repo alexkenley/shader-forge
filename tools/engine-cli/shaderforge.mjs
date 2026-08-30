@@ -64,6 +64,7 @@ Usage:
   engine build [runtime|spatial] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]
+  engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
   engine migrate detect <path> [--output-root migration] [--run-id detect-unity]
   engine migrate unity <path> [--output-root migration] [--run-id unity-project]
@@ -80,6 +81,7 @@ Reserved commands:
 function parseFlags(tokens) {
   const positionals = [];
   const flags = {};
+  const duplicateFlags = [];
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
@@ -89,6 +91,9 @@ function parseFlags(tokens) {
     }
 
     const key = token.slice(2);
+    if (Object.hasOwn(flags, key)) {
+      duplicateFlags.push(key);
+    }
     const nextValue = tokens[index + 1];
     if (!nextValue || nextValue.startsWith('--')) {
       flags[key] = true;
@@ -99,7 +104,7 @@ function parseFlags(tokens) {
     index += 1;
   }
 
-  return { positionals, flags };
+  return { positionals, flags, duplicateFlags };
 }
 
 async function requestJson(baseUrl, pathname, options = {}) {
@@ -268,18 +273,26 @@ async function runRuntime(sceneName, flags) {
   await runCommand(buildResult.binaryPath, args, { cwd: repoRoot });
 }
 
-async function runSpatialValidate(flags) {
+async function runSpatialCommand(subcommand, flags) {
   const buildDir = resolveBuildDirectory(flags);
   const binaryPath = spatialBinaryPath(buildDir);
   if (!fs.existsSync(binaryPath)) {
-    throw new Error(`Spatial validator was not found at ${binaryPath}. Build it first with \`engine build spatial --build-dir ${buildDir}\`.`);
+    throw new Error(`Spatial tool was not found at ${binaryPath}. Build it first with \`engine build spatial --build-dir ${buildDir}\`.`);
   }
 
   const requestedRoot = String(flags['animation-root'] || 'animation');
   const animationRoot = path.isAbsolute(requestedRoot)
     ? path.normalize(requestedRoot)
     : path.resolve(process.cwd(), requestedRoot);
-  await runCommand(binaryPath, ['validate', '--animation-root', animationRoot], { cwd: repoRoot });
+  const args = [subcommand, '--animation-root', animationRoot];
+  if (subcommand === 'cook') {
+    const requestedOutputRoot = String(flags['output-root'] || path.join('build', 'cooked'));
+    const outputRoot = path.isAbsolute(requestedOutputRoot)
+      ? path.normalize(requestedOutputRoot)
+      : path.resolve(process.cwd(), requestedOutputRoot);
+    args.push('--output-root', outputRoot);
+  }
+  await runCommand(binaryPath, args, { cwd: repoRoot });
 }
 
 async function bakeAssets(flags) {
@@ -681,26 +694,34 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   if (command === 'spatial') {
     const spatialSubcommand = argv[1];
-    const { positionals, flags } = parseFlags(argv.slice(2));
-    if (spatialSubcommand !== 'validate') {
+    const { positionals, flags, duplicateFlags } = parseFlags(argv.slice(2));
+    if (!['validate', 'cook'].includes(spatialSubcommand)) {
       throw new Error(spatialSubcommand
         ? `Unknown spatial subcommand: ${spatialSubcommand}`
-        : 'engine spatial requires the validate subcommand.');
+        : 'engine spatial requires the validate or cook subcommand.');
     }
     if (positionals.length) {
-      throw new Error(`engine spatial validate does not accept positional arguments: ${positionals.join(' ')}`);
+      throw new Error(`engine spatial ${spatialSubcommand} does not accept positional arguments: ${positionals.join(' ')}`);
     }
-    const supportedFlags = new Set(['animation-root', 'build-dir', 'config']);
+    if (duplicateFlags.length) {
+      throw new Error(`Duplicate engine spatial ${spatialSubcommand} flag: --${duplicateFlags[0]}`);
+    }
+    const supportedFlags = new Set([
+      'animation-root',
+      'build-dir',
+      'config',
+      ...(spatialSubcommand === 'cook' ? ['output-root'] : []),
+    ]);
     const unknownFlags = Object.keys(flags).filter((flag) => !supportedFlags.has(flag));
     if (unknownFlags.length) {
-      throw new Error(`Unknown engine spatial validate flag: --${unknownFlags[0]}`);
+      throw new Error(`Unknown engine spatial ${spatialSubcommand} flag: --${unknownFlags[0]}`);
     }
     for (const flag of supportedFlags) {
       if (Object.hasOwn(flags, flag) && typeof flags[flag] !== 'string') {
-        throw new Error(`engine spatial validate requires a value for --${flag}.`);
+        throw new Error(`engine spatial ${spatialSubcommand} requires a value for --${flag}.`);
       }
     }
-    await runSpatialValidate(flags);
+    await runSpatialCommand(spatialSubcommand, flags);
     return;
   }
 

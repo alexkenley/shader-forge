@@ -14,7 +14,7 @@ Shader Forge is split between engine architecture docs and implementation scaffo
 - `npm run test:shell-smoke`: explicit alias for the shell smoke harness.
 - `npm run test:sessiond`: run the deterministic backend session/file harness.
 - `npm run test:spatial-authoring-scaffold`: compile and execute the native spatial skeleton/socket and attachment-profile parser harness; WSL `g++` is required on Windows.
-- `npm run test:spatial-tool`: compile and execute the native `shader_forge_spatial validate` command harness; WSL `g++` is required on Windows.
+- `npm run test:spatial-tool`: compile and execute the native `shader_forge_spatial validate` and deterministic `cook` command harness; WSL `g++` is required on Windows and `g++` is required elsewhere.
 - `npm run test:ollama-smoke`: probe a local Ollama endpoint and run a minimal chat-completion smoke test. If Ollama is not already reachable on a local loopback candidate, prefer starting it with `ollama serve` and rerunning the harness instead of treating the real local-model lane as unavailable.
 - `./scripts/start-dev-clean.sh`: Unix/WSL clean-start path that removes generated outputs, runs the shell and sessiond harnesses, starts `engine_sessiond`, and then launches the shell dev server.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1`: Windows clean-start path that removes generated outputs, runs the shell and sessiond harnesses, starts `engine_sessiond`, and then starts the WSL-backed dev shell.

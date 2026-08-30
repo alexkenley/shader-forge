@@ -94,10 +94,11 @@ The current Phase 5.72 slice now exists as a first engine-owned animation founda
 - `AnimationSystem` now preserves v1 skeleton loading while also strictly parsing and validating v2 skeleton hierarchies, roles, socket frames, and canonical quaternions
 - optional v1 attachment profiles now parse and validate primary grips, contact/handle frames, two-hand targets and tolerances, motion-envelope samples, skeleton/socket references, and same-skeleton clip references
 - generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots
+- animation source paths and file bytes must be valid UTF-8 before a successful load can commit a new generation; source files sort by explicit UTF-8 keys for cross-platform handle and cooked-table stability
 - isolated humanoid and rifle/pistol fixtures plus `npm run test:spatial-authoring-scaffold` provide an executable native WSL validation lane without entering normal authored or cooked roots
-- `shader_forge_spatial validate --animation-root <path>` now reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts and stable skeleton/profile metadata; `engine build spatial` and `engine spatial validate` expose that read-only path without a daemon or cooker
+- `shader_forge_spatial validate --animation-root <path>` now reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts and stable skeleton/profile metadata; `shader_forge_spatial cook` reuses that same validated snapshot to atomically stage complete socket/profile tables at `<output-root>/animation/spatial-authoring.bin`, and the CLI exposes both already-built commands without a daemon or auto-build
 
-This is still a widening slice, not the final animation runtime. The normal authored/runtime lane remains the compatible v1 `debug_humanoid` metadata path. V2 spatial assets currently live only in fixtures. The validator is read-only and does not cook, sample, solve IK, capture, preview, or call `engine_sessiond`. Prefab existence validation, joint-limit and diagnostic-capsule parsing, sampling/blending, IK, attachment rendering, cooker integration, review capture, spatial operations, native preview tooling, and `sf-mcp` spatial tools remain deferred.
+This is still a widening slice, not the final animation runtime. The normal authored/runtime lane remains the compatible v1 `debug_humanoid` metadata path. V2 spatial assets currently live only in fixtures. The explicit spatial cooker emits derived metadata but is not integrated with generic `engine bake` or runtime loading. Prefab existence validation, joint-limit and diagnostic-capsule parsing, sampling/blending, IK, attachment rendering, review capture, spatial operations, native preview tooling, and `sf-mcp` spatial tools remain deferred.
 
 ## Later Scope
 
@@ -111,7 +112,7 @@ Later animation work should add:
 - keyframe/timeline editing UI
 - animation debugging overlays, scrubbers, and per-bone inspection
 - tighter shell/native-tool preview and edit workflows
-- attachment-profile evaluation, dominant-hand item drive, secondary-hand IK, and spatial review packets on top of the implemented schema/query foundation, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
+- attachment-profile evaluation, dominant-hand item drive, secondary-hand IK, and spatial review packets on top of the implemented schema/query/cook foundation, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
 
 ## Runtime Model
 
@@ -143,7 +144,7 @@ Cook path:
 - resolve clip and skeleton references
 - emit cooked runtime animation tables and clip data
 - preserve deterministic identifiers for states, parameters, and events
-- later cook socket tables and attachment profiles into `build/cooked/animation/`; generated spatial reviews stay under `build/spatial-reviews/` and are not authored source
+- integrate the implemented explicit socket/profile cooker with generic `engine bake` and later runtime consumption; generated spatial reviews stay under `build/spatial-reviews/` and are not authored source
 
 SQLite may track indexing and preview metadata, but not replace text-backed authored animation assets.
 
@@ -177,7 +178,7 @@ The animation system should expose structured operations through CLI and future 
 
 - Phase 5.5 establishes the text-data and cook foundations animation depends on
 - Phase 5.72 introduces the engine animation subsystem
-- Phase 5.73 now has its first native schema/query slice; spatial operations and the visual tuning workflow still depend on later sampling, IK, rendering, and capture work
+- Phase 5.73 now has its native schema/query/cook slice; spatial operations and the visual tuning workflow still depend on later sampling, IK, rendering, and capture work
 - Phase 5.75 and later authoring work should expose animation preview and asset editing, but broad World/Assets visual polish must not invent a second attachment-truth path
 - Phase 6 integrates animation deeply with gameplay, audio, VFX, and runtime tools
 

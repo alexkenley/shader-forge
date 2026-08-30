@@ -34,7 +34,7 @@ Assistant entry points:
 - Use `shell/engine-shell/src/reference-guide.ts` as the shell adapter that imports the structured guide data.
 - Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.
 - Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.
-- Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query slice and the deferred attachment-tuning workflow.
+- Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook slice and the deferred attachment-tuning workflow.
 - Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline.
 
 ### Assistant Lookup Workflow
@@ -166,8 +166,9 @@ Assistant entry points:
 - `engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal.
 - `engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact through `engine_sessiond` and refreshes its trusted hash.
 - `engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now quarantines a tracked artifact through that same sessiond mutation authority so later risky transitions keep denying it until it is explicitly promoted again.
-- `engine build runtime` configures and builds the native runtime with CMake; `engine build spatial` builds the dependency-free native spatial validator. Both resolve CMake from `SHADER_FORGE_CMAKE` first and then `cmake` on `PATH`.
+- `engine build runtime` configures and builds the native runtime with CMake; `engine build spatial` builds the dependency-free native spatial validate/cook tool. Both resolve CMake from `SHADER_FORGE_CMAKE` first and then `cmake` on `PATH`.
 - `engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs the already-built validator and prints deterministic JSON. It gives a build-first error when absent and does not compile, cook, or start a daemon.
+- `engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]` validates through the same `AnimationSystem` and atomically stages one byte-stable derived payload at `<output-root>/animation/spatial-authoring.bin`. It does not auto-build, start a daemon, or join generic `engine bake` yet.
 - `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.
 - `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
 - `engine migrate detect|unity|godot <path>` now emits normalized migration manifests and reports for supported source-engine fixtures and real projects.
@@ -263,20 +264,21 @@ Assistant entry points:
 - `animation/clips/*.anim.toml` defines named clips with skeleton ownership, looping/root-motion metadata, and text-backed clip events.
 - `animation/graphs/*.animgraph.toml` defines named animation graphs with float parameters, named states, and explicit entry-state selection.
 - `AnimationSystem` now strictly validates v2 skeleton hierarchies, roles, sockets, and canonical quaternions plus v1 attachment profiles while keeping the existing v1 skeleton lane compatible.
+- Every animation source path and file must be valid UTF-8 before `AnimationSystem` commits a new generation.
 - Generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots.
 - The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet.
 
 ### Spatial Authoring And Attachment Tuning
 
-- Spatial authoring now has a native schema/query foundation, not yet a visual workbench. See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`.
+- Spatial authoring now has a native schema/query/cook foundation, not yet a visual workbench. See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`.
 - Native engine code will own behavior, typed schemas, validation, and runtime execution. Source-controlled TOML will own tuning values. Shell, CLI, and `sf-mcp` will edit those same assets only through `engine_sessiond` revision-safe operations.
 - V1 skeleton compatibility, strict v2 skeleton/socket validation, v1 attachment-profile validation, cross-references, canonical quaternions, and generation-safe query handles now exist.
 - Isolated humanoid/rifle/pistol fixtures under `animation/fixtures/spatial/` and `npm run test:spatial-authoring-scaffold` exercise the native parser through WSL without entering authored or cooked roots.
-- `shader_forge_spatial validate --animation-root <path>` now reuses that exact `AnimationSystem` loader and reports deterministic JSON counts plus skeleton/profile metadata. `engine build spatial` builds it and `engine spatial validate` runs it read-only.
+- `shader_forge_spatial validate --animation-root <path>` reuses that exact `AnimationSystem` loader and reports deterministic JSON counts plus skeleton/profile metadata. `shader_forge_spatial cook` validates through the same loader and atomically writes complete socket/profile tables with relative source paths and no typed handles or absolute machine paths.
 - Humans and agents will share one `reviewId` and an immutable review packet with explicit cameras, resolution/framing, lighting, pose samples, source revisions, evaluated transforms/bounds, diagnostics, captures, operation id, and all lease ids. Do not scrape a live cursor or camera.
 - Preview candidates must be labelled. Cooked data is derived and non-editable. Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.
 - Two-hand weapons use dominant-hand item drive then off-hand IK. VLM or visual scores never apply.
-- Prefab existence, joint/capsule parsing, sampling, IK, rendering/capture, review packets, cooker and sessiond integration, shell tuning, and `sf-mcp` spatial tools remain deferred.
+- Prefab existence, joint/capsule parsing, generic `engine bake` and runtime-consumption integration, sampling, IK, rendering/capture, review packets, sessiond integration, shell tuning, and `sf-mcp` spatial tools remain deferred.
 - Implementation is ordered after the existing operation layer and before broad World/Assets visual polish.
 
 ### Physics Foundation
@@ -311,7 +313,7 @@ Assistant entry points:
 - `npm run test:scene-authoring` validates the shell scene-authoring surface plus session-root scene/prefab/entity/transform file writes.
 - `npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.
 - `npm run test:spatial-authoring-scaffold` compiles and executes the native v1/v2 skeleton, socket, attachment-profile, cross-reference, quaternion, reload, and typed-handle validation harness; WSL `g++` is required on Windows.
-- `npm run test:spatial-tool` compiles and runs the production native validator against isolated valid/invalid fixtures, checking deterministic JSON, loader diagnostics, and CLI help/build-first behavior; WSL `g++` is required on Windows.
+- `npm run test:spatial-tool` requires a native compiler and runs the production validate/cook tool against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, checking deterministic validation, byte-stable complete cooking, relative paths, invalid-input output preservation, loader diagnostics, and CLI strict/help/build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere.
 - `npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices.
 - `./scripts/start-dev-clean.sh` is the Unix/WSL clean-start path.
 - `powershell.exe -ExecutionPolicy Bypass -File .\scripts\start-dev-clean.ps1` is the Windows clean-start path.
@@ -331,7 +333,7 @@ Assistant entry points:
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
 - A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.
 - A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. MCP exposure of that workflow is still the next credential/lease gate. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
-- A first native spatial schema/query slice with compatible v1 skeletons, strict v2 skeleton/socket and v1 attachment validation, generation-safe handles, isolated fixtures, and executable native coverage.
+- A native spatial schema/query/cook slice with compatible v1 skeletons, strict v2 skeleton/socket and v1 attachment validation, generation-safe handles, isolated fixtures, deterministic validation, and an atomic derived payload.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
 ### What Still Needs Widening
@@ -344,7 +346,7 @@ Assistant entry points:
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
-- Spatial authoring still needs prefab-catalog and joint/capsule integration, cooking, sampling, IK, attachment rendering/capture, review packets, sessiond operations, shell tuning, and MCP tools on top of the native schema/query slice.
+- Spatial authoring still needs prefab-catalog and joint/capsule integration, generic bake/runtime consumption, sampling, IK, attachment rendering/capture, review packets, sessiond operations, shell tuning, and MCP tools on top of the native schema/query/cook slice.
 - Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.

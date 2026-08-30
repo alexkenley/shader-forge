@@ -154,6 +154,63 @@ bool fail(std::string* errorMessage, std::string message) {
   return false;
 }
 
+bool isValidUtf8(std::string_view value) {
+  const auto* bytes = reinterpret_cast<const unsigned char*>(value.data());
+  std::size_t index = 0;
+  while (index < value.size()) {
+    const unsigned char lead = bytes[index++];
+    if (lead <= 0x7f) continue;
+    int continuationCount = 0;
+    unsigned char firstMinimum = 0x80;
+    unsigned char firstMaximum = 0xbf;
+    if (lead >= 0xc2 && lead <= 0xdf) {
+      continuationCount = 1;
+    } else if (lead >= 0xe0 && lead <= 0xef) {
+      continuationCount = 2;
+      if (lead == 0xe0) firstMinimum = 0xa0;
+      if (lead == 0xed) firstMaximum = 0x9f;
+    } else if (lead >= 0xf0 && lead <= 0xf4) {
+      continuationCount = 3;
+      if (lead == 0xf0) firstMinimum = 0x90;
+      if (lead == 0xf4) firstMaximum = 0x8f;
+    } else {
+      return false;
+    }
+    if (index + static_cast<std::size_t>(continuationCount) > value.size()) return false;
+    if (bytes[index] < firstMinimum || bytes[index] > firstMaximum) return false;
+    index += 1;
+    for (int continuation = 1; continuation < continuationCount; ++continuation, ++index) {
+      if (bytes[index] < 0x80 || bytes[index] > 0xbf) return false;
+    }
+  }
+  return true;
+}
+
+std::string utf8Path(const std::filesystem::path& path) {
+  const std::u8string value = path.generic_u8string();
+  return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+}
+
+bool validateUtf8File(const std::filesystem::path& path, std::string* errorMessage) {
+  const std::string serializedPath = utf8Path(path);
+  if (!isValidUtf8(serializedPath)) {
+    return fail(errorMessage, "Animation source path is not valid UTF-8.");
+  }
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream.is_open()) {
+    return fail(errorMessage, "Could not open animation source file at " + serializedPath);
+  }
+  std::ostringstream content;
+  content << stream.rdbuf();
+  if (!stream.good() && !stream.eof()) {
+    return fail(errorMessage, "Could not read animation source file at " + serializedPath);
+  }
+  if (!isValidUtf8(content.str())) {
+    return fail(errorMessage, "Animation source file is not valid UTF-8: " + serializedPath);
+  }
+  return true;
+}
+
 bool parseStrictDocument(
   const std::filesystem::path& path,
   StrictDocument* document,
@@ -472,7 +529,9 @@ bool sortedRegularFilesWithSuffix(
       return fail(errorMessage, "Could not continue enumerating animation directory '" + directory.string() + "': " + error.message());
     }
   }
-  std::sort(files->begin(), files->end());
+  std::sort(files->begin(), files->end(), [](const auto& left, const auto& right) {
+    return utf8Path(left) < utf8Path(right);
+  });
   return true;
 }
 
@@ -1463,7 +1522,8 @@ struct AnimationSystem::Impl {
     }
     for (const auto& filePath : skeletonFiles) {
       SkeletonDefinitionSnapshot skeleton;
-      if (!loadSkeletonFile(filePath, &skeleton, errorMessage)) {
+      if (!validateUtf8File(filePath, errorMessage)
+          || !loadSkeletonFile(filePath, &skeleton, errorMessage)) {
         return false;
       }
       if (std::any_of(nextSkeletons.begin(), nextSkeletons.end(), [&](const auto& existing) {
@@ -1495,7 +1555,8 @@ struct AnimationSystem::Impl {
     }
     for (const auto& filePath : clipFiles) {
       ClipDefinitionSnapshot clip;
-      if (!loadClipFile(filePath, nextSkeletons, &clip, errorMessage)) {
+      if (!validateUtf8File(filePath, errorMessage)
+          || !loadClipFile(filePath, nextSkeletons, &clip, errorMessage)) {
         return false;
       }
       if (findClipByName(nextClips, clip.name) != nullptr) {
@@ -1517,7 +1578,8 @@ struct AnimationSystem::Impl {
     }
     for (const auto& filePath : graphFiles) {
       GraphDefinitionSnapshot graph;
-      if (!loadGraphFile(filePath, nextSkeletons, nextClips, &graph, errorMessage)) {
+      if (!validateUtf8File(filePath, errorMessage)
+          || !loadGraphFile(filePath, nextSkeletons, nextClips, &graph, errorMessage)) {
         return false;
       }
       if (std::any_of(nextGraphs.begin(), nextGraphs.end(), [&](const auto& existing) {
@@ -1550,7 +1612,8 @@ struct AnimationSystem::Impl {
       }
       for (const auto& filePath : attachmentFiles) {
         AttachmentProfileSnapshot profile;
-        if (!loadAttachmentProfileFile(filePath, nextSkeletons, nextClips, &profile, errorMessage)) {
+        if (!validateUtf8File(filePath, errorMessage)
+            || !loadAttachmentProfileFile(filePath, nextSkeletons, nextClips, &profile, errorMessage)) {
           return false;
         }
         if (std::any_of(nextAttachmentProfiles.begin(), nextAttachmentProfiles.end(), [&](const auto& existing) {

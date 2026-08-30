@@ -54,8 +54,9 @@ Current implemented commands:
 The initial build/run/bake command family now targets the native runtime and cooked-content scaffolds:
 
 - `engine build runtime` configures and builds `shader_forge_runtime` through CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`; the no-target `engine build` form remains compatible and selects `runtime`
-- `engine build spatial` configures the same native tree and builds only the dependency-free `shader_forge_spatial` validation executable
+- `engine build spatial` configures the same native tree and builds only the dependency-free `shader_forge_spatial` validate/cook executable
 - `engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs an already-built validator and prints deterministic JSON for valid skeleton/socket and attachment-profile data; it fails with a build-first diagnostic rather than compiling implicitly
+- `engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]` runs the same already-built tool, validates through `AnimationSystem`, and atomically stages one deterministic derived payload at `<output-root>/animation/spatial-authoring.bin`; it rejects unknown, missing, duplicate, or positional arguments and does not auto-build or join the generic `engine bake` lane yet
 - `engine run sandbox` builds and launches the native runtime target
 - `engine run` now forwards `--input-root`, `--content-root`, `--audio-root`, `--animation-root`, `--physics-root`, `--data-foundation`, `--save-root`, `--tooling-layout`, and `--tooling-layout-save` so native bring-up can inspect text-backed engine assets and configuration directly while keeping runtime persistence under the active project root
 - `engine bake` now scans the text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report plus generated-mesh preview payloads for procedural geometry assets
