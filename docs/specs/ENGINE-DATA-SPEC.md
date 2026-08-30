@@ -27,7 +27,9 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - scene lookup is now tied to real text assets instead of a purely free-form runtime scene name
 - scene-to-prefab relationships and `runtime_bootstrap` defaults are validated across the catalog rather than treated as isolated files
 - prefab component payloads can now reference `content/procgeo/*.procgeo.toml` and `content/effects/*.effect.toml` through deterministic `[component.render]` and `[component.effect]` sections
+- prefab sources may now declare one strict optional `[component.collision]` box with finite item-local `center`, canonical unit `xyzw` `rotation`, and positive finite `dimensions`; `DataFoundation` exposes it as typed optional snapshot truth and rejects malformed, duplicate, unknown-key, or non-prefab use
 - the spatial evaluator reuses this same prefab-to-render-procgeo chain to expose exact authored box corners for attachment tuning; it does not create a second prefab geometry schema, and the visual box is not collision geometry
+- authored prefab collision is independent of render procgeo and is not yet consumed by runtime physics, the spatial evaluator, clipping diagnostics, or the staged prefab cook lane
 - procgeo dimensions must be finite positive numbers before a source can become valid evaluator or cook input
 - runtime startup now resolves the active scene and overlay preference from the text-backed source assets when possible
 - cooked outputs are still planning targets only in this slice, but they now target a stable `FlatBuffers` runtime-data lane under `build/cooked/`

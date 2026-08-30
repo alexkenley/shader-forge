@@ -74,12 +74,20 @@ struct PrefabEffectComponentSnapshot {
   std::string trigger;
 };
 
+struct PrefabCollisionComponentSnapshot {
+  std::string shape;
+  std::array<float, 3> center{0.0F, 0.0F, 0.0F};
+  std::array<float, 4> rotation{0.0F, 0.0F, 0.0F, 1.0F};
+  std::array<float, 3> dimensions{1.0F, 1.0F, 1.0F};
+};
+
 struct PrefabSourceSnapshot {
   std::string name;
   std::string category;
   std::string spawnTag;
   PrefabRenderComponentSnapshot renderComponent;
   PrefabEffectComponentSnapshot effectComponent;
+  std::optional<PrefabCollisionComponentSnapshot> collisionComponent;
   std::filesystem::path sourcePath;
   std::filesystem::path cookedPath;
   bool valid = false;

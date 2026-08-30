@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { repoRootFromScript } from './lib/harness-utils.mjs';
 
@@ -23,6 +24,9 @@ const dataPath = path.join(repoRoot, 'content', 'data', 'runtime_bootstrap.data.
 const effectPath = path.join(repoRoot, 'content', 'effects', 'impact_spark.effect.toml');
 const procgeoFloorPath = path.join(repoRoot, 'content', 'procgeo', 'sandbox_floor.procgeo.toml');
 const procgeoCratePath = path.join(repoRoot, 'content', 'procgeo', 'debug_crate.procgeo.toml');
+const spatialFixtureRoot = path.join(repoRoot, 'animation', 'fixtures', 'spatial');
+const spatialRiflePrefabPath = path.join(spatialFixtureRoot, 'content', 'prefabs', 'weapon_rifle_mk1.prefab.toml');
+const spatialFoundationPath = path.join(spatialFixtureRoot, 'data', 'foundation', 'engine-data-layout.toml');
 
 const foundationHeader = fs.readFileSync(foundationHeaderPath, 'utf8');
 const foundationSource = fs.readFileSync(foundationSourcePath, 'utf8');
@@ -38,6 +42,7 @@ const dataAsset = fs.readFileSync(dataPath, 'utf8');
 const effectAsset = fs.readFileSync(effectPath, 'utf8');
 const procgeoFloorAsset = fs.readFileSync(procgeoFloorPath, 'utf8');
 const procgeoCrateAsset = fs.readFileSync(procgeoCratePath, 'utf8');
+const spatialRiflePrefab = fs.readFileSync(spatialRiflePrefabPath, 'utf8');
 
 assert.match(foundationHeader, /class DataFoundation/);
 assert.match(foundationHeader, /enum class DataAssetKind/);
@@ -46,6 +51,8 @@ assert.match(foundationHeader, /struct SceneSourceSnapshot/);
 assert.match(foundationHeader, /struct SceneEntitySnapshot/);
 assert.match(foundationHeader, /struct PrefabRenderComponentSnapshot/);
 assert.match(foundationHeader, /struct PrefabEffectComponentSnapshot/);
+assert.match(foundationHeader, /struct PrefabCollisionComponentSnapshot/);
+assert.match(foundationHeader, /std::optional<PrefabCollisionComponentSnapshot> collisionComponent/);
 assert.match(foundationHeader, /struct ComposedSceneEntitySnapshot/);
 assert.match(foundationHeader, /struct ComposedSceneSnapshot/);
 assert.match(foundationHeader, /struct RuntimeBootstrapSnapshot/);
@@ -73,6 +80,7 @@ assert.match(foundationSource, /primary_prefab/);
 assert.match(foundationSource, /source_prefab/);
 assert.match(foundationSource, /component\.render/);
 assert.match(foundationSource, /component\.effect/);
+assert.match(foundationSource, /component\.collision/);
 assert.match(foundationSource, /Scene entity layout:/);
 assert.match(foundationSource, /Scene prefab components:/);
 assert.match(foundationSource, /Composed scene:/);
@@ -133,10 +141,131 @@ assert.match(procgeoCrateAsset, /generator = "box"/);
 assert.match(procgeoCrateAsset, /width = 1\.5/);
 assert.match(procgeoCrateAsset, /height = 1\.5/);
 assert.match(procgeoCrateAsset, /depth = 1\.5/);
+assert.match(spatialRiflePrefab, /\[component\.collision\]/);
+assert.match(spatialRiflePrefab, /shape = "box"/);
+assert.match(spatialRiflePrefab, /dimensions = \[0\.08, 0\.12, 0\.9\]/);
+
+function run(command, args) {
+  const result = spawnSync(command, args, { cwd: repoRoot, encoding: 'utf8' });
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, `${command} failed.\n${result.stderr || result.stdout}`);
+}
+
+function toWslPath(windowsPath) {
+  const normalized = windowsPath.replaceAll('\\', '/');
+  const match = /^([A-Za-z]):\/(.*)$/.exec(normalized);
+  assert.ok(match, `Cannot map path to WSL: ${windowsPath}`);
+  return `/mnt/${match[1].toLowerCase()}/${match[2]}`;
+}
+
+const collisionTempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shader-forge-prefab-collision-'));
+const collisionContentRoot = path.join(collisionTempRoot, 'content');
+const collisionDriverPath = path.join(collisionTempRoot, 'collision_driver.cpp');
+const collisionExecutablePath = path.join(collisionTempRoot, 'collision_driver');
+for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
+  fs.mkdirSync(path.join(collisionContentRoot, directory), { recursive: true });
+}
+fs.cpSync(path.join(spatialFixtureRoot, 'content', 'prefabs'), path.join(collisionContentRoot, 'prefabs'), { recursive: true });
+fs.cpSync(path.join(spatialFixtureRoot, 'content', 'procgeo'), path.join(collisionContentRoot, 'procgeo'), { recursive: true });
+fs.writeFileSync(collisionDriverPath, String.raw`
+#include "shader_forge/runtime/data_foundation.hpp"
+
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+using shader_forge::runtime::DataFoundation;
+using shader_forge::runtime::DataFoundationConfig;
+
+std::string readFile(const std::filesystem::path& path) {
+  std::ifstream stream(path);
+  std::ostringstream contents;
+  contents << stream.rdbuf();
+  return contents.str();
+}
+
+void writeFile(const std::filesystem::path& path, const std::string& contents) {
+  std::ofstream stream(path, std::ios::trunc);
+  stream << contents;
+}
+
+bool replaceOnce(std::string* value, const std::string& from, const std::string& to) {
+  const auto position = value->find(from);
+  if (position == std::string::npos) return false;
+  value->replace(position, from.size(), to);
+  return true;
+}
+
+int main(int argc, char** argv) {
+  if (argc != 3) return 2;
+  const DataFoundationConfig config{
+    .contentRoot = argv[1],
+    .foundationPath = argv[2],
+  };
+  DataFoundation foundation;
+  std::string error;
+  if (!foundation.loadFromDisk(config, &error)) {
+    std::cerr << error << '\n';
+    return 3;
+  }
+  const auto rifle = foundation.prefabSource("weapon.rifle.mk1");
+  if (!rifle || !rifle->valid || !rifle->collisionComponent) return 4;
+  const auto& collision = *rifle->collisionComponent;
+  if (collision.shape != "box"
+      || collision.center != std::array<float, 3>{0.0F, 0.0F, 0.0F}
+      || collision.rotation != std::array<float, 4>{0.0F, 0.0F, 0.0F, 1.0F}
+      || collision.dimensions != std::array<float, 3>{0.08F, 0.12F, 0.9F}) return 5;
+  const auto pistol = foundation.prefabSource("weapon.pistol.mk1");
+  if (!pistol || !pistol->valid || pistol->collisionComponent) return 6;
+
+  const std::filesystem::path riflePath = std::filesystem::path(argv[1]) / "prefabs/weapon_rifle_mk1.prefab.toml";
+  const std::string original = readFile(riflePath);
+  const std::vector<std::pair<std::string, std::string>> mutations{
+    {"shape = \"box\"", "shape = \"sphere\""},
+    {"center = [0.0, 0.0, 0.0]", "center = [nan, 0.0, 0.0]"},
+    {"rotation = [0.0, 0.0, 0.0, 1.0]", "rotation = [0.0, 0.0, 0.0, 2.0]"},
+    {"rotation = [0.0, 0.0, 0.0, 1.0]", "rotation = [0.0, 0.0, 0.0, -1.0]"},
+    {"dimensions = [0.08, 0.12, 0.9]", "dimensions = [0.08, 0.0, 0.9]"},
+    {"dimensions = [0.08, 0.12, 0.9]", "dimensions = [0.08, 0.12, 0.9junk]"},
+    {"dimensions = [0.08, 0.12, 0.9]", "dimensions = [0.08, 0.12, 0.9]\nunknown = true"},
+    {"dimensions = [0.08, 0.12, 0.9]", "dimensions = [0.08, 0.12, 0.9]\ndimensions = [0.08, 0.12, 0.9]"},
+    {"center = [0.0, 0.0, 0.0]", ""},
+    {"dimensions = [0.08, 0.12, 0.9]", "dimensions = [0.08, 0.12, 0.9]\n\n[component.collision]"},
+  };
+  for (const auto& [from, to] : mutations) {
+    std::string candidate = original;
+    if (!replaceOnce(&candidate, from, to)) return 7;
+    writeFile(riflePath, candidate);
+    DataFoundation rejected;
+    error.clear();
+    if (rejected.loadFromDisk(config, &error) || error.empty()) return 8;
+  }
+  std::string missing = original;
+  if (!replaceOnce(&missing, "shape = \"box\"", "")) return 9;
+  writeFile(riflePath, missing);
+  DataFoundation rejected;
+  error.clear();
+  if (rejected.loadFromDisk(config, &error) || error.empty()) return 10;
+  writeFile(riflePath, original);
+  const std::filesystem::path nonPrefabPath = std::filesystem::path(argv[1]) / "effects/invalid.effect.toml";
+  writeFile(nonPrefabPath, original);
+  DataFoundation wrongKind;
+  error.clear();
+  if (wrongKind.loadFromDisk(config, &error) || error.find("only valid on prefab assets") == std::string::npos) return 11;
+  std::filesystem::remove(nonPrefabPath);
+  return 0;
+}
+`);
 
 const isWindows = process.platform === 'win32';
 let syntaxChecked = false;
+let collisionChecked = false;
 
+try {
 if (!isWindows) {
   const syntaxCheck = spawnSync(
     'g++',
@@ -169,6 +298,22 @@ if (!isWindows) {
     `Data foundation scaffold syntax check failed.\n${syntaxCheck.stderr || syntaxCheck.stdout}`,
   );
   syntaxChecked = true;
+  run('g++', ['-std=c++20', '-I', includeRoot, collisionDriverPath, foundationSourcePath, '-o', collisionExecutablePath]);
+  run(collisionExecutablePath, [collisionContentRoot, spatialFoundationPath]);
+  collisionChecked = true;
+} else {
+  const compiler = spawnSync('wsl.exe', ['sh', '-lc', 'command -v g++'], { encoding: 'utf8' });
+  if (!compiler.error && compiler.status === 0) {
+    run('wsl.exe', [
+      'g++', '-std=c++20', '-I', toWslPath(includeRoot),
+      toWslPath(collisionDriverPath), toWslPath(foundationSourcePath), '-o', toWslPath(collisionExecutablePath),
+    ]);
+    run('wsl.exe', [toWslPath(collisionExecutablePath), toWslPath(collisionContentRoot), toWslPath(spatialFoundationPath)]);
+    collisionChecked = true;
+  }
+}
+} finally {
+  fs.rmSync(collisionTempRoot, { recursive: true, force: true });
 }
 
 console.log('Engine data foundation scaffold passed.');
@@ -176,6 +321,9 @@ console.log(`- Verified data foundation assets under ${path.join(repoRoot, 'cont
 console.log(`- Verified format manifest under ${path.join(repoRoot, 'data', 'foundation')}`);
 console.log(`- Verified native data foundation sources under ${runtimeRoot}`);
 console.log('- Verified TOML source, FlatBuffers cooked-output planning, SQLite tooling-db decisions, and effect descriptor metadata are represented in code and assets');
+console.log(collisionChecked
+  ? '- Compiled and ran strict optional prefab collision parsing and rejection coverage'
+  : '- SKIPPED native prefab collision probe: no supported g++ compiler was available');
 console.log(syntaxChecked
   ? '- Verified native data foundation C++ sources pass fallback syntax-only compilation'
   : '- Skipped g++ syntax check (not available on Windows — use WSL or CI for native compilation)');

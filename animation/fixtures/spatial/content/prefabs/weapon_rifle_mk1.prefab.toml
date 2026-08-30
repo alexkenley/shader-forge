@@ -10,3 +10,9 @@ spawn_tag = "weapon"
 [component.render]
 procgeo = "weapon.rifle.mk1"
 material_hint = "weapon_rifle"
+
+[component.collision]
+shape = "box"
+center = [0.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+dimensions = [0.08, 0.12, 0.9]

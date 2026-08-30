@@ -131,6 +131,80 @@ bool parseVector3Value(const std::string& rawValue, std::array<float, 3>* result
   return true;
 }
 
+bool parseCompleteFiniteFloat(std::string_view token, float* result) {
+  const std::string text = trim(token);
+  if (text.empty()) {
+    return false;
+  }
+
+  std::size_t consumed = 0;
+  try {
+    const float parsed = std::stof(text, &consumed);
+    if (consumed != text.size() || !std::isfinite(parsed)) {
+      return false;
+    }
+    *result = parsed;
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+template <std::size_t N>
+bool parseFiniteFloatArray(const std::string& rawValue, std::array<float, N>* result) {
+  const std::string raw = trim(rawValue);
+  if (raw.size() < 2 || raw.front() != '[' || raw.back() != ']') {
+    return false;
+  }
+
+  const std::string body = trim(std::string_view(raw).substr(1, raw.size() - 2));
+  if (body.empty()) {
+    return false;
+  }
+
+  std::array<float, N> parsed{};
+  std::size_t start = 0;
+  std::size_t index = 0;
+  while (start <= body.size()) {
+    if (index >= N) {
+      return false;
+    }
+
+    const std::size_t comma = body.find(',', start);
+    const std::string token = trim(std::string_view(body).substr(
+      start,
+      comma == std::string::npos ? body.size() - start : comma - start));
+    if (!parseCompleteFiniteFloat(token, &parsed[index])) {
+      return false;
+    }
+    index += 1;
+
+    if (comma == std::string::npos) {
+      break;
+    }
+    start = comma + 1;
+    if (start >= body.size()) {
+      return false;
+    }
+  }
+
+  if (index != N) {
+    return false;
+  }
+
+  *result = parsed;
+  return true;
+}
+
+bool isUnitLengthQuaternion(const std::array<float, 4>& rotation) {
+  const double x = static_cast<double>(rotation[0]);
+  const double y = static_cast<double>(rotation[1]);
+  const double z = static_cast<double>(rotation[2]);
+  const double w = static_cast<double>(rotation[3]);
+  const double length = std::sqrt(x * x + y * y + z * z + w * w);
+  return std::isfinite(length) && std::abs(length - 1.0) <= 1e-6;
+}
+
 std::string lowerString(std::string value) {
   std::transform(
     value.begin(),
@@ -256,6 +330,18 @@ struct ParsedAssetFields {
     std::string trigger;
   };
 
+  struct PrefabCollisionComponentFields {
+    bool seenSection = false;
+    bool hasShape = false;
+    bool hasCenter = false;
+    bool hasRotation = false;
+    bool hasDimensions = false;
+    std::string shape;
+    std::array<float, 3> center{0.0F, 0.0F, 0.0F};
+    std::array<float, 4> rotation{0.0F, 0.0F, 0.0F, 1.0F};
+    std::array<float, 3> dimensions{1.0F, 1.0F, 1.0F};
+  };
+
   std::string name;
   std::string schema;
   int schemaVersion = 0;
@@ -280,6 +366,7 @@ struct ParsedAssetFields {
   int columns = 1;
   PrefabRenderComponentFields renderComponent;
   PrefabEffectComponentFields effectComponent;
+  PrefabCollisionComponentFields collisionComponent;
   std::vector<SceneEntityFields> sceneEntities;
 };
 
@@ -390,6 +477,7 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
     sceneEntity,
     prefabRenderComponent,
     prefabEffectComponent,
+    prefabCollisionComponent,
   };
   SectionMode currentSection = SectionMode::none;
   ParsedAssetFields::SceneEntityFields* currentSceneEntity = nullptr;
@@ -415,6 +503,15 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
         currentSection = SectionMode::prefabRenderComponent;
       } else if (sectionName == "component.effect") {
         currentSection = SectionMode::prefabEffectComponent;
+      } else if (sectionName == "component.collision") {
+        if (asset->collisionComponent.seenSection) {
+          if (errorMessage) {
+            *errorMessage = "Duplicate [component.collision] section in " + path.string();
+          }
+          return false;
+        }
+        asset->collisionComponent.seenSection = true;
+        currentSection = SectionMode::prefabCollisionComponent;
       }
       continue;
     }
@@ -475,6 +572,101 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
         asset->effectComponent.effect = normalizeToken(parsedValue);
       } else if (key == "trigger") {
         asset->effectComponent.trigger = normalizeToken(parsedValue);
+      }
+      continue;
+    }
+
+    if (currentSection == SectionMode::prefabCollisionComponent) {
+      if (key == "shape") {
+        if (asset->collisionComponent.hasShape) {
+          if (errorMessage) {
+            *errorMessage = "Duplicate key 'shape' in [component.collision] in " + path.string();
+          }
+          return false;
+        }
+        if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
+          if (errorMessage) {
+            *errorMessage = "Malformed collision shape in " + path.string();
+          }
+          return false;
+        }
+        asset->collisionComponent.shape = parsedValue;
+        asset->collisionComponent.hasShape = true;
+        if (asset->collisionComponent.shape != "box") {
+          if (errorMessage) {
+            *errorMessage =
+              "Unsupported collision shape '" + asset->collisionComponent.shape + "' in " + path.string();
+          }
+          return false;
+        }
+      } else if (key == "center") {
+        if (asset->collisionComponent.hasCenter) {
+          if (errorMessage) {
+            *errorMessage = "Duplicate key 'center' in [component.collision] in " + path.string();
+          }
+          return false;
+        }
+        if (!parseFiniteFloatArray(value, &asset->collisionComponent.center)) {
+          if (errorMessage) {
+            *errorMessage = "Malformed collision center in " + path.string();
+          }
+          return false;
+        }
+        asset->collisionComponent.hasCenter = true;
+      } else if (key == "rotation") {
+        if (asset->collisionComponent.hasRotation) {
+          if (errorMessage) {
+            *errorMessage = "Duplicate key 'rotation' in [component.collision] in " + path.string();
+          }
+          return false;
+        }
+        if (!parseFiniteFloatArray(value, &asset->collisionComponent.rotation)) {
+          if (errorMessage) {
+            *errorMessage = "Malformed collision rotation in " + path.string();
+          }
+          return false;
+        }
+        if (!isUnitLengthQuaternion(asset->collisionComponent.rotation)) {
+          if (errorMessage) {
+            *errorMessage = "collision rotation must be unit length within 1e-6 in " + path.string();
+          }
+          return false;
+        }
+        if (asset->collisionComponent.rotation[3] < 0.0F) {
+          if (errorMessage) {
+            *errorMessage = "collision rotation must be canonical with w >= 0 in " + path.string();
+          }
+          return false;
+        }
+        asset->collisionComponent.hasRotation = true;
+      } else if (key == "dimensions") {
+        if (asset->collisionComponent.hasDimensions) {
+          if (errorMessage) {
+            *errorMessage = "Duplicate key 'dimensions' in [component.collision] in " + path.string();
+          }
+          return false;
+        }
+        if (!parseFiniteFloatArray(value, &asset->collisionComponent.dimensions)) {
+          if (errorMessage) {
+            *errorMessage = "Malformed collision dimensions in " + path.string();
+          }
+          return false;
+        }
+        if (
+          asset->collisionComponent.dimensions[0] <= 0.0F
+          || asset->collisionComponent.dimensions[1] <= 0.0F
+          || asset->collisionComponent.dimensions[2] <= 0.0F) {
+          if (errorMessage) {
+            *errorMessage = "collision dimensions must be finite and each > 0 in " + path.string();
+          }
+          return false;
+        }
+        asset->collisionComponent.hasDimensions = true;
+      } else {
+        if (errorMessage) {
+          *errorMessage = "Unknown key '" + key + "' in [component.collision] in " + path.string();
+        }
+        return false;
       }
       continue;
     }
@@ -553,6 +745,33 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
         }
         return false;
       }
+    }
+  }
+
+  if (asset->collisionComponent.seenSection) {
+    if (!asset->collisionComponent.hasShape) {
+      if (errorMessage) {
+        *errorMessage = "Missing shape in [component.collision] in " + path.string();
+      }
+      return false;
+    }
+    if (!asset->collisionComponent.hasCenter) {
+      if (errorMessage) {
+        *errorMessage = "Missing center in [component.collision] in " + path.string();
+      }
+      return false;
+    }
+    if (!asset->collisionComponent.hasRotation) {
+      if (errorMessage) {
+        *errorMessage = "Missing rotation in [component.collision] in " + path.string();
+      }
+      return false;
+    }
+    if (!asset->collisionComponent.hasDimensions) {
+      if (errorMessage) {
+        *errorMessage = "Missing dimensions in [component.collision] in " + path.string();
+      }
+      return false;
     }
   }
 
@@ -762,6 +981,12 @@ struct DataFoundation::Impl {
     if (!parseAssetFile(path, &parsed, errorMessage)) {
       return false;
     }
+    if (parsed.collisionComponent.seenSection && kind != DataAssetKind::prefab) {
+      if (errorMessage) {
+        *errorMessage = "[component.collision] is only valid on prefab assets in " + path.string();
+      }
+      return false;
+    }
 
     const std::optional<std::string> validationError = validateAsset(parsed, kind, manifest);
     if (validationError.has_value()) {
@@ -817,6 +1042,14 @@ struct DataFoundation::Impl {
           .effect = parsed.effectComponent.effect,
           .trigger = parsed.effectComponent.trigger,
         },
+        .collisionComponent = parsed.collisionComponent.seenSection
+          ? std::optional<PrefabCollisionComponentSnapshot>{PrefabCollisionComponentSnapshot{
+              .shape = parsed.collisionComponent.shape,
+              .center = parsed.collisionComponent.center,
+              .rotation = parsed.collisionComponent.rotation,
+              .dimensions = parsed.collisionComponent.dimensions,
+            }}
+          : std::nullopt,
         .sourcePath = path,
         .cookedPath = asset.cookedPath,
         .valid = asset.valid,
