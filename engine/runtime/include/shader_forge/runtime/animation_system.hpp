@@ -114,6 +114,7 @@ struct AttachmentSecondaryHandSnapshot {
   SpatialVector3Snapshot targetTranslation;
   SpatialQuaternionSnapshot targetRotation;
   SpatialVector3Snapshot poleTranslation;
+  std::string poleSpace;
   double reachMeters = 0.0;
   double angleDegrees = 0.0;
   double contactMeters = 0.0;
@@ -197,10 +198,35 @@ struct EvaluatedSecondaryHandFrameSnapshot {
   std::optional<SpatialTransformSnapshot> palmWorld;
   std::optional<SpatialTransformSnapshot> targetWorld;
   std::optional<SpatialVector3Snapshot> poleTranslation;
+  std::string poleSpace;
+  std::optional<SpatialVector3Snapshot> poleWorld;
+  std::optional<std::string> poleReason;
   std::optional<double> preSolveDistanceMeters;
 };
 
+struct SpatialSecondaryIkDiagnosticSnapshot {
+  std::string status;
+  std::optional<std::string> reason;
+  bool solved = false;
+  std::optional<bool> reachable;
+  std::optional<double> preSolveDistanceMeters;
+  std::optional<double> targetDistanceMeters;
+  std::optional<double> minReachMeters;
+  std::optional<double> maxReachMeters;
+  std::optional<double> reachResidualMeters;
+  std::optional<double> postSolveDistanceMeters;
+  std::optional<double> reachToleranceMeters;
+  std::optional<bool> reachWithinTolerance;
+  std::optional<double> contactToleranceMeters;
+  std::optional<bool> contactWithinTolerance;
+  std::optional<double> postSolveAngleDegrees;
+  std::optional<double> angleToleranceDegrees;
+  std::optional<bool> angleWithinTolerance;
+  std::optional<bool> withinTolerance;
+};
+
 struct SpatialAttachmentEvaluationSnapshot {
+  int attachmentSchemaVersion = 0;
   std::string skeletonId;
   std::string skeletonName;
   std::string rootBone;
@@ -219,6 +245,7 @@ struct SpatialAttachmentEvaluationSnapshot {
   std::optional<AttachmentHandleAxisSnapshot> handleAxisWorld;
   std::optional<EvaluatedHandFrameSnapshot> dominantHandFrame;
   std::optional<EvaluatedSecondaryHandFrameSnapshot> secondaryHandFrame;
+  SpatialSecondaryIkDiagnosticSnapshot secondaryIk;
 };
 
 struct SpatialSampledAttachmentEvaluationSnapshot {

@@ -1,6 +1,6 @@
 # Engine Spatial Authoring And Attachment Tuning Spec
 
-Status: native schema/query/cook/rest-schematic evaluation, deterministic schema-v2 clip and pre-IK attachment sampling, strict native/CLI sampled evaluation, revision-safe transient rest sessiond evaluation, semantic operation, constrained Assets tuner, and native-evaluated Assets rest-rig schematic implemented; IK/sessiond sampled evidence/rendered review workflow deferred
+Status: native schema/query/cook/rest-schematic evaluation, compatible v1 plus strict v2 attachment profiles, deterministic schema-v2 clip sampling and sampled two-bone secondary-hand IK, strict native/CLI sampled evaluation, revision-safe transient rest sessiond evaluation, semantic operation, constrained Assets tuner, and native-evaluated Assets rest-rig schematic implemented; sampled sessiond/shell evidence and rendered review workflow deferred
 
 Date: 2026-08-31
 
@@ -10,7 +10,7 @@ Shader Forge spatial authoring is the engine-owned contract for skeleton sockets
 
 It exists so a weapon, tool, or held item has one authored truth that native runtime code, cooked data, the React shell, the CLI, and `sf-mcp` all share. It is the product answer to Unreal's split truth, where Blueprint or editor presentation can drift from native C++ behavior.
 
-This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, validation, typed query access, a deterministic derived cooker, deterministic schema-v2 clip pose sampling, deterministic rest and sampled attachment evaluation (pre-IK for two-hand profiles), a strict native/CLI sampled query over exact authored phase/time, a revision-safe transient rest sessiond query, lease-gated no-write attachment preview with transient rest baseline/candidate evaluation over the generic operation journal, and an Assets workbench that draws only those rest evaluator reports. Sampled evaluation is not yet connected to runtime graph playback, sessiond, MCP, or the shell, and the product does not yet provide IK, item-mesh rendering, native capture, or review packets.
+This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, validation, typed query access, a deterministic derived cooker, deterministic schema-v2 clip pose sampling, deterministic rest evaluation, and sampled attachment evaluation with native two-bone secondary-hand IK for v2 two-hand profiles. It also provides a strict native/CLI sampled query over exact authored phase/time, a revision-safe transient rest sessiond query, lease-gated no-write attachment preview with transient rest baseline/candidate evaluation over the generic operation journal, and an Assets workbench that draws those rest evaluator reports, including resolved v2 item-space poles. Schema-v1 two-hand profiles remain explicitly pre-IK. Sampled evaluation is not yet connected to runtime graph playback, sessiond, MCP, or the shell, and the product does not yet provide item-mesh rendering, joint-limit/clipping results, native capture, or review packets.
 
 ## Authored-Truth Contract
 
@@ -32,7 +32,7 @@ If a value affects how an item sits in a hand, it lives in an attachment profile
 - unchanged schema-version-1 clip loading plus strict schema-version-2 per-bone keyframe tracks for v2 skeletons
 - deterministic `sampleClipPose` evaluation at normalized time with linear translation, shortest-path normalized quaternion interpolation, rest-local fallback for untracked bones, stable skeleton order, parent-composed world transforms, and no root-motion accumulation
 - strict, section-aware schema-version-2 skeleton parsing with stable dotted IDs, bone hierarchy, semantic roles, sockets, finite vectors, canonical unit quaternions, graph validation, and capability checks
-- optional schema-version-1 attachment-profile loading from an `attachments/` directory, including primary grip, contact/handle frames, two-hand target/pole/tolerances, and motion-envelope sample metadata
+- compatible schema-version-1 plus strict schema-version-2 attachment-profile loading from an `attachments/` directory, including primary grip, contact/handle frames, two-hand target/item-space pole/tolerances, and motion-envelope sample metadata
 - cross-reference validation for v2 skeleton IDs, primary sockets, dominant-hand roles, and animation clips on the same skeleton
 - UTF-8 validation for every loaded animation source path and file before any new animation generation is committed, plus explicit UTF-8 source-file sort keys so handles and cooked table order do not depend on Windows UTF-16 versus POSIX byte ordering
 - generation-tagged `SkeletonId`, `BoneId`, `SocketId`, and `AttachmentProfileId` handles plus snapshot/query APIs; successful reloads invalidate older handles, while failed reloads retain the last valid generation
@@ -40,16 +40,16 @@ If a value affects how an item sits in a hand, it lives in an attachment profile
 - `npm run test:spatial-authoring-scaffold`, which compiles and executes a native C++ validation driver; WSL `g++` is required on Windows
 - a dependency-free `shader_forge_spatial validate --animation-root <path>` executable that calls the same `AnimationSystem::loadFromDisk` path and emits deterministic JSON with normalized root, collection counts, stable IDs, schema versions, bone/socket counts, attachment references/mode/perspective, and motion-envelope phase/sample counts
 - `shader_forge_spatial cook --animation-root <path> --output-root <path>`, which validates through that same loader and stages exactly one deterministic UTF-8 JSON payload at `<output-root>/animation/spatial-authoring.bin`; it includes complete snapshot-backed bone/socket/profile tables, relative source paths, canonical quaternions, and no generation handles or absolute machine paths
-- `shader_forge_spatial evaluate-rest --animation-root <path> --attachment <id>`, which composes the selected v2 skeleton rest pose, sockets, dominant/item frames, contact/handle frames, secondary target, unresolved pole input, and joint-segment endpoints into deterministic machine-readable geometry
-- `shader_forge_spatial evaluate-sample --animation-root <path> --attachment <id> --phase <phase> --normalized-time <value>`, which requires an exact authored envelope sample, composes the same geometry from the native clip sampler, applies primary attachment, and labels requested/applied/unavailable procedural layers without pretending secondary-hand IK ran
-- `GET /api/spatial/attachment/evaluate`, which stages exact current authored animation bytes through `SessionStore`, binds the selected source path and SHA-256 revision to the validator-selected attachment ID, runs that same rest evaluator, and rechecks the source revision before returning
+- `shader_forge_spatial evaluate-rest --animation-root <path> --attachment <id>`, which composes the selected v2 skeleton rest pose, sockets, dominant/item frames, contact/handle frames, secondary target, versioned pole truth, and joint-segment endpoints into deterministic machine-readable geometry; v1 poles remain unresolved and v2 item-space poles resolve to world coordinates
+- `shader_forge_spatial evaluate-sample --animation-root <path> --attachment <id> --phase <phase> --normalized-time <value>`, which requires an exact authored envelope sample, composes the same geometry from the native clip sampler, applies primary attachment, runs deterministic two-bone secondary-hand IK for v2 two-hand profiles, and labels requested/applied/unavailable procedural layers exactly; v1 two-hand profiles remain explicitly pre-IK
+- `GET /api/spatial/attachment/evaluate`, which stages exact current authored animation bytes through `SessionStore`, binds the selected source path and SHA-256 revision to the validator-selected attachment ID and schema version, runs that same rest evaluator, and rechecks the source revision before returning
 - sibling temporary-file replacement after a successful close, so invalid input and failed writes do not overwrite an existing final payload
 - `engine build spatial`, plus strict `engine spatial validate`, `engine spatial cook`, `engine spatial evaluate-rest`, and `engine spatial evaluate-sample` adapters for running an already-built tool; none auto-builds or starts a daemon, and neither evaluator creates a review artifact
-- `npm run test:spatial-tool`, which requires a native compiler, compiles and runs all four commands against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, and checks deterministic validation, byte-stable cooking, representative field completeness, relative paths, sentinel preservation, rest and sampled geometry invariants, motion-envelope and procedural-layer truth, non-commuting transform composition, canonical quaternion sign, unresolved pole space, non-finite failure, CLI strictness, help, and build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere
+- `npm run test:spatial-tool`, which requires a native compiler, compiles and runs all four commands against isolated valid, invalid-schema, and invalid-UTF-8 fixtures, and checks deterministic validation, byte-stable v1/v2 cooking, representative field completeness, relative paths, sentinel preservation, rest and sampled geometry invariants, motion-envelope and procedural-layer truth, reachable and unreachable IK, separate reach/contact/angular tolerances, pole-side bending, degenerate failure, v1 compatibility, non-commuting transform composition, canonical quaternion sign, non-finite failure, CLI strictness, help, and build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere
 
 The loader retains `item_prefab` as a stable reference but does not yet validate prefab existence because `AnimationSystem` does not own the prefab catalogue. Bone joint limits and diagnostic capsules are also not parsed in this slice.
 
-The rest evaluator remains a schematic geometry query with `pose.sampled=false`. The sampled evaluator reports `pose.sampled=true` and applies primary attachment over the sampled skeleton. A two-hand profile requests `secondary_hand_ik`, reports that layer unavailable, and carries `pre_ik_only`; a one-hand profile has no secondary-hand layer and carries `sampled_attachment_schematic_only`. Both have unavailable item geometry, joint-limit, and clipping diagnostics and are not review evidence. The Assets schematic and current sessiond/MCP paths still consume rest reports only. Sessiond evaluation reports are transient and never become operation validation or persisted review artifacts. Still deferred: generic `engine bake` integration, cooked-runtime loading, runtime graph consumption, blending, IK, attachment rendering, available spatial diagnostics, sampled sessiond/shell/MCP evidence, native camera/capture, review packets, operation-scoped validation/recapture, native overlay tuning, and typed `sf-mcp` validation/review resources. The semantic attachment mutation operation, constrained shell tuner, native-evaluated rest-rig schematic, and `sf-mcp` preview/review/apply/undo adapter are implemented.
+The rest evaluator remains an unsolved schematic geometry query with `pose.sampled=false`. For v2 profiles it resolves the authored item-space pole into world space; v1 pole space remains unresolved. The sampled evaluator reports `pose.sampled=true`, applies primary attachment, and for v2 two-hand profiles applies `secondary_hand_ik` to the semantic upper-arm/lower-arm/hand chain using the secondary palm socket as the effector. Reachable targets align the palm frame to the target. Unreachable targets clamp only the physical wrist solve and report exact reach/contact/angular residual and tolerance truth. Schema-v1 two-hand profiles still report the IK layer unavailable and carry `pre_ik_only`; one-hand profiles carry `sampled_attachment_schematic_only`. All current results have unavailable item geometry, joint-limit, and clipping diagnostics and are not review evidence. The Assets schematic and current sessiond/MCP paths still consume rest reports only, though the shell now accepts v2 rest evidence and projects a resolved pole. Sessiond evaluation reports are transient and never become operation validation or persisted review artifacts. Still deferred: generic `engine bake` integration, cooked-runtime loading, runtime graph consumption, blending, attachment rendering, joint-limit/clipping diagnostics, sampled sessiond/shell/MCP evidence, native camera/capture, review packets, operation-scoped validation/recapture, native overlay tuning, and typed `sf-mcp` validation/review resources. The semantic attachment mutation operation, constrained shell tuner, native-evaluated rest-rig schematic, and `sf-mcp` preview/review/apply/undo adapter are implemented.
 
 ## Goals
 
@@ -101,11 +101,11 @@ Already available foundations:
 - The existing hierarchical lease coordinator, including FIFO overlapping-write queues and workspace-scoped `runtime` exclusivity.
 - The authored animation root under `animation/` and the current `AnimationSystem` load/validate path, widened rather than replaced.
 - The shared code-trust evaluate/review-queue path used by file-write apply.
-- The first native v1/v2 skeleton and v1 attachment-profile parser, validator, generation-safe query handles, isolated fixtures, and executable native harness.
+- The native v1/v2 skeleton and compatible v1/strict v2 attachment-profile parser, validator, generation-safe query handles, isolated fixtures, deterministic sampled two-bone IK, and executable native harnesses.
 
-Required before capture, IK diagnostics, and review packets can pass:
+Required before capture diagnostics and review packets can pass:
 
-- A procedural secondary-hand IK layer in native runtime. The implemented sampled attachment query applies primary attachment but does not solve two-hand IK, so it is not enough for review evidence.
+- Authored joint limits and diagnostic capsules plus item geometry, so the implemented secondary-hand IK output can be checked for joint violations and clipping rather than only reach/contact/angular tolerance truth.
 - A runtime capture path that can render the staging workbench to image files. The current projected debug-proxy cards are not an acceptable stand-in.
 - Promotion of the isolated humanoid/rifle fixture into a real authored/cooked runtime lane only when runtime graph playback, sampled attachment evaluation, and rendering can consume it; `debug_humanoid` remains the compatible v1 metadata asset.
 
@@ -259,7 +259,7 @@ Path: `animation/attachments/<name>.attachment.toml`
 Required fields:
 
 - `schema = "shader_forge.attachment_profile"`
-- `schema_version = 1`
+- `schema_version = 1` or `2`; v1 remains compatible and pre-IK, while v2 enables explicit pole semantics and sampled IK
 - `id`: stable dotted identifier
 - `name`
 - `owner_system = "animation_system"`
@@ -280,10 +280,10 @@ Optional `[secondary_hand]` for `mode = "two_hand"`:
 
 - `enabled = true`
 - `target.translation` and `target.rotation`: item-local frame the off-hand IK follows after the item is driven by the dominant grip
-- `pole.translation`: an authored pole input. Schema version 1 does not yet declare its coordinate space, so `evaluate-rest` returns the raw translation with `space = "unresolved"` and no world transform rather than inventing item-local or parent-space semantics
-- `tolerances.reach_meters`
-- `tolerances.angle_degrees`
-- `tolerances.contact_meters`
+- `pole.translation`: an authored pole point. Schema version 1 does not declare its coordinate space, so evaluation returns the raw translation with `space = "unresolved"` and no world transform. Schema version 2 requires `pole.space = "item"`; the point is transformed through the primary-driven item frame and no world/skeleton fallback is invented.
+- `tolerances.reach_meters`: allowed residual beyond the physical two-bone reach interval
+- `tolerances.angle_degrees`: allowed post-solve angular error between the secondary palm socket and target frame
+- `tolerances.contact_meters`: allowed post-solve translation error between the secondary palm socket and target frame
 - `joint_limit_policy`: `diagnose` or `clamp_and_diagnose`
 
 Optional authored diagnostic inputs:
@@ -304,7 +304,9 @@ Rules:
 - prefabs are referenced by ID only. An attachment profile must not copy mesh, collider, socket, or grip fields out of the prefab.
 - a prefab must not copy attachment translation, rotation, tolerances, or envelope times. Prefabs may declare that they are attachable; they do not own the grip.
 - one-hand profiles omit `secondary_hand` or set `enabled = false`.
-- two-hand profiles fail validation without `secondary_hand.enabled = true` and a target frame.
+- two-hand profiles fail validation without `secondary_hand.enabled = true`, a target frame, pole, and tolerances.
+- schema-v2 two-hand profiles additionally require direct semantic `upper_arm_<side> -> lower_arm_<side> -> hand_<side>` bones for the non-dominant side, a `palm_contact` socket on that hand, and `pole.space = "item"`.
+- schema-v1 profiles may not author `pole.space`; their two-hand sampled output remains explicitly pre-IK.
 - unknown schema versions fail closed.
 - first-person and `both` profiles require a recorded `player_camera` in every complete review packet.
 
@@ -312,7 +314,7 @@ Rules:
 
 Native code now exposes generation-tagged, non-string `SkeletonId`, `BoneId`, `SocketId`, and `AttachmentProfileId` handles after validation. Query APIs resolve authored IDs to handles and handles to snapshots. A successful reload advances the generation so stale handles cannot resolve into reordered data; a failed reload retains the last valid generation and snapshots.
 
-The IK and review types in the example below remain target APIs. `SampledClipPoseSnapshot` and `SpatialSampledAttachmentEvaluationSnapshot` are now implemented for deterministic pre-IK queries. `SpatialAttachmentEvaluationSnapshot` carries the shared geometry payload for rest and sampled wrappers; neither wrapper is review evidence.
+The review types in the example below remain target APIs. `SampledClipPoseSnapshot` and `SpatialSampledAttachmentEvaluationSnapshot` are implemented, including deterministic v2 two-bone IK and numeric reach/contact/angular diagnostics. `SpatialAttachmentEvaluationSnapshot` carries the shared geometry payload for rest and sampled wrappers; neither wrapper is review evidence.
 
 ```cpp
 struct SkeletonId { std::uint64_t generation = 0; std::uint64_t index = 0; };
@@ -351,10 +353,11 @@ Flow:
 2. The implemented native validator checks supported schema versions, strict section/key shapes, stable IDs, the bone tree, required capability roles, vectors, quaternion canonicalization, socket and clip references, contact/handle inputs, attachment modes, tolerances, and envelope sample ranges.
 3. The implemented loader assigns generation-tagged query handles and commits a new generation only after the whole load succeeds.
 4. Prefab existence, joint limits, and diagnostic capsules remain deferred because their owning catalogues/data are not integrated into this loader yet.
-5. The implemented explicit cooker serializes complete snapshot-backed skeleton/socket and attachment-profile tables to one deterministic `<output-root>/animation/spatial-authoring.bin` JSON payload, using relative source paths and omitting query handles.
+5. The implemented explicit cooker serializes complete snapshot-backed skeleton/socket and attachment-profile tables to one deterministic `<output-root>/animation/spatial-authoring.bin` JSON payload, using relative source paths and omitting query handles. A pure-v1 profile set retains cooked schema version 1; any v2 profile produces cooked schema version 2 with explicit `poleSpace`.
 6. It writes a sibling temporary file and replaces the final only after validation and a successful close. Generic `engine bake` integration and runtime consumption remain deferred.
-7. The implemented rest evaluator composes parent-first rest bone transforms, sockets, attachment/item frames, hand targets, and joint-segment endpoints. It emits an unresolved raw pole input because the schema does not author pole space and fails closed on non-finite evaluated output.
-8. Cooked files remain derived outputs rather than edit targets.
+7. The implemented rest evaluator composes parent-first rest bone transforms, sockets, attachment/item frames, hand targets, and joint-segment endpoints without running procedural IK. V1 pole input remains unresolved; v2 item-space pole input is resolved and safely exposed to sessiond/the Assets schematic. Evaluation reports use schema version 1 or 2 to match the attachment semantics and fail closed on non-finite output.
+8. The implemented sampled evaluator runs primary attachment and then deterministic two-bone secondary-hand IK for v2 two-hand profiles. It preserves limb lengths and stable skeleton order, aligns the palm socket to the target when reachable, clamps only the physical wrist solve when unreachable, and reports separate reach/contact/angular residuals and tolerances. Missing/misparented chains, zero-length limbs, non-finite math, and degenerate pole planes fail closed.
+9. Cooked files remain derived outputs rather than edit targets.
 
 SQLite may store index rows for search. Deleting the tooling DB must not delete sockets or attachment tuning.
 
@@ -494,9 +497,10 @@ Additional project phases may be added as `[motion_envelope.<name>]` tables. A r
 Diagnostics, numeric and exact when their authored inputs are present:
 
 - primary contact: translation and angular error between the socket frame and item primary-contact frame
-- reach: meters between off-hand effector and secondary target, compared to `tolerances.reach_meters`
+- reach: meters the target lies outside the physical arm interval `[minReachMeters, maxReachMeters]`, compared to `tolerances.reach_meters`
 - joint: degrees past each evaluated hinge/ball limit
-- contact: meters between off-hand palm frame and the target contact frame, compared to `tolerances.contact_meters`
+- contact: post-solve meters between the off-hand palm frame and target contact frame, compared to `tolerances.contact_meters`
+- angle: post-solve angular residual between those frames, compared to `tolerances.angle_degrees`
 - handle line: distance and angular deviation from the authored item-local handle axis
 - clipping: overlap depth in meters between item bounds and torso/head/arm capsules
 
@@ -583,7 +587,7 @@ GET accepts only an existing attachment path and a non-`missing` SHA-256 base re
 
 Preview accepts the same attachment path family. Sessiond stages the authored animation tree into a fresh temporary root, rejects links, validates baseline and candidate through `shader_forge_spatial`, maps stable relative source paths to old/new profile IDs, evaluates the exact staged baseline and candidate bytes under those expected IDs, requires both resource keys on rename, and rechecks the granted write lease after evaluation immediately before operation creation. A new-file preview returns `evaluation.baseline: null`. The immediate response contains the transient evaluations, while the durable operation context stores only label, subject ID, resource keys, and preview lease ID; it never stores credentials or evaluation reports. No authored bytes or cooked output change during preview. Both GET and preview always remove their temporary staging roots.
 
-Evaluator responses must match the public rest-evaluation schema, remain `pose.sampled=false`, and return the attachment ID selected by validation. Wrong IDs or malformed output fail closed. These reports help humans and machines compare exact authored candidates, but they are not sampled-pose or rendered review evidence and cannot satisfy a later review-packet gate.
+Evaluator responses must match the public rest-evaluation schema, remain `pose.sampled=false`, and return the attachment ID and schema version selected by validation. Wrong IDs, cross-version reports, or malformed output fail closed. These reports help humans and machines compare exact authored candidates, but they are not sampled-pose or rendered review evidence and cannot satisfy a later review-packet gate.
 
 Deferred routes:
 
@@ -602,7 +606,7 @@ Implemented sessiond-backed operation commands:
 - `engine spatial approve|reject <operation-id>` performs the review transition
 - `engine spatial apply|undo <operation-id>` requires explicit agent and lease IDs plus `SHADER_FORGE_AGENT_CREDENTIAL`
 
-These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook|evaluate-rest|evaluate-sample` commands remain separate from the sessiond operation adapter. Both evaluators are read-only. Sessiond currently invokes only `evaluate-rest` in isolated transient staging for GET and preview responses; those reports have `pose.sampled=false`. Native/CLI `evaluate-sample` reports `pose.sampled=true`, explicit procedural-layer truth, and `not_review_evidence`; two-hand results carry `pre_ik_only` with secondary IK unavailable, while one-hand results carry `sampled_attachment_schematic_only` with secondary IK not applicable.
+These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook|evaluate-rest|evaluate-sample` commands remain separate from the sessiond operation adapter. Both evaluators are read-only. Sessiond currently invokes only `evaluate-rest` in isolated transient staging for GET and preview responses; those reports have `pose.sampled=false`, never apply IK, and support both v1 unresolved and v2 resolved item-space poles. Native/CLI `evaluate-sample` reports `pose.sampled=true`, explicit procedural-layer truth, and `not_review_evidence`. V2 two-hand results apply `secondary_hand_ik` and report numeric reach/contact/angular truth; v1 two-hand results carry `pre_ik_only` with secondary IK unavailable; one-hand results carry `sampled_attachment_schematic_only` with secondary IK not applicable.
 
 Deferred commands:
 
@@ -616,7 +620,7 @@ Implemented first surface: the `Assets` workspace lists exact source-owned attac
 
 The third pane is a responsive, accessible rest-rig schematic that consumes only sessiond evaluation reports. Authored evidence is bound to active session, attachment path, and exact source revision. Candidate evidence is additionally bound to operation id, base revision, proposed revision, and allowed operation state. Draft numeric edits never move cached authored or candidate geometry: they mark that evidence stale until a new native evaluation returns. A conflicted operation remains visible as stale candidate evidence even when its numeric values happen to equal the current draft.
 
-The schematic validates the complete public evaluation shape and bounded payload before rendering. Malformed nested values, non-finite vectors/quaternions/axes/transforms, unsafe projection bounds, oversized text/arrays, or excessive coordinate rows make the whole schematic unavailable. Front X/Y, Side Z/Y, and Top X/Z projections show evaluator bone segments/origins, sockets, item origin and orientation axes, contact, hands and palms, secondary target, and handle direction. They never invent an item mesh or project an unresolved pole. Exact evaluator coordinates, evaluator diagnostics, path, revision, evidence state, direction-glyph limitations, and explicit `UNSAMPLED` / `NOT REVIEW EVIDENCE` labels remain available outside the SVG through semantic text, live/alert regions, and a keyboard-operable figure. The three desktop panes stack at the responsive breakpoint.
+The schematic validates the complete public evaluation shape and bounded payload before rendering. Malformed nested values, non-finite vectors/quaternions/axes/transforms, unsafe projection bounds, oversized text/arrays, or excessive coordinate rows make the whole schematic unavailable. Front X/Y, Side Z/Y, and Top X/Z projections show evaluator bone segments/origins, sockets, item origin and orientation axes, contact, hands and palms, secondary target, resolved v2 pole, and handle direction. They never invent an item mesh or project an unresolved v1 pole. Exact evaluator coordinates, evaluator diagnostics, path, revision, evidence state, direction-glyph limitations, and explicit `UNSAMPLED` / `NOT REVIEW EVIDENCE` labels remain available outside the SVG through semantic text, live/alert regions, and a keyboard-operable figure. The three desktop panes stack at the responsive breakpoint.
 
 Browsing is read-only and still attempts the lease-free evaluator GET when the constrained TOML editing parser rejects the source layout. Explicit `Begin tuning` registers the fixed shell actor in memory and requests the exact profile write lease. Queued/lost leases disable editing with text explanations. Preview, Approve, and Apply are separate; candidates display `NOT APPLIED`; Reject is available before apply. Apply releases/disconnects. Undo reacquires a fresh covering lease. Source rereads clear the prior authored evaluation before fetching the exact new SHA-256 revision. Preview/apply/undo heartbeat and recheck coordination before mutation. Credentials never enter JSX, storage, logs, or JSON bodies.
 
@@ -698,7 +702,7 @@ The following illustrates the full canonical profile contract. The isolated rifl
 
 ```toml
 schema = "shader_forge.attachment_profile"
-schema_version = 1
+schema_version = 2
 id = "attachment.rifle.two_hand.right_dominant"
 name = "rifle_two_hand_right_dominant"
 owner_system = "animation_system"
@@ -732,6 +736,7 @@ rotation = [0.000, 0.000, 0.000, 1.000]
 
 [secondary_hand.pole]
 translation = [0.000, 0.080, 0.160]
+space = "item"
 
 [secondary_hand.tolerances]
 reach_meters = 0.040
@@ -802,17 +807,17 @@ Gameplay reads the profile through the animation system. It does not keep a para
 
 `npm run test:spatial-operations` starts sessiond with deterministic validator/evaluator injection. It exercises the revision-safe GET and transient preview evaluation contract without requiring a native build.
 
-`npm run test:spatial-shell` executes the pure primary-grip source transformer, schematic validator/projection guards, and operation-reconciliation helpers. It also protects exact evidence binding, the single shared App SSE subscription plus authoritative operation refetch, conflict refresh/resource-coverage decisions, captured-connection-only cleanup, no-lease browsing, operation-only mutation, fail-closed malformed/oversized evaluator handling, unresolved-pole exclusion, accessible evidence labels, and responsive three-pane stacking.
+`npm run test:spatial-shell` executes the pure primary-grip source transformer, v1/v2 schematic validator/projection guards, and operation-reconciliation helpers. It also protects exact evidence binding, the single shared App SSE subscription plus authoritative operation refetch, conflict refresh/resource-coverage decisions, captured-connection-only cleanup, no-lease browsing, operation-only mutation, fail-closed malformed/oversized evaluator handling, unresolved-v1 exclusion, resolved-v2 pole projection, accessible evidence labels, and responsive three-pane stacking.
 
 Current assertions cover:
 
-- unchanged v1 loading alongside strict v2 skeleton/socket and v1 attachment-profile loading
+- unchanged v1 loading alongside strict v2 skeleton/socket and attachment-profile loading
 - dotted IDs, section isolation, tree/cycle/role/socket validation, quaternion validation and sign canonicalization
 - attachment skeleton/socket/clip cross-references, two-hand requirements, ranges, duplicate keys/IDs, deterministic ordering, optional attachment-root behavior, and failed-load state retention
 - generation-safe typed handle invalidation after successful reload
 - exact rest-pose bone, socket, joint-segment, item, contact, handle, palm, and secondary-target invariants for the rifle fixture
 - parent-first translation/rotation composition with non-commuting rotations, `xyzw` quaternion output, canonical non-negative `w`, and deterministic repeated output
-- explicit `pose.sampled=false`, unavailable item geometry/IK/joint-limit/clipping diagnostics, unresolved pole world space, and `not_review_evidence`
+- explicit `pose.sampled=false`, unavailable item geometry/IK/joint-limit/clipping diagnostics, v1 unresolved versus v2 resolved item-space pole truth, and `not_review_evidence`
 - fail-closed behavior when evaluated numeric diagnostics are non-finite
 - GET path, symlink, session, revision, exact staged-byte, expected-ID, and final revision-drift checks before returning an evaluation
 - GET success without a lease, operation, journal entry, authored write, or persisted evaluation
@@ -840,7 +845,7 @@ The fixtures remain outside `animation/skeletons/`, `animation/clips/`, `animati
 
 ## Acceptance Gates
 
-A complete spatial-authoring workflow requires all gates below. The implemented slice satisfies parsing, validation, typed handles, deterministic cooking, native clip pose sampling, rest and sampled attachment evaluation (pre-IK for two-hand profiles), exact transient rest operation evidence, and a non-review Assets schematic; IK, sampled sessiond/shell evidence, rendered capture, and immutable review remain open.
+A complete spatial-authoring workflow requires all gates below. The implemented slice satisfies parsing, validation, typed handles, deterministic v1/v2 cooking, native clip pose sampling, rest evaluation, sampled v2 two-bone IK with explicit v1 fallback, exact transient rest operation evidence, and a non-review Assets schematic with resolved v2 pole projection; sampled sessiond/shell evidence, rendered capture, and immutable review remain open.
 
 1. Skeleton schema version 2 with hierarchy, roles, and sockets validates natively. **Implemented.**
 2. Attachment profiles validate and load to generation-safe typed handles, then cook with skeleton sockets into a deterministic derived payload. **Implemented.** Generic bake and runtime-consumption integration remain deferred.
@@ -852,8 +857,8 @@ A complete spatial-authoring workflow requires all gates below. The implemented 
 8. Diagnostics are numeric and profile-driven.
 9. Unrelated profiles concurrent; overlapping keys queue; capture lease is short and exclusive.
 10. `sf-mcp` attachment mutation tools call those operations and no other write path. **Implemented for preview/review/apply/undo.**
-11. The native schema and production validate/cook/evaluate-rest/evaluate-sample command harnesses pass; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema, validation, deterministic cooker, rest-schematic, and sampled attachment evaluation portions implemented; two-hand output remains pre-IK.**
-12. Current three-bone metadata, proxy-card rendering, and the unsampled Assets schematic are still described honestly wherever they remain. **Implemented for the Assets schematic: no mesh, sampled animation, IK, joint-limit, clipping, camera, capture, or review-evidence claim.**
+11. The native schema and production validate/cook/evaluate-rest/evaluate-sample command harnesses pass; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema, validation, deterministic v1/v2 cooker, rest schematic, v1 pre-IK compatibility, and v2 sampled two-bone IK with reachable/unreachable/degenerate coverage implemented.**
+12. Current three-bone metadata, proxy-card rendering, and the unsampled Assets schematic are still described honestly wherever they remain. **Implemented for the Assets schematic: resolved v2 pole projection is allowed, but no mesh, sampled animation, solved IK pose, joint-limit, clipping, camera, capture, or review-evidence claim.**
 
 Until the remaining workflow gates pass, the implementation is a spatial schema/query/cook/rest-schematic foundation rather than a complete authoring and review workbench.
 
@@ -861,14 +866,14 @@ Until the remaining workflow gates pass, the implementation is a spatial schema/
 
 Dependency order, with no calendar estimates. This work starts after the operation layer, which already exists, and finishes its contract-sensitive slices before broad World/Assets visual polish.
 
-1. **Schema and validator — implemented.** V1 skeleton compatibility, strict v2 skeleton/socket parsing, v1 attachment profiles, role and graph validation, quaternion canonicalization, and supported cross-references. Prefab existence plus joint/capsule parsing remain deferred.
+1. **Schema and validator — implemented.** V1 skeleton/attachment compatibility, strict v2 skeleton/socket and attachment parsing, item-space pole semantics, secondary-arm/palm capability checks, role and graph validation, quaternion canonicalization, and supported cross-references. Prefab existence plus joint/capsule parsing remain deferred.
 2. **Typed loader handles — implemented.** Generation-tagged skeleton, bone, socket, and attachment handles plus snapshot/query APIs, with transactional reload behavior. Schema-v2 clip tracks now produce deterministic sampled pose snapshots by clip name and normalized time.
 3. **Read-only native validation command — implemented.** One `shader_forge_spatial` executable reuses `AnimationSystem`, emits deterministic JSON, and is exposed by CLI build and validate commands without auto-build or daemon state.
 4. **Deterministic cooker — implemented as an explicit spatial command.** `shader_forge_spatial cook` validates through `AnimationSystem` and atomically stages one complete socket/profile payload under `build/cooked/animation/`. Generic `engine bake` integration and runtime consumption remain deferred.
-5. **Rest-pose schematic evaluation — implemented.** `shader_forge_spatial evaluate-rest` composes deterministic rest bone/socket, item, hand, and joint-segment frames. A revision-safe sessiond GET now evaluates exact current authored bytes, and preview returns transient exact baseline/candidate evaluations. All are explicitly unsampled, have no mesh/IK/joint/clipping evidence, and are not review packets.
+5. **Rest-pose schematic evaluation — implemented.** `shader_forge_spatial evaluate-rest` composes deterministic rest bone/socket, item, hand, joint-segment, target, and pole frames. A revision-safe sessiond GET evaluates exact current authored bytes, preview returns transient exact baseline/candidate evaluations, and the shell projects resolved v2 poles. All are explicitly unsampled, do not apply IK, have no mesh/joint/clipping evidence, and are not review packets.
 6. **Spatial operations — attachment mutation implemented.** Preview/apply/undo over `engine_sessiond` for attachment TOML only, with separate review transitions, labelled candidates, expected-ID binding, and a lease recheck after evaluator work. Operation-scoped validate/recapture/review packets remain deferred. No fake captures.
 7. **Humanoid fixture — implemented for validation, rest evaluation, and clip sampling.** Isolated humanoid, rifle, pistol, and schema-v2 clip fixtures plus the executable native harness now prove schema validation, interpolation, rest fallback, and transform composition without entering authored or cooked roots.
-8. **Sampling and procedural layers — pre-IK evaluation implemented.** Native schema-v2 pose sampling now feeds primary attachment composition at exact authored envelope phase/time. Requested/applied/unavailable layers are explicit. Secondary-hand IK and diagnostics remain the animation-runtime widening spatial authoring depends on.
+8. **Sampling and procedural layers — sampled IK implemented.** Native schema-v2 pose sampling feeds primary attachment and deterministic secondary-hand two-bone IK at exact authored envelope phase/time. Requested/applied/unavailable layers are explicit, v1 remains pre-IK, and v2 reports reachable/unreachable plus separate reach/contact/angular tolerance truth. Sampled sessiond/shell evidence remains the next widening step.
 9. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.
 10. **Constrained tuner and rest-rig schematic — first shell slice implemented.** The three-pane Assets workbench edits exact primary-grip translation/rotation fields through the operation workflow and presents exact native rest evaluation in Front X/Y, Side Z/Y, and Top X/Z projections. Evidence remains fixed to its path/revision/operation identity when drafts move; malformed reports fail closed; browsing remains lease-free; the shared App SSE lane reconciles active operation state authoritatively. Sampled attachment consumption, native overlay, item-mesh rendering, cameras, capture, and review evidence remain deferred.
 11. **`sf-mcp` adapter — attachment mutation implemented.** Process-owned identity and credentials plus explicit leases adapt preview/review/apply/undo. Typed spatial resources and validation/recapture/review tools remain deferred until their engine operations exist.

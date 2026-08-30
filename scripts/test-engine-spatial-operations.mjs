@@ -29,6 +29,10 @@ function profileId(content) {
   return /^id\s*=\s*"([^"]+)"/m.exec(content)?.[1] || '';
 }
 
+function profileSchemaVersion(content) {
+  return Number.parseInt(/^schema_version\s*=\s*(\d+)/m.exec(content)?.[1] || '', 10);
+}
+
 function identityTransform() {
   return {
     translation: [0, 0, 0],
@@ -113,6 +117,25 @@ function restEvaluation(attachmentId) {
   };
 }
 
+function restEvaluationV2(attachmentId) {
+  const evaluation = restEvaluation(attachmentId);
+  evaluation.schemaVersion = 2;
+  evaluation.attachment.mode = 'two_hand';
+  evaluation.hands.secondary = {
+    enabled: true,
+    boneId: 'hand_l',
+    role: 'hand_l',
+    world: identityTransform(),
+    palmWorld: identityTransform(),
+    targetWorld: identityTransform(),
+    pole: { translation: [0, 0.2, 0.1], space: 'item', world: [0.5, 0.2, 0.1], reason: null },
+    preSolveDistanceMeters: 0.5,
+  };
+  evaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'rest_pose_unsolved' };
+  evaluation.limitations.push('secondary_hand_ik_unavailable');
+  return evaluation;
+}
+
 function mutateRestEvaluation(attachmentId, mutate) {
   const evaluation = restEvaluation(attachmentId);
   mutate(evaluation);
@@ -158,7 +181,7 @@ async function validateAnimationRoot(animationRoot) {
     }
     const id = profileId(content);
     if (!id) throw new Error('Attachment id is required.');
-    profiles.push({ id, source: `attachments/${name}`, schemaVersion: 1 });
+    profiles.push({ id, source: `attachments/${name}`, schemaVersion: profileSchemaVersion(content) });
   }
   return {
     schema: 'shader_forge.spatial_validation',
@@ -387,6 +410,31 @@ try {
   await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
 
   const normalEvaluate = evaluateImpl;
+  evaluateImpl = async (_animationRoot, attachmentId) => restEvaluationV2(attachmentId);
+  const v1SourceV2Report = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+  assert.equal(v1SourceV2Report.status, 500);
+  assert.equal(v1SourceV2Report.payload.code, 'spatial_evaluator_protocol_error');
+
+  const v2Content = originalContent.replace('schema_version = 1', 'schema_version = 2');
+  const v2Query = { ...evaluateQuery, baseRevision: textContentRevision(v2Content) };
+  await fs.writeFile(path.join(projectRoot, attachmentPath), v2Content, 'utf8');
+  const v2Evaluate = await request(service.baseUrl, attachmentEvaluatePath(v2Query));
+  assert.equal(v2Evaluate.status, 200);
+  assert.equal(v2Evaluate.payload.evaluation.schemaVersion, 2);
+  assert.deepEqual(v2Evaluate.payload.evaluation.hands.secondary.pole, {
+    translation: [0, 0.2, 0.1], space: 'item', world: [0.5, 0.2, 0.1], reason: null,
+  });
+  assert.deepEqual(v2Evaluate.payload.evaluation.diagnostics.secondaryIk, {
+    status: 'unavailable', reason: 'rest_pose_unsolved',
+  });
+
+  evaluateImpl = async (_animationRoot, attachmentId) => restEvaluation(attachmentId);
+  const v2SourceV1Report = await request(service.baseUrl, attachmentEvaluatePath(v2Query));
+  assert.equal(v2SourceV1Report.status, 500);
+  assert.equal(v2SourceV1Report.payload.code, 'spatial_evaluator_protocol_error');
+  await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
+  evaluateImpl = normalEvaluate;
+
   evaluateImpl = async () => restEvaluation('weapon.wrong');
   const wrongIdEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
   assert.equal(wrongIdEvaluate.status, 500);
@@ -429,6 +477,22 @@ try {
     ['wrong diagnostic contract', (id) => mutateRestEvaluation(id, (evaluation) => {
       evaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'unknown' };
     })],
+    ['schema-v2 pole without world point', (id) => {
+      const evaluation = restEvaluationV2(id);
+      evaluation.hands.secondary.pole.world = null;
+      return evaluation;
+    }],
+    ['schema-v2 pole with unresolved reason', (id) => {
+      const evaluation = restEvaluationV2(id);
+      evaluation.hands.secondary.pole.reason = 'pole_space_not_authored';
+      return evaluation;
+    }],
+    ['schema-v1 report with resolved item pole', (id) => {
+      const evaluation = restEvaluationV2(id);
+      evaluation.schemaVersion = 1;
+      evaluation.diagnostics.secondaryIk.reason = 'secondary_hand_ik_not_implemented';
+      return evaluation;
+    }],
     ['oversized report', (id) => mutateRestEvaluation(id, (evaluation) => {
       evaluation.attachment.name = 'n'.repeat(8 * 1024 * 1024);
     })],
@@ -679,6 +743,44 @@ try {
   assert.equal(JSON.stringify(journal).includes('shader_forge.spatial_attachment_evaluation'), false);
   assert.equal('evaluation' in journal.operations[0], false);
   assert.equal('evaluation' in journal.operations[0].context, false);
+
+  const v2CandidateContent = candidateContent.replace('schema_version = 1', 'schema_version = 2');
+  evaluateImpl = async (animationRoot, attachmentId) => (
+    attachmentId === 'weapon.rifle.new'
+      ? restEvaluationV2(attachmentId)
+      : normalEvaluate(animationRoot, attachmentId)
+  );
+  const mixedVersionPreview = await request(
+    service.baseUrl,
+    '/api/operations/spatial-attachment/preview',
+    {
+      method: 'POST', credential,
+      body: {
+        ...previewBody,
+        content: v2CandidateContent,
+        leaseId: bothKeys.payload.lease.id,
+      },
+    },
+  );
+  assert.equal(mixedVersionPreview.status, 201);
+  assert.equal(mixedVersionPreview.payload.evaluation.baseline.schemaVersion, 1);
+  assert.equal(mixedVersionPreview.payload.evaluation.candidate.schemaVersion, 2);
+
+  evaluateImpl = normalEvaluate;
+  const mismatchedV2CandidatePreview = await request(
+    service.baseUrl,
+    '/api/operations/spatial-attachment/preview',
+    {
+      method: 'POST', credential,
+      body: {
+        ...previewBody,
+        content: v2CandidateContent,
+        leaseId: bothKeys.payload.lease.id,
+      },
+    },
+  );
+  assert.equal(mismatchedV2CandidatePreview.status, 500);
+  assert.equal(mismatchedV2CandidatePreview.payload.code, 'spatial_evaluator_protocol_error');
 
   const pistolPath = 'animation/attachments/pistol.attachment.toml';
   const pistolContent = 'schema_version = 1\nid = "weapon.pistol"\n';

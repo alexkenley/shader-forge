@@ -173,6 +173,24 @@ assert.equal(
 assert.equal(schematic.spatialProjectionBounds([], 'xy'), null);
 assert.equal(schematic.isSpatialAttachmentEvaluation(validRestEvaluation), true);
 assert.equal(schematic.isSpatialAttachmentEvaluation(populatedRestEvaluation), true);
+const resolvedPoleEvaluation = structuredClone(populatedRestEvaluation);
+resolvedPoleEvaluation.schemaVersion = 2;
+resolvedPoleEvaluation.attachment.mode = 'two_hand';
+resolvedPoleEvaluation.hands.secondary.pole = {
+  translation: [0, 1, 0], space: 'item', world: [0.25, 0.5, 0.75], reason: null,
+};
+resolvedPoleEvaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'rest_pose_unsolved' };
+resolvedPoleEvaluation.limitations.push('secondary_hand_ik_unavailable');
+assert.equal(schematic.isSpatialAttachmentEvaluation(resolvedPoleEvaluation), true);
+for (const mutate of [
+  (report) => { report.hands.secondary.pole.world = null; },
+  (report) => { report.hands.secondary.pole.reason = 'not actually resolved'; },
+  (report) => { report.hands.secondary.pole.space = 'unresolved'; },
+]) {
+  const malformed = structuredClone(resolvedPoleEvaluation);
+  mutate(malformed);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, 'malformed schema-v2 pole must fail closed');
+}
 const wrongCoordinate = structuredClone(validRestEvaluation);
 wrongCoordinate.coordinateSystem.forward = '-Z';
 assert.equal(schematic.isSpatialAttachmentEvaluation(wrongCoordinate), false);
@@ -322,6 +340,7 @@ assert.match(schematicSource, /UNSAMPLED/);
 assert.match(schematicSource, /NOT REVIEW EVIDENCE/);
 assert.match(schematicSource, /handleAxisWorld/);
 assert.match(schematicSource, /palmWorld/);
+assert.match(schematicSource, /a resolved authored pole is shown as a green ring/);
 assert.match(schematicSource, /An unresolved pole is never projected/);
 assert.match(schematicSource, /Exact evaluator coordinates/);
 assert.match(schematicSource, /Evaluator diagnostics/);
@@ -329,9 +348,9 @@ assert.match(schematicSource, /isSpatialAttachmentEvaluation\(evaluation\)/);
 assert.match(schematicSource, /safeEvaluation \? `\$\{evidenceLabel\} loaded\.` : 'Rest evaluation unavailable\.'/);
 assert.match(schematicSource, /<figure/);
 assert.match(schematicSource, /role="img"/);
-assert.match(schematicSource, /pole\.translation/, 'the fail-closed validator must inspect unresolved pole coordinates');
-assert.doesNotMatch(evaluationPointsSource, /\.pole|pole\./, 'unresolved poles must not influence projection bounds');
-assert.doesNotMatch(drawingSource, /\.pole|pole\./, 'unresolved poles must not be drawn');
+assert.match(schematicSource, /function validPole/, 'the fail-closed validator must inspect versioned pole coordinates');
+assert.match(evaluationPointsSource, /secondary\.pole/, 'resolved poles must influence projection bounds');
+assert.match(drawingSource, /secondaryPole/, 'resolved poles must be drawn');
 assert.match(viewSource, /transitionOperation/);
 assert.doesNotMatch(viewSource, /\bwriteFile\b/);
 assert.match(clientSource, /X-Shader-Forge-Agent-Credential/);

@@ -1,5 +1,5 @@
 schema = "shader_forge.attachment_profile"
-schema_version = 1
+schema_version = 2
 id = "weapon.rifle.mk1.humanoid"
 name = "Rifle Mk1 Humanoid"
 owner_system = "animation_system"
@@ -33,6 +33,7 @@ rotation = [0.0, 0.0, 0.0, 1.0]
 
 [secondary_hand.pole]
 translation = [0.0, -0.2, 0.25]
+space = "item"
 
 [secondary_hand.tolerances]
 reach_meters = 0.04

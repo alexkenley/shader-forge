@@ -209,7 +209,7 @@ try {
         'attachments/rifle_mk1_humanoid.attachment.toml',
       ],
     );
-    assert.equal(report.attachmentProfiles[1].schemaVersion, 1);
+    assert.equal(report.attachmentProfiles[1].schemaVersion, 2);
     assert.equal(report.attachmentProfiles[1].skeleton, 'humanoid.standard.v2');
     assert.equal(report.attachmentProfiles[1].itemPrefab, 'weapon.rifle.mk1');
     assert.equal(report.attachmentProfiles[1].mode, 'two_hand');
@@ -235,7 +235,7 @@ try {
 
     const cooked = JSON.parse(firstCookBytes.toString('utf8'));
     assert.equal(cooked.schema, 'shader_forge.spatial_authoring_cooked');
-    assert.equal(cooked.schemaVersion, 1);
+    assert.equal(cooked.schemaVersion, 2);
     assert.deepEqual(cooked.skeletons.map((entry) => entry.id), ['debug_humanoid', 'humanoid.standard.v2']);
     assert.equal(cooked.skeletons[0].source, 'skeletons/debug_humanoid.skeleton.toml');
     assert.deepEqual(cooked.skeletons[0].boneIds, ['hips', 'spine', 'head']);
@@ -261,6 +261,7 @@ try {
     assert.deepEqual(rifle.handleAxis.direction, [0, 0, 1]);
     assert.equal(rifle.secondaryHand.enabled, true);
     assert.deepEqual(rifle.secondaryHand.targetTranslation, [0, 0, 0.42]);
+    assert.equal(rifle.secondaryHand.poleSpace, 'item');
     assert.equal(rifle.secondaryHand.jointLimitPolicy, 'clamp_and_diagnose');
     assert.deepEqual(rifle.motionEnvelopes.map((entry) => entry.phase), ['aim', 'idle']);
     assert.deepEqual(rifle.motionEnvelopes[0].normalizedTimes, [0, 0.5, 1]);
@@ -288,6 +289,7 @@ try {
     assert.equal(secondRest.stdout, firstRest.stdout, 'rest evaluation must be byte-stable');
     const rest = JSON.parse(firstRest.stdout);
     assert.equal(rest.schema, 'shader_forge.spatial_attachment_evaluation');
+    assert.equal(rest.schemaVersion, 2);
     assert.deepEqual(rest.pose, { kind: 'rest', sampled: false });
     assert.deepEqual(rest.coordinateSystem, {
       units: 'meters', handedness: 'right', up: '+Y', forward: '+Z', quaternionOrder: 'xyzw',
@@ -302,13 +304,12 @@ try {
     assertVectorClose(rest.hands.secondary.targetWorld.translation, [-0.78, 1.455, 0.52], 'secondary target world');
     assertVectorClose(rest.hands.secondary.palmWorld.translation, [0.78, 1.47, 0.04], 'secondary palm world');
     assert.ok(Math.abs(rest.hands.secondary.preSolveDistanceMeters - 1.6322453859637651) <= 1e-12);
-    assert.deepEqual(rest.hands.secondary.pole, {
-      translation: [0, -0.2, 0.25],
-      space: 'unresolved',
-      world: null,
-      reason: 'pole_space_not_authored',
-    });
+    assertVectorClose(rest.hands.secondary.pole.translation, [0, -0.2, 0.25], 'authored pole');
+    assert.equal(rest.hands.secondary.pole.space, 'item');
+    assertVectorClose(rest.hands.secondary.pole.world, [-0.78, 1.255, 0.35], 'resolved item-space pole');
+    assert.equal(rest.hands.secondary.pole.reason, null);
     assert.equal(rest.diagnostics.secondaryIk.status, 'unavailable');
+    assert.equal(rest.diagnostics.secondaryIk.reason, 'rest_pose_unsolved');
     assert.ok(rest.limitations.includes('not_review_evidence'));
     const handSegment = rest.segments.find((segment) => segment.boneId === 'hand_r');
     assertVectorClose(handSegment.from, [-0.54, 1.47, 0], 'hand segment start');
@@ -333,7 +334,7 @@ try {
     assert.equal(secondSample.stdout, firstSample.stdout, 'sampled evaluation must be byte-stable');
     const sampled = JSON.parse(firstSample.stdout);
     assert.equal(sampled.schema, 'shader_forge.spatial_attachment_evaluation');
-    assert.equal(sampled.schemaVersion, 1);
+    assert.equal(sampled.schemaVersion, 2);
     assert.deepEqual(sampled.pose, {
       kind: 'clip_sample',
       sampled: true,
@@ -341,8 +342,8 @@ try {
       clip: 'rifle_ready',
       normalizedTime: 0.5,
       proceduralLayersRequested: ['primary_attachment', 'secondary_hand_ik'],
-      proceduralLayersApplied: ['primary_attachment'],
-      proceduralLayersUnavailable: ['secondary_hand_ik'],
+      proceduralLayersApplied: ['primary_attachment', 'secondary_hand_ik'],
+      proceduralLayersUnavailable: [],
     });
     assert.deepEqual(sampled.coordinateSystem, rest.coordinateSystem);
     assert.deepEqual(sampled.attachment, rest.attachment);
@@ -353,13 +354,30 @@ try {
       findById(rest.sockets, 'socket.hand_r.primary').world.translation,
       'sampled primary socket must move at idle 0.5',
     );
-    assert.equal(sampled.diagnostics.secondaryIk.status, 'unavailable');
-    assert.equal(sampled.diagnostics.secondaryIk.reason, 'secondary_hand_ik_not_implemented');
+    assert.equal(sampled.diagnostics.secondaryIk.status, 'applied');
+    assert.equal(sampled.diagnostics.secondaryIk.solved, true);
+    assert.equal(sampled.diagnostics.secondaryIk.reachable, false);
+    assert.equal('reason' in sampled.diagnostics.secondaryIk, false);
+    assert.ok(Math.abs(
+      sampled.diagnostics.secondaryIk.targetDistanceMeters
+      - sampled.diagnostics.secondaryIk.maxReachMeters
+      - sampled.diagnostics.secondaryIk.reachResidualMeters
+    ) <= 1e-12);
+    assert.ok(Math.abs(sampled.diagnostics.secondaryIk.minReachMeters - 0.04) <= 1e-12);
+    assert.ok(Math.abs(sampled.diagnostics.secondaryIk.maxReachMeters - 0.52) <= 1e-12);
+    assert.equal(sampled.diagnostics.secondaryIk.reachToleranceMeters, 0.04);
+    assert.equal(sampled.diagnostics.secondaryIk.reachWithinTolerance, false);
+    assert.equal(sampled.diagnostics.secondaryIk.contactToleranceMeters, 0.015);
+    assert.equal(sampled.diagnostics.secondaryIk.contactWithinTolerance, false);
+    assert.ok(sampled.diagnostics.secondaryIk.postSolveDistanceMeters > 0.015);
+    assert.equal(sampled.diagnostics.secondaryIk.postSolveAngleDegrees, 0);
+    assert.equal(sampled.diagnostics.secondaryIk.angleToleranceDegrees, 8);
+    assert.equal(sampled.diagnostics.secondaryIk.angleWithinTolerance, true);
+    assert.equal(sampled.diagnostics.secondaryIk.withinTolerance, false);
     assert.deepEqual(sampled.limitations, [
-      'pre_ik_only',
+      'sampled_attachment_schematic_only',
       'not_review_evidence',
       'item_mesh_unavailable',
-      'secondary_hand_ik_unavailable',
     ]);
     assert.equal(JSON.stringify(sampled).includes('review packet'), false);
     assert.equal(JSON.stringify(sampled).includes('capture'), false);
@@ -371,6 +389,138 @@ try {
       'item_mesh_unavailable',
       'secondary_hand_ik_unavailable',
     ]);
+
+    const reachableRoot = path.join(tempRoot, 'reachable IK animation');
+    fs.cpSync(fixtureRoot, reachableRoot, { recursive: true });
+    const reachableAttachmentPath = path.join(
+      reachableRoot, 'attachments', 'rifle_mk1_humanoid.attachment.toml',
+    );
+    fs.writeFileSync(
+      reachableAttachmentPath,
+      fs.readFileSync(reachableAttachmentPath, 'utf8')
+        .replace('translation = [0.0, 0.0, 0.42]', 'translation = [1.0, 0.0, 0.15]')
+        .replace('translation = [0.0, -0.2, 0.25]', 'translation = [0.8, -0.2, 0.15]'),
+    );
+    const reachableResult = sample(
+      '--animation-root', reachableRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--phase', 'idle', '--normalized-time', '0.5',
+    );
+    const reachable = JSON.parse(reachableResult.stdout);
+    const reachableIk = reachable.diagnostics.secondaryIk;
+    assert.equal(reachableIk.status, 'applied');
+    assert.equal(reachableIk.solved, true);
+    assert.equal(reachableIk.reachable, true);
+    assert.ok(reachableIk.preSolveDistanceMeters > reachableIk.postSolveDistanceMeters);
+    assert.ok(reachableIk.reachResidualMeters <= 1e-12);
+    assert.equal(reachableIk.reachWithinTolerance, true);
+    assert.ok(reachableIk.postSolveDistanceMeters <= 1e-12);
+    assert.equal(reachableIk.contactWithinTolerance, true);
+    assert.ok(reachableIk.postSolveAngleDegrees <= 1e-10);
+    assert.equal(reachableIk.angleWithinTolerance, true);
+    assert.equal(reachableIk.withinTolerance, true);
+    assert.deepEqual(reachable.pose.proceduralLayersApplied, ['primary_attachment', 'secondary_hand_ik']);
+    assert.deepEqual(reachable.pose.proceduralLayersUnavailable, []);
+    assert.equal(reachable.limitations.includes('pre_ik_only'), false);
+    assert.equal(reachable.limitations.includes('secondary_hand_ik_unavailable'), false);
+    assertVectorClose(
+      reachable.hands.secondary.palmWorld.translation,
+      reachable.hands.secondary.targetWorld.translation,
+      'reachable palm contact',
+    );
+    assertVectorClose(
+      reachable.hands.secondary.palmWorld.rotation,
+      reachable.hands.secondary.targetWorld.rotation,
+      'reachable palm orientation',
+    );
+    const reachableUpper = findById(reachable.bones, 'upper_arm_l');
+    const reachableLower = findById(reachable.bones, 'lower_arm_l');
+    const reachableHand = findById(reachable.bones, 'hand_l');
+    const distance = (left, right) => Math.hypot(
+      right[0] - left[0], right[1] - left[1], right[2] - left[2],
+    );
+    assert.ok(Math.abs(distance(reachableUpper.world.translation, reachableLower.world.translation) - 0.28) <= 1e-12);
+    assert.ok(Math.abs(distance(reachableLower.world.translation, reachableHand.world.translation) - 0.24) <= 1e-12);
+    const subtract = (left, right) => left.map((value, index) => value - right[index]);
+    const dot = (left, right) => left.reduce((sum, value, index) => sum + value * right[index], 0);
+    const scale = (value, amount) => value.map((entry) => entry * amount);
+    const shoulderToHand = subtract(reachableHand.world.translation, reachableUpper.world.translation);
+    const axisLength = Math.hypot(...shoulderToHand);
+    const axis = scale(shoulderToHand, 1 / axisLength);
+    const poleFromShoulder = subtract(reachable.hands.secondary.pole.world, reachableUpper.world.translation);
+    const elbowFromShoulder = subtract(reachableLower.world.translation, reachableUpper.world.translation);
+    const poleOffAxis = subtract(poleFromShoulder, scale(axis, dot(poleFromShoulder, axis)));
+    const elbowOffAxis = subtract(elbowFromShoulder, scale(axis, dot(elbowFromShoulder, axis)));
+    assert.ok(dot(poleOffAxis, elbowOffAxis) > 0, 'elbow must bend toward the authored item-space pole');
+
+    const v1Root = path.join(tempRoot, 'schema v1 compatibility animation');
+    fs.cpSync(fixtureRoot, v1Root, { recursive: true });
+    const v1AttachmentPath = path.join(v1Root, 'attachments', 'rifle_mk1_humanoid.attachment.toml');
+    fs.writeFileSync(
+      v1AttachmentPath,
+      fs.readFileSync(v1AttachmentPath, 'utf8')
+        .replace('schema_version = 2', 'schema_version = 1')
+        .replace(/\r?\nspace = "item"/, ''),
+    );
+    const v1Sample = JSON.parse(sample(
+      '--animation-root', v1Root, '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--phase', 'idle', '--normalized-time', '0.5',
+    ).stdout);
+    assert.equal(v1Sample.schemaVersion, 1);
+    assert.deepEqual(v1Sample.pose.proceduralLayersApplied, ['primary_attachment']);
+    assert.deepEqual(v1Sample.pose.proceduralLayersUnavailable, ['secondary_hand_ik']);
+    assert.deepEqual(v1Sample.hands.secondary.pole, {
+      translation: [0, -0.2, 0.25],
+      space: 'unresolved',
+      world: null,
+      reason: 'pole_space_not_authored',
+    });
+    assert.deepEqual(v1Sample.diagnostics.secondaryIk, {
+      status: 'unavailable', reason: 'secondary_hand_ik_not_implemented',
+    });
+    assert.deepEqual(v1Sample.limitations, [
+      'pre_ik_only', 'not_review_evidence', 'item_mesh_unavailable',
+      'secondary_hand_ik_unavailable',
+    ]);
+    const v1CookRoot = path.join(tempRoot, 'schema v1 cooked output');
+    const v1Cook = invoke(['cook', '--animation-root', v1Root, '--output-root', v1CookRoot]);
+    assert.equal(v1Cook.status, 0, v1Cook.stderr || v1Cook.stdout);
+    const v1Cooked = JSON.parse(fs.readFileSync(path.join(v1CookRoot, 'animation', 'spatial-authoring.bin')));
+    assert.equal(v1Cooked.schemaVersion, 1);
+    assert.equal('poleSpace' in v1Cooked.attachmentProfiles[1].secondaryHand, false);
+
+    const collinearRoot = path.join(tempRoot, 'collinear pole animation');
+    fs.cpSync(reachableRoot, collinearRoot, { recursive: true });
+    const collinearAttachmentPath = path.join(
+      collinearRoot, 'attachments', 'rifle_mk1_humanoid.attachment.toml',
+    );
+    fs.writeFileSync(
+      collinearAttachmentPath,
+      fs.readFileSync(collinearAttachmentPath, 'utf8')
+        .replace('translation = [0.8, -0.2, 0.15]', 'translation = [1.0, 0.0, 0.11]'),
+    );
+    const collinear = invoke([
+      'evaluate-sample', '--animation-root', collinearRoot,
+      '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5',
+    ]);
+    assert.notEqual(collinear.status, 0);
+    assert.equal(collinear.stdout, '');
+    assert.match(collinear.stderr, /pole is collinear with the shoulder-target line/);
+
+    const zeroLengthRoot = path.join(tempRoot, 'zero length IK animation');
+    fs.cpSync(reachableRoot, zeroLengthRoot, { recursive: true });
+    const zeroLengthSkeletonPath = path.join(zeroLengthRoot, 'skeletons', 'spatial_humanoid.skeleton.toml');
+    fs.writeFileSync(
+      zeroLengthSkeletonPath,
+      fs.readFileSync(zeroLengthSkeletonPath, 'utf8')
+        .replace('translation = [0.28, 0.0, 0.0]', 'translation = [0.0, 0.0, 0.0]'),
+    );
+    const zeroLength = invoke([
+      'evaluate-sample', '--animation-root', zeroLengthRoot,
+      '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5',
+    ]);
+    assert.notEqual(zeroLength.status, 0);
+    assert.equal(zeroLength.stdout, '');
+    assert.match(zeroLength.stderr, /segment length is zero or non-finite/);
 
     const oneHandRoot = path.join(tempRoot, 'one hand animation');
     fs.cpSync(fixtureRoot, oneHandRoot, { recursive: true });
@@ -572,7 +722,7 @@ console.log('Engine spatial validation tool passed.');
 console.log('- Verified deterministic validation JSON and precise invalid-input diagnostics');
 console.log('- Verified byte-stable complete cooking and invalid-input output preservation');
 console.log('- Verified rest-pose geometry, fixture invariants, and parent-rotated composition');
-console.log('- Verified sampled attachment JSON, pre-IK labels, and unchanged evaluate-rest shape');
+console.log('- Verified v1 pre-IK compatibility and v2 sampled two-bone IK truth');
 console.log('- Verified CLI strict flags, help, and build-first behavior');
 assert.equal(nativeChecked, true, 'native spatial execution is required');
 console.log('- Compiled and ran shader_forge_spatial against isolated fixtures');

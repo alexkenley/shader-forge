@@ -38,6 +38,7 @@ const LEGEND = [
   ['Hand frame', '#38bdf8'],
   ['Palm frame', '#2dd4bf'],
   ['Secondary target', '#c084fc'],
+  ['Secondary pole', '#34d399'],
   ['Handle direction', '#fb923c'],
 ] as const;
 
@@ -138,6 +139,20 @@ function validDiagnostic(value: unknown, budget: ValidationBudget, statuses: rea
     && boundedString(value.reason, budget);
 }
 
+function validPole(value: unknown, schemaVersion: unknown, budget: ValidationBudget) {
+  if (!exactRecord(value, ['translation', 'space', 'world', 'reason'])
+      || !isSpatialEvaluationVec3(value.translation)) return false;
+  if (schemaVersion === 1) {
+    return value.space === 'unresolved'
+      && value.world === null
+      && boundedString(value.reason, budget);
+  }
+  return schemaVersion === 2
+    && value.space === 'item'
+    && isSpatialEvaluationVec3(value.world)
+    && value.reason === null;
+}
+
 function transformTranslation(value: unknown): SpatialEvaluationVec3 | null {
   return isRecord(value) && isSpatialEvaluationVec3(value.translation) ? value.translation : null;
 }
@@ -158,7 +173,7 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
   ])) return false;
   if (
     value.schema !== 'shader_forge.spatial_attachment_evaluation'
-    || value.schemaVersion !== 1
+    || (value.schemaVersion !== 1 && value.schemaVersion !== 2)
     || !exactRecord(value.pose, ['kind', 'sampled'])
     || value.pose.kind !== 'rest'
     || value.pose.sampled !== false
@@ -244,13 +259,8 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     && validTransform(value.hands.secondary.world)
     && (value.hands.secondary.palmWorld === null || validTransform(value.hands.secondary.palmWorld))
     && (value.hands.secondary.targetWorld === null || validTransform(value.hands.secondary.targetWorld))
-    && (value.hands.secondary.pole === null || (
-      exactRecord(value.hands.secondary.pole, ['translation', 'space', 'world', 'reason'])
-      && isSpatialEvaluationVec3(value.hands.secondary.pole.translation)
-      && value.hands.secondary.pole.space === 'unresolved'
-      && value.hands.secondary.pole.world === null
-      && boundedString(value.hands.secondary.pole.reason, budget)
-    ))
+    && (value.hands.secondary.pole === null
+      || validPole(value.hands.secondary.pole, value.schemaVersion, budget))
     && (value.hands.secondary.preSolveDistanceMeters === null || (
       typeof value.hands.secondary.preSolveDistanceMeters === 'number'
       && Number.isFinite(value.hands.secondary.preSolveDistanceMeters)
@@ -274,7 +284,11 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     + (value.item.handleAxisWorld ? 2 : 0)
     + (value.hands.dominant ? 1 + (value.hands.dominant.palmWorld ? 1 : 0) : 0)
     + (value.hands.secondary
-      ? 1 + (value.hands.secondary.palmWorld ? 1 : 0) + (value.hands.secondary.targetWorld ? 1 : 0)
+      ? 1
+        + (value.hands.secondary.palmWorld ? 1 : 0)
+        + (value.hands.secondary.targetWorld ? 1 : 0)
+        + (isRecord(value.hands.secondary.pole)
+          && isSpatialEvaluationVec3(value.hands.secondary.pole.world) ? 1 : 0)
       : 0);
   if (coordinateRowCount > SPATIAL_EVALUATION_LIMITS.maxCoordinateRows) return false;
   const points = evaluationPoints(value as SpatialAttachmentEvaluation);
@@ -372,6 +386,7 @@ function evaluationPoints(evaluation: SpatialAttachmentEvaluation) {
     add(transformTranslation(evaluation.hands.secondary.world));
     add(transformTranslation(evaluation.hands.secondary.palmWorld));
     add(transformTranslation(evaluation.hands.secondary.targetWorld));
+    if (isRecord(evaluation.hands.secondary.pole)) add(evaluation.hands.secondary.pole.world);
   }
   return points;
 }
@@ -386,7 +401,7 @@ function CoordinateMarker({
   point: SpatialEvaluationVec3;
   projection: SpatialRestSchematicProjection;
   bounds: ProjectionBounds;
-  kind: 'point' | 'socket' | 'contact' | 'target' | 'palm' | 'item';
+  kind: 'point' | 'socket' | 'contact' | 'target' | 'pole' | 'palm' | 'item';
   color: string;
 }) {
   const mapped = projectSpatialPoint(point, projection, bounds);
@@ -405,6 +420,9 @@ function CoordinateMarker({
   }
   if (kind === 'target') {
     return <circle cx={mapped.x} cy={mapped.y} fill="none" r="2.2" stroke={color} strokeWidth="0.8" />;
+  }
+  if (kind === 'pole') {
+    return <circle cx={mapped.x} cy={mapped.y} fill="none" r="1.8" stroke={color} strokeDasharray="1 0.8" strokeWidth="0.8" />;
   }
   return <circle cx={mapped.x} cy={mapped.y} fill={color} r={kind === 'item' ? 1.7 : kind === 'palm' ? 1.35 : 1.05} />;
 }
@@ -466,6 +484,9 @@ function Drawing({
   const contact = transformTranslation(evaluation.item.primaryContactWorld);
   const dominant = isRecord(evaluation.hands.dominant) ? evaluation.hands.dominant : null;
   const secondary = isRecord(evaluation.hands.secondary) ? evaluation.hands.secondary : null;
+  const secondaryPole = secondary && isRecord(secondary.pole) && isSpatialEvaluationVec3(secondary.pole.world)
+    ? secondary.pole.world
+    : null;
   const handle = isRecord(evaluation.item.handleAxisWorld)
     && isSpatialEvaluationVec3(evaluation.item.handleAxisWorld.origin)
     && isSpatialEvaluationVec3(evaluation.item.handleAxisWorld.direction)
@@ -515,6 +536,9 @@ function Drawing({
       {secondary ? <HandMarkers bounds={bounds} hand={secondary} projection={projection} secondary /> : null}
       {secondary ? (
         <OptionalMarker bounds={bounds} color="#c084fc" kind="target" projection={projection} transform={secondary.targetWorld} />
+      ) : null}
+      {secondaryPole ? (
+        <CoordinateMarker bounds={bounds} color="#34d399" kind="pole" point={secondaryPole} projection={projection} />
       ) : null}
       {handle ? (
         <>
@@ -613,6 +637,9 @@ function coordinateRows(evaluation: SpatialAttachmentEvaluation) {
     addTransform('Secondary hand', String(evaluation.hands.secondary.boneId || 'secondary'), evaluation.hands.secondary.world);
     addTransform('Secondary palm', String(evaluation.hands.secondary.boneId || 'secondary'), evaluation.hands.secondary.palmWorld);
     addTransform('Secondary target', 'target', evaluation.hands.secondary.targetWorld);
+    if (isRecord(evaluation.hands.secondary.pole) && isSpatialEvaluationVec3(evaluation.hands.secondary.pole.world)) {
+      rows.push({ kind: 'Secondary pole', id: String(evaluation.hands.secondary.pole.space || 'pole'), value: evaluation.hands.secondary.pole.world });
+    }
   }
   return rows;
 }
@@ -709,7 +736,7 @@ export function SpatialRestSchematic({
         {drawing}
       </div>
       <figcaption>
-        Native evaluator world frames only. The item marker is an origin with orientation axes; no mesh, bounds, sampled animation, IK result, clipping result, camera, or capture is shown. An unresolved pole is never projected.
+        Native evaluator world frames only. The item marker is an origin with orientation axes; a resolved authored pole is shown as a green ring. No mesh, bounds, sampled animation, IK result, clipping result, camera, or capture is shown. An unresolved pole is never projected.
       </figcaption>
       <ul className="spatial-rest-schematic__legend" aria-label="Schematic legend">
         {LEGEND.map(([label, color]) => <li key={label}><span aria-hidden="true" style={{ background: color }} />{label}</li>)}

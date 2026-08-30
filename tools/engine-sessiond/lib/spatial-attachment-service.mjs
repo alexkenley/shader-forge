@@ -237,7 +237,7 @@ function requireStatusReason(value, status, reason) {
   if (result.status !== status || result.reason !== reason) evaluationProtocolError();
 }
 
-function requireRestEvaluationShape(report, expectedAttachmentId) {
+function requireRestEvaluationShape(report, expectedAttachmentId, expectedSchemaVersion) {
   let serialized;
   try {
     serialized = JSON.stringify(report);
@@ -255,7 +255,10 @@ function requireRestEvaluationShape(report, expectedAttachmentId) {
     'schema', 'schemaVersion', 'pose', 'coordinateSystem', 'skeleton', 'attachment',
     'bones', 'segments', 'sockets', 'item', 'hands', 'diagnostics', 'limitations',
   ]);
-  if (evaluation.schema !== restEvaluationSchema || evaluation.schemaVersion !== 1) {
+  if (
+    evaluation.schema !== restEvaluationSchema
+    || evaluation.schemaVersion !== expectedSchemaVersion
+  ) {
     evaluationProtocolError();
   }
 
@@ -361,13 +364,17 @@ function requireRestEvaluationShape(report, expectedAttachmentId) {
     if (secondary.pole !== null) {
       const pole = requireExactObject(secondary.pole, ['translation', 'space', 'world', 'reason']);
       requireFiniteTuple(pole.translation, 3);
-      if (
-        pole.space !== 'unresolved'
-        || pole.world !== null
-        || pole.reason !== 'pole_space_not_authored'
-      ) {
+      const validV1Pole = evaluation.schemaVersion === 1
+        && pole.space === 'unresolved'
+        && pole.world === null
+        && pole.reason === 'pole_space_not_authored';
+      const validV2Pole = evaluation.schemaVersion === 2
+        && pole.space === 'item'
+        && pole.reason === null;
+      if (!validV1Pole && !validV2Pole) {
         evaluationProtocolError();
       }
+      if (validV2Pole) requireFiniteTuple(pole.world, 3);
     }
     if (
       secondary.preSolveDistanceMeters !== null
@@ -389,7 +396,7 @@ function requireRestEvaluationShape(report, expectedAttachmentId) {
     diagnostics.secondaryIk,
     attachment.mode === 'two_hand' ? 'unavailable' : 'not_applicable',
     attachment.mode === 'two_hand'
-      ? 'secondary_hand_ik_not_implemented'
+      ? (evaluation.schemaVersion === 2 ? 'rest_pose_unsolved' : 'secondary_hand_ik_not_implemented')
       : 'one_hand_attachment',
   );
   requireStatusReason(diagnostics.jointLimits, 'unavailable', 'joint_limits_not_authored');
@@ -462,16 +469,23 @@ function profileBySource(report, source) {
   return matches[0] || null;
 }
 
-function requiredProfileId(profile, code, message) {
+function requiredProfileIdentity(profile, code, message) {
   const attachmentId = typeof profile?.id === 'string' ? profile.id.trim() : '';
   if (!profile || !attachmentId) {
     throw serviceError(code === 'spatial_candidate_source_missing' ? 422 : 500, code, message);
   }
-  return attachmentId;
+  if (![1, 2].includes(profile.schemaVersion)) {
+    throw serviceError(
+      500,
+      'spatial_validator_protocol_error',
+      'Spatial validator returned an unsupported attachment profile schema version.',
+    );
+  }
+  return { id: attachmentId, schemaVersion: profile.schemaVersion };
 }
 
-function publicEvaluation(report, expectedAttachmentId) {
-  requireRestEvaluationShape(report, expectedAttachmentId);
+function publicEvaluation(report, expectedAttachmentId, expectedSchemaVersion) {
+  requireRestEvaluationShape(report, expectedAttachmentId, expectedSchemaVersion);
   return structuredClone(report);
 }
 
@@ -608,21 +622,21 @@ export class SpatialAttachmentService {
 
       const oldProfile = profileBySource(baseline, normalized.stagedSource);
       const newProfile = profileBySource(candidate, normalized.stagedSource);
-      const newAttachmentId = requiredProfileId(
+      const newAttachment = requiredProfileIdentity(
         newProfile,
         'spatial_candidate_source_missing',
         'Validator did not return the proposed attachment source.',
       );
-      const oldAttachmentId = inspection.exists
-        ? requiredProfileId(
+      const oldAttachment = inspection.exists
+        ? requiredProfileIdentity(
           oldProfile,
           'spatial_baseline_source_missing',
           'Validator did not return the authored attachment source.',
         )
         : null;
 
-      const subjectId = newAttachmentId.toLowerCase();
-      const previousSubjectId = oldAttachmentId ? oldAttachmentId.toLowerCase() : null;
+      const subjectId = newAttachment.id.toLowerCase();
+      const previousSubjectId = oldAttachment ? oldAttachment.id.toLowerCase() : null;
       const resourceKeys = [...new Set([
         ...(previousSubjectId ? [`spatial/attachment/${previousSubjectId}`] : []),
         `spatial/attachment/${subjectId}`,
@@ -637,18 +651,20 @@ export class SpatialAttachmentService {
       });
 
       const evaluation = { baseline: null, candidate: null };
-      if (oldAttachmentId) {
+      if (oldAttachment) {
         await fs.writeFile(stagedAttachmentPath, stagedBaselineContent, 'utf8');
         evaluation.baseline = await this.#evaluateStagedAttachment(
           stagedAnimationRoot,
-          oldAttachmentId,
+          oldAttachment.id,
+          oldAttachment.schemaVersion,
           'baseline',
         );
       }
       await fs.writeFile(stagedAttachmentPath, normalized.content, 'utf8');
       evaluation.candidate = await this.#evaluateStagedAttachment(
         stagedAnimationRoot,
-        newAttachmentId,
+        newAttachment.id,
+        newAttachment.schemaVersion,
         'candidate',
       );
 
@@ -734,14 +750,15 @@ export class SpatialAttachmentService {
         );
       }
 
-      const attachmentId = requiredProfileId(
+      const attachment = requiredProfileIdentity(
         profileBySource(baseline, normalized.stagedSource),
         'spatial_baseline_source_missing',
         'Validator did not return the authored attachment source.',
       );
       const evaluation = await this.#evaluateStagedAttachment(
         stagedAnimationRoot,
-        attachmentId,
+        attachment.id,
+        attachment.schemaVersion,
         'baseline',
       );
 
@@ -772,7 +789,7 @@ export class SpatialAttachmentService {
     }
   }
 
-  async #evaluateStagedAttachment(animationRoot, attachmentId, role) {
+  async #evaluateStagedAttachment(animationRoot, attachmentId, attachmentSchemaVersion, role) {
     let report;
     try {
       report = await this.#evaluateRestAttachment(animationRoot, attachmentId);
@@ -803,7 +820,7 @@ export class SpatialAttachmentService {
         error,
       );
     }
-    return publicEvaluation(report, attachmentId);
+    return publicEvaluation(report, attachmentId, attachmentSchemaVersion);
   }
 
   async #stageAuthoredAnimation(sessionId, stagedAnimationRoot) {

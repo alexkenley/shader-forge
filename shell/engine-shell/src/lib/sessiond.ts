@@ -833,7 +833,7 @@ export type SpatialEvaluationDiagnostic = {
 
 export type SpatialAttachmentEvaluation = {
   schema: 'shader_forge.spatial_attachment_evaluation';
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   pose: { kind: 'rest'; sampled: false };
   coordinateSystem: {
     units: 'meters';
@@ -898,9 +898,9 @@ export type SpatialAttachmentEvaluation = {
       targetWorld: SpatialEvaluationTransform | null;
       pole: {
         translation: SpatialEvaluationVec3;
-        space: 'unresolved';
-        world: null;
-        reason: string;
+        space: 'unresolved' | 'item';
+        world: SpatialEvaluationVec3 | null;
+        reason: string | null;
       } | null;
       preSolveDistanceMeters: number | null;
     } | null;

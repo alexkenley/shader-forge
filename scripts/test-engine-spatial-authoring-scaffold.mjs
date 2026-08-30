@@ -254,7 +254,8 @@ std::string observableFingerprint(const AnimationSystem& system) {
           << ',' << profile.secondaryHand->angleDegrees << ',' << profile.secondaryHand->contactMeters << ',' << profile.secondaryHand->jointLimitPolicy
           << ',' << profile.secondaryHand->targetTranslation.x << ',' << profile.secondaryHand->targetTranslation.y << ',' << profile.secondaryHand->targetTranslation.z
           << ',' << profile.secondaryHand->targetRotation.x << ',' << profile.secondaryHand->targetRotation.y << ',' << profile.secondaryHand->targetRotation.z << ',' << profile.secondaryHand->targetRotation.w
-          << ',' << profile.secondaryHand->poleTranslation.x << ',' << profile.secondaryHand->poleTranslation.y << ',' << profile.secondaryHand->poleTranslation.z;
+          << ',' << profile.secondaryHand->poleTranslation.x << ',' << profile.secondaryHand->poleTranslation.y << ',' << profile.secondaryHand->poleTranslation.z
+          << ',' << profile.secondaryHand->poleSpace;
     }
     for (const auto& envelope : profile.motionEnvelopes) {
       out << "|envelope=" << envelope.phase << ',' << envelope.clip;
@@ -277,7 +278,7 @@ int main(int argc, char** argv) {
   const auto skeleton = system.findSkeleton("humanoid.standard.v2");
   const auto profile = system.findAttachmentProfile("weapon.rifle.mk1.humanoid");
   if (!skeleton || skeleton->id != "humanoid.standard.v2" || skeleton->sockets.size() != 3) return fail("dotted skeleton id or sockets were not preserved");
-  if (!profile || profile->id != "weapon.rifle.mk1.humanoid" || !profile->secondaryHand) return fail("dotted attachment id or two-hand data were not preserved");
+  if (!profile || profile->id != "weapon.rifle.mk1.humanoid" || profile->schemaVersion != 2 || !profile->secondaryHand || profile->secondaryHand->poleSpace != "item") return fail("dotted attachment id, schema v2, or item pole space were not preserved");
   const auto skeletonHandle = system.findSkeletonId("humanoid.standard.v2");
   const auto profileHandle = system.findAttachmentProfileId("weapon.rifle.mk1.humanoid");
   if (!skeletonHandle || !profileHandle || !system.snapshotSkeleton(*skeletonHandle) || !system.snapshotAttachmentProfile(*profileHandle)) return fail("typed handles did not resolve");
@@ -353,15 +354,30 @@ int main(int argc, char** argv) {
     return fail("sampled attachment phase/clip/time metadata was not exact");
   }
   if (sampledIdleMid->proceduralLayersRequested != std::vector<std::string>{"primary_attachment", "secondary_hand_ik"}
-      || sampledIdleMid->proceduralLayersApplied != std::vector<std::string>{"primary_attachment"}
-      || sampledIdleMid->proceduralLayersUnavailable != std::vector<std::string>{"secondary_hand_ik"}) {
+      || sampledIdleMid->proceduralLayersApplied != std::vector<std::string>{"primary_attachment", "secondary_hand_ik"}
+      || !sampledIdleMid->proceduralLayersUnavailable.empty()) {
     return fail("sampled attachment layer truth was not exact");
   }
-  if (!sameAttachmentGeometry(sampledIdleStart->evaluation, *rest) || !sameAttachmentGeometry(sampledIdleEnd->evaluation, *rest)) {
-    return fail("sampled idle endpoints did not match rest attachment geometry");
+  if (rest->secondaryIk.status != "unavailable" || !rest->secondaryIk.reason || *rest->secondaryIk.reason != "rest_pose_unsolved" || rest->secondaryIk.solved) {
+    return fail("rest evaluation must remain unsolved");
   }
-  if (!sampledMatchesRest(*readyMid, sampledIdleMid->evaluation)) {
-    return fail("sampled attachment did not reuse the clip-sample pose");
+  if (sampledIdleStart->evaluation.secondaryIk.status != "applied" || !sampledIdleStart->evaluation.secondaryIk.solved
+      || sampledIdleMid->evaluation.secondaryIk.status != "applied" || sampledIdleEnd->evaluation.secondaryIk.status != "applied") {
+    return fail("schema-v2 sampled two-hand IK was not applied");
+  }
+  if (sameAttachmentGeometry(sampledIdleStart->evaluation, *rest) || sameAttachmentGeometry(sampledIdleEnd->evaluation, *rest)) {
+    return fail("sampled idle IK endpoints must differ from unsolved rest geometry");
+  }
+  const auto secondaryChainRole = [](const std::string& role) {
+    return role == "upper_arm_l" || role == "lower_arm_l" || role == "hand_l";
+  };
+  for (std::size_t index = 0; index < readyMid->bones.size(); ++index) {
+    if (secondaryChainRole(readyMid->bones[index].role)) continue;
+    if (readyMid->bones[index].id != sampledIdleMid->evaluation.bones[index].id
+        || !sameTransform(readyMid->bones[index].local, sampledIdleMid->evaluation.bones[index].local)
+        || !sameTransform(readyMid->bones[index].world, sampledIdleMid->evaluation.bones[index].world)) {
+      return fail("sampled attachment did not reuse the clip-sample pose outside the secondary IK chain");
+    }
   }
   const auto restPrimarySocket = std::find_if(rest->sockets.begin(), rest->sockets.end(), [](const auto& socket) {
     return socket.id == "socket.hand_r.primary";
@@ -383,6 +399,86 @@ int main(int argc, char** argv) {
   if (!sampledMidHand || !sameTransform(sampledMidHand->world, midHand->world)) {
     return fail("sampled attachment hand geometry did not follow the sampled pose");
   }
+  const auto sampledIdleMidAgain = system.evaluateSampledAttachment(*profileHandle, "idle", 0.5, &error);
+  if (!sampledIdleMidAgain || !sameAttachmentGeometry(sampledIdleMidAgain->evaluation, sampledIdleMid->evaluation)
+      || sampledIdleMidAgain->evaluation.secondaryIk.postSolveDistanceMeters != sampledIdleMid->evaluation.secondaryIk.postSolveDistanceMeters) {
+    return fail("secondary-hand IK solver is not deterministic");
+  }
+  const auto* restUpperL = findEvaluationBone(*rest, "upper_arm_l");
+  const auto* restLowerL = findEvaluationBone(*rest, "lower_arm_l");
+  const auto* restHandL = findEvaluationBone(*rest, "hand_l");
+  const auto* solvedUpper = findEvaluationBone(sampledIdleMid->evaluation, "upper_arm_l");
+  const auto* solvedLower = findEvaluationBone(sampledIdleMid->evaluation, "lower_arm_l");
+  const auto* solvedHand = findEvaluationBone(sampledIdleMid->evaluation, "hand_l");
+  if (!restUpperL || !restLowerL || !restHandL || !solvedUpper || !solvedLower || !solvedHand) {
+    return fail("secondary IK chain bones were missing");
+  }
+  const auto segmentLength = [](const SpatialVector3Snapshot& from, const SpatialVector3Snapshot& to) {
+    return std::hypot(to.x - from.x, to.y - from.y, to.z - from.z);
+  };
+  if (std::abs(segmentLength(solvedUpper->world.translation, solvedLower->world.translation) - segmentLength(restUpperL->world.translation, restLowerL->world.translation)) > 1e-12
+      || std::abs(segmentLength(solvedLower->world.translation, solvedHand->world.translation) - segmentLength(restLowerL->world.translation, restHandL->world.translation)) > 1e-12) {
+    return fail("secondary IK did not preserve sampled upper/lower segment lengths");
+  }
+  if (!sampledIdleMid->evaluation.secondaryHandFrame || !sampledIdleMid->evaluation.secondaryHandFrame->targetWorld
+      || !rest->secondaryHandFrame || !rest->secondaryHandFrame->targetWorld
+      || sameVector(sampledIdleMid->evaluation.secondaryHandFrame->targetWorld->translation, rest->secondaryHandFrame->targetWorld->translation)
+      || sampledIdleMid->evaluation.secondaryHandFrame->poleSpace != "item"
+      || !sampledIdleMid->evaluation.secondaryHandFrame->poleWorld
+      || sampledIdleMid->evaluation.secondaryHandFrame->poleReason
+      || rest->secondaryHandFrame->poleSpace != "item"
+      || !rest->secondaryHandFrame->poleWorld
+      || rest->secondaryHandFrame->poleReason) {
+    return fail("schema-v2 pole space/world were not retained, or sampled target was not preserved through item motion");
+  }
+  if (!sampledIdleMid->evaluation.secondaryIk.reachable || *sampledIdleMid->evaluation.secondaryIk.reachable
+      || !sampledIdleMid->evaluation.secondaryIk.withinTolerance || *sampledIdleMid->evaluation.secondaryIk.withinTolerance
+      || !sampledIdleMid->evaluation.secondaryIk.postSolveDistanceMeters
+      || !sampledIdleMid->evaluation.secondaryIk.reachToleranceMeters
+      || *sampledIdleMid->evaluation.secondaryIk.postSolveDistanceMeters <= *sampledIdleMid->evaluation.secondaryIk.reachToleranceMeters
+      || *sampledIdleMid->evaluation.secondaryIk.reachToleranceMeters != 0.04) {
+    return fail("unreachable residual/tolerance truth was not reported");
+  }
+  if (sameTransform(solvedHand->world, restHandL->world)
+      || (sampledIdleMid->evaluation.secondaryHandFrame->palmWorld && rest->secondaryHandFrame->palmWorld
+          && sameTransform(*sampledIdleMid->evaluation.secondaryHandFrame->palmWorld, *rest->secondaryHandFrame->palmWorld))) {
+    return fail("solved secondary hand/palm did not move toward the target");
+  }
+
+  const auto v1ProfileRoot = std::filesystem::temp_directory_path() / "shader_forge_spatial_v1_profile";
+  std::filesystem::remove_all(v1ProfileRoot);
+  std::filesystem::copy(sourceRoot, v1ProfileRoot, std::filesystem::copy_options::recursive);
+  std::string v1ProfileText = readFile(v1ProfileRoot / "attachments/rifle_mk1_humanoid.attachment.toml");
+  if (!replaceOnce(&v1ProfileText, "schema_version = 2", "schema_version = 1")
+      || !replaceOnce(&v1ProfileText, "space = \"item\"", "")) {
+    return fail("schema-v1 attachment compatibility fixture mutation failed");
+  }
+  writeFile(v1ProfileRoot / "attachments/rifle_mk1_humanoid.attachment.toml", v1ProfileText);
+  AnimationSystem v1ProfileSystem;
+  error.clear();
+  if (!v1ProfileSystem.loadFromDisk(AnimationConfig{v1ProfileRoot}, &error)) {
+    return fail("schema-v1 attachment compatibility load failed: " + error);
+  }
+  const auto v1Profile = v1ProfileSystem.findAttachmentProfile("weapon.rifle.mk1.humanoid");
+  const auto v1ProfileHandle = v1ProfileSystem.findAttachmentProfileId("weapon.rifle.mk1.humanoid");
+  const auto v1Sample = v1ProfileHandle
+    ? v1ProfileSystem.evaluateSampledAttachment(*v1ProfileHandle, "idle", 0.5, &error)
+    : std::nullopt;
+  if (!v1Profile || v1Profile->schemaVersion != 1 || !v1Profile->secondaryHand
+      || !v1Profile->secondaryHand->poleSpace.empty() || !v1Sample
+      || v1Sample->proceduralLayersApplied != std::vector<std::string>{"primary_attachment"}
+      || v1Sample->proceduralLayersUnavailable != std::vector<std::string>{"secondary_hand_ik"}
+      || !v1Sample->evaluation.secondaryHandFrame
+      || v1Sample->evaluation.secondaryHandFrame->poleSpace != "unresolved"
+      || v1Sample->evaluation.secondaryHandFrame->poleWorld
+      || !v1Sample->evaluation.secondaryHandFrame->poleReason
+      || *v1Sample->evaluation.secondaryHandFrame->poleReason != "pole_space_not_authored"
+      || v1Sample->evaluation.secondaryIk.status != "unavailable"
+      || !v1Sample->evaluation.secondaryIk.reason
+      || *v1Sample->evaluation.secondaryIk.reason != "secondary_hand_ik_not_implemented") {
+    return fail("schema-v1 attachment compatibility semantics changed");
+  }
+  std::filesystem::remove_all(v1ProfileRoot);
 
   error.clear();
   const auto aimStart = system.sampleClipPose("rifle_aim", 0.0, &error);
@@ -574,8 +670,15 @@ int main(int argc, char** argv) {
   if (!rejectMutation(skeletonFile, "rotation = [0.0, 0.0, 0.0, 1.0]", "rotation = [0.0, 0.0, 0.0, nan]")) return fail("non-finite quaternion accepted");
   if (!rejectMutation(skeletonFile, "role = \"primary_grip\"", "role = \"utility\"")) return fail("wrong primary socket role accepted");
   if (!rejectMutation(attachmentFile, "mode = \"two_hand\"", "mode = \"three_hand\"")) return fail("invalid attachment mode accepted");
-  if (!rejectMutation(attachmentFile, "schema_version = 1", "schema_version = 2")) return fail("unknown attachment version accepted");
-  if (!rejectMutation(attachmentFile, "schema_version = 1", "schema_version = nope")) return fail("malformed attachment version accepted without diagnostics");
+  if (!rejectMutation(attachmentFile, "schema_version = 2", "schema_version = 99")) return fail("unknown attachment version accepted");
+  if (!rejectMutation(attachmentFile, "schema_version = 2", "schema_version = nope")) return fail("malformed attachment version accepted without diagnostics");
+  if (!rejectMutation(attachmentFile, "space = \"item\"", "space = \"world\"")) return fail("invalid pole space accepted");
+  if (!rejectMutation(attachmentFile, "space = \"item\"", "")) return fail("missing pole space accepted");
+  if (!rejectMutation(skeletonFile, "role = \"upper_arm_l\"", "role = \"other\"")) return fail("missing secondary IK chain accepted");
+  if (!rejectMutation(skeletonFile, "parent = \"upper_arm_l\"", "parent = \"chest\"")) return fail("misparented secondary IK chain accepted");
+  if (!rejectMutation(skeletonFile, "bone = \"hand_l\"\nrole = \"palm_contact\"", "bone = \"hand_l\"\nrole = \"other\"")) {
+    return fail("missing secondary palm socket accepted");
+  }
   if (!rejectMutation(attachmentFile, "perspective = \"both\"", "perspective = \"both\"\nunknown_key = true")) return fail("unknown attachment key accepted");
   if (!rejectMutation(attachmentFile, "skeleton = \"humanoid.standard.v2\"", "skeleton = \"missing.skeleton\"")) return fail("missing attachment skeleton accepted");
   if (!rejectMutation(attachmentFile, "socket = \"socket.hand_r.primary\"", "socket = \"socket.missing\"")) return fail("missing primary socket accepted");
@@ -725,7 +828,7 @@ try {
 }
 
 console.log('Engine spatial authoring scaffold passed.');
-console.log('- Verified strict v2 skeleton/socket and v1 attachment-profile contracts');
+console.log('- Verified strict v2 skeleton/socket and compatible v1/v2 attachment-profile contracts');
 console.log('- Verified v1 clip compatibility and v2 clip sampling, rest fallback, and quaternion interpolation');
 console.log('- Verified sampled attachment evaluation over authored envelope phase/time and layer truth');
 console.log('- Verified dotted IDs, representative rejection cases, and transactional reload state');

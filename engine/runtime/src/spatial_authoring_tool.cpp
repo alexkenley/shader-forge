@@ -232,6 +232,9 @@ bool appendAttachmentProfile(
     appendQuaternion(out, profile.secondaryHand->targetRotation);
     out << ",\"poleTranslation\":";
     appendVector(out, profile.secondaryHand->poleTranslation);
+    if (!profile.secondaryHand->poleSpace.empty()) {
+      out << ",\"poleSpace\":" << jsonString(profile.secondaryHand->poleSpace);
+    }
     out << ",\"reachMeters\":" << profile.secondaryHand->reachMeters
         << ",\"angleDegrees\":" << profile.secondaryHand->angleDegrees
         << ",\"contactMeters\":" << profile.secondaryHand->contactMeters
@@ -265,10 +268,14 @@ bool buildCookedPayload(
   std::string* errorMessage) {
   const auto skeletons = animation.snapshotSkeletons();
   const auto profiles = animation.snapshotAttachmentProfiles();
+  const int schemaVersion = std::any_of(profiles.begin(), profiles.end(), [](const auto& profile) {
+    return profile.schemaVersion >= 2;
+  }) ? 2 : 1;
   std::ostringstream out;
   out.imbue(std::locale::classic());
   out << std::setprecision(std::numeric_limits<double>::max_digits10)
-      << "{\"schema\":\"shader_forge.spatial_authoring_cooked\",\"schemaVersion\":1,\"skeletons\":[";
+      << "{\"schema\":\"shader_forge.spatial_authoring_cooked\",\"schemaVersion\":" << schemaVersion
+      << ",\"skeletons\":[";
   for (std::size_t index = 0; index < skeletons.size(); ++index) {
     if (index != 0) out << ',';
     if (!appendSkeleton(out, skeletons[index], animationRoot, errorMessage)) return false;
@@ -445,7 +452,14 @@ void appendAttachmentEvaluationFields(
     if (hand.poleTranslation) {
       out << "{\"translation\":";
       appendVector(out, *hand.poleTranslation);
-      out << ",\"space\":\"unresolved\",\"world\":null,\"reason\":\"pole_space_not_authored\"}";
+      out << ",\"space\":" << jsonString(hand.poleSpace.empty() ? "unresolved" : hand.poleSpace)
+          << ",\"world\":";
+      if (hand.poleWorld) appendVector(out, *hand.poleWorld);
+      else out << "null";
+      out << ",\"reason\":";
+      if (hand.poleReason) out << jsonString(*hand.poleReason);
+      else out << "null";
+      out << '}';
     } else {
       out << "null";
     }
@@ -457,12 +471,45 @@ void appendAttachmentEvaluationFields(
     out << "null";
   }
   out << "},\"diagnostics\":{\"secondaryIk\":";
-  if (evaluation.mode == "two_hand") {
-    out << "{\"status\":\"unavailable\",\"reason\":\"secondary_hand_ik_not_implemented\"}";
-  } else {
-    out << "{\"status\":\"not_applicable\",\"reason\":\"one_hand_attachment\"}";
+  const auto& secondaryIk = evaluation.secondaryIk;
+  out << "{\"status\":" << jsonString(secondaryIk.status.empty()
+    ? (evaluation.mode == "two_hand" ? "unavailable" : "not_applicable")
+    : secondaryIk.status);
+  if (secondaryIk.reason) {
+    out << ",\"reason\":" << jsonString(*secondaryIk.reason);
+  } else if (secondaryIk.status != "applied") {
+    out << ",\"reason\":" << jsonString(evaluation.mode == "two_hand" ? "rest_pose_unsolved" : "one_hand_attachment");
   }
-  out << ','
+  if (secondaryIk.solved || secondaryIk.status == "applied") {
+    const auto appendOptionalNumberField = [&](std::string_view name, const std::optional<double>& value) {
+      out << ",\"" << name << "\":";
+      if (value) appendNumber(out, *value);
+      else out << "null";
+    };
+    const auto appendOptionalBoolField = [&](std::string_view name, const std::optional<bool>& value) {
+      out << ",\"" << name << "\":";
+      if (value) out << (*value ? "true" : "false");
+      else out << "null";
+    };
+    out << ",\"solved\":" << (secondaryIk.solved ? "true" : "false")
+        << ",\"reachable\":" << (secondaryIk.reachable && *secondaryIk.reachable ? "true" : "false");
+    appendOptionalNumberField("preSolveDistanceMeters", secondaryIk.preSolveDistanceMeters);
+    appendOptionalNumberField("targetDistanceMeters", secondaryIk.targetDistanceMeters);
+    appendOptionalNumberField("minReachMeters", secondaryIk.minReachMeters);
+    appendOptionalNumberField("maxReachMeters", secondaryIk.maxReachMeters);
+    appendOptionalNumberField("reachResidualMeters", secondaryIk.reachResidualMeters);
+    appendOptionalNumberField("reachToleranceMeters", secondaryIk.reachToleranceMeters);
+    appendOptionalBoolField("reachWithinTolerance", secondaryIk.reachWithinTolerance);
+    appendOptionalNumberField("postSolveDistanceMeters", secondaryIk.postSolveDistanceMeters);
+    appendOptionalNumberField("contactToleranceMeters", secondaryIk.contactToleranceMeters);
+    appendOptionalBoolField("contactWithinTolerance", secondaryIk.contactWithinTolerance);
+    appendOptionalNumberField("postSolveAngleDegrees", secondaryIk.postSolveAngleDegrees);
+    appendOptionalNumberField("angleToleranceDegrees", secondaryIk.angleToleranceDegrees);
+    appendOptionalBoolField("angleWithinTolerance", secondaryIk.angleWithinTolerance);
+    appendOptionalBoolField("withinTolerance", secondaryIk.withinTolerance);
+  }
+  out << '}'
+      << ','
       << "\"jointLimits\":{\"status\":\"unavailable\",\"reason\":\"joint_limits_not_authored\"},"
       << "\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}";
 }
@@ -473,14 +520,17 @@ void appendEvaluationLimitations(
   std::string_view poseLimitation) {
   out << ",\"limitations\":[" << jsonString(poseLimitation)
       << ",\"not_review_evidence\",\"item_mesh_unavailable\"";
-  if (evaluation.mode == "two_hand") out << ",\"secondary_hand_ik_unavailable\"";
+  if (evaluation.mode == "two_hand" && evaluation.secondaryIk.status != "applied") {
+    out << ",\"secondary_hand_ik_unavailable\"";
+  }
   out << "]}\n";
 }
 
 void appendRestEvaluation(
   std::ostringstream& out,
   const SpatialAttachmentEvaluationSnapshot& evaluation) {
-  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":1"
+  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":"
+      << (evaluation.attachmentSchemaVersion >= 2 ? 2 : 1)
       << ",\"pose\":{\"kind\":\"rest\",\"sampled\":false}";
   appendAttachmentEvaluationFields(out, evaluation);
   appendEvaluationLimitations(out, evaluation, "rest_pose_only");
@@ -489,7 +539,8 @@ void appendRestEvaluation(
 void appendSampledEvaluation(
   std::ostringstream& out,
   const SpatialSampledAttachmentEvaluationSnapshot& sampled) {
-  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":1"
+  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":"
+      << (sampled.evaluation.attachmentSchemaVersion >= 2 ? 2 : 1)
       << ",\"pose\":{\"kind\":\"clip_sample\",\"sampled\":true"
       << ",\"phase\":" << jsonString(sampled.phase)
       << ",\"clip\":" << jsonString(sampled.clipName)

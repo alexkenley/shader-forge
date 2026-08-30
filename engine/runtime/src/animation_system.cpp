@@ -1502,8 +1502,11 @@ bool loadAttachmentProfileFile(
       || !readString(document.top, "perspective", &profile->perspective, context, errorMessage)) {
     return false;
   }
-  if (schema != "shader_forge.attachment_profile" || schemaVersion != 1 || ownerSystem != "animation_system") {
+  if (schema != "shader_forge.attachment_profile" || ownerSystem != "animation_system") {
     return fail(errorMessage, "Invalid attachment profile header in " + context);
+  }
+  if (schemaVersion != 1 && schemaVersion != 2) {
+    return fail(errorMessage, "Unsupported attachment profile schema_version in " + context);
   }
 
   profile->schemaVersion = schemaVersion;
@@ -1603,7 +1606,16 @@ bool loadAttachmentProfileFile(
       continue;
     }
     if (section == "secondary_hand.pole") {
-      if (!requireOnlyKeys(table, {"translation"}, section, errorMessage)
+      if (schemaVersion >= 2) {
+        if (!requireOnlyKeys(table, {"translation", "space"}, section, errorMessage)
+            || !readVector3(table, "translation", &secondary.poleTranslation, section, errorMessage)
+            || !readString(table, "space", &secondary.poleSpace, section, errorMessage)) {
+          return false;
+        }
+        if (secondary.poleSpace != "item") {
+          return fail(errorMessage, "Attachment secondary_hand.pole space must be \"item\" in " + context);
+        }
+      } else if (!requireOnlyKeys(table, {"translation"}, section, errorMessage)
           || !readVector3(table, "translation", &secondary.poleTranslation, section, errorMessage)) {
         return false;
       }
@@ -1723,6 +1735,33 @@ bool loadAttachmentProfileFile(
     if (!hasRole(secondaryRole) || !hasSecondaryHeader || !secondary.enabled
         || !hasSecondaryTarget || !hasSecondaryPole || !hasSecondaryTolerances) {
       return fail(errorMessage, "Two-hand attachment is missing required secondary-hand data in " + context);
+    }
+    if (schemaVersion >= 2) {
+      const std::string secondaryUpperRole = profile->dominantHand == "right" ? "upper_arm_l" : "upper_arm_r";
+      const std::string secondaryLowerRole = profile->dominantHand == "right" ? "lower_arm_l" : "lower_arm_r";
+      const auto findRole = [&](std::string_view role) -> const SkeletonBoneSnapshot* {
+        const auto found = std::find_if(
+          skeleton->boneDefinitions.begin(),
+          skeleton->boneDefinitions.end(),
+          [&](const auto& bone) { return bone.role == role; });
+        return found == skeleton->boneDefinitions.end() ? nullptr : &*found;
+      };
+      const auto* upper = findRole(secondaryUpperRole);
+      const auto* lower = findRole(secondaryLowerRole);
+      const auto* hand = findRole(secondaryRole);
+      if (upper == nullptr || lower == nullptr || hand == nullptr) {
+        return fail(errorMessage, "Two-hand attachment is missing required secondary-hand chain roles in " + context);
+      }
+      if (lower->parent != upper->id || hand->parent != lower->id) {
+        return fail(errorMessage, "Two-hand attachment secondary-hand chain is not a direct parent chain in " + context);
+      }
+      const bool hasSecondaryPalm = std::any_of(
+        skeleton->sockets.begin(),
+        skeleton->sockets.end(),
+        [&](const auto& socket) { return socket.bone == hand->id && socket.role == "palm_contact"; });
+      if (!hasSecondaryPalm) {
+        return fail(errorMessage, "Two-hand attachment requires a secondary palm_contact socket in " + context);
+      }
     }
     profile->secondaryHand = secondary;
   } else {
@@ -1846,6 +1885,186 @@ bool composeTransforms(
     multiplyQuaternions(parent.rotation, local.rotation),
     world,
     errorMessage);
+}
+
+SpatialVector3Snapshot subtractVectors(
+  const SpatialVector3Snapshot& left,
+  const SpatialVector3Snapshot& right) {
+  return cleanVector({left.x - right.x, left.y - right.y, left.z - right.z});
+}
+
+SpatialVector3Snapshot scaleVector(const SpatialVector3Snapshot& value, double scale) {
+  return cleanVector({value.x * scale, value.y * scale, value.z * scale});
+}
+
+double dotVectors(const SpatialVector3Snapshot& left, const SpatialVector3Snapshot& right) {
+  return left.x * right.x + left.y * right.y + left.z * right.z;
+}
+
+double vectorLength(const SpatialVector3Snapshot& value) {
+  return std::hypot(value.x, value.y, value.z);
+}
+
+bool vectorIsFinite(const SpatialVector3Snapshot& value) {
+  return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool tryNormalizeVector(
+  const SpatialVector3Snapshot& value,
+  SpatialVector3Snapshot* normalized,
+  std::string_view error,
+  std::string* errorMessage) {
+  const double length = vectorLength(value);
+  if (!std::isfinite(length) || length == 0.0) {
+    return fail(errorMessage, std::string(error));
+  }
+  *normalized = cleanVector({value.x / length, value.y / length, value.z / length});
+  if (!vectorIsFinite(*normalized)) {
+    return fail(errorMessage, std::string(error));
+  }
+  return true;
+}
+
+SpatialQuaternionSnapshot conjugateQuaternion(const SpatialQuaternionSnapshot& value) {
+  return {-value.x, -value.y, -value.z, value.w};
+}
+
+bool invertTransform(
+  const SpatialTransformSnapshot& value,
+  SpatialTransformSnapshot* inverse,
+  std::string* errorMessage) {
+  const SpatialQuaternionSnapshot conjugate = conjugateQuaternion(value.rotation);
+  return makeTransform(
+    rotateVector(conjugate, {-value.translation.x, -value.translation.y, -value.translation.z}),
+    conjugate,
+    inverse,
+    errorMessage);
+}
+
+bool quaternionFromAxes(
+  const SpatialVector3Snapshot& xAxis,
+  const SpatialVector3Snapshot& yAxis,
+  const SpatialVector3Snapshot& zAxis,
+  SpatialQuaternionSnapshot* rotation,
+  std::string* errorMessage) {
+  if (!vectorIsFinite(xAxis) || !vectorIsFinite(yAxis) || !vectorIsFinite(zAxis)) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+  const double r00 = xAxis.x;
+  const double r01 = yAxis.x;
+  const double r02 = zAxis.x;
+  const double r10 = xAxis.y;
+  const double r11 = yAxis.y;
+  const double r12 = zAxis.y;
+  const double r20 = xAxis.z;
+  const double r21 = yAxis.z;
+  const double r22 = zAxis.z;
+  SpatialQuaternionSnapshot quaternion{
+    std::copysign(0.5 * std::sqrt(std::max(0.0, 1.0 + r00 - r11 - r22)), r21 - r12),
+    std::copysign(0.5 * std::sqrt(std::max(0.0, 1.0 - r00 + r11 - r22)), r02 - r20),
+    std::copysign(0.5 * std::sqrt(std::max(0.0, 1.0 - r00 - r11 + r22)), r10 - r01),
+    0.5 * std::sqrt(std::max(0.0, 1.0 + r00 + r11 + r22)),
+  };
+  if (!canonicalizeQuaternion(&quaternion, errorMessage)) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+  *rotation = quaternion;
+  return true;
+}
+
+bool rotationMappingOffset(
+  const SpatialVector3Snapshot& localOffset,
+  const SpatialVector3Snapshot& worldOffset,
+  const SpatialVector3Snapshot& planeNormal,
+  SpatialQuaternionSnapshot* rotation,
+  std::string* errorMessage) {
+  SpatialVector3Snapshot localX;
+  SpatialVector3Snapshot worldX;
+  SpatialVector3Snapshot normal;
+  if (!tryNormalizeVector(localOffset, &localX, "Spatial evaluation secondary-hand IK produced non-finite math.", errorMessage)
+      || !tryNormalizeVector(worldOffset, &worldX, "Spatial evaluation secondary-hand IK produced non-finite math.", errorMessage)
+      || !tryNormalizeVector(planeNormal, &normal, "Spatial evaluation secondary-hand IK produced non-finite math.", errorMessage)) {
+    return false;
+  }
+
+  SpatialVector3Snapshot worldY;
+  if (!tryNormalizeVector(
+        crossVectors(normal, worldX),
+        &worldY,
+        "Spatial evaluation secondary-hand IK produced non-finite math.",
+        errorMessage)) {
+    return false;
+  }
+  const SpatialVector3Snapshot worldZ = cleanVector(crossVectors(worldX, worldY));
+  SpatialQuaternionSnapshot worldFromIdentity;
+  if (!quaternionFromAxes(worldX, worldY, worldZ, &worldFromIdentity, errorMessage)) {
+    return false;
+  }
+
+  const SpatialVector3Snapshot helper = std::abs(localX.y) < 0.9
+    ? SpatialVector3Snapshot{0.0, 1.0, 0.0}
+    : SpatialVector3Snapshot{1.0, 0.0, 0.0};
+  SpatialVector3Snapshot localZ;
+  if (!tryNormalizeVector(
+        crossVectors(localX, helper),
+        &localZ,
+        "Spatial evaluation secondary-hand IK produced non-finite math.",
+        errorMessage)) {
+    return false;
+  }
+  const SpatialVector3Snapshot localY = cleanVector(crossVectors(localZ, localX));
+  SpatialQuaternionSnapshot localFromIdentity;
+  if (!quaternionFromAxes(localX, localY, localZ, &localFromIdentity, errorMessage)) {
+    return false;
+  }
+  SpatialQuaternionSnapshot mapped = multiplyQuaternions(worldFromIdentity, conjugateQuaternion(localFromIdentity));
+  if (!canonicalizeQuaternion(&mapped, errorMessage)) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+  *rotation = mapped;
+  return true;
+}
+
+bool recomputePoseWorlds(
+  std::vector<EvaluatedBonePoseSnapshot>* posedBones,
+  std::string* errorMessage) {
+  std::map<std::string, EvaluatedBonePoseSnapshot*> bonesById;
+  for (auto& bone : *posedBones) {
+    bonesById.emplace(bone.id, &bone);
+  }
+  std::map<std::string, bool> resolved;
+  std::set<std::string> visiting;
+  const std::function<bool(EvaluatedBonePoseSnapshot&)> resolve = [&](EvaluatedBonePoseSnapshot& bone) {
+    if (resolved[bone.id]) {
+      return true;
+    }
+    if (!visiting.insert(bone.id).second) {
+      return fail(errorMessage, "Spatial evaluation could not resolve bone '" + bone.id + "'.");
+    }
+    if (bone.parent.empty()) {
+      bone.world = bone.local;
+      resolved[bone.id] = true;
+      visiting.erase(bone.id);
+      return true;
+    }
+    const auto parent = bonesById.find(bone.parent);
+    if (parent == bonesById.end()) {
+      return fail(errorMessage, "Spatial evaluation could not resolve parent bone '" + bone.parent + "'.");
+    }
+    if (!resolve(*parent->second)
+        || !composeTransforms(parent->second->world, bone.local, &bone.world, errorMessage)) {
+      return false;
+    }
+    resolved[bone.id] = true;
+    visiting.erase(bone.id);
+    return true;
+  };
+  for (auto& bone : *posedBones) {
+    if (!resolve(bone)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 SpatialVector3Snapshot lerpVectors(
@@ -1990,6 +2209,7 @@ const SkeletonSocketSnapshot* palmSocketForBone(
 
 bool classifyProceduralLayers(
   const std::vector<std::string>& requested,
+  bool secondaryIkApplied,
   std::vector<std::string>* applied,
   std::vector<std::string>* unavailable,
   std::string* errorMessage) {
@@ -2001,11 +2221,210 @@ bool classifyProceduralLayers(
       continue;
     }
     if (layer == "secondary_hand_ik") {
-      unavailable->push_back(layer);
+      if (secondaryIkApplied) {
+        applied->push_back(layer);
+      } else {
+        unavailable->push_back(layer);
+      }
       continue;
     }
     return fail(errorMessage, "Unsupported procedural layer '" + layer + "'.");
   }
+  return true;
+}
+
+EvaluatedBonePoseSnapshot* findPoseBoneById(
+  std::vector<EvaluatedBonePoseSnapshot>* bones,
+  std::string_view id) {
+  const auto found = std::find_if(bones->begin(), bones->end(), [&](const auto& bone) {
+    return bone.id == id;
+  });
+  return found == bones->end() ? nullptr : &*found;
+}
+
+EvaluatedBonePoseSnapshot* findPoseBoneByRole(
+  std::vector<EvaluatedBonePoseSnapshot>* bones,
+  std::string_view role) {
+  const auto found = std::find_if(bones->begin(), bones->end(), [&](const auto& bone) {
+    return bone.role == role;
+  });
+  return found == bones->end() ? nullptr : &*found;
+}
+
+void setSecondaryIkUnavailable(SpatialAttachmentEvaluationSnapshot* evaluation, std::string_view reason) {
+  if (evaluation->mode == "two_hand") {
+    evaluation->secondaryIk.status = "unavailable";
+    evaluation->secondaryIk.reason = std::string(reason);
+  } else {
+    evaluation->secondaryIk.status = "not_applicable";
+    evaluation->secondaryIk.reason = "one_hand_attachment";
+  }
+  evaluation->secondaryIk.solved = false;
+  evaluation->secondaryIk.reachable.reset();
+  evaluation->secondaryIk.preSolveDistanceMeters.reset();
+  evaluation->secondaryIk.targetDistanceMeters.reset();
+  evaluation->secondaryIk.minReachMeters.reset();
+  evaluation->secondaryIk.maxReachMeters.reset();
+  evaluation->secondaryIk.reachResidualMeters.reset();
+  evaluation->secondaryIk.postSolveDistanceMeters.reset();
+  evaluation->secondaryIk.reachToleranceMeters.reset();
+  evaluation->secondaryIk.reachWithinTolerance.reset();
+  evaluation->secondaryIk.contactToleranceMeters.reset();
+  evaluation->secondaryIk.contactWithinTolerance.reset();
+  evaluation->secondaryIk.postSolveAngleDegrees.reset();
+  evaluation->secondaryIk.angleToleranceDegrees.reset();
+  evaluation->secondaryIk.angleWithinTolerance.reset();
+  evaluation->secondaryIk.withinTolerance.reset();
+}
+
+bool applySecondaryHandTwoBoneIk(
+  const AttachmentProfileSnapshot& profile,
+  const SkeletonDefinitionSnapshot& skeleton,
+  const SpatialAttachmentEvaluationSnapshot& preSolve,
+  std::vector<EvaluatedBonePoseSnapshot>* posedBones,
+  SpatialSecondaryIkDiagnosticSnapshot* diagnostic,
+  std::string* errorMessage) {
+  if (!profile.secondaryHand || !preSolve.secondaryHandFrame || !preSolve.secondaryHandFrame->targetWorld
+      || !preSolve.secondaryHandFrame->poleWorld) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK is missing a resolved target or pole.");
+  }
+
+  const std::string upperRole = profile.dominantHand == "right" ? "upper_arm_l" : "upper_arm_r";
+  const std::string lowerRole = profile.dominantHand == "right" ? "lower_arm_l" : "lower_arm_r";
+  const std::string handRole = profile.dominantHand == "right" ? "hand_l" : "hand_r";
+  auto* upper = findPoseBoneByRole(posedBones, upperRole);
+  auto* lower = findPoseBoneByRole(posedBones, lowerRole);
+  auto* hand = findPoseBoneByRole(posedBones, handRole);
+  if (upper == nullptr || lower == nullptr || hand == nullptr) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK chain is missing required roles.");
+  }
+  if (lower->parent != upper->id || hand->parent != lower->id) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK chain is not a direct parent chain.");
+  }
+  auto* upperParent = findPoseBoneById(posedBones, upper->parent);
+  if (upperParent == nullptr && !upper->parent.empty()) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK chain is missing required roles.");
+  }
+
+  const auto* palm = palmSocketForBone(skeleton, hand->id);
+  if (palm == nullptr) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK is missing a palm_contact socket.");
+  }
+  SpatialTransformSnapshot palmLocal;
+  SpatialTransformSnapshot palmInverse;
+  SpatialTransformSnapshot desiredHand;
+  if (!makeTransform(palm->translation, palm->rotation, &palmLocal, errorMessage)
+      || !invertTransform(palmLocal, &palmInverse, errorMessage)
+      || !composeTransforms(*preSolve.secondaryHandFrame->targetWorld, palmInverse, &desiredHand, errorMessage)) {
+    return false;
+  }
+
+  const SpatialVector3Snapshot shoulder = upper->world.translation;
+  const SpatialVector3Snapshot desiredWrist = desiredHand.translation;
+  const SpatialVector3Snapshot poleWorld = *preSolve.secondaryHandFrame->poleWorld;
+  const double upperLength = vectorLength(lower->local.translation);
+  const double lowerLength = vectorLength(hand->local.translation);
+  if (!std::isfinite(upperLength) || upperLength <= 0.0 || !std::isfinite(lowerLength) || lowerLength <= 0.0) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK segment length is zero or non-finite.");
+  }
+
+  const SpatialVector3Snapshot shoulderToWrist = subtractVectors(desiredWrist, shoulder);
+  const double desiredDistance = vectorLength(shoulderToWrist);
+  if (!std::isfinite(desiredDistance) || desiredDistance == 0.0 || !vectorIsFinite(poleWorld)) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+  const double maxReach = upperLength + lowerLength;
+  const double minReach = std::abs(upperLength - lowerLength);
+  const bool reachable = desiredDistance <= maxReach && desiredDistance >= minReach;
+  const double reachResidual = desiredDistance > maxReach
+    ? desiredDistance - maxReach
+    : (desiredDistance < minReach ? minReach - desiredDistance : 0.0);
+  const double solvedDistance = std::min(maxReach, std::max(minReach, desiredDistance));
+  if (!std::isfinite(reachResidual) || !std::isfinite(solvedDistance) || solvedDistance == 0.0) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+
+  SpatialVector3Snapshot axis;
+  if (!tryNormalizeVector(
+        shoulderToWrist,
+        &axis,
+        "Spatial evaluation secondary-hand IK produced non-finite math.",
+        errorMessage)) {
+    return false;
+  }
+  const SpatialVector3Snapshot solvedWrist = addVectors(shoulder, scaleVector(axis, solvedDistance));
+  const SpatialVector3Snapshot poleRelative = subtractVectors(poleWorld, shoulder);
+  const SpatialVector3Snapshot poleRejection = subtractVectors(poleRelative, scaleVector(axis, dotVectors(poleRelative, axis)));
+  const double poleSeparation = vectorLength(poleRejection);
+  if (!std::isfinite(poleSeparation) || poleSeparation <= 1e-10) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK pole is collinear with the shoulder-target line.");
+  }
+  SpatialVector3Snapshot bendDir;
+  SpatialVector3Snapshot planeNormal;
+  if (!tryNormalizeVector(
+        poleRejection,
+        &bendDir,
+        "Spatial evaluation secondary-hand IK pole is collinear with the shoulder-target line.",
+        errorMessage)
+      || !tryNormalizeVector(
+        crossVectors(axis, bendDir),
+        &planeNormal,
+        "Spatial evaluation secondary-hand IK produced non-finite math.",
+        errorMessage)) {
+    return false;
+  }
+
+  double cosShoulder = (upperLength * upperLength + solvedDistance * solvedDistance - lowerLength * lowerLength)
+    / (2.0 * upperLength * solvedDistance);
+  if (!std::isfinite(cosShoulder)) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+  if (cosShoulder > 1.0) cosShoulder = 1.0;
+  if (cosShoulder < -1.0) cosShoulder = -1.0;
+  const double sinShoulder = std::sqrt(std::max(0.0, 1.0 - cosShoulder * cosShoulder));
+  if (!std::isfinite(sinShoulder)) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+  const SpatialVector3Snapshot elbow = addVectors(
+    addVectors(shoulder, scaleVector(axis, upperLength * cosShoulder)),
+    scaleVector(bendDir, upperLength * sinShoulder));
+  const SpatialVector3Snapshot upperOffset = subtractVectors(elbow, shoulder);
+  const SpatialVector3Snapshot lowerOffset = subtractVectors(solvedWrist, elbow);
+  if (!vectorIsFinite(elbow) || !vectorIsFinite(upperOffset) || !vectorIsFinite(lowerOffset)) {
+    return fail(errorMessage, "Spatial evaluation secondary-hand IK produced non-finite math.");
+  }
+
+  SpatialQuaternionSnapshot upperWorldRotation;
+  SpatialQuaternionSnapshot lowerWorldRotation;
+  if (!rotationMappingOffset(lower->local.translation, upperOffset, planeNormal, &upperWorldRotation, errorMessage)
+      || !rotationMappingOffset(hand->local.translation, lowerOffset, planeNormal, &lowerWorldRotation, errorMessage)) {
+    return false;
+  }
+  const SpatialQuaternionSnapshot parentWorldRotation = upperParent == nullptr
+    ? SpatialQuaternionSnapshot{0.0, 0.0, 0.0, 1.0}
+    : upperParent->world.rotation;
+  SpatialQuaternionSnapshot upperLocalRotation = multiplyQuaternions(conjugateQuaternion(parentWorldRotation), upperWorldRotation);
+  SpatialQuaternionSnapshot lowerLocalRotation = multiplyQuaternions(conjugateQuaternion(upperWorldRotation), lowerWorldRotation);
+  SpatialQuaternionSnapshot handLocalRotation = multiplyQuaternions(conjugateQuaternion(lowerWorldRotation), desiredHand.rotation);
+  if (!makeTransform(upper->local.translation, upperLocalRotation, &upper->local, errorMessage)
+      || !makeTransform(lower->local.translation, lowerLocalRotation, &lower->local, errorMessage)
+      || !makeTransform(hand->local.translation, handLocalRotation, &hand->local, errorMessage)
+      || !recomputePoseWorlds(posedBones, errorMessage)) {
+    return false;
+  }
+
+  diagnostic->status = "applied";
+  diagnostic->reason.reset();
+  diagnostic->solved = true;
+  diagnostic->reachable = reachable;
+  diagnostic->targetDistanceMeters = withoutSignedZero(desiredDistance);
+  diagnostic->minReachMeters = withoutSignedZero(minReach);
+  diagnostic->maxReachMeters = withoutSignedZero(maxReach);
+  diagnostic->reachResidualMeters = withoutSignedZero(reachResidual);
+  diagnostic->reachToleranceMeters = withoutSignedZero(profile.secondaryHand->reachMeters);
+  diagnostic->reachWithinTolerance = reachResidual <= profile.secondaryHand->reachMeters;
+  diagnostic->contactToleranceMeters = withoutSignedZero(profile.secondaryHand->contactMeters);
+  diagnostic->angleToleranceDegrees = withoutSignedZero(profile.secondaryHand->angleDegrees);
   return true;
 }
 
@@ -2029,6 +2448,7 @@ bool composeAttachmentEvaluation(
   }
 
   evaluation->skeletonId = skeleton.id;
+  evaluation->attachmentSchemaVersion = profile.schemaVersion;
   evaluation->skeletonName = skeleton.name;
   evaluation->rootBone = skeleton.rootBone;
   evaluation->attachmentId = profile.id;
@@ -2127,6 +2547,19 @@ bool composeAttachmentEvaluation(
           || !composeTransforms(evaluation->itemWorld, targetLocal, &targetWorld, errorMessage)) return false;
       hand.targetWorld = targetWorld;
       hand.poleTranslation = profile.secondaryHand->poleTranslation;
+      if (profile.schemaVersion >= 2 && profile.secondaryHand->poleSpace == "item") {
+        hand.poleSpace = "item";
+        const SpatialVector3Snapshot poleWorld = addVectors(
+          evaluation->itemWorld.translation,
+          rotateVector(evaluation->itemWorld.rotation, profile.secondaryHand->poleTranslation));
+        if (!vectorIsFinite(poleWorld)) {
+          return fail(errorMessage, "Spatial evaluation produced a non-finite secondary-hand pole.");
+        }
+        hand.poleWorld = poleWorld;
+      } else {
+        hand.poleSpace = "unresolved";
+        hand.poleReason = "pole_space_not_authored";
+      }
       if (hand.palmWorld) {
         const auto& palm = hand.palmWorld->translation;
         const double distance = std::hypot(
@@ -2464,6 +2897,9 @@ std::optional<SpatialAttachmentEvaluationSnapshot> AnimationSystem::evaluateRest
   }
   SpatialAttachmentEvaluationSnapshot evaluation;
   if (!evaluateRestAttachmentSnapshot(*profile, *skeleton, &evaluation, errorMessage)) return std::nullopt;
+  setSecondaryIkUnavailable(
+    &evaluation,
+    profile->schemaVersion >= 2 ? "rest_pose_unsolved" : "secondary_hand_ik_not_implemented");
   return evaluation;
 }
 
@@ -2509,9 +2945,20 @@ std::optional<SpatialSampledAttachmentEvaluationSnapshot> AnimationSystem::evalu
     return std::nullopt;
   }
 
+  const bool requestSecondaryIk = std::find(
+    envelope->proceduralLayers.begin(),
+    envelope->proceduralLayers.end(),
+    "secondary_hand_ik") != envelope->proceduralLayers.end();
+  const bool applySecondaryIk = profile->schemaVersion >= 2
+    && profile->mode == "two_hand"
+    && profile->secondaryHand
+    && profile->secondaryHand->enabled
+    && profile->secondaryHand->poleSpace == "item"
+    && requestSecondaryIk;
+
   std::vector<std::string> applied;
   std::vector<std::string> unavailable;
-  if (!classifyProceduralLayers(envelope->proceduralLayers, &applied, &unavailable, errorMessage)) {
+  if (!classifyProceduralLayers(envelope->proceduralLayers, applySecondaryIk, &applied, &unavailable, errorMessage)) {
     return std::nullopt;
   }
 
@@ -2523,6 +2970,63 @@ std::optional<SpatialSampledAttachmentEvaluationSnapshot> AnimationSystem::evalu
   SpatialSampledAttachmentEvaluationSnapshot result;
   if (!composeAttachmentEvaluation(*profile, *skeleton, sampledPose->bones, &result.evaluation, errorMessage)) {
     return std::nullopt;
+  }
+  if (applySecondaryIk) {
+    const auto preSolveDistance = result.evaluation.secondaryHandFrame
+      ? result.evaluation.secondaryHandFrame->preSolveDistanceMeters
+      : std::nullopt;
+    std::vector<EvaluatedBonePoseSnapshot> solvedBones = result.evaluation.bones;
+    SpatialSecondaryIkDiagnosticSnapshot diagnostic;
+    if (!applySecondaryHandTwoBoneIk(*profile, *skeleton, result.evaluation, &solvedBones, &diagnostic, errorMessage)) {
+      return std::nullopt;
+    }
+    result.evaluation = {};
+    if (!composeAttachmentEvaluation(*profile, *skeleton, solvedBones, &result.evaluation, errorMessage)) {
+      return std::nullopt;
+    }
+    if (result.evaluation.secondaryHandFrame) {
+      result.evaluation.secondaryHandFrame->preSolveDistanceMeters = preSolveDistance;
+    }
+    double postSolveDistance = 0.0;
+    if (!result.evaluation.secondaryHandFrame
+        || !result.evaluation.secondaryHandFrame->palmWorld
+        || !result.evaluation.secondaryHandFrame->targetWorld) {
+      fail(errorMessage, "Spatial evaluation secondary-hand IK is missing a palm_contact socket.");
+      return std::nullopt;
+    }
+    const auto& palm = result.evaluation.secondaryHandFrame->palmWorld->translation;
+    const auto& target = result.evaluation.secondaryHandFrame->targetWorld->translation;
+    postSolveDistance = std::hypot(target.x - palm.x, target.y - palm.y, target.z - palm.z);
+    const auto& palmRotation = result.evaluation.secondaryHandFrame->palmWorld->rotation;
+    const auto& targetRotation = result.evaluation.secondaryHandFrame->targetWorld->rotation;
+    const double rotationDot = std::clamp(std::abs(
+      palmRotation.x * targetRotation.x
+      + palmRotation.y * targetRotation.y
+      + palmRotation.z * targetRotation.z
+      + palmRotation.w * targetRotation.w), 0.0, 1.0);
+    const double postSolveAngleDegrees = 2.0 * std::acos(rotationDot) * 180.0 / std::acos(-1.0);
+    if (!std::isfinite(postSolveDistance) || !std::isfinite(postSolveAngleDegrees)) {
+      fail(errorMessage, "Spatial evaluation produced a non-finite secondary-hand distance.");
+      return std::nullopt;
+    }
+    diagnostic.preSolveDistanceMeters = preSolveDistance;
+    diagnostic.postSolveDistanceMeters = withoutSignedZero(postSolveDistance);
+    diagnostic.contactWithinTolerance = diagnostic.contactToleranceMeters
+      && postSolveDistance <= *diagnostic.contactToleranceMeters;
+    diagnostic.postSolveAngleDegrees = withoutSignedZero(postSolveAngleDegrees);
+    diagnostic.angleWithinTolerance = diagnostic.angleToleranceDegrees
+      && postSolveAngleDegrees <= *diagnostic.angleToleranceDegrees;
+    diagnostic.withinTolerance = diagnostic.reachWithinTolerance
+      && *diagnostic.reachWithinTolerance
+      && diagnostic.contactWithinTolerance
+      && *diagnostic.contactWithinTolerance
+      && diagnostic.angleWithinTolerance
+      && *diagnostic.angleWithinTolerance;
+    result.evaluation.secondaryIk = std::move(diagnostic);
+  } else if (profile->mode == "two_hand") {
+    setSecondaryIkUnavailable(&result.evaluation, "secondary_hand_ik_not_implemented");
+  } else {
+    setSecondaryIkUnavailable(&result.evaluation, "one_hand_attachment");
   }
   result.phase = envelope->phase;
   result.clipName = sampledPose->clipName;
