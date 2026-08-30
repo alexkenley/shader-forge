@@ -675,6 +675,7 @@ Current checkpoint now implemented:
 - migration reports now record converted, approximated, skipped, and manual counts instead of only detect-only notes
 
 Still ahead inside this phase:
+- high-fidelity, rerunnable whole-project migration from Unreal, Unity, and Godot, using source-editor exporters where required, stable source IDs and provenance, conflict-safe reimport, conversion of assets/scenes/gameplay metadata, and a clear validation/remediation report for anything that cannot be converted automatically
 - deeper scene hierarchy, transform, and component extraction from source-engine data
 - real asset/material/audio/animation conversion instead of project-structure placeholders
 - exporter-assisted Unreal actor and Blueprint extraction
