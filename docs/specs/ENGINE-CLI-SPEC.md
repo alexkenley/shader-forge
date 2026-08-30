@@ -66,8 +66,8 @@ The initial build/run/bake command family now targets the native runtime and coo
 - `engine policy artifacts [--root <path>]` now prints tracked artifact hashes, verification state, and promote/quarantine metadata for a workspace
 - `engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]` now lists queued review-required requests from a live `engine_sessiond`
 - `engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal
-- `engine policy promote <path> [--root <path>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact into a reviewed project-owned state and refreshes its trusted hash
-- `engine policy quarantine <path> [--root <path>] [--decision-by <name>] [--note <text>]` now marks a tracked artifact as quarantined so later risky transitions deny it until it is promoted again
+- `engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact through `engine_sessiond`'s HTTP transition route and refreshes its trusted hash
+- `engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now marks a tracked artifact as quarantined through that same sessiond mutation authority so later risky transitions deny it until it is promoted again
 - `engine ai providers [--root <path>]` now prints the effective AI provider manifest, provider readiness state, and current default provider for a workspace
 - `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs a workspace-backed smoke test through the shared AI layer
 - `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses the same first-slice request path for deterministic fake-provider output and optional Ollama-backed prompts

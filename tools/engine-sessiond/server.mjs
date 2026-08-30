@@ -6,6 +6,7 @@ import { CodeTrustApprovalStore } from './lib/code-trust-approval-store.mjs';
 import { CoordinationStore } from './lib/coordination-store.mjs';
 import { initGitRepository, readGitStatus } from './lib/git-service.mjs';
 import { getPlatformInfo, listHostDirectory } from './lib/host-fs-service.mjs';
+import { OperationStore } from './lib/operation-store.mjs';
 import { SessionStore } from './lib/session-store.mjs';
 import { RuntimeStore } from './lib/runtime-store.mjs';
 import { TerminalStore } from './lib/terminal-store.mjs';
@@ -16,6 +17,7 @@ import {
   inspectCodeTrustState,
   listCodeTrustArtifacts,
   recordCodeTrustArtifact,
+  restoreCodeTrustArtifact,
   transitionCodeTrustArtifact,
 } from '../shared/code-trust-policy.mjs';
 import {
@@ -32,27 +34,108 @@ import {
   listProfilingCaptures,
 } from '../shared/engine-profiling-service.mjs';
 
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
+function requestOrigin(request) {
+  const value = request?.headers?.origin;
+  return Array.isArray(value) ? value[0] || '' : typeof value === 'string' ? value : '';
+}
+
+function isLoopbackHostname(hostname) {
+  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === '0:0:0:0:0:0:0:1';
+}
+
+function isUnspecifiedBindHost(hostname) {
+  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  return normalized === '0.0.0.0'
+    || normalized === '::'
+    || normalized === '::0'
+    || normalized === '0:0:0:0:0:0:0:0';
+}
+
+function isLoopbackBindHost(hostname) {
+  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!normalized || isUnspecifiedBindHost(normalized)) {
+    return false;
+  }
+  if (isLoopbackHostname(normalized)) {
+    return true;
+  }
+  if (/^127(?:\.\d{1,3}){3}$/.test(normalized)) {
+    return normalized.split('.').every((part) => {
+      const value = Number(part);
+      return Number.isInteger(value) && value >= 0 && value <= 255;
+    });
+  }
+  return false;
+}
+
+function assertLoopbackBindHost(host) {
+  const normalized = String(host || '').trim() || '127.0.0.1';
+  if (!isLoopbackBindHost(normalized)) {
+    throw new Error(
+      `engine_sessiond refuses to bind non-loopback host '${normalized}'. Authenticated remote mode is not implemented.`,
+    );
+  }
+  return normalized;
+}
+
+function formatHttpBaseUrl(address) {
+  const hostname = String(address?.address || '');
+  const host = hostname.includes(':') && !hostname.startsWith('[')
+    ? `[${hostname}]`
+    : hostname;
+  return `http://${host}:${address.port}`;
+}
+
+function isLoopbackBrowserOrigin(origin) {
+  if (!origin) {
+    return false;
+  }
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return false;
+    }
+    return isLoopbackHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isRequestOriginAllowed(request) {
+  const origin = requestOrigin(request);
+  return !origin || isLoopbackBrowserOrigin(origin);
+}
+
+function corsHeaders(request) {
+  const origin = requestOrigin(request);
+  const headers = {
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
   };
+  if (origin && isLoopbackBrowserOrigin(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    headers.Vary = 'Origin';
+  }
+  return headers;
 }
 
-function jsonHeaders(statusCode = 200) {
+function jsonHeaders(statusCode = 200, request = null) {
   return {
     statusCode,
     headers: {
-      ...corsHeaders(),
+      ...corsHeaders(request),
       'Content-Type': 'application/json; charset=utf-8',
     },
   };
 }
 
-function sseHeaders() {
+function sseHeaders(request) {
   return {
-    ...corsHeaders(),
+    ...corsHeaders(request),
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
@@ -61,9 +144,16 @@ function sseHeaders() {
 }
 
 function writeJson(response, statusCode, payload) {
-  const { headers } = jsonHeaders(statusCode);
+  const { headers } = jsonHeaders(statusCode, response.req);
   response.writeHead(statusCode, headers);
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function assertAllowedOrigin(request) {
+  if (isRequestOriginAllowed(request)) {
+    return;
+  }
+  throw createHttpError(403, 'Non-loopback Origin is not allowed.');
 }
 
 async function readJsonBody(request) {
@@ -89,7 +179,7 @@ function createEventHub() {
   }
 
   function subscribe(request, response) {
-    response.writeHead(200, sseHeaders());
+    response.writeHead(200, sseHeaders(request));
     response.write(': connected\n\n');
     listeners.add(response);
 
@@ -184,6 +274,104 @@ function readCodeTrustActor(body) {
       : 'human';
 }
 
+function mapOperationActorToCodeTrustActor(actor) {
+  if (actor == null || actor === '') {
+    throw createHttpError(400, 'actor is required.');
+  }
+  if (typeof actor !== 'object') {
+    throw createHttpError(400, 'actor must be an object.');
+  }
+  const kind = typeof actor.kind === 'string' ? actor.kind.trim() : '';
+  if (kind === 'mcp') {
+    return 'assistant';
+  }
+  if (kind === 'human' || kind === 'shell' || kind === 'cli') {
+    return 'human';
+  }
+  throw createHttpError(400, 'actor.kind must be human, shell, cli, or mcp.');
+}
+
+function requireOperationActor(actor) {
+  mapOperationActorToCodeTrustActor(actor);
+  return actor;
+}
+
+function journalCodeTrustArtifact(artifact) {
+  if (!artifact || typeof artifact !== 'object') {
+    return null;
+  }
+  return {
+    path: artifact.path || '',
+    origin: artifact.origin || '',
+    targetTier: artifact.targetTier || '',
+    targetKind: artifact.targetKind || '',
+    lastAction: artifact.lastAction || '',
+    updatedAt: artifact.updatedAt || '',
+    hashAlgorithm: artifact.hashAlgorithm || '',
+    contentHash: artifact.contentHash || '',
+    promotionStatus: artifact.promotionStatus || 'tracked',
+    promotedAt: artifact.promotedAt || null,
+    promotedBy: artifact.promotedBy || null,
+    promotionNote: artifact.promotionNote || '',
+    quarantinedAt: artifact.quarantinedAt || null,
+    quarantinedBy: artifact.quarantinedBy || null,
+    quarantineNote: artifact.quarantineNote || '',
+  };
+}
+
+function expectedOperationArtifactHash(record, phase) {
+  if (phase === 'undo') {
+    if (!record?.baseRevision || record.baseRevision === 'missing' || record.beforeContent == null) {
+      return '';
+    }
+    return String(record.baseRevision).startsWith('sha256:')
+      ? record.baseRevision.slice('sha256:'.length)
+      : '';
+  }
+  if (!record?.proposedRevision || !String(record.proposedRevision).startsWith('sha256:')) {
+    return '';
+  }
+  return record.proposedRevision.slice('sha256:'.length);
+}
+
+async function finalizeOperationCodeTrustEffect(record, { phase } = {}) {
+  const effect = record?.codeTrustEffect;
+  if (!effect?.evaluation) {
+    return { status: 'skipped' };
+  }
+  const expectedContentHash = expectedOperationArtifactHash(record, phase);
+
+  if (phase === 'undo') {
+    const restored = await restoreCodeTrustArtifact({
+      rootPath: record.workspaceRoot,
+      relativePath: record.path,
+      priorRecord: Object.prototype.hasOwnProperty.call(effect, 'priorArtifact')
+        ? effect.priorArtifact
+        : null,
+      expectedCurrent: effect.artifact || null,
+      expectedContentHash,
+    });
+    return {
+      status: 'reverted',
+      artifact: journalCodeTrustArtifact(restored.artifact),
+    };
+  }
+
+  const artifact = await recordCodeTrustArtifact({
+    rootPath: record.workspaceRoot,
+    relativePath: record.path,
+    actor: effect.actor || 'human',
+    origin: effect.origin || effect.evaluation.effectiveOrigin || '',
+    evaluation: effect.evaluation,
+    expectedContentHash,
+  });
+  const journaled = journalCodeTrustArtifact(artifact);
+  return {
+    status: journaled ? 'recorded' : 'skipped',
+    artifact: journaled,
+  };
+}
+
 function readCodeTrustOrigin(body) {
   return body?.policy && typeof body.policy === 'object' && typeof body.policy.origin === 'string'
     ? body.policy.origin.trim()
@@ -245,6 +433,12 @@ function approvalRequestForOperation(operationType, body) {
   if (operationType === 'file_write') {
     return normalizeFileWriteRequest(body);
   }
+  if (operationType === 'operation_apply') {
+    return {
+      sessionId: requireTrimmedString(body.sessionId, 'sessionId'),
+      operationId: requireTrimmedString(body.operationId, 'operationId'),
+    };
+  }
   if (operationType === 'build_runtime') {
     return normalizeBuildRuntimeRequest(body);
   }
@@ -257,6 +451,9 @@ function approvalRequestForOperation(operationType, body) {
 function approvalSummary(operationType, request, codeTrust) {
   if (operationType === 'file_write') {
     return `Review assistant file write to ${codeTrust?.path || request.path}`;
+  }
+  if (operationType === 'operation_apply') {
+    return `Review assistant operation apply to ${codeTrust?.path || request.operationId}`;
   }
   if (operationType === 'build_runtime') {
     return `Review assistant runtime build (${request.config})`;
@@ -279,16 +476,28 @@ async function executeFileWrite({
 }) {
   const fileWrite = normalizeFileWriteRequest(request);
   const rootPath = resolveCodeTrustRoot(sessionStore, fileWrite.sessionId);
-  const result = await sessionStore.writeFile(fileWrite.sessionId, fileWrite.path, fileWrite.content);
-  await recordCodeTrustArtifact({
-    rootPath,
-    relativePath: fileWrite.path,
-    actor,
-    origin,
-    evaluation: codeTrust,
-  });
+  const result = await sessionStore.writeTextFileAtomic(
+    fileWrite.sessionId,
+    fileWrite.path,
+    fileWrite.content,
+    {
+      afterMutation: async () => {
+        await recordCodeTrustArtifact({
+          rootPath,
+          relativePath: fileWrite.path,
+          actor,
+          origin,
+          evaluation: codeTrust,
+        });
+      },
+    },
+  );
   return {
-    ...result,
+    session: result.session,
+    path: result.path,
+    size: result.size,
+    modifiedAt: result.modifiedAt,
+    content: result.content,
     codeTrust,
   };
 }
@@ -322,7 +531,7 @@ async function executeRuntimeRestart({ sessionStore, runtimeStore, request }) {
   });
 }
 
-async function executeApprovedOperation({ sessionStore, runtimeStore, buildStore }, approvalRecord) {
+async function executeApprovedOperation({ sessionStore, runtimeStore, buildStore, operationStore }, approvalRecord) {
   if (!approvalRecord) {
     throw createHttpError(404, 'Approval record is required.');
   }
@@ -334,6 +543,24 @@ async function executeApprovedOperation({ sessionStore, runtimeStore, buildStore
       actor: 'human',
       origin: approvalRecord.codeTrust?.effectiveOrigin || '',
     });
+  }
+  if (approvalRecord.operationType === 'operation_apply') {
+    const operation = await operationStore.apply(approvalRecord.request.operationId, {
+      actor: {
+        kind: 'human',
+        id: 'code-trust-approval',
+        name: 'Code-trust approval',
+      },
+      codeTrust: {
+        actor: 'human',
+        origin: approvalRecord.codeTrust?.effectiveOrigin || '',
+        evaluation: approvalRecord.codeTrust,
+      },
+    });
+    return {
+      operation,
+      codeTrust: approvalRecord.codeTrust,
+    };
   }
   if (approvalRecord.operationType === 'build_runtime') {
     return executeBuildRuntime({
@@ -404,6 +631,7 @@ function createRouter({
   buildStore,
   approvalStore,
   coordinationStore,
+  operationStore,
   eventHub,
   diagnosticsRecorder,
 }) {
@@ -414,7 +642,13 @@ function createRouter({
     }
 
     if (request.method === 'OPTIONS') {
-      response.writeHead(204, corsHeaders());
+      try {
+        assertAllowedOrigin(request);
+      } catch (error) {
+        writeJson(response, error.statusCode || 403, { error: error.message });
+        return;
+      }
+      response.writeHead(204, corsHeaders(request));
       response.end();
       return;
     }
@@ -423,6 +657,7 @@ function createRouter({
     const { pathname, searchParams } = requestUrl;
 
     try {
+      assertAllowedOrigin(request);
       if (request.method === 'GET' && pathname === '/health') {
         const capabilities = [
           'sessions',
@@ -449,6 +684,8 @@ function createRouter({
           'profile:capture',
           'profile:list',
           'coordination',
+          'operations',
+          'operations:file-write',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
@@ -728,13 +965,16 @@ function createRouter({
           throw createHttpError(400, 'path is required.');
         }
 
-        const artifact = await transitionCodeTrustArtifact({
-          rootPath: resolveCodeTrustRoot(sessionStore, sessionId),
-          relativePath,
-          transition,
-          decidedBy: decisionBy,
-          note,
-        });
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId);
+        const artifact = await sessionStore.runSerializedFileMutation(async () => (
+          transitionCodeTrustArtifact({
+            rootPath,
+            relativePath,
+            transition,
+            decidedBy: decisionBy,
+            note,
+          })
+        ), sessionId ? { sessionId } : {});
         eventHub.emit('code-trust.artifact.transitioned', {
           sessionId: sessionId || null,
           transition,
@@ -783,7 +1023,7 @@ function createRouter({
 
         try {
           const outcome = await executeApprovedOperation(
-            { sessionStore, runtimeStore, buildStore },
+            { sessionStore, runtimeStore, buildStore, operationStore },
             approvalRecord,
           );
           const approval = approvalStore.resolveApproval(approvalId, {
@@ -897,6 +1137,92 @@ function createRouter({
           origin: readCodeTrustOrigin(body),
         });
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/operations/file-write/preview') {
+        const body = await readJsonBody(request);
+        const operation = await operationStore.previewFileWrite({
+          sessionId: body.sessionId,
+          path: body.path,
+          content: body.content,
+          baseRevision: body.baseRevision,
+          actor: body.actor,
+        });
+        writeJson(response, 201, { operation });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/operations') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const state = searchParams.get('state') || 'all';
+        writeJson(response, 200, {
+          operations: operationStore.listOperations({ sessionId, state }),
+        });
+        return;
+      }
+
+      const operationActionMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/operations\/([^/]+)\/(approve|reject|apply|undo)$/)
+        : null;
+      if (operationActionMatch) {
+        const operationId = decodeURIComponent(operationActionMatch[1]);
+        const action = operationActionMatch[2];
+        const body = await readJsonBody(request);
+        const actor = requireOperationActor(body?.actor);
+        let operation;
+        if (action === 'approve') {
+          operation = await operationStore.approve(operationId, { actor });
+        } else if (action === 'reject') {
+          operation = await operationStore.reject(operationId, { actor });
+        } else if (action === 'apply') {
+          const current = operationStore.getOperation(operationId);
+          if (current.state === 'approved' || current.state === 'applying') {
+            const rootPath = resolveCodeTrustRoot(sessionStore, current.sessionId);
+            const codeTrustActor = mapOperationActorToCodeTrustActor(actor);
+            const codeTrust = await evaluateCodeTrustAction({
+              rootPath,
+              action: 'apply',
+              relativePath: current.path,
+              actor: codeTrustActor,
+              origin: readCodeTrustOrigin(body),
+            });
+            queueOrRejectCodeTrustRequest({
+              approvalStore,
+              operationType: 'operation_apply',
+              sessionId: current.sessionId,
+              requestBody: {
+                sessionId: current.sessionId,
+                operationId: current.id,
+              },
+              codeTrust,
+            });
+            operation = await operationStore.apply(operationId, {
+              actor,
+              codeTrust: {
+                actor: codeTrustActor,
+                origin: readCodeTrustOrigin(body) || codeTrust.effectiveOrigin || '',
+                evaluation: codeTrust,
+              },
+            });
+            writeJson(response, 200, { operation, codeTrust });
+            return;
+          }
+          operation = await operationStore.apply(operationId, { actor });
+        } else {
+          operation = await operationStore.undo(operationId, { actor });
+        }
+        writeJson(response, 200, { operation });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname.startsWith('/api/operations/')) {
+        const operationId = decodeURIComponent(pathname.slice('/api/operations/'.length));
+        if (!operationId || operationId.includes('/')) {
+          writeJson(response, 404, { error: `No route for ${request.method} ${pathname}` });
+          return;
+        }
+        writeJson(response, 200, { operation: operationStore.getOperation(operationId) });
         return;
       }
 
@@ -1097,6 +1423,12 @@ function createRouter({
       if (typeof error === 'object' && error && 'lease' in error && error.lease) {
         payload.lease = error.lease;
       }
+      if (typeof error === 'object' && error && 'conflict' in error && error.conflict) {
+        payload.conflict = error.conflict;
+      }
+      if (typeof error === 'object' && error && 'operation' in error && error.operation) {
+        payload.operation = error.operation;
+      }
       writeJson(response, statusCode, payload);
     }
   };
@@ -1110,9 +1442,11 @@ export async function startEngineSessiond({
   buildLaunchFactory,
   approvalStore,
   coordinationStore,
+  operationStore,
   now,
   heartbeatTimeoutMs,
 } = {}) {
+  const bindHost = assertLoopbackBindHost(host);
   const eventHub = createEventHub();
   const diagnosticsRecorder = createDiagnosticsRecorder(eventHub);
   const terminalStore = new TerminalStore({
@@ -1144,8 +1478,18 @@ export async function startEngineSessiond({
     now,
     heartbeatTimeoutMs,
   });
+  const resolvedOperationStore = operationStore || new OperationStore({
+    sessionStore,
+    emitEvent: (type, data) => {
+      diagnosticsRecorder.emit(type, data);
+    },
+    finalizeEffect: finalizeOperationCodeTrustEffect,
+  });
   if (typeof sessionStore.loadSessions === 'function') {
     await sessionStore.loadSessions();
+  }
+  if (typeof resolvedOperationStore.loadOperations === 'function') {
+    await resolvedOperationStore.loadOperations();
   }
   const server = http.createServer(createRouter({
     sessionStore,
@@ -1154,13 +1498,14 @@ export async function startEngineSessiond({
     buildStore,
     approvalStore: resolvedApprovalStore,
     coordinationStore: resolvedCoordinationStore,
+    operationStore: resolvedOperationStore,
     eventHub,
     diagnosticsRecorder,
   }));
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, host, resolve);
+    server.listen(port, bindHost, resolve);
   });
 
   const address = server.address();
@@ -1171,13 +1516,14 @@ export async function startEngineSessiond({
   return {
     host: address.address,
     port: address.port,
-    baseUrl: `http://${address.address}:${address.port}`,
+    baseUrl: formatHttpBaseUrl(address),
     sessionStore,
     terminalStore,
     runtimeStore,
     buildStore,
     approvalStore: resolvedApprovalStore,
     coordinationStore: resolvedCoordinationStore,
+    operationStore: resolvedOperationStore,
     close: async () => {
       await buildStore.close();
       await runtimeStore.close();
@@ -1191,7 +1537,7 @@ export async function startEngineSessiond({
 }
 
 async function runStandalone() {
-  const host = process.env.SHADER_FORGE_SESSIOND_HOST?.trim() || '127.0.0.1';
+  const host = assertLoopbackBindHost(process.env.SHADER_FORGE_SESSIOND_HOST?.trim() || '127.0.0.1');
   const port = Number.parseInt(process.env.SHADER_FORGE_SESSIOND_PORT?.trim() || '41741', 10);
   const service = await startEngineSessiond({ host, port });
   console.log(`engine_sessiond listening on ${service.baseUrl}`);

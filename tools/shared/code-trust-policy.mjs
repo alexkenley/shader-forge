@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,59 @@ const decisionRank = {
   review_required: 1,
   deny: 2,
 };
+const artifactStoreTails = new Map();
+
+function artifactStoreKey(rootPath) {
+  const normalized = path.normalize(path.resolve(rootPath));
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function serializeArtifactStore(rootPath, operation) {
+  const key = artifactStoreKey(rootPath);
+  const previous = artifactStoreTails.get(key) || Promise.resolve();
+  const next = previous.then(operation, operation);
+  artifactStoreTails.set(key, next.catch(() => {}));
+  return next;
+}
+
+function durableArtifactFingerprint(record) {
+  if (!record) {
+    return '';
+  }
+  return JSON.stringify({
+    path: record.path || '',
+    origin: record.origin || '',
+    targetTier: record.targetTier || '',
+    targetKind: record.targetKind || '',
+    lastAction: record.lastAction || '',
+    updatedAt: record.updatedAt || '',
+    hashAlgorithm: record.hashAlgorithm || '',
+    contentHash: record.contentHash || '',
+    promotionStatus: record.promotionStatus || '',
+    promotedAt: record.promotedAt || null,
+    promotedBy: record.promotedBy || null,
+    promotionNote: record.promotionNote || '',
+    quarantinedAt: record.quarantinedAt || null,
+    quarantinedBy: record.quarantinedBy || null,
+    quarantineNote: record.quarantineNote || '',
+  });
+}
+
+export function durableArtifactsEqual(left, right) {
+  if (!left && !right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return durableArtifactFingerprint(normalizeArtifactRecord(left))
+    === durableArtifactFingerprint(normalizeArtifactRecord(right));
+}
+
+function persistableArtifactRecord(record) {
+  const normalized = normalizeArtifactRecord(record);
+  return normalized ? structuredClone(normalized) : null;
+}
 
 function normalizeSlashes(value) {
   return String(value || '').replace(/\\/g, '/');
@@ -324,8 +377,16 @@ async function writeArtifactStore(rootPath, storePath, records) {
     version: artifactStoreVersion,
     artifacts: records,
   };
+  const serialized = `${JSON.stringify(payload, null, 2)}\n`;
   await fs.mkdir(path.dirname(storePath), { recursive: true });
-  await fs.writeFile(storePath, JSON.stringify(payload, null, 2), 'utf8');
+  const tempPath = `${storePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, serialized, 'utf8');
+    await fs.rename(tempPath, storePath);
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => {});
+    throw error;
+  }
 }
 
 export class CodeTrustPolicyError extends Error {
@@ -334,6 +395,32 @@ export class CodeTrustPolicyError extends Error {
     this.name = 'CodeTrustPolicyError';
     this.statusCode = evaluation.decision === 'review_required' ? 409 : 403;
     this.codeTrust = evaluation;
+  }
+}
+
+export class CodeTrustArtifactConflictError extends Error {
+  constructor({ path: relativePath, message } = {}) {
+    super(message || `Code-trust artifact conflict for '${relativePath || 'unknown'}'.`);
+    this.name = 'CodeTrustArtifactConflictError';
+    this.statusCode = 409;
+    this.conflict = {
+      code: 'code_trust_artifact_conflict',
+      path: relativePath || '',
+    };
+  }
+}
+
+export class CodeTrustArtifactHashError extends Error {
+  constructor({ path: relativePath, expectedHash = '', actualHash = '' } = {}) {
+    super(`Code-trust artifact hash mismatch for '${relativePath || 'unknown'}'.`);
+    this.name = 'CodeTrustArtifactHashError';
+    this.statusCode = 409;
+    this.conflict = {
+      code: 'code_trust_artifact_hash_mismatch',
+      path: relativePath || '',
+      expectedHash,
+      actualHash,
+    };
   }
 }
 
@@ -614,6 +701,7 @@ export async function recordCodeTrustArtifact({
   actor = 'human',
   origin = '',
   evaluation,
+  expectedContentHash,
 } = {}) {
   if (!evaluation || !evaluation.path) {
     throw new Error('A code-trust evaluation is required before recording an artifact.');
@@ -625,44 +713,53 @@ export async function recordCodeTrustArtifact({
     return null;
   }
 
-  const resolvedRoot = path.resolve(rootPath);
-  const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath || evaluation.path);
-  const { storePath, records } = await readArtifactStore(resolvedRoot);
-  const timestamp = new Date().toISOString();
-  const existingRecord = records.find((record) => record.path === normalizedPath) || null;
-  const contentHash = await hashArtifactFile(resolvedRoot, normalizedPath);
-  const keepQuarantined = existingRecord?.promotionStatus === 'quarantined';
-  const keepPromoted =
-    existingRecord?.promotionStatus === 'promoted'
-    && existingRecord.origin === evaluation.effectiveOrigin
-    && evaluation.effectiveOrigin !== 'assistant_generated'
-    && evaluation.effectiveOrigin !== 'external_plugin';
-  const nextRecord = {
-    path: normalizedPath,
-    origin: evaluation.effectiveOrigin,
-    targetTier: evaluation.targetTier,
-    targetKind: evaluation.targetKind,
-    lastAction: evaluation.action,
-    updatedAt: timestamp,
-    hashAlgorithm: contentHash ? artifactHashAlgorithm : '',
-    contentHash,
-    promotionStatus: keepQuarantined ? 'quarantined' : keepPromoted ? 'promoted' : 'tracked',
-    promotedAt: keepPromoted ? existingRecord.promotedAt : null,
-    promotedBy: keepPromoted ? existingRecord.promotedBy : null,
-    promotionNote: keepPromoted ? existingRecord.promotionNote : '',
-    quarantinedAt: keepQuarantined ? existingRecord.quarantinedAt : null,
-    quarantinedBy: keepQuarantined ? existingRecord.quarantinedBy : null,
-    quarantineNote: keepQuarantined ? existingRecord.quarantineNote : '',
-  };
+  return serializeArtifactStore(rootPath, async () => {
+    const resolvedRoot = path.resolve(rootPath);
+    const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath || evaluation.path);
+    const { storePath, records } = await readArtifactStore(resolvedRoot);
+    const timestamp = new Date().toISOString();
+    const existingRecord = records.find((record) => record.path === normalizedPath) || null;
+    const contentHash = await hashArtifactFile(resolvedRoot, normalizedPath);
+    if (expectedContentHash != null && contentHash !== expectedContentHash) {
+      throw new CodeTrustArtifactHashError({
+        path: normalizedPath,
+        expectedHash: expectedContentHash,
+        actualHash: contentHash,
+      });
+    }
+    const keepQuarantined = existingRecord?.promotionStatus === 'quarantined';
+    const keepPromoted =
+      existingRecord?.promotionStatus === 'promoted'
+      && existingRecord.origin === evaluation.effectiveOrigin
+      && evaluation.effectiveOrigin !== 'assistant_generated'
+      && evaluation.effectiveOrigin !== 'external_plugin';
+    const nextRecord = {
+      path: normalizedPath,
+      origin: evaluation.effectiveOrigin,
+      targetTier: evaluation.targetTier,
+      targetKind: evaluation.targetKind,
+      lastAction: evaluation.action,
+      updatedAt: timestamp,
+      hashAlgorithm: contentHash ? artifactHashAlgorithm : '',
+      contentHash,
+      promotionStatus: keepQuarantined ? 'quarantined' : keepPromoted ? 'promoted' : 'tracked',
+      promotedAt: keepPromoted ? existingRecord.promotedAt : null,
+      promotedBy: keepPromoted ? existingRecord.promotedBy : null,
+      promotionNote: keepPromoted ? existingRecord.promotionNote : '',
+      quarantinedAt: keepQuarantined ? existingRecord.quarantinedAt : null,
+      quarantinedBy: keepQuarantined ? existingRecord.quarantinedBy : null,
+      quarantineNote: keepQuarantined ? existingRecord.quarantineNote : '',
+    };
 
-  const existingIndex = records.findIndex((record) => record.path === normalizedPath);
-  const nextRecords = existingIndex >= 0
-    ? records.map((record, index) => (index === existingIndex ? nextRecord : record))
-    : [nextRecord, ...records];
+    const existingIndex = records.findIndex((record) => record.path === normalizedPath);
+    const nextRecords = existingIndex >= 0
+      ? records.map((record, index) => (index === existingIndex ? nextRecord : record))
+      : [nextRecord, ...records];
 
-  nextRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  await writeArtifactStore(resolvedRoot, storePath, nextRecords.slice(0, 64));
-  return inspectArtifactRecord(resolvedRoot, nextRecord);
+    nextRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    await writeArtifactStore(resolvedRoot, storePath, nextRecords.slice(0, 64));
+    return inspectArtifactRecord(resolvedRoot, nextRecord);
+  });
 }
 
 export async function listCodeTrustArtifacts(rootPath, { limit = 64 } = {}) {
@@ -679,8 +776,6 @@ export async function transitionCodeTrustArtifact({
   decidedBy = 'human',
   note = '',
 } = {}) {
-  const resolvedRoot = path.resolve(rootPath);
-  const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath);
   const normalizedTransition = transition === 'promote' || transition === 'quarantine'
     ? transition
     : '';
@@ -688,47 +783,120 @@ export async function transitionCodeTrustArtifact({
     throw new Error(`Unsupported code-trust artifact transition: ${transition}`);
   }
 
-  const { storePath, records } = await readArtifactStore(resolvedRoot);
-  const existingIndex = records.findIndex((record) => record.path === normalizedPath);
-  if (existingIndex === -1) {
-    throw new Error(`No tracked code-trust artifact exists for '${normalizedPath}'.`);
-  }
+  return serializeArtifactStore(rootPath, async () => {
+    const resolvedRoot = path.resolve(rootPath);
+    const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath);
+    const { storePath, records } = await readArtifactStore(resolvedRoot);
+    const existingIndex = records.findIndex((record) => record.path === normalizedPath);
+    if (existingIndex === -1) {
+      throw new Error(`No tracked code-trust artifact exists for '${normalizedPath}'.`);
+    }
 
-  const existingRecord = records[existingIndex];
-  const timestamp = new Date().toISOString();
-  const currentHash = await hashArtifactFile(resolvedRoot, normalizedPath);
-  if (normalizedTransition === 'promote' && !currentHash) {
-    throw new Error(`Cannot promote '${normalizedPath}' because the file is missing.`);
-  }
+    const existingRecord = records[existingIndex];
+    const timestamp = new Date().toISOString();
+    const currentHash = await hashArtifactFile(resolvedRoot, normalizedPath);
+    if (normalizedTransition === 'promote' && !currentHash) {
+      throw new Error(`Cannot promote '${normalizedPath}' because the file is missing.`);
+    }
 
-  const nextRecord = normalizedTransition === 'promote'
-    ? {
-        ...existingRecord,
-        origin: 'project_authored',
-        updatedAt: timestamp,
-        hashAlgorithm: artifactHashAlgorithm,
-        contentHash: currentHash,
-        promotionStatus: 'promoted',
-        promotedAt: timestamp,
-        promotedBy: normalizeOptionalString(decidedBy) || 'human',
-        promotionNote: String(note || '').trim(),
-        quarantinedAt: null,
-        quarantinedBy: null,
-        quarantineNote: '',
-      }
-    : {
-        ...existingRecord,
-        updatedAt: timestamp,
-        promotionStatus: 'quarantined',
-        quarantinedAt: timestamp,
-        quarantinedBy: normalizeOptionalString(decidedBy) || 'human',
-        quarantineNote: String(note || '').trim(),
+    const nextRecord = normalizedTransition === 'promote'
+      ? {
+          ...existingRecord,
+          origin: 'project_authored',
+          updatedAt: timestamp,
+          hashAlgorithm: artifactHashAlgorithm,
+          contentHash: currentHash,
+          promotionStatus: 'promoted',
+          promotedAt: timestamp,
+          promotedBy: normalizeOptionalString(decidedBy) || 'human',
+          promotionNote: String(note || '').trim(),
+          quarantinedAt: null,
+          quarantinedBy: null,
+          quarantineNote: '',
+        }
+      : {
+          ...existingRecord,
+          updatedAt: timestamp,
+          promotionStatus: 'quarantined',
+          quarantinedAt: timestamp,
+          quarantinedBy: normalizeOptionalString(decidedBy) || 'human',
+          quarantineNote: String(note || '').trim(),
+        };
+
+    const nextRecords = records.map((record, index) => (index === existingIndex ? nextRecord : record));
+    nextRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    await writeArtifactStore(resolvedRoot, storePath, nextRecords.slice(0, 64));
+    return inspectArtifactRecord(resolvedRoot, nextRecord);
+  });
+}
+
+export async function snapshotCodeTrustArtifact(rootPath, relativePath) {
+  return serializeArtifactStore(rootPath, async () => {
+    const resolvedRoot = path.resolve(rootPath);
+    const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath);
+    const { records } = await readArtifactStore(resolvedRoot);
+    const existing = records.find((record) => record.path === normalizedPath) || null;
+    return existing ? persistableArtifactRecord(existing) : null;
+  });
+}
+
+export async function restoreCodeTrustArtifact({
+  rootPath,
+  relativePath,
+  priorRecord = null,
+  expectedCurrent = null,
+  expectedContentHash,
+} = {}) {
+  return serializeArtifactStore(rootPath, async () => {
+    const resolvedRoot = path.resolve(rootPath);
+    const normalizedPath = normalizeRelativePath(resolvedRoot, relativePath);
+    const currentHash = await hashArtifactFile(resolvedRoot, normalizedPath);
+    if (expectedContentHash != null && currentHash !== expectedContentHash) {
+      throw new CodeTrustArtifactHashError({
+        path: normalizedPath,
+        expectedHash: expectedContentHash,
+        actualHash: currentHash,
+      });
+    }
+
+    const { storePath, records } = await readArtifactStore(resolvedRoot);
+    const existingIndex = records.findIndex((record) => record.path === normalizedPath);
+    const existing = existingIndex >= 0 ? records[existingIndex] : null;
+    const normalizedPrior = priorRecord ? persistableArtifactRecord(priorRecord) : null;
+    const normalizedExpected = expectedCurrent ? persistableArtifactRecord(expectedCurrent) : null;
+
+    if (durableArtifactsEqual(existing, normalizedPrior)) {
+      return {
+        status: 'reverted',
+        artifact: existing ? await inspectArtifactRecord(resolvedRoot, existing) : null,
       };
+    }
 
-  const nextRecords = records.map((record, index) => (index === existingIndex ? nextRecord : record));
-  nextRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  await writeArtifactStore(resolvedRoot, storePath, nextRecords.slice(0, 64));
-  return inspectArtifactRecord(resolvedRoot, nextRecord);
+    if (!durableArtifactsEqual(existing, normalizedExpected)) {
+      throw new CodeTrustArtifactConflictError({
+        path: normalizedPath,
+        message: `Code-trust artifact '${normalizedPath}' changed after this operation and will not be clobbered.`,
+      });
+    }
+
+    let nextRecords;
+    if (!normalizedPrior) {
+      nextRecords = existingIndex >= 0
+        ? records.filter((_, index) => index !== existingIndex)
+        : records;
+    } else if (existingIndex >= 0) {
+      nextRecords = records.map((record, index) => (index === existingIndex ? normalizedPrior : record));
+    } else {
+      nextRecords = [normalizedPrior, ...records];
+    }
+
+    nextRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    await writeArtifactStore(resolvedRoot, storePath, nextRecords.slice(0, 64));
+    return {
+      status: 'reverted',
+      artifact: normalizedPrior ? await inspectArtifactRecord(resolvedRoot, normalizedPrior) : null,
+    };
+  });
 }
 
 export async function inspectCodeTrustState(rootPath) {

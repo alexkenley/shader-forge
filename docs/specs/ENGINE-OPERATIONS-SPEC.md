@@ -1,0 +1,243 @@
+# Engine Operations Spec
+
+Status: hardened text-file write slice implemented in `engine_sessiond`
+
+Date: 2026-08-30
+
+## Purpose
+
+Shader Forge mutations must be previewable, revision-checked, attributable, atomically applied, and undoable before shell, CLI, and MCP clients share a write path.
+
+This spec is the canonical contract for engine-owned operations. The implemented slice is a workspace-scoped text-file write workflow owned by `engine_sessiond`. It is the shared backend for later Activity/Changes UI and later MCP mutation tools. It does not replace `POST /api/files/write`.
+
+MCP exposure remains disabled until coordinator credentials and leases are wired as the next exposure gate. `sf-mcp` stays read-and-coordinate only. Actor strings recorded on operations are local provenance, not cryptographic attribution.
+
+## Current Implemented Slice
+
+`engine_sessiond` records file-write operations with:
+
+- a stable `op_` identifier
+- actor provenance whose `kind` is `human`, `shell`, `cli`, or `mcp`, plus `id` and `name` strings
+- a normalized project-relative path
+- the canonical physical `workspaceRoot` captured at preview
+- created and updated timestamps
+- state
+- base revision and proposed revision
+- a line-oriented preview summary
+- journaled code-trust effect status (`idle`, `pending`, `recorded`, `reverted`, `skipped`, `failed`) with coherent applying/apply and undoing/undo shapes
+- append-only lifecycle events, including `apply_failed`, `undo_failed`, and `recovered`
+
+Approve, reject, apply, and undo require an explicit valid actor object. The backend never defaults a missing actor to anonymous `human`. Credentials are stripped and are never stored, returned, or streamed.
+
+Records persist atomically in the sessiond state directory as `operations.json`, next to `sessions.json`. Restarting `engine_sessiond` does not erase Activity/Changes history. Invalid persisted records are skipped on load and cannot become applicable operations.
+
+Each operation also stores the canonical physical workspace-root identity captured at preview. Workspace identity is the canonical path plus filesystem identity (`dev`/`ino`). Session `rootPath` is immutable after creation; changing workspace identity requires deleting and recreating the session. Apply, undo, and restart recovery reject a record whose stored workspace root no longer matches the live session.
+
+Legacy session records that lack `rootIdentity` are migrated during `SessionStore` load using the existing atomic session-store persist, before load returns. Operation records were unshipped on main `37b862c`; this slice keeps the initial released `operations.json` format internally consistent and skips invalid records rather than migrating intermediate WIP operation schemas.
+
+## Revisions
+
+A revision is a SHA-256 hash of UTF-8 file bytes, formatted as `sha256:<hex>`.
+
+The explicit missing-file sentinel is `missing`.
+
+Existing files are decoded as strict UTF-8. Invalid byte sequences are rejected; the backend does not decode replacement characters and continue.
+
+Preview reads the current file through `SessionStore` physical-boundary enforcement (the same `realpath` / verified-parent / symlink-and-junction containment used by list/read/write). The caller's `baseRevision` must match the current revision. Before-content and proposed-content are stored server-side for later apply and undo. They are omitted from list/get views and SSE payloads. On load, recomputed hashes of stored before/proposed content must match the persisted revisions or the record is skipped.
+
+A stale base revision returns HTTP 409 with a structured conflict:
+
+```json
+{
+  "error": "File revision conflict.",
+  "conflict": {
+    "code": "revision_conflict",
+    "path": "notes/existing.txt",
+    "expectedRevision": "sha256:...",
+    "actualRevision": "sha256:..."
+  }
+}
+```
+
+## HTTP Surface
+
+- `POST /api/operations/file-write/preview`
+- `GET /api/operations`
+- `GET /api/operations/:id`
+- `POST /api/operations/:id/approve`
+- `POST /api/operations/:id/reject`
+- `POST /api/operations/:id/apply`
+- `POST /api/operations/:id/undo`
+
+Preview body:
+
+- `sessionId`
+- `path`
+- `content` (UTF-8 text)
+- `baseRevision`
+- `actor.kind` / `actor.id` / `actor.name`
+
+Preview does not mutate the workspace file.
+
+## State Machine
+
+Supported states: `previewed`, `approved`, `rejected`, `applying`, `applied`, `undoing`, `undone`, `conflicted`.
+
+Client-driven transitions:
+
+- `previewed` -> `approved` or `rejected`
+- `approved` -> `applied`, `rejected`, or `conflicted`
+- `applied` -> `undone` or `conflicted`
+
+`applying` and `undoing` are durable journal intermediates, not client-requested states. They exist only while apply/undo is in flight or awaiting restart reconciliation.
+
+Invalid transitions return HTTP 409. `rejected`, `undone`, and `conflicted` are terminal in this slice. A conflicted operation is not retried; the caller previews a new operation from the current revision.
+
+## Serialized File Mutation
+
+Every project-file writer and every supported code-trust artifact transition shares one `SessionStore` file-mutation queue. That includes `POST /api/files/write`, operation apply/undo, and `POST /api/code-trust/artifacts/transition`. CLI `engine policy promote|quarantine` calls that same sessiond HTTP route instead of mutating artifacts in another process. Sessiond is the mutation authority; this slice does not add an inter-process lock.
+
+Compare-and-write and compare-and-remove inspect revision and workspace identity, then run an optional `beforeMutation` callback, then mutate source bytes, then run `afterMutation`. `beforeMutation` executes inside the existing serialized queue after that inspection and before source mutation. Direct writes and provenance transitions cannot sneak between inspect, snapshot/precheck, source mutation, and artifact restore.
+
+`SessionStore` throws a structured `revision_conflict` from those primitives. Artifact files under `.shader-forge/code-trust-artifacts.json` use serialized atomic replacement. The file-mutation queue is process-global on purpose. Upgrade to per-path serialization only if throughput later matters.
+
+This covers cooperative engine clients (shell, CLI, sessiond, and later MCP callers of the same contract). Hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+
+## Apply And Undo
+
+Apply requires `approved` state and an explicit actor. It reuses the existing code-trust policy/evaluation/review-queue path used by `POST /api/files/write`: `evaluateCodeTrustAction` with action `apply` and the same review/deny queue. Operation actor kinds `human`, `shell`, and `cli` evaluate as code-trust `human`. `mcp` evaluates as code-trust `assistant`. This is not a second policy model.
+
+Code-trust artifact recording is a journaled operation effect, not a post-apply side effect. The apply path:
+
+1. persists `applying` in `operations.json` before touching the project file, including pending code-trust effect metadata
+2. inside the SessionStore mutation lane, snapshots any prior artifact in `beforeMutation` and persists that snapshot before source bytes change
+3. compare-and-writes the proposed bytes against the recorded base revision
+4. runs an idempotent code-trust finalizer in `afterMutation` and persists `applying` plus `recorded` or `skipped` before the terminal `applied` journal record
+5. persists `applied` with `appliedRevision` and effect status `recorded` or `skipped`
+
+The record is not declared `applied` until that finalizer succeeds. A failed effect stays `applying` with effect status `failed` so startup recovery can retry it. Direct `POST /api/files/write` still records artifacts in the same SessionStore mutation as the write; only the operation journal owns recoverable operation effects.
+
+Undo requires `applied` state and an explicit actor, persists `undoing` first, then inside the same mutation lane:
+
+- prechecks artifact provenance in `beforeMutation` after revision/identity inspection and before source mutation
+- compare-and-writes the stored before-bytes when the file existed at preview time
+- compare-and-removes the file when the operation created it (`baseRevision` was `missing`)
+- reruns the same recoverable code-trust effect lane in `afterMutation` so the tracked artifact is refreshed, reverted, or tombstoned to match the restored bytes
+
+A later promote/quarantine either runs to completion first, in which case undo leaves the source unchanged and records a `code_trust_artifact_conflict`, or undo completes atomically first. Undo must not return 409 after it has already restored source bytes.
+
+Undo records `resultingRevision` (`sha256:...` or `missing`) and emits `operation.undone`. Trust metadata must not keep claiming reverted bytes are still applied. Expected content-hash validation remains in the finalizer: apply records must match the proposed SHA-256, and undo restore checks the restored bytes.
+
+Replacement uses a same-directory temp-file + rename. A failed replacement never deletes the destination first; the original file is preserved. Existing POSIX mode bits, including executable bits, are copied onto the replacement where the host supports them.
+
+An external change before apply or undo returns 409, marks the operation `conflicted`, and leaves the on-disk file unchanged.
+
+## Journal Recovery
+
+On startup, intermediate `applying` / `undoing` records are reconciled by comparing the current file revision with the recorded base, proposed, and applied revisions:
+
+- if the file mutation landed, resume/finalize the code-trust effect and complete the record to `applied` or `undone`
+- if the file is still at the prior stable revision, append a `recovered` event and return to `approved` or `applied`
+- if an artifact conflict is observed while recovering a landed undo/apply, persist a terminal `conflicted` record with append-only provenance rather than leaving `undoing` or `applying` forever
+- otherwise mark `conflicted`
+
+Valid crash windows stay recoverable without repeating a completed effect:
+
+- `applying` + `recorded` after a terminal `applied` persist failure reloads and finalizes to `applied`
+- `undoing` + `reverted` after a terminal `undone` persist failure reloads and finalizes to `undone`
+
+A persistence failure after the file mutation keeps the journal in the intermediate state. Restart recovery is comparison-based and does not blindly retry the write. Recovery events are attributed to the actor that initiated the last `applying` or `undoing` event, not the original proposer.
+
+The event log is append-only. Apply/undo failure and recovery never replace or delete persisted transition events. A failed file mutation appends `apply_failed` or `undo_failed` and returns to the prior stable state while keeping the in-flight event.
+
+## Local Trust Boundary
+
+`engine_sessiond` is a loopback control plane, not a remote authenticated API.
+
+- the HTTP server binds only loopback hosts such as `127.0.0.1`, `localhost`, and `::1`
+- non-loopback bind hosts, including `0.0.0.0` and `::`, are rejected unless a future authenticated remote mode is explicitly implemented
+- requests with no `Origin` header (native CLI and `sf-mcp` stdio) are accepted
+- loopback browser Origins such as `http://127.0.0.1`, `http://localhost`, and `http://[::1]` are accepted for local shell development
+- non-loopback browser Origins are rejected at the HTTP boundary
+
+The bind-host and Origin checks are a local trust boundary. They are not cryptographic client authentication and do not attribute actors.
+
+MCP mutation tools remain disabled until coordinator credentials and leases are wired through the same operation contract.
+
+## Events
+
+Lifecycle events stream on the existing `/api/events` SSE bus:
+
+- `operation.previewed`
+- `operation.approved`
+- `operation.rejected`
+- `operation.applied`
+- `operation.undone`
+- `operation.conflicted`
+
+Payloads are operation views. They do not include file contents or credentials.
+
+## Path And Trust Boundary
+
+Operations reuse `SessionStore` path resolution. Symlinks and junctions cannot escape the session root. This slice does not introduce a second path resolver.
+
+`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, shell Activity/Changes UI, and MCP mutation tools are later slices.
+
+## Persistence Validation
+
+Records are loaded only when all of the following hold:
+
+- state is one of the supported states
+- actor kind is `human`, `shell`, `cli`, or `mcp`
+- timestamps are ISO-8601
+- revisions are `sha256:<hex>` or `missing` as required by the state
+- preview schema is complete (`addedLines`, `removedLines`, `beforeLineCount`, `afterLineCount`, `created`, `summary`)
+- a canonical `workspaceRoot` string is present
+- event types and shapes are known
+- the event type/state sequence is a legal transition history, and the final event state matches the record state
+- recomputed hashes of stored before/proposed content match the persisted revisions
+- code-trust effects are coherent for the record state, including applying/apply and undoing/undo combinations
+
+Required effect shapes:
+
+- `idle` is phase-less and has no evaluation, artifact, or error
+- `pending` requires an evaluation and is apply or undo
+- `failed` requires an evaluation and error string
+- `recorded` is apply-phase and requires both an evaluation and an artifact
+- `reverted` is undo-phase and requires an evaluation
+- `skipped` is apply or undo with no artifact or error
+
+A fabricated `applying` record marked `recorded`/`apply` without an evaluation and artifact is rejected on load and must never recover to `applied`.
+
+Invalid records are skipped. They cannot be listed as applicable operations.
+
+## Verification
+
+`npm run test:sessiond` covers the first-pass workflow plus:
+
+- preview without mutation
+- approval plus apply
+- stale-base conflict
+- external-change conflict before apply
+- undo
+- created-file undo
+- restart persistence
+- lifecycle event emission
+- invalid transitions
+- path-boundary enforcement
+- deterministic rename-barrier serialization of a direct write behind an in-flight apply
+- simulated persistence failure plus restart reconciliation for apply and undo
+- replacement failure preserving the original file and appending `apply_failed`
+- invalid UTF-8 rejection
+- executable mode preservation where the host supports it
+- non-loopback Origin rejection
+- non-loopback bind-host rejection, including `0.0.0.0` and `::`
+- missing actors
+- immutable session `rootPath` plus operation workspace-identity mismatch rejection
+- journaled code-trust apply/undo effects, including failed-effect recovery
+- prior-artifact snapshot persisted inside the mutation lane before source bytes change
+- undo provenance precheck inside the same lane, plus a deterministic promote-during-undo barrier
+- applying/undoing effect-state validation, including rejection of fabricated `applying`+`recorded` records without evaluation/artifact
+- applying+recorded and undoing+reverted crash windows that finalize without repeating the effect
+- persisted legacy session `rootIdentity` migration plus same-path root replacement
+- malformed persisted records skipped on load, including preview-schema, event-sequence, and final-event/state corruption

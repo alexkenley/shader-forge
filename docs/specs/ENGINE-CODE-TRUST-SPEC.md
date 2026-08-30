@@ -34,6 +34,9 @@ Current implemented surfaces:
 - `GET /api/code-trust/approvals`
 - `POST /api/code-trust/approvals/:id/decision`
 - policy enforcement on `POST /api/files/write`
+- policy enforcement on `POST /api/operations/:id/apply` through that same evaluate / review-queue path
+- journaled, idempotent code-trust artifact recording as an operation effect that must succeed before apply is durable, with undo refreshing/reverting/tombstoning the same artifact inside the SessionStore mutation lane
+- prior-artifact snapshots persisted in that lane before source bytes change, and undo provenance prechecks that cannot interleave with promote/quarantine
 - policy enforcement on `POST /api/build/runtime`
 - policy enforcement on `POST /api/runtime/start`
 - policy enforcement on `POST /api/runtime/restart`
@@ -41,7 +44,7 @@ Current implemented surfaces:
 - CLI artifact inspection through `engine policy artifacts`
 - CLI dry-run checks through `engine policy check`
 - CLI approval inspection and decisions through `engine policy approvals|approve|deny`
-- CLI artifact promotion and quarantine through `engine policy promote|quarantine`
+- CLI artifact promotion and quarantine through `engine policy promote|quarantine`, which call `engine_sessiond`'s HTTP transition route instead of mutating artifacts in another process
 - shell-side inspection, artifact promote/quarantine controls, and pending approval controls in the `Workspace` right-panel tab
 
 This slice still does not try to provide full sandboxing. It makes the trust boundary visible, queueable, and testable first.
@@ -120,7 +123,12 @@ Each approval currently stores:
 
 Current approval behavior:
 
-- review-gated assistant file writes and assistant compile requests return HTTP `409` with both `codeTrust` and `approval`
+- review-gated assistant file writes, operation apply, and assistant compile requests return HTTP `409` with both `codeTrust` and `approval`
+- operation apply maps `human`/`shell`/`cli` actors to the existing `human` policy actor and `mcp` to `assistant`; it does not introduce a second policy model
+- operation apply records the artifact through the operation journal's finalizer rather than after the operation is already `applied`; a failed effect stays recoverable as `applying`
+- operation undo reruns that finalizer so trust metadata matches restored or deleted bytes instead of claiming reverted content is still applied
+- all supported artifact transitions, including CLI promote/quarantine, run through sessiond's serialized SessionStore mutation lane; artifact files use serialized atomic replacement
+- cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee
 - approvals can be listed by workspace session, while engine-wide approvals remain visible alongside session-scoped entries
 - approving a queued request replays the stored operation as a human-reviewed action
 - denying a queued request records the decision without executing the deferred operation
@@ -144,7 +152,7 @@ The CLI currently uses the same core for:
 - policy inspection without running `engine_sessiond`
 - full tracked-artifact inspection without running `engine_sessiond`
 - deterministic dry-run checks for future assistant workflows
-- explicit promote and quarantine transitions for tracked artifacts
+- explicit promote and quarantine transitions for tracked artifacts through a running `engine_sessiond` HTTP API
 - approval listing and approval decisions against a running `engine_sessiond`
 
 ## Deterministic Verification
@@ -172,6 +180,7 @@ This first slice still does not provide:
 - signed artifact verification
 - real plugin package verification
 - code hot reload or upgrade contracts
-- cryptographic signing keys or trust-promotion workflows beyond local explicit review metadata
+- cryptographic signing keys, cryptographic actor attribution, or trust-promotion workflows beyond local explicit review metadata
+- an adversarial guarantee against hostile out-of-process filesystem swaps at the OS syscall boundary; the serialized mutation lane covers cooperative engine clients
 
 Those widening passes should land before Shader Forge treats assistant-driven code execution or plugin load as routine workflows.

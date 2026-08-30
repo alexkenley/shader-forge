@@ -91,7 +91,7 @@ It does not expose:
 - an HTTP MCP endpoint
 - built-in model execution, assistant chat, prompts, or provider selection
 
-Write and exclusive-operation tools land only after the engine has shared contracts for preview, revision preconditions, structured diffs, atomic application, approval policy, provenance, validation, conflict handling, and recovery. A lease grants coordination ownership; it is not authority to bypass those contracts.
+Write and exclusive-operation tools land only after they call the shared engine-owned operation contracts. The hardened file-write contract now exists in `engine_sessiond`; MCP still does not expose it. Authenticated MCP actor identity plus coordinator credential and lease enforcement is the next exposure gate. A lease grants coordination ownership; it is not authority to bypass those contracts.
 
 ## Verification
 
@@ -110,4 +110,4 @@ Run it with `npm run test:mcp`.
 
 ## Next Widening Gate
 
-The next MCP slice should add mutation or build/runtime tools only when the corresponding engine-owned preview, revision, atomicity, approval, and rollback contracts are implemented and shared by shell, CLI, and MCP. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface.
+`engine_sessiond` now owns a hardened revision-safe text-file write operation contract (preview, revision hashes, structured conflict, journaled apply/undo, journaled code-trust effects, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filter). All supported mutations, including CLI provenance promote/quarantine, go through that sessiond mutation authority and the serialized SessionStore lane; artifact files use atomic replacement, and workspace identity is path plus filesystem identity. That contract is not yet exposed through MCP tools. The next MCP slice should add mutation tools only by calling those shared engine-owned operations with coordinator credentials and leases, not by wrapping `/api/files/write` or opening a second write path. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` itself still refuses non-loopback bind hosts such as `0.0.0.0` and `::`. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.

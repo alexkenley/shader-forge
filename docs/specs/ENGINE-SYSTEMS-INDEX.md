@@ -1,6 +1,8 @@
 # Shader Forge Systems Index
 
-Date: 2026-03-22
+Date: 2026-08-30
+
+`engine_sessiond` remains a loopback-only control plane: it refuses non-loopback bind hosts such as `0.0.0.0` and `::`, keeps session `rootPath` immutable after creation, and owns the revision-safe text-file operation journal. That journal now records canonical workspace identity (path plus filesystem `dev`/`ino`), validates the full event sequence and coherent applying/undoing effect shapes on load, appends failure/recovery transitions, and finalizes code-trust artifacts before an operation is `applied` or `undone`. All supported mutations, including CLI provenance promote/quarantine, go through sessiond's serialized SessionStore mutation lane; artifact files use atomic replacement. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee. MCP mutation tools stay disabled until they call that same contract.
 
 Major system specs:
 
@@ -14,6 +16,7 @@ Major system specs:
 - [Engine Physics Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-PHYSICS-SPEC.md)
 - [Engine Renderer Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-RENDERER-SPEC.md)
 - [Engine Sessiond Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SESSIOND-SPEC.md)
+- [Engine Operations Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-OPERATIONS-SPEC.md)
 - [Shader Forge MCP Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-MCP-SPEC.md)
 - [Engine CLI Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-CLI-SPEC.md)
 - [Engine Save System Spec](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SAVE-SYSTEM-SPEC.md)

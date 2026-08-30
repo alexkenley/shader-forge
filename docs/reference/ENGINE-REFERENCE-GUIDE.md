@@ -91,16 +91,31 @@ Assistant entry points:
 
 ### Workspaces, Files, And Source Control
 
-- `engine_sessiond` currently provides session create/list/get/update/delete.
+- `engine_sessiond` currently provides session create/list/get/update/delete. Session `rootPath` is immutable after creation; changing workspace identity requires delete/recreate.
 - Session records now persist across `engine_sessiond` restarts and stay available until deleted.
 - Safe file list, file read, and file write APIs are now available inside the active session root.
+- `engine_sessiond` now also owns a revision-safe text-file write operation workflow: preview, list/get, approve/reject, apply, undo, durable journal recovery, and restart-safe history.
+- File-write operations persist in the sessiond state directory so Activity/Changes history survives backend restart. Credentials are never stored. Invalid persisted records are skipped on load after preview-schema and event-sequence validation.
+- Each operation stores the canonical workspace-root identity captured at preview. Apply, undo, and recovery reject a mismatched live session root.
+- Revisions are SHA-256 content hashes plus an explicit `missing` sentinel. Stale preview/apply/undo calls return HTTP 409 with a structured conflict.
+- Direct `/api/files/write`, operation apply/undo, and code-trust promote/quarantine share one serialized `SessionStore` file-mutation queue. Compare-and-write/remove run optional `beforeMutation` after revision/identity inspection and before source mutation. Apply/undo persist `applying`/`undoing` before touching the project file and recover by revision comparison after a crash or persistence failure.
+- Failure and recovery append `apply_failed`, `undo_failed`, or `recovered` events and never replace persisted transitions. Recovery is attributed to the last applying/undoing actor, not the proposer.
+- Replacement uses a same-directory temp-file + rename without deleting the destination first. Existing POSIX mode bits are preserved where the host supports them. Non-UTF-8 existing files are rejected.
+- Approve/reject/apply/undo require an explicit valid actor and never default to anonymous human. Recorded actors are local provenance, not cryptographic attribution.
+- Operation apply reuses the existing code-trust evaluate / review-queue path used by `POST /api/files/write`, but artifact recording is a journaled idempotent effect that must succeed before the operation is `applied`. Apply snapshots prior artifacts inside the mutation lane before source bytes change. Undo provenance precheck and artifact restore run in that same lane so a promote/quarantine cannot interleave. Undo refreshes, reverts, or tombstones that artifact so trust metadata does not claim reverted bytes are still applied.
+- All supported mutations, including CLI `engine policy promote|quarantine`, go through `engine_sessiond`. Artifact files use serialized atomic replacement. Workspace identity is canonical path plus filesystem `dev`/`ino`. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+- Persisted operations validate coherent applying/apply and undoing/undo effect shapes. A fabricated `applying`+`recorded` record without evaluation/artifact is skipped. `applying`+`recorded` and `undoing`+`reverted` crash windows finalize without repeating the effect. Legacy session `rootIdentity` is persisted during load.
+- `engine_sessiond` binds only loopback hosts. Non-loopback bind hosts including `0.0.0.0` and `::` are rejected until an authenticated remote mode exists.
+- Non-loopback browser Origins are rejected at the sessiond HTTP boundary. No-Origin native CLI/MCP requests and loopback shell Origins remain allowed. This is a local trust boundary, not client authentication.
+- Operation lifecycle events stream on `/api/events`. MCP mutation tools remain disabled until coordinator credentials and leases are wired through this same contract.
+- See `docs/specs/ENGINE-OPERATIONS-SPEC.md` for the canonical contract.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
 - `GET /api/ai/providers` and `POST /api/ai/test` now expose the first Phase 5.9 AI provider inspection and smoke-test lane from `engine_sessiond`.
 - `GET /api/package/inspect` and `POST /api/package/run` now expose the first Phase 6.2 release-layout inspect/package flow from `engine_sessiond`, including package prep state and optional auto-bake execution.
 - `GET /api/profile/live`, `GET /api/profile/captures`, and `POST /api/profile/capture` now expose the first Phase 6.3 diagnostics snapshot, capture-history, and capture-report lanes from `engine_sessiond`.
 - `GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.
-- `GET /api/code-trust/artifacts` and `POST /api/code-trust/artifacts/transition` now expose tracked artifact hashes, verification state, and explicit promote/quarantine transitions.
+- `GET /api/code-trust/artifacts` and `POST /api/code-trust/artifacts/transition` now expose tracked artifact hashes, verification state, and explicit promote/quarantine transitions through the SessionStore mutation lane.
 - `GET /api/code-trust/approvals` and `POST /api/code-trust/approvals/:id/decision` now expose the review queue for `review_required` code-trust operations.
 - Policy-relevant file writes now record origin and trust-tier metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`.
 - Runtime build and runtime start/restart now pass through the same code-trust policy layer before compile or load transitions continue.
@@ -122,7 +137,7 @@ Assistant entry points:
 - Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.
 - Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical writes queue through `engine_sessiond` instead of running over each other.
 - This first version is read-and-coordinate only. It does not expose file or scene writes, build/runtime mutation, arbitrary commands, or HTTP transport.
-- Mutation, build, and runtime tools remain blocked until shared preview, revision, structured diff, atomic apply, approval, provenance, validation, conflict, and recovery contracts exist.
+- `engine_sessiond` now has the hardened shared file-write preview/revision/apply/undo contract, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery, and loopback-only bind, but MCP mutation tools remain disabled until they call that workflow with coordinator credentials and leases. Cooperative clients are covered; OS syscall-boundary filesystem swaps are not an adversarial security guarantee.
 - Shader Forge MCP does not contain a built-in assistant, model execution, provider picker, or prompt UI. External clients own the AI experience.
 - Run `npm run test:mcp` for the deterministic stdio, resource, tool, file-boundary, coordination, and disconnect-cleanup harness.
 - See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and current widening gate.
@@ -145,8 +160,8 @@ Assistant entry points:
 - `engine policy artifacts [--root <path>]` now prints tracked artifact hashes, verification state, and promote/quarantine metadata for a workspace.
 - `engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]` now lists pending or historical code-trust approvals from a running backend.
 - `engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal.
-- `engine policy promote <path> [--root <path>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact into a reviewed project-owned state and refreshes its trusted hash.
-- `engine policy quarantine <path> [--root <path>] [--decision-by <name>] [--note <text>]` now quarantines a tracked artifact so later risky transitions keep denying it until it is explicitly promoted again.
+- `engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact through `engine_sessiond` and refreshes its trusted hash.
+- `engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now quarantines a tracked artifact through that same sessiond mutation authority so later risky transitions keep denying it until it is explicitly promoted again.
 - `engine build runtime` configures and builds the native runtime with CMake, resolving the executable from `SHADER_FORGE_CMAKE` first and then falling back to `cmake` on `PATH`.
 - `engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.
 - `engine bake` scans text-backed content, audio, animation, and physics roots, emits staged cooked outputs into `build/cooked/`, and writes a deterministic asset-pipeline report.
@@ -266,7 +281,7 @@ Assistant entry points:
 ### Deterministic Harnesses And Clean Start
 
 - `npm test` runs the preserved shell smoke harness.
-- `npm run test:sessiond` validates local backend session/file flows plus multi-agent leases, queue promotion, expiry, credential ownership, workspace cleanup, and isolation.
+- `npm run test:sessiond` validates local backend session/file flows, revision-safe file-write operations, journal recovery, writer serialization, loopback-only bind, immutable session roots, journaled code-trust effects, undo-vs-promote mutation-lane barriers, persisted `rootIdentity` migration, Origin/actor/code-trust gates, plus multi-agent leases, queue promotion, expiry, credential ownership, workspace cleanup, and isolation.
 - `npm run test:viewer-bridge` validates build/runtime bridge events.
 - `npm run test:packaging-scaffold` validates export-preset inspection, visible prep state, auto-bake packaging, and release-layout generation through the CLI and `engine_sessiond`.
 - `npm run test:profiling-scaffold` validates live diagnostics snapshots, persisted capture reports, and capture-history listing through the CLI and `engine_sessiond`.
@@ -291,6 +306,7 @@ Assistant entry points:
 - A first CLI and shell/sessiond profiling lane that captures workspace diagnostics plus live runtime/build log context into JSON reports under `build/profiling/captures/`.
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
 - A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.
+- A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. MCP exposure of that workflow is still the next credential/lease gate. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
 ### What Still Needs Widening
@@ -306,5 +322,6 @@ Assistant entry points:
 - Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.
+- File-write operations exist in `engine_sessiond`, but shell Activity/Changes UI still needs to consume that contract, and MCP mutation tools still need coordinator credentials and leases before exposure. Scene and asset operations are not in this slice.
 - Profiling still needs Tracy/RenderDoc integration, GPU and memory diagnostics, native profiling panels, and deeper performance-regression workflows beyond the current diagnostics snapshot lane.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

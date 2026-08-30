@@ -332,12 +332,18 @@ try {
   assert.equal(modifiedPromotedLoad.decision, 'deny');
   assert.equal(modifiedPromotedLoad.diagnostics[0].code, 'promoted_artifact_verification_failed');
 
-  const quarantinedProjectArtifact = runCli([
+  const cliSource = await fs.readFile(engineCliPath, 'utf8');
+  assert.match(cliSource, /\/api\/code-trust\/artifacts\/transition/);
+  assert.equal(cliSource.includes('transitionCodeTrustArtifact('), false);
+
+  const quarantinedProjectArtifact = await runCliAsync([
     'policy',
     'quarantine',
     'games/demo/player_logic.ts',
-    '--root',
-    tempProjectRoot,
+    '--session',
+    sessionId,
+    '--base-url',
+    service.baseUrl,
     '--decision-by',
     'human',
     '--note',
@@ -446,6 +452,7 @@ try {
   console.log(`- Verified shared code-trust policy inspection through ${engineCliPath}`);
   console.log('- Verified assistant-generated artifacts are tracked and inspectable through engine_sessiond');
   console.log('- Verified tracked artifacts now carry hashes, verification state, and explicit promote/quarantine transitions');
+  console.log('- Verified CLI promote/quarantine mutations go through engine_sessiond HTTP instead of a second in-process mutation authority');
   console.log('- Verified assistant-triggered engine apply and compile requests queue explicit approvals that can be listed, approved, or denied');
   console.log('- Verified approved review-required operations execute their deferred file-write and runtime-build side effects');
   console.log('- Verified assistant-triggered engine load remains denied when the artifact origin is still assistant-generated');

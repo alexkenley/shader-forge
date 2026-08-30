@@ -47,6 +47,13 @@ Current implemented surfaces:
 - `POST /api/coordination/leases`
 - `GET /api/coordination/leases/:id`
 - `POST /api/coordination/leases/:id/release`
+- `POST /api/operations/file-write/preview`
+- `GET /api/operations`
+- `GET /api/operations/:id`
+- `POST /api/operations/:id/approve`
+- `POST /api/operations/:id/reject`
+- `POST /api/operations/:id/apply`
+- `POST /api/operations/:id/undo`
 - `GET /api/events`
 
 This gives the shell and harnesses a real backend-owned session and file model before PTY and runtime lifecycle work land.
@@ -64,13 +71,18 @@ This gives the shell and harnesses a real backend-owned session and file model b
 
 - persistent project sessions stored in a local JSON record and restored on `engine_sessiond` startup
 - concurrent session creation is serialized by the session store, and physical-root identity is canonicalized so case aliases and symlink/junction aliases resolve to one workspace session ID
+- workspace identity is the canonical path plus filesystem identity (`dev`/`ino`); same-path directory replacement is rejected when the live identity no longer matches
+- session `rootPath` is immutable after creation; changing workspace identity requires deleting and recreating the session. Name updates remain allowed
 - existing persisted session IDs remain loadable; available roots are canonicalized when restored, while temporarily unavailable roots retain their persisted record
+- legacy session records that lack `rootIdentity` are migrated during load with the existing atomic session-store persist before load returns
 - file list/read/write operations enforce the canonical physical workspace boundary: existing targets are resolved with `realpath`, created targets use a verified physical parent, and symlinks or junctions cannot escape the session root
 - directory listings inspect link entries without following them; a link may be listed from its safe parent, but using an outside-target link as the list/read/write target is rejected
-- UTF-8 file reads
-- UTF-8 file writes inside the active session root, with parent-directory creation for authored asset workflows
+- strict UTF-8 file reads that reject invalid byte sequences instead of inserting replacement characters
+- UTF-8 file writes inside the active session root, with parent-directory creation for authored asset workflows and atomic same-directory replacement that preserves the original on failure
 - directory listing with stable relative paths and timestamps
 - JSON HTTP API suitable for local shell integration and harness use
+- HTTP requests with no Origin (native CLI/MCP) and loopback browser Origins are accepted; non-loopback browser Origins are rejected. This is a local trust boundary, not cryptographic authentication
+- `engine_sessiond` binds only loopback hosts (`127.0.0.1`, `localhost`, `::1`, and other `127.0.0.0/8` addresses). Non-loopback bind hosts including `0.0.0.0` and `::` are rejected until an authenticated remote mode exists
 - session persistence defaults to `~/.shader-forge/engine-sessiond/sessions.json`, with `SHADER_FORGE_SESSIOND_DATA_DIR` available to override the storage directory for local setups and harnesses
 - runtime start/restart can now resolve the active session root and launch the native runtime against that project context instead of only a repo-default root
 - runtime start/restart now also derives a save root under `<session-root>/saved/runtime` so runtime quick-saves stay attached to the active project workspace instead of the backend process directory
@@ -87,7 +99,10 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - policy-relevant artifact writes now record trust metadata under `<session-root>/.shader-forge/code-trust-artifacts.json`
 - tracked artifacts now also carry content hashes plus verification state so risky transitions can distinguish reviewed, modified, missing, and quarantined files
 - `GET /api/code-trust/artifacts` now exposes the full tracked-artifact list for a workspace instead of only the summary card slice
-- `POST /api/code-trust/artifacts/transition` now supports explicit `promote` and `quarantine` transitions, and those transitions emit SSE updates so shell trust state can refresh without polling hacks
+- `POST /api/code-trust/artifacts/transition` now supports explicit `promote` and `quarantine` transitions through the same SessionStore mutation lane as file writes and operation apply/undo, and those transitions emit SSE updates so shell trust state can refresh without polling hacks
+- CLI `engine policy promote|quarantine` calls that sessiond HTTP route instead of mutating artifacts in another process; sessiond is the mutation authority and this slice does not add an inter-process lock
+- artifact files under `<session-root>/.shader-forge/code-trust-artifacts.json` use serialized atomic replacement
+- cooperative engine clients are covered by that serialized lane; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee
 - sessiond now exposes workspace-backed AI provider inspection and smoke-test routes so the shell and harnesses can inspect `ai/providers.toml` without building their own provider clients
 - `GET /api/ai/providers` now reports manifest source, default provider, provider readiness, installed Ollama models when reachable, and diagnostics for unimplemented hosted-provider entries
 - `POST /api/ai/test` now runs the current first-slice smoke-test path through the shared AI layer, with deterministic fake-provider coverage and optional Ollama-backed requests
@@ -106,9 +121,32 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - `build` and `runtime` are documented workspace-scoped exclusive resources, so unrelated work and separate workspace sessions remain concurrent
 - disconnect, heartbeat expiry, lease release, and workspace deletion clean up held work and promote eligible queued leases
 - coordination lifecycle changes stream through the existing SSE event bus without exposing agent credentials
+- sessiond now owns a revision-safe text-file write operation workflow with preview, approval, reject, apply, undo, durable applying/undoing journal states, and restart reconciliation
+- file-write operations persist atomically in the sessiond state directory as `operations.json` so Activity/Changes history survives backend restart
+- each operation stores the canonical workspace-root identity captured at preview; apply/undo/recovery reject a mismatched live session root
+- persisted operations are validated on load, including preview schema, the full event type/state sequence, and coherent applying/apply plus undoing/undo effect shapes; invalid records are skipped and cannot become applicable
+- a fabricated `applying` record marked `recorded` without an evaluation and artifact is rejected on load and cannot recover to `applied`
+- revisions are SHA-256 content hashes plus an explicit `missing` sentinel; stale preview/apply/undo calls return HTTP 409 with a structured conflict
+- preview reads and apply/undo writes reuse `SessionStore` physical-boundary enforcement rather than a second path resolver
+- every project-file writer and every supported code-trust artifact transition, including `POST /api/files/write`, operation apply/undo, and CLI provenance promote/quarantine, shares one serialized `SessionStore` file-mutation queue with compare-and-write / compare-and-remove primitives plus an optional `beforeMutation` callback
+- apply snapshots prior artifacts in that `beforeMutation` callback and persists them before source bytes change; undo provenance precheck runs in the same callback so a transition cannot interleave between precheck, source mutation, and artifact restore
+- apply/undo persist journal state before touching the project file; a persistence failure after the file mutation is recovered by revision comparison, not a blind retry
+- `applying`+`recorded` and `undoing`+`reverted` after a terminal journal persist failure reload and finalize without repeating the effect
+- an artifact conflict observed during startup recovery persists a terminal `conflicted` record with append-only provenance rather than leaving `undoing` forever
+- apply/undo failure and recovery append `apply_failed`, `undo_failed`, or `recovered` events and never replace or delete persisted transitions; recovery is attributed to the last applying/undoing actor
+- replacement uses a same-directory temp-file + rename without a Windows delete-destination fallback, so a failed replacement preserves the original
+- existing POSIX mode bits are preserved on replacement where the host supports them; existing files that are not valid UTF-8 are rejected
+- approve/reject/apply/undo require an explicit valid actor and never default to anonymous human; recorded actors are local provenance, not cryptographic attribution
+- operation apply reuses the existing code-trust evaluate / review-queue path used by `POST /api/files/write`, but artifact recording is a journaled idempotent effect that must succeed before the operation is `applied`
+- operation undo refreshes, reverts, or tombstones that same code-trust artifact in the recoverable effect lane
+- the initial released operation-store format is internally consistent; operation records were unshipped on main `37b862c`, so this slice does not migrate intermediate WIP operation schemas
+- non-loopback browser Origins are rejected at the HTTP boundary; no-Origin native CLI/MCP requests and loopback shell Origins remain allowed. This is a local trust boundary, not client authentication
+- operation lifecycle events stream through the existing SSE bus; credentials and file contents are not persisted in public views
+- MCP mutation tools remain disabled until coordinator credentials and leases are wired through this same contract
+- the canonical contract lives in [ENGINE-OPERATIONS-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-OPERATIONS-SPEC.md)
 
 ## Future AI APIs
 
 - a process-scoped MCP adapter over the engine-owned coordination and mutation contracts
-- isolated change sets with preview, validation, revision preconditions, merge/apply, provenance, and undo
+- MCP exposure of the existing file-write operation workflow, plus later scene/asset/multi-file change sets
 - MCP resources for project, scene, asset, code, runtime, test, diagnostics, coordination, and activity state

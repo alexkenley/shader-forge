@@ -10,8 +10,9 @@ Current execution status:
 - the React shell now uses World, Code, Playtest, and Assets as its primary workspaces, with Guide kept under Help
 - the main shell no longer presents a built-in development assistant or provider controls
 - `engine_sessiond` now owns workspace-scoped agent registration, private credentials, hierarchical leases, writer fairness, expiry, disconnect cleanup, and build/runtime exclusivity
+- `engine_sessiond` now also owns a hardened revision-safe text-file write operation workflow with preview, SHA-256 revisions, structured conflicts, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filtering, provenance, SSE events, and restart-safe history
 - Shader Forge MCP (`sf-mcp`) is the current process-scoped stdio adapter for external clients
-- the first `sf-mcp` surface is deliberately read-and-coordinate only; broad mutation and exclusive operation tools remain gated on preview, revision, atomicity, approval, and recovery contracts
+- the first `sf-mcp` surface is deliberately read-and-coordinate only; MCP mutation tools remain disabled until coordinator credentials and leases are wired through that same operation contract
 
 ## 1. Executive Decision
 
@@ -128,7 +129,7 @@ Shader Forge MCP, shortened to `sf-mcp`, starts as a process-scoped stdio MCP se
 
 The first surface exposes `shaderforge://project`, `shaderforge://coordination`, project/file inspection, coordination inspection, lease request/status/release, and explicit heartbeat. It is read-and-coordinate only.
 
-HTTP transport, file or scene writes, build/runtime mutation, and arbitrary command execution are excluded until the shared preview, revision, structured diff, atomic apply, approval, provenance, validation, conflict, and recovery contracts exist. If HTTP transport later becomes required, bind it to loopback, require an unguessable session credential, restrict origins, and expose only the MCP operation surface.
+The shared text-file preview, revision, structured diff, journaled apply, approval, provenance, validation, conflict, and recovery contract now exists in `engine_sessiond`. All supported mutations, including CLI provenance promote/quarantine, go through that sessiond mutation authority and the serialized SessionStore lane. Code-trust artifact recording is a journaled idempotent effect that must succeed before apply is durable; prior-artifact snapshots persist before source bytes change, and undo provenance precheck plus restore cannot interleave with a later transition. Artifact files use serialized atomic replacement. Workspace identity is path plus filesystem identity. Session roots are immutable after creation, bind hosts stay loopback-only, and recovery appends events instead of rewriting history. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee. File or scene writes, build/runtime mutation, and HTTP transport stay excluded from MCP until that contract is consumed with coordinator credentials and leases. Actor strings are local provenance, not cryptographic attribution. If HTTP transport later becomes required, bind it to loopback, require an unguessable session credential, restrict origins, and expose only the MCP operation surface.
 
 Do not expose the current broad `engine_sessiond` filesystem and PTY authority directly as the public MCP boundary.
 
@@ -626,6 +627,8 @@ Exit criteria:
 
 ### Gate 1: Make Mutations Safe and Observable
 
+Current status: the hardened text-file write operation contract is implemented in `engine_sessiond`, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, and loopback-only bind. Scene/asset operations, shell Activity/Changes consumption, and authenticated MCP mutation tools remain open.
+
 Actions:
 
 - replace lossy scene writes with revision-safe, atomic operations
@@ -640,7 +643,7 @@ Exit criteria:
 
 - stale edits cannot overwrite newer project state
 - interrupted writes do not corrupt project files
-- every mutation can be traced to a human, shell, CLI, or MCP client
+- every mutation can be traced to a human, shell, CLI, or MCP client through local provenance strings; cryptographic attribution is still later work
 - representative scene, asset, and code changes can be previewed and validated
 - non-overlapping agents can work concurrently while conflicting and runtime-exclusive work is queued deterministically
 
@@ -875,8 +878,8 @@ The direction-setting shell and coordination work is now implemented. Continue w
 3. completed: remove built-in assistant/provider surfaces from the main workspace while preserving the real Code editor and inline search
 4. completed: establish engine-owned multi-agent registration, heartbeat, leases, conflict queues, fairness, and cleanup
 5. completed: expose the first Shader Forge MCP (`sf-mcp`) read-and-coordinate surface over process-scoped stdio
-6. next: define and implement the typed mutation preview, revision, diff, approval, and operation-event contracts
+6. completed: implement and harden the sessiond-owned text-file mutation preview, revision, line-oriented diff summary, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filter, and operation-event contract
 7. next: add the Activity and Changes state model and connect it to real operation events
-8. next: widen MCP only through shared safe mutation contracts, then add rendered interaction and accessibility checks for the complete path
+8. next: widen MCP only through that shared file-write operation contract after coordinator credentials and leases are the exposure gate, then later scene/asset operations, then rendered interaction and accessibility checks for the complete path
 
-Do not begin visual polish, a real viewport, or broad MCP mutation tools before the operation and revision contracts are safe. That ordering prevents a polished shell from becoming a façade over unreliable engine state.
+Do not begin visual polish, a real viewport, or broad MCP mutation tools before the remaining operation consumers exist. Authenticated MCP actor/lease enforcement is still the next exposure gate. That ordering prevents a polished shell from becoming a façade over unreliable engine state.

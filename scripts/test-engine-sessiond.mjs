@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
+import { OperationStore } from '../tools/engine-sessiond/lib/operation-store.mjs';
 import { SessionStore } from '../tools/engine-sessiond/lib/session-store.mjs';
+import {
+  recordCodeTrustArtifact,
+  restoreCodeTrustArtifact,
+  transitionCodeTrustArtifact,
+} from '../tools/shared/code-trust-policy.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
 const sessionStateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-sessiond-state-'));
@@ -278,6 +285,8 @@ try {
   assert.equal(health.service, 'engine_sessiond');
   assert.equal(Array.isArray(health.capabilities), true);
   assert.ok(health.capabilities.includes('coordination'));
+  assert.ok(health.capabilities.includes('operations'));
+  assert.ok(health.capabilities.includes('operations:file-write'));
 
   const corsPreflight = await fetch(`${service.baseUrl}/api/sessions/example`, {
     method: 'OPTIONS',
@@ -309,6 +318,25 @@ try {
     { name: 'repo-root-renamed' },
   );
   assert.equal(updatedSessionPayload.session.name, 'repo-root-renamed');
+  assert.equal(updatedSessionPayload.session.rootPath, repoRoot);
+
+  const immutableRootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-session-root-'));
+  const blockedRootUpdate = await fetch(
+    `${service.baseUrl}/api/sessions/${encodeURIComponent(createPayload.session.id)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootPath: immutableRootDir }),
+    },
+  );
+  const blockedRootPayload = await blockedRootUpdate.json();
+  assert.equal(blockedRootUpdate.status, 409);
+  assert.match(blockedRootPayload.error, /rootPath is immutable after creation/i);
+  const unchangedSession = await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${createPayload.session.id}`,
+  );
+  assert.equal(unchangedSession.session.rootPath, repoRoot);
+  await fs.rm(immutableRootDir, { recursive: true, force: true });
 
   const persistedSessionStore = JSON.parse(await fs.readFile(sessionStorePath, 'utf8'));
   assert.equal(persistedSessionStore.version, 1);
@@ -962,6 +990,1798 @@ try {
   await fs.rm(workspaceARoot, { recursive: true, force: true });
   await fs.rm(workspaceBRoot, { recursive: true, force: true });
 
+  function sha256Revision(content) {
+    return `sha256:${createHash('sha256').update(String(content), 'utf8').digest('hex')}`;
+  }
+
+  async function requestOperation(pathname, method = 'GET', body) {
+    const headers = {};
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const response = await fetch(`${service.baseUrl}${pathname}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const text = await response.text();
+    let payload = {};
+    if (text) {
+      payload = JSON.parse(text);
+    }
+    return { status: response.status, payload };
+  }
+
+  const operationRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-operations-'));
+  const existingFilePath = 'notes/existing.txt';
+  const createdFilePath = 'notes/created.txt';
+  const existingContent = 'alpha\nbeta\n';
+  const proposedContent = 'alpha\nbeta\ngamma\n';
+  await fs.mkdir(path.join(operationRoot, 'notes'));
+  await fs.writeFile(path.join(operationRoot, existingFilePath), existingContent, 'utf8');
+  const operationSession = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
+    name: 'operations-workspace',
+    rootPath: operationRoot,
+  });
+  const operationSessionId = operationSession.session.id;
+  const shellActor = {
+    kind: 'shell',
+    id: 'engine-shell',
+    name: 'Engine Shell',
+    credential: 'must-never-persist',
+  };
+  const humanActor = {
+    kind: 'human',
+    id: 'operator',
+    name: 'Operator',
+  };
+  const existingRevision = sha256Revision(existingContent);
+  const proposedRevision = sha256Revision(proposedContent);
+  const operationEvents = await subscribeSessiondEvents();
+
+  const previewResult = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: proposedContent,
+    baseRevision: existingRevision,
+    actor: shellActor,
+  });
+  assert.equal(previewResult.status, 201, previewResult.payload.error || 'preview should succeed');
+  const previewed = previewResult.payload.operation;
+  assert.match(previewed.id, /^op_/);
+  assert.equal(previewed.kind, 'file_write');
+  assert.equal(previewed.sessionId, operationSessionId);
+  assert.equal(previewed.path, existingFilePath);
+  assert.equal(previewed.workspaceRoot, await fs.realpath(operationRoot));
+  assert.equal(previewed.workspaceIdentity.canonicalPath, previewed.workspaceRoot);
+  assert.equal(typeof previewed.workspaceIdentity.dev, 'string');
+  assert.equal(typeof previewed.workspaceIdentity.ino, 'string');
+  assert.ok(previewed.workspaceIdentity.dev);
+  assert.ok(previewed.workspaceIdentity.ino);
+  assert.equal(previewed.state, 'previewed');
+  assert.equal(previewed.codeTrustEffect.status, 'idle');
+  assert.equal(previewed.baseRevision, existingRevision);
+  assert.equal(previewed.proposedRevision, proposedRevision);
+  assert.equal(previewed.appliedRevision, null);
+  assert.equal(previewed.actor.kind, 'shell');
+  assert.equal(previewed.actor.id, 'engine-shell');
+  assert.equal(previewed.actor.name, 'Engine Shell');
+  assert.equal('credential' in previewed.actor, false);
+  assert.equal(previewed.preview.addedLines > 0, true);
+  assert.equal(typeof previewed.preview.summary, 'string');
+  assert.ok(previewed.events.some((event) => event.type === 'previewed'));
+  assert.equal(
+    await fs.readFile(path.join(operationRoot, existingFilePath), 'utf8'),
+    existingContent,
+  );
+  const previewedEvent = await operationEvents.waitFor(
+    (event) => event.type === 'operation.previewed' && event.data?.id === previewed.id,
+  );
+  assert.equal(previewedEvent.data.state, 'previewed');
+  assert.equal(JSON.stringify(previewedEvent.data).includes('must-never-persist'), false);
+
+  const stalePreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: 'stale\n',
+    baseRevision: sha256Revision('not-the-current-bytes'),
+    actor: humanActor,
+  });
+  assert.equal(stalePreview.status, 409);
+  assert.equal(stalePreview.payload.conflict.code, 'revision_conflict');
+  assert.equal(stalePreview.payload.conflict.path, existingFilePath);
+  assert.equal(stalePreview.payload.conflict.actualRevision, existingRevision);
+  assert.equal(
+    await fs.readFile(path.join(operationRoot, existingFilePath), 'utf8'),
+    existingContent,
+  );
+
+  const invalidActor = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: proposedContent,
+    baseRevision: existingRevision,
+    actor: { kind: 'assistant', id: 'gpt', name: 'GPT' },
+  });
+  assert.equal(invalidActor.status, 400);
+  assert.match(invalidActor.payload.error, /actor\.kind must be human, shell, cli, or mcp/i);
+
+  const applyBeforeApprove = await requestOperation(
+    `/api/operations/${encodeURIComponent(previewed.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(applyBeforeApprove.status, 409);
+  assert.match(applyBeforeApprove.payload.error, /cannot be applied from state previewed/i);
+
+  const undoBeforeApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(previewed.id)}/undo`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(undoBeforeApply.status, 409);
+  assert.match(undoBeforeApply.payload.error, /cannot be undone from state previewed/i);
+
+  const approvedResult = await requestOperation(
+    `/api/operations/${encodeURIComponent(previewed.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(approvedResult.status, 200, approvedResult.payload.error || 'approve should succeed');
+  assert.equal(approvedResult.payload.operation.state, 'approved');
+  await operationEvents.waitFor(
+    (event) => event.type === 'operation.approved' && event.data?.id === previewed.id,
+  );
+
+  const approveAgain = await requestOperation(
+    `/api/operations/${encodeURIComponent(previewed.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(approveAgain.status, 409);
+  assert.match(approveAgain.payload.error, /cannot be approved from state approved/i);
+
+  const conflictWorkspaceFile = path.join(operationRoot, existingFilePath);
+  await fs.writeFile(conflictWorkspaceFile, 'external change\n', 'utf8');
+  const externalConflict = await requestOperation(
+    `/api/operations/${encodeURIComponent(previewed.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(externalConflict.status, 409);
+  assert.equal(externalConflict.payload.conflict.code, 'revision_conflict');
+  assert.equal(externalConflict.payload.conflict.expectedRevision, existingRevision);
+  assert.equal(externalConflict.payload.conflict.actualRevision, sha256Revision('external change\n'));
+  assert.equal(externalConflict.payload.operation.state, 'conflicted');
+  assert.equal(await fs.readFile(conflictWorkspaceFile, 'utf8'), 'external change\n');
+  await operationEvents.waitFor(
+    (event) => event.type === 'operation.conflicted' && event.data?.id === previewed.id,
+  );
+  await fs.writeFile(conflictWorkspaceFile, existingContent, 'utf8');
+
+  const applyAfterConflict = await requestOperation(
+    `/api/operations/${encodeURIComponent(previewed.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(applyAfterConflict.status, 409);
+
+  const applyPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: proposedContent,
+    baseRevision: existingRevision,
+    actor: shellActor,
+  });
+  assert.equal(applyPreview.status, 201, applyPreview.payload.error || 'second preview should succeed');
+  const applyOperationId = applyPreview.payload.operation.id;
+  const approveApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(applyOperationId)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(approveApply.status, 200);
+  const appliedResult = await requestOperation(
+    `/api/operations/${encodeURIComponent(applyOperationId)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(appliedResult.status, 200, appliedResult.payload.error || 'apply should succeed');
+  assert.equal(appliedResult.payload.operation.state, 'applied');
+  assert.equal(appliedResult.payload.operation.appliedRevision, proposedRevision);
+  assert.equal(appliedResult.payload.operation.codeTrustEffect.status, 'recorded');
+  assert.equal(appliedResult.payload.operation.codeTrustEffect.phase, 'apply');
+  assert.equal(await fs.readFile(conflictWorkspaceFile, 'utf8'), proposedContent);
+  const artifactsAfterApply = JSON.parse(
+    await fs.readFile(path.join(operationRoot, '.shader-forge', 'code-trust-artifacts.json'), 'utf8'),
+  );
+  const appliedArtifact = artifactsAfterApply.artifacts.find((artifact) => artifact.path === existingFilePath);
+  assert.ok(appliedArtifact);
+  assert.equal(appliedArtifact.contentHash, proposedRevision.slice('sha256:'.length));
+  await operationEvents.waitFor(
+    (event) => event.type === 'operation.applied' && event.data?.id === applyOperationId,
+  );
+
+  const rejectAfterApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(applyOperationId)}/reject`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(rejectAfterApply.status, 409);
+
+  const undoneResult = await requestOperation(
+    `/api/operations/${encodeURIComponent(applyOperationId)}/undo`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(undoneResult.status, 200, undoneResult.payload.error || 'undo should succeed');
+  assert.equal(undoneResult.payload.operation.state, 'undone');
+  assert.equal(undoneResult.payload.operation.resultingRevision, existingRevision);
+  assert.equal(undoneResult.payload.operation.codeTrustEffect.status, 'reverted');
+  assert.equal(undoneResult.payload.operation.codeTrustEffect.phase, 'undo');
+  assert.equal(await fs.readFile(conflictWorkspaceFile, 'utf8'), existingContent);
+  const artifactsAfterUndo = JSON.parse(
+    await fs.readFile(path.join(operationRoot, '.shader-forge', 'code-trust-artifacts.json'), 'utf8'),
+  );
+  const undoneArtifact = artifactsAfterUndo.artifacts.find((artifact) => artifact.path === existingFilePath);
+  assert.equal(undoneArtifact, undefined);
+  await operationEvents.waitFor(
+    (event) => event.type === 'operation.undone' && event.data?.id === applyOperationId,
+  );
+
+  const undoAgain = await requestOperation(
+    `/api/operations/${encodeURIComponent(applyOperationId)}/undo`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(undoAgain.status, 409);
+
+  const createdPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: createdFilePath,
+    content: 'brand new file\n',
+    baseRevision: 'missing',
+    actor: { kind: 'cli', id: 'engine-cli', name: 'Engine CLI' },
+  });
+  assert.equal(createdPreview.status, 201, createdPreview.payload.error || 'created-file preview should succeed');
+  assert.equal(createdPreview.payload.operation.baseRevision, 'missing');
+  assert.equal(createdPreview.payload.operation.preview.created, true);
+  await assert.rejects(fs.stat(path.join(operationRoot, createdFilePath)), { code: 'ENOENT' });
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(createdPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  const createdApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(createdPreview.payload.operation.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(createdApply.status, 200, createdApply.payload.error || 'created-file apply should succeed');
+  assert.equal(
+    await fs.readFile(path.join(operationRoot, createdFilePath), 'utf8'),
+    'brand new file\n',
+  );
+  const createdUndo = await requestOperation(
+    `/api/operations/${encodeURIComponent(createdPreview.payload.operation.id)}/undo`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(createdUndo.status, 200, createdUndo.payload.error || 'created-file undo should succeed');
+  assert.equal(createdUndo.payload.operation.state, 'undone');
+  assert.equal(createdUndo.payload.operation.resultingRevision, 'missing');
+  assert.equal(createdUndo.payload.operation.codeTrustEffect.status, 'reverted');
+  await assert.rejects(fs.stat(path.join(operationRoot, createdFilePath)), { code: 'ENOENT' });
+  const artifactsAfterCreatedUndo = JSON.parse(
+    await fs.readFile(path.join(operationRoot, '.shader-forge', 'code-trust-artifacts.json'), 'utf8'),
+  );
+  const createdArtifact = artifactsAfterCreatedUndo.artifacts.find((artifact) => artifact.path === createdFilePath);
+  assert.equal(createdArtifact, undefined);
+
+  const promotedPath = 'notes/promoted.txt';
+  const promotedOriginal = 'owned-by-project\n';
+  const promotedUpdated = 'operation-changed\n';
+  await fs.writeFile(path.join(operationRoot, promotedPath), promotedOriginal, 'utf8');
+  await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
+    sessionId: operationSessionId,
+    path: promotedPath,
+    content: promotedOriginal,
+    actor: 'human',
+  });
+  const promoteSeed = await requestJsonNoAuth(`${service.baseUrl}/api/code-trust/artifacts/transition`, 'POST', {
+    sessionId: operationSessionId,
+    path: promotedPath,
+    transition: 'promote',
+    decisionBy: 'reviewer',
+    note: 'keep-this-promotion',
+  });
+  assert.equal(promoteSeed.artifact.promotionStatus, 'promoted');
+  const priorPromotedRecord = JSON.parse(
+    await fs.readFile(path.join(operationRoot, '.shader-forge', 'code-trust-artifacts.json'), 'utf8'),
+  ).artifacts.find((artifact) => artifact.path === promotedPath);
+  const promotedPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: promotedPath,
+    content: promotedUpdated,
+    baseRevision: sha256Revision(promotedOriginal),
+    actor: humanActor,
+  });
+  assert.equal(promotedPreview.status, 201, promotedPreview.payload.error || 'promoted preview should succeed');
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(promotedPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  const promotedApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(promotedPreview.payload.operation.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(promotedApply.status, 200, promotedApply.payload.error || 'promoted apply should succeed');
+  const promotedUndo = await requestOperation(
+    `/api/operations/${encodeURIComponent(promotedPreview.payload.operation.id)}/undo`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(promotedUndo.status, 200, promotedUndo.payload.error || 'promoted undo should restore prior artifact');
+  assert.equal(await fs.readFile(path.join(operationRoot, promotedPath), 'utf8'), promotedOriginal);
+  const restoredPromotedRecord = JSON.parse(
+    await fs.readFile(path.join(operationRoot, '.shader-forge', 'code-trust-artifacts.json'), 'utf8'),
+  ).artifacts.find((artifact) => artifact.path === promotedPath);
+  assert.ok(restoredPromotedRecord);
+  assert.equal(restoredPromotedRecord.promotionStatus, 'promoted');
+  assert.equal(restoredPromotedRecord.contentHash, priorPromotedRecord.contentHash);
+  assert.equal(restoredPromotedRecord.promotedBy, 'reviewer');
+  assert.equal(restoredPromotedRecord.promotionNote, 'keep-this-promotion');
+  assert.equal(restoredPromotedRecord.updatedAt, priorPromotedRecord.updatedAt);
+
+  const laterPromotePath = 'notes/later-promote.txt';
+  const laterOriginal = 'before-later-promote\n';
+  const laterUpdated = 'after-later-promote\n';
+  await fs.writeFile(path.join(operationRoot, laterPromotePath), laterOriginal, 'utf8');
+  const laterPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: laterPromotePath,
+    content: laterUpdated,
+    baseRevision: sha256Revision(laterOriginal),
+    actor: humanActor,
+  });
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(laterPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  const laterApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(laterPreview.payload.operation.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(laterApply.status, 200, laterApply.payload.error || 'later-promote apply should succeed');
+  const laterPromote = await requestJsonNoAuth(`${service.baseUrl}/api/code-trust/artifacts/transition`, 'POST', {
+    sessionId: operationSessionId,
+    path: laterPromotePath,
+    transition: 'promote',
+    decisionBy: 'human',
+    note: 'do-not-clobber',
+  });
+  assert.equal(laterPromote.artifact.promotionStatus, 'promoted');
+  const laterUndo = await requestOperation(
+    `/api/operations/${encodeURIComponent(laterPreview.payload.operation.id)}/undo`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(laterUndo.status, 409);
+  assert.equal(laterUndo.payload.conflict.code, 'code_trust_artifact_conflict');
+  assert.equal(laterUndo.payload.operation.state, 'conflicted');
+  assert.equal(await fs.readFile(path.join(operationRoot, laterPromotePath), 'utf8'), laterUpdated);
+  const laterStillPromoted = JSON.parse(
+    await fs.readFile(path.join(operationRoot, '.shader-forge', 'code-trust-artifacts.json'), 'utf8'),
+  ).artifacts.find((artifact) => artifact.path === laterPromotePath);
+  assert.equal(laterStillPromoted.promotionStatus, 'promoted');
+  assert.equal(laterStillPromoted.promotionNote, 'do-not-clobber');
+
+  const rejectedPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: 'rejected\n',
+    baseRevision: existingRevision,
+    actor: humanActor,
+  });
+  const rejected = await requestOperation(
+    `/api/operations/${encodeURIComponent(rejectedPreview.payload.operation.id)}/reject`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.payload.operation.state, 'rejected');
+  const approveRejected = await requestOperation(
+    `/api/operations/${encodeURIComponent(rejectedPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(approveRejected.status, 409);
+  const applyRejected = await requestOperation(
+    `/api/operations/${encodeURIComponent(rejectedPreview.payload.operation.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(applyRejected.status, 409);
+
+  const listed = await requestOperation(
+    `/api/operations?sessionId=${encodeURIComponent(operationSessionId)}`,
+  );
+  assert.equal(listed.status, 200);
+  assert.ok(listed.payload.operations.some((operation) => operation.id === applyOperationId));
+  const fetched = await requestOperation(`/api/operations/${encodeURIComponent(applyOperationId)}`);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.payload.operation.state, 'undone');
+  assert.equal('beforeContent' in fetched.payload.operation, false);
+  assert.equal('proposedContent' in fetched.payload.operation, false);
+
+  const persistedOperations = JSON.parse(
+    await fs.readFile(path.join(sessionStateDir, 'operations.json'), 'utf8'),
+  );
+  assert.equal(persistedOperations.version, 1);
+  assert.ok(persistedOperations.operations.some((operation) => operation.id === applyOperationId));
+  assert.equal(JSON.stringify(persistedOperations).includes('must-never-persist'), false);
+
+  await operationEvents.close();
+  await service.close();
+  service = await startService();
+
+  const restoredOperations = await requestOperation(
+    `/api/operations?sessionId=${encodeURIComponent(operationSessionId)}`,
+  );
+  assert.equal(restoredOperations.status, 200);
+  const restoredApplied = restoredOperations.payload.operations.find(
+    (operation) => operation.id === applyOperationId,
+  );
+  assert.equal(restoredApplied.state, 'undone');
+  assert.equal(restoredApplied.path, existingFilePath);
+  assert.equal(restoredApplied.actor.kind, 'shell');
+  const restoredCreated = restoredOperations.payload.operations.find(
+    (operation) => operation.id === createdPreview.payload.operation.id,
+  );
+  assert.equal(restoredCreated.state, 'undone');
+  assert.equal(restoredCreated.baseRevision, 'missing');
+
+  const blockedOrigin = await fetch(`${service.baseUrl}/health`, {
+    headers: { Origin: 'https://example.com' },
+  });
+  assert.equal(blockedOrigin.status, 403);
+  assert.match((await blockedOrigin.json()).error, /non-loopback origin is not allowed/i);
+  assert.equal(blockedOrigin.headers.get('access-control-allow-origin'), null);
+
+  const blockedPreflight = await fetch(`${service.baseUrl}/api/sessions/example`, {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' },
+  });
+  assert.equal(blockedPreflight.status, 403);
+
+  const loopbackOrigin = await fetch(`${service.baseUrl}/health`, {
+    headers: { Origin: 'http://127.0.0.1:5173' },
+  });
+  assert.equal(loopbackOrigin.status, 200);
+  assert.equal(loopbackOrigin.headers.get('access-control-allow-origin'), 'http://127.0.0.1:5173');
+
+  const localhostOrigin = await fetch(`${service.baseUrl}/health`, {
+    headers: { Origin: 'http://localhost:4173' },
+  });
+  assert.equal(localhostOrigin.status, 200);
+  assert.equal(localhostOrigin.headers.get('access-control-allow-origin'), 'http://localhost:4173');
+
+  const ipv6LoopbackOrigin = await fetch(`${service.baseUrl}/health`, {
+    headers: { Origin: 'http://[::1]:5173' },
+  });
+  assert.equal(ipv6LoopbackOrigin.status, 200);
+
+  const nativeNoOrigin = await fetch(`${service.baseUrl}/health`);
+  assert.equal(nativeNoOrigin.status, 200);
+
+  await assert.rejects(
+    startEngineSessiond({ host: '0.0.0.0', port: 0 }),
+    /refuses to bind non-loopback host '0\.0\.0\.0'/i,
+  );
+  await assert.rejects(
+    startEngineSessiond({ host: '::', port: 0 }),
+    /refuses to bind non-loopback host '::'/i,
+  );
+  await assert.rejects(
+    startEngineSessiond({ host: '192.168.1.10', port: 0 }),
+    /authenticated remote mode is not implemented/i,
+  );
+
+  let ipv6Service = null;
+  try {
+    ipv6Service = await startEngineSessiond({
+      host: '::1',
+      port: 0,
+      sessionStore: new SessionStore({
+        storageFilePath: path.join(sessionStateDir, 'ipv6-sessions.json'),
+      }),
+      runtimeLaunchFactory,
+      buildLaunchFactory,
+    });
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : '';
+    const message = error instanceof Error ? error.message : String(error);
+    if (!['EADDRNOTAVAIL', 'EAFNOSUPPORT', 'EINVAL', 'EPERM'].includes(code)
+      && !/eaddrnotavail|eafnosupport|ipv6|listen/i.test(message)) {
+      throw error;
+    }
+  }
+  if (ipv6Service) {
+    try {
+      assert.match(ipv6Service.baseUrl, /^http:\/\/\[::1\]:\d+$/);
+      const ipv6Health = await fetch(`${ipv6Service.baseUrl}/health`);
+      assert.equal(ipv6Health.status, 200);
+      const ipv6Payload = await ipv6Health.json();
+      assert.equal(ipv6Payload.ok, true);
+      assert.equal(ipv6Payload.service, 'engine_sessiond');
+    } finally {
+      await ipv6Service.close();
+    }
+  }
+
+  const missingPreviewActor = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: proposedContent,
+    baseRevision: existingRevision,
+  });
+  assert.equal(missingPreviewActor.status, 400);
+  assert.match(missingPreviewActor.payload.error, /actor is required/i);
+
+  const actorRequiredPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: 'actor-required\n',
+    baseRevision: existingRevision,
+    actor: humanActor,
+  });
+  assert.equal(actorRequiredPreview.status, 201);
+  const missingApproveActor = await requestOperation(
+    `/api/operations/${encodeURIComponent(actorRequiredPreview.payload.operation.id)}/approve`,
+    'POST',
+    {},
+  );
+  assert.equal(missingApproveActor.status, 400);
+  assert.match(missingApproveActor.payload.error, /actor is required/i);
+  const nullApproveActor = await requestOperation(
+    `/api/operations/${encodeURIComponent(actorRequiredPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: null },
+  );
+  assert.equal(nullApproveActor.status, 400);
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(actorRequiredPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  const missingApplyActor = await requestOperation(
+    `/api/operations/${encodeURIComponent(actorRequiredPreview.payload.operation.id)}/apply`,
+    'POST',
+    {},
+  );
+  assert.equal(missingApplyActor.status, 400);
+  assert.match(missingApplyActor.payload.error, /actor is required/i);
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(actorRequiredPreview.payload.operation.id)}/reject`,
+    'POST',
+    { actor: humanActor },
+  );
+
+  const mcpPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: 'mcp-should-not-apply\n',
+    baseRevision: existingRevision,
+    actor: { kind: 'mcp', id: 'agent-1', name: 'MCP Agent' },
+  });
+  assert.equal(mcpPreview.status, 201);
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(mcpPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  const mcpApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(mcpPreview.payload.operation.id)}/apply`,
+    'POST',
+    { actor: { kind: 'mcp', id: 'agent-1', name: 'MCP Agent' } },
+  );
+  assert.equal(mcpApply.status, 409);
+  assert.equal(mcpApply.payload.codeTrust?.decision, 'review_required');
+  assert.equal(mcpApply.payload.approval?.operationType, 'operation_apply');
+  assert.equal(await fs.readFile(path.join(operationRoot, existingFilePath), 'utf8'), existingContent);
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(mcpPreview.payload.operation.id)}/reject`,
+    'POST',
+    { actor: humanActor },
+  );
+
+  const invalidUtf8Path = 'notes/invalid-utf8.txt';
+  await fs.writeFile(path.join(operationRoot, invalidUtf8Path), Buffer.from([0xff, 0xfe, 0x00, 0x80]));
+  const invalidUtf8Read = await requestJsonNoAuth(
+    `${service.baseUrl}/api/files/read?sessionId=${encodeURIComponent(operationSessionId)}&path=${encodeURIComponent(invalidUtf8Path)}`,
+  );
+  assert.match(invalidUtf8Read.error, /not valid UTF-8/i);
+  const invalidUtf8Preview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: invalidUtf8Path,
+    content: 'replacement-should-not-decode\n',
+    baseRevision: existingRevision,
+    actor: humanActor,
+  });
+  assert.match(invalidUtf8Preview.payload.error, /not valid UTF-8/i);
+
+  const scriptRelPath = 'tools/run.sh';
+  const scriptAbsPath = path.join(operationRoot, scriptRelPath);
+  await fs.mkdir(path.dirname(scriptAbsPath), { recursive: true });
+  await fs.writeFile(scriptAbsPath, '#!/bin/sh\necho old\n', { mode: 0o755 });
+  await fs.chmod(scriptAbsPath, 0o755);
+  const scriptModeBefore = (await fs.stat(scriptAbsPath)).mode;
+  if ((scriptModeBefore & 0o111) !== 0) {
+    const scriptRevision = sha256Revision('#!/bin/sh\necho old\n');
+    const scriptPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+      sessionId: operationSessionId,
+      path: scriptRelPath,
+      content: '#!/bin/sh\necho new\n',
+      baseRevision: scriptRevision,
+      actor: humanActor,
+    });
+    assert.equal(scriptPreview.status, 201);
+    await requestOperation(
+      `/api/operations/${encodeURIComponent(scriptPreview.payload.operation.id)}/approve`,
+      'POST',
+      { actor: humanActor },
+    );
+    const scriptApply = await requestOperation(
+      `/api/operations/${encodeURIComponent(scriptPreview.payload.operation.id)}/apply`,
+      'POST',
+      { actor: humanActor },
+    );
+    assert.equal(scriptApply.status, 200, scriptApply.payload.error || 'executable apply should succeed');
+    const scriptModeAfter = (await fs.stat(scriptAbsPath)).mode;
+    assert.equal(scriptModeAfter & 0o111, scriptModeBefore & 0o111);
+    assert.equal(await fs.readFile(scriptAbsPath, 'utf8'), '#!/bin/sh\necho new\n');
+  }
+
+  const mismatchPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: existingFilePath,
+    content: 'identity-mismatch\n',
+    baseRevision: existingRevision,
+    actor: humanActor,
+  });
+  assert.equal(mismatchPreview.status, 201);
+  await requestOperation(
+    `/api/operations/${encodeURIComponent(mismatchPreview.payload.operation.id)}/approve`,
+    'POST',
+    { actor: humanActor },
+  );
+  const operationsPath = path.join(sessionStateDir, 'operations.json');
+  const persistedForIdentity = JSON.parse(await fs.readFile(operationsPath, 'utf8'));
+  const mismatchRecord = persistedForIdentity.operations.find(
+    (operation) => operation.id === mismatchPreview.payload.operation.id,
+  );
+  assert.ok(mismatchRecord);
+  mismatchRecord.workspaceRoot = path.join(operationRoot, 'not-the-session-root');
+  await fs.writeFile(operationsPath, `${JSON.stringify(persistedForIdentity, null, 2)}\n`, 'utf8');
+  await service.close();
+  service = await startService();
+  const mismatchedApply = await requestOperation(
+    `/api/operations/${encodeURIComponent(mismatchPreview.payload.operation.id)}/apply`,
+    'POST',
+    { actor: humanActor },
+  );
+  assert.equal(mismatchedApply.status, 409);
+  assert.match(mismatchedApply.payload.error, /workspace identity does not match the session root/i);
+  assert.equal(await fs.readFile(path.join(operationRoot, existingFilePath), 'utf8'), existingContent);
+
+  const persistedForValidation = JSON.parse(await fs.readFile(operationsPath, 'utf8'));
+  const validTemplate = persistedForValidation.operations.find((operation) => operation.id === applyOperationId);
+  assert.ok(validTemplate);
+  persistedForValidation.operations.push(
+    {
+      ...validTemplate,
+      id: 'op_bad_state',
+      state: 'nope',
+    },
+    {
+      ...validTemplate,
+      id: 'op_hash_mismatch',
+      proposedContent: 'tampered-without-hash-update\n',
+    },
+    {
+      ...validTemplate,
+      id: 'op_bad_actor',
+      actor: { kind: 'wizard', id: 'x', name: 'nope' },
+    },
+    {
+      ...validTemplate,
+      id: 'op_bad_timestamp',
+      createdAt: 'yesterday',
+      updatedAt: 'tomorrow',
+    },
+    {
+      ...validTemplate,
+      id: 'op_bad_event',
+      events: [{ type: 'exploded', at: validTemplate.createdAt, state: 'previewed', actor: validTemplate.actor }],
+    },
+    {
+      ...validTemplate,
+      id: 'op_bad_preview',
+      preview: { addedLines: 1 },
+    },
+    {
+      ...validTemplate,
+      id: 'op_fabricated_preview',
+      preview: {
+        ...validTemplate.preview,
+        addedLines: validTemplate.preview.addedLines + 1,
+      },
+    },
+    {
+      ...validTemplate,
+      id: 'op_impossible_effect',
+      codeTrustEffect: {
+        ...validTemplate.codeTrustEffect,
+        status: 'pending',
+        phase: 'apply',
+      },
+    },
+    {
+      ...validTemplate,
+      id: 'op_fabricated_recorded',
+      state: 'applying',
+      appliedRevision: null,
+      resultingRevision: null,
+      codeTrustEffect: {
+        status: 'recorded',
+        phase: 'apply',
+        actor: 'human',
+        origin: 'project_authored',
+        evaluation: null,
+        artifact: null,
+        error: null,
+        updatedAt: validTemplate.updatedAt,
+      },
+      events: [
+        { type: 'previewed', at: validTemplate.createdAt, state: 'previewed', actor: validTemplate.actor },
+        { type: 'approved', at: validTemplate.createdAt, state: 'approved', actor: validTemplate.actor },
+        { type: 'applying', at: validTemplate.updatedAt, state: 'applying', actor: validTemplate.actor },
+      ],
+    },
+    {
+      ...validTemplate,
+      id: 'op_malformed_effect_artifact',
+      state: 'applying',
+      appliedRevision: null,
+      resultingRevision: null,
+      codeTrustEffect: {
+        status: 'recorded',
+        phase: 'apply',
+        actor: 'human',
+        origin: 'project_authored',
+        evaluation: { path: validTemplate.path, action: 'apply', allowed: true },
+        artifact: {},
+        priorArtifact: null,
+        error: null,
+        updatedAt: validTemplate.updatedAt,
+      },
+      events: [
+        { type: 'previewed', at: validTemplate.createdAt, state: 'previewed', actor: validTemplate.actor },
+        { type: 'approved', at: validTemplate.createdAt, state: 'approved', actor: validTemplate.actor },
+        { type: 'applying', at: validTemplate.updatedAt, state: 'applying', actor: validTemplate.actor },
+      ],
+    },
+    {
+      ...validTemplate,
+      id: 'op_wrong_operation_artifact',
+      state: 'applying',
+      appliedRevision: null,
+      resultingRevision: null,
+      codeTrustEffect: {
+        status: 'recorded',
+        phase: 'apply',
+        actor: 'human',
+        origin: 'project_authored',
+        evaluation: {
+          path: 'other.txt',
+          action: 'apply',
+          targetTier: 'project_authored',
+          targetKind: 'code',
+          effectiveOrigin: 'project_authored',
+        },
+        artifact: {
+          path: 'other.txt',
+          origin: 'project_authored',
+          targetTier: 'project_authored',
+          targetKind: 'code',
+          lastAction: 'apply',
+          updatedAt: validTemplate.updatedAt,
+          hashAlgorithm: 'sha256',
+          contentHash: '0'.repeat(64),
+          promotionStatus: 'tracked',
+        },
+        priorArtifact: null,
+        error: null,
+        updatedAt: validTemplate.updatedAt,
+      },
+      events: [
+        { type: 'previewed', at: validTemplate.createdAt, state: 'previewed', actor: validTemplate.actor },
+        { type: 'approved', at: validTemplate.createdAt, state: 'approved', actor: validTemplate.actor },
+        { type: 'applying', at: validTemplate.updatedAt, state: 'applying', actor: validTemplate.actor },
+      ],
+    },
+    {
+      ...validTemplate,
+      id: 'op_mismatched_artifact_provenance',
+      state: 'applying',
+      appliedRevision: null,
+      resultingRevision: null,
+      codeTrustEffect: {
+        status: 'recorded',
+        phase: 'apply',
+        actor: 'assistant',
+        origin: 'assistant_generated',
+        evaluation: {
+          path: validTemplate.path,
+          action: 'apply',
+          targetTier: 'engine_trusted',
+          targetKind: 'code',
+          effectiveOrigin: 'assistant_generated',
+        },
+        artifact: {
+          path: validTemplate.path,
+          origin: 'engine_trusted',
+          targetTier: 'engine_trusted',
+          targetKind: 'code',
+          lastAction: 'apply',
+          updatedAt: validTemplate.updatedAt,
+          hashAlgorithm: 'sha256',
+          contentHash: validTemplate.proposedRevision.slice('sha256:'.length),
+          promotionStatus: 'tracked',
+        },
+        priorArtifact: null,
+        error: null,
+        updatedAt: validTemplate.updatedAt,
+      },
+      events: [
+        { type: 'previewed', at: validTemplate.createdAt, state: 'previewed', actor: validTemplate.actor },
+        { type: 'approved', at: validTemplate.createdAt, state: 'approved', actor: validTemplate.actor },
+        { type: 'applying', at: validTemplate.updatedAt, state: 'applying', actor: validTemplate.actor },
+      ],
+    },
+    {
+      ...validTemplate,
+      id: 'op_bad_sequence',
+      events: [
+        { type: 'previewed', at: validTemplate.createdAt, state: 'previewed', actor: validTemplate.actor },
+        { type: 'applied', at: validTemplate.updatedAt, state: 'applied', actor: validTemplate.actor },
+      ],
+    },
+    {
+      ...validTemplate,
+      id: 'op_state_event_mismatch',
+      state: 'approved',
+    },
+    {
+      ...validTemplate,
+      id: 'op_missing_workspace_root',
+      workspaceRoot: '',
+    },
+  );
+  await fs.writeFile(operationsPath, `${JSON.stringify(persistedForValidation, null, 2)}\n`, 'utf8');
+  await service.close();
+  service = await startService();
+  const afterMalformed = await requestOperation(
+    `/api/operations?sessionId=${encodeURIComponent(operationSessionId)}`,
+  );
+  const loadedIds = new Set(afterMalformed.payload.operations.map((operation) => operation.id));
+  assert.equal(loadedIds.has('op_bad_state'), false);
+  assert.equal(loadedIds.has('op_hash_mismatch'), false);
+  assert.equal(loadedIds.has('op_bad_actor'), false);
+  assert.equal(loadedIds.has('op_bad_timestamp'), false);
+  assert.equal(loadedIds.has('op_bad_event'), false);
+  assert.equal(loadedIds.has('op_bad_preview'), false);
+  assert.equal(loadedIds.has('op_fabricated_preview'), false);
+  assert.equal(loadedIds.has('op_impossible_effect'), false);
+  assert.equal(loadedIds.has('op_fabricated_recorded'), false);
+  assert.equal(loadedIds.has('op_malformed_effect_artifact'), false);
+  assert.equal(loadedIds.has('op_wrong_operation_artifact'), false);
+  assert.equal(loadedIds.has('op_mismatched_artifact_provenance'), false);
+  assert.equal(loadedIds.has('op_bad_sequence'), false);
+  assert.equal(loadedIds.has('op_state_event_mismatch'), false);
+  assert.equal(loadedIds.has('op_missing_workspace_root'), false);
+  assert.equal(loadedIds.has(applyOperationId), true);
+
+  const journalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-journal-'));
+  const journalWorkspace = path.join(journalDir, 'workspace');
+  await fs.mkdir(journalWorkspace);
+  const journalFile = path.join(journalWorkspace, 'note.txt');
+  await fs.writeFile(journalFile, 'before\n', 'utf8');
+  const journalSessions = new SessionStore({ storageFilePath: path.join(journalDir, 'sessions.json') });
+  await journalSessions.loadSessions();
+  const journalSession = await journalSessions.createSession({
+    name: 'journal',
+    rootPath: journalWorkspace,
+  });
+  let failTerminalPersist = false;
+  const journalOperationsPath = path.join(journalDir, 'operations.json');
+  const journalBeforePersist = async (payload) => {
+    if (
+      failTerminalPersist
+      && payload.operations.some((operation) => operation.state === 'applied' || operation.state === 'undone')
+    ) {
+      throw new Error('simulated persistence failure');
+    }
+  };
+  const journalOps = new OperationStore({
+    sessionStore: journalSessions,
+    storageFilePath: journalOperationsPath,
+    beforePersist: journalBeforePersist,
+  });
+  await journalOps.loadOperations();
+  const applyActor = { kind: 'cli', id: 'recover-cli', name: 'Recover CLI' };
+  const undoActor = { kind: 'shell', id: 'recover-shell', name: 'Recover Shell' };
+  const journalPreview = await journalOps.previewFileWrite({
+    sessionId: journalSession.id,
+    path: 'note.txt',
+    content: 'after\n',
+    baseRevision: sha256Revision('before\n'),
+    actor: humanActor,
+  });
+  await journalOps.approve(journalPreview.id, { actor: humanActor });
+  failTerminalPersist = true;
+  await assert.rejects(
+    journalOps.apply(journalPreview.id, { actor: applyActor }),
+    /simulated persistence failure/,
+  );
+  assert.equal(await fs.readFile(journalFile, 'utf8'), 'after\n');
+  const applyingDisk = JSON.parse(await fs.readFile(journalOperationsPath, 'utf8'));
+  assert.equal(applyingDisk.operations[0].state, 'applying');
+  assert.ok(applyingDisk.operations[0].events.some((event) => event.type === 'applying'));
+  failTerminalPersist = false;
+  const journalOpsReloaded = new OperationStore({
+    sessionStore: journalSessions,
+    storageFilePath: journalOperationsPath,
+    beforePersist: journalBeforePersist,
+  });
+  await journalOpsReloaded.loadOperations();
+  const recoveredApplied = journalOpsReloaded.getOperation(journalPreview.id);
+  assert.equal(recoveredApplied.state, 'applied');
+  const recoveredAppliedEvent = [...recoveredApplied.events].reverse().find((event) => event.type === 'applied');
+  assert.equal(recoveredAppliedEvent.actor.kind, 'cli');
+  assert.equal(recoveredAppliedEvent.actor.id, 'recover-cli');
+  assert.equal(recoveredApplied.actor.kind, 'human');
+  failTerminalPersist = true;
+  await assert.rejects(
+    journalOpsReloaded.undo(journalPreview.id, { actor: undoActor }),
+    /simulated persistence failure/,
+  );
+  assert.equal(await fs.readFile(journalFile, 'utf8'), 'before\n');
+  const undoingDisk = JSON.parse(await fs.readFile(journalOperationsPath, 'utf8'));
+  assert.equal(undoingDisk.operations[0].state, 'undoing');
+  assert.ok(undoingDisk.operations[0].events.some((event) => event.type === 'undoing'));
+  failTerminalPersist = false;
+  const journalOpsUndoReloaded = new OperationStore({
+    sessionStore: journalSessions,
+    storageFilePath: journalOperationsPath,
+  });
+  await journalOpsUndoReloaded.loadOperations();
+  const recoveredUndone = journalOpsUndoReloaded.getOperation(journalPreview.id);
+  assert.equal(recoveredUndone.state, 'undone');
+  const recoveredUndoneEvent = [...recoveredUndone.events].reverse().find((event) => event.type === 'undone');
+  assert.equal(recoveredUndoneEvent.actor.kind, 'shell');
+  assert.equal(recoveredUndoneEvent.actor.id, 'recover-shell');
+  await fs.rm(journalDir, { recursive: true, force: true });
+
+  const replaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-replace-'));
+  const replaceWorkspace = path.join(replaceDir, 'workspace');
+  await fs.mkdir(replaceWorkspace);
+  const replaceFile = path.join(replaceWorkspace, 'keep.txt');
+  await fs.writeFile(replaceFile, 'original\n', 'utf8');
+  const replaceSessions = new SessionStore({
+    storageFilePath: path.join(replaceDir, 'sessions.json'),
+    beforeAtomicRename: async () => {
+      throw Object.assign(new Error('simulated replace failure'), { code: 'EPERM' });
+    },
+  });
+  await replaceSessions.loadSessions();
+  const replaceSession = await replaceSessions.createSession({
+    name: 'replace',
+    rootPath: replaceWorkspace,
+  });
+  await assert.rejects(
+    replaceSessions.writeTextFileAtomic(replaceSession.id, 'keep.txt', 'replacement\n'),
+    /simulated replace failure/,
+  );
+  assert.equal(await fs.readFile(replaceFile, 'utf8'), 'original\n');
+  const leftoverTemps = (await fs.readdir(replaceWorkspace))
+    .filter((name) => name.endsWith('.tmp'));
+  assert.equal(leftoverTemps.length, 0);
+  const replaceOps = new OperationStore({
+    sessionStore: replaceSessions,
+    storageFilePath: path.join(replaceDir, 'operations.json'),
+  });
+  await replaceOps.loadOperations();
+  const replacePreview = await replaceOps.previewFileWrite({
+    sessionId: replaceSession.id,
+    path: 'keep.txt',
+    content: 'replacement\n',
+    baseRevision: sha256Revision('original\n'),
+    actor: humanActor,
+  });
+  await replaceOps.approve(replacePreview.id, { actor: humanActor });
+  await assert.rejects(
+    replaceOps.apply(replacePreview.id, { actor: humanActor }),
+    /simulated replace failure/,
+  );
+  assert.equal(await fs.readFile(replaceFile, 'utf8'), 'original\n');
+  const replaceOperation = replaceOps.getOperation(replacePreview.id);
+  assert.equal(replaceOperation.state, 'approved');
+  assert.ok(replaceOperation.events.some((event) => event.type === 'applying'));
+  assert.equal(replaceOperation.events.at(-1).type, 'apply_failed');
+  assert.equal(replaceOperation.events.at(-1).state, 'approved');
+  await fs.rm(replaceDir, { recursive: true, force: true });
+
+  const recoveredRollbackDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-recovered-'));
+  const recoveredWorkspace = path.join(recoveredRollbackDir, 'workspace');
+  await fs.mkdir(recoveredWorkspace);
+  await fs.writeFile(path.join(recoveredWorkspace, 'note.txt'), 'stable\n', 'utf8');
+  const recoveredSessions = new SessionStore({
+    storageFilePath: path.join(recoveredRollbackDir, 'sessions.json'),
+  });
+  await recoveredSessions.loadSessions();
+  const recoveredSession = await recoveredSessions.createSession({
+    name: 'recovered',
+    rootPath: recoveredWorkspace,
+  });
+  const recoveredOpsPath = path.join(recoveredRollbackDir, 'operations.json');
+  const recoveredOps = new OperationStore({
+    sessionStore: recoveredSessions,
+    storageFilePath: recoveredOpsPath,
+  });
+  await recoveredOps.loadOperations();
+  const recoveredPreview = await recoveredOps.previewFileWrite({
+    sessionId: recoveredSession.id,
+    path: 'note.txt',
+    content: 'changed\n',
+    baseRevision: sha256Revision('stable\n'),
+    actor: humanActor,
+  });
+  await recoveredOps.approve(recoveredPreview.id, { actor: humanActor });
+  const recoveredPayload = JSON.parse(await fs.readFile(recoveredOpsPath, 'utf8'));
+  recoveredPayload.operations[0].state = 'applying';
+  recoveredPayload.operations[0].codeTrustEffect = {
+    status: 'skipped',
+    phase: 'apply',
+    actor: '',
+    origin: '',
+    evaluation: null,
+    artifact: null,
+    error: null,
+    updatedAt: new Date().toISOString(),
+  };
+  recoveredPayload.operations[0].events.push({
+    type: 'applying',
+    at: new Date().toISOString(),
+    state: 'applying',
+    actor: { kind: 'cli', id: 'crash-apply', name: 'Crash Apply' },
+  });
+  await fs.writeFile(recoveredOpsPath, `${JSON.stringify(recoveredPayload, null, 2)}\n`, 'utf8');
+  const recoveredReloaded = new OperationStore({
+    sessionStore: recoveredSessions,
+    storageFilePath: recoveredOpsPath,
+  });
+  await recoveredReloaded.loadOperations();
+  const recoveredRecord = recoveredReloaded.getOperation(recoveredPreview.id);
+  assert.equal(recoveredRecord.state, 'approved');
+  assert.equal(await fs.readFile(path.join(recoveredWorkspace, 'note.txt'), 'utf8'), 'stable\n');
+  assert.ok(recoveredRecord.events.some((event) => event.type === 'applying'));
+  assert.equal(recoveredRecord.events.at(-1).type, 'recovered');
+  assert.equal(recoveredRecord.events.at(-1).actor.id, 'crash-apply');
+  assert.equal(recoveredRecord.actor.kind, 'human');
+  await fs.rm(recoveredRollbackDir, { recursive: true, force: true });
+
+  const replacedRootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-root-replaced-'));
+  const replacedWorkspace = path.join(replacedRootDir, 'workspace');
+  const originalWorkspace = path.join(replacedRootDir, 'workspace-original');
+  await fs.mkdir(replacedWorkspace);
+  await fs.writeFile(path.join(replacedWorkspace, 'x.txt'), 'same-base\n', 'utf8');
+  const replacedSessions = new SessionStore({
+    storageFilePath: path.join(replacedRootDir, 'sessions.json'),
+  });
+  await replacedSessions.loadSessions();
+  const replacedSession = await replacedSessions.createSession({
+    name: 'root-replacement',
+    rootPath: replacedWorkspace,
+  });
+  const replacedOps = new OperationStore({
+    sessionStore: replacedSessions,
+    storageFilePath: path.join(replacedRootDir, 'operations.json'),
+  });
+  await replacedOps.loadOperations();
+  const replacedPreview = await replacedOps.previewFileWrite({
+    sessionId: replacedSession.id,
+    path: 'x.txt',
+    content: 'must-not-land\n',
+    baseRevision: sha256Revision('same-base\n'),
+    actor: humanActor,
+  });
+  await replacedOps.approve(replacedPreview.id, { actor: humanActor });
+  await fs.rename(replacedWorkspace, originalWorkspace);
+  await fs.mkdir(replacedWorkspace);
+  await fs.writeFile(path.join(replacedWorkspace, 'x.txt'), 'same-base\n', 'utf8');
+  await assert.rejects(
+    replacedOps.apply(replacedPreview.id, { actor: humanActor }),
+    /workspace identity does not match the session root/i,
+  );
+  assert.equal(replacedOps.getOperation(replacedPreview.id).state, 'approved');
+  assert.equal(await fs.readFile(path.join(originalWorkspace, 'x.txt'), 'utf8'), 'same-base\n');
+  assert.equal(await fs.readFile(path.join(replacedWorkspace, 'x.txt'), 'utf8'), 'same-base\n');
+  await fs.rm(replacedRootDir, { recursive: true, force: true });
+
+  const legacyIdentityDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-legacy-identity-'));
+  const legacyWorkspace = path.join(legacyIdentityDir, 'workspace');
+  await fs.mkdir(legacyWorkspace);
+  await fs.writeFile(path.join(legacyWorkspace, 'x.txt'), 'legacy-base\n', 'utf8');
+  const legacySessionsPath = path.join(legacyIdentityDir, 'sessions.json');
+  const legacyTimestamp = '2026-08-30T12:00:00.000Z';
+  await fs.writeFile(
+    legacySessionsPath,
+    `${JSON.stringify({
+      version: 1,
+      sessions: [
+        {
+          id: 'session_legacy_identity',
+          name: 'legacy-identity',
+          rootPath: legacyWorkspace,
+          createdAt: legacyTimestamp,
+          updatedAt: legacyTimestamp,
+        },
+      ],
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  const legacySessions = new SessionStore({ storageFilePath: legacySessionsPath });
+  await legacySessions.loadSessions();
+  const migratedSession = legacySessions.getSession('session_legacy_identity');
+  assert.ok(migratedSession.rootIdentity);
+  assert.equal(typeof migratedSession.rootIdentity.dev, 'string');
+  assert.equal(typeof migratedSession.rootIdentity.ino, 'string');
+  assert.ok(migratedSession.rootIdentity.dev);
+  assert.ok(migratedSession.rootIdentity.ino);
+  const migratedDisk = JSON.parse(await fs.readFile(legacySessionsPath, 'utf8'));
+  assert.equal(migratedDisk.sessions[0].id, 'session_legacy_identity');
+  assert.equal(migratedDisk.sessions[0].rootIdentity.dev, migratedSession.rootIdentity.dev);
+  assert.equal(migratedDisk.sessions[0].rootIdentity.ino, migratedSession.rootIdentity.ino);
+  const legacyReloaded = new SessionStore({ storageFilePath: legacySessionsPath });
+  await legacyReloaded.loadSessions();
+  const reloadedLegacy = legacyReloaded.getSession('session_legacy_identity');
+  assert.equal(reloadedLegacy.rootIdentity.dev, migratedSession.rootIdentity.dev);
+  assert.equal(reloadedLegacy.rootIdentity.ino, migratedSession.rootIdentity.ino);
+  const legacyOriginal = path.join(legacyIdentityDir, 'workspace-original');
+  await fs.rename(legacyWorkspace, legacyOriginal);
+  await fs.mkdir(legacyWorkspace);
+  await fs.writeFile(path.join(legacyWorkspace, 'x.txt'), 'legacy-base\n', 'utf8');
+  await assert.rejects(
+    legacyReloaded.writeTextFileAtomic('session_legacy_identity', 'x.txt', 'must-not-land\n'),
+    /workspace identity does not match the session root/i,
+  );
+  assert.equal(await fs.readFile(path.join(legacyOriginal, 'x.txt'), 'utf8'), 'legacy-base\n');
+  assert.equal(await fs.readFile(path.join(legacyWorkspace, 'x.txt'), 'utf8'), 'legacy-base\n');
+  await fs.rm(legacyIdentityDir, { recursive: true, force: true });
+
+  const effectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-effect-'));
+  const effectWorkspace = path.join(effectDir, 'workspace');
+  await fs.mkdir(effectWorkspace);
+  await fs.writeFile(path.join(effectWorkspace, 'note.txt'), 'before-effect\n', 'utf8');
+  const effectSessions = new SessionStore({
+    storageFilePath: path.join(effectDir, 'sessions.json'),
+  });
+  await effectSessions.loadSessions();
+  const effectSession = await effectSessions.createSession({
+    name: 'effect',
+    rootPath: effectWorkspace,
+  });
+  let failEffect = true;
+  let effectCalls = 0;
+  const effectArtifact = (record, phase) => ({
+    path: record.path,
+    origin: 'project_authored',
+    targetTier: 'project_authored',
+    targetKind: 'code',
+    lastAction: 'apply',
+    updatedAt: new Date().toISOString(),
+    hashAlgorithm: 'sha256',
+    contentHash: sha256Revision(phase === 'undo' ? 'before-effect\n' : 'after-effect\n').slice('sha256:'.length),
+    promotionStatus: 'tracked',
+    promotedAt: null,
+    promotedBy: null,
+    promotionNote: '',
+    quarantinedAt: null,
+    quarantinedBy: null,
+    quarantineNote: '',
+  });
+  const effectOps = new OperationStore({
+    sessionStore: effectSessions,
+    storageFilePath: path.join(effectDir, 'operations.json'),
+    finalizeEffect: async (record, { phase }) => {
+      effectCalls += 1;
+      if (failEffect) {
+        throw new Error('simulated code-trust effect failure');
+      }
+      return {
+        status: phase === 'undo' ? 'reverted' : 'recorded',
+        artifact: effectArtifact(record, phase),
+      };
+    },
+  });
+  await effectOps.loadOperations();
+  const effectPreview = await effectOps.previewFileWrite({
+    sessionId: effectSession.id,
+    path: 'note.txt',
+    content: 'after-effect\n',
+    baseRevision: sha256Revision('before-effect\n'),
+    actor: humanActor,
+  });
+  await effectOps.approve(effectPreview.id, { actor: humanActor });
+  await assert.rejects(
+    effectOps.apply(effectPreview.id, {
+      actor: humanActor,
+      codeTrust: {
+        actor: 'human',
+        origin: 'project_authored',
+        evaluation: {
+          path: 'note.txt',
+          action: 'apply',
+          allowed: true,
+          targetTier: 'project_authored',
+          targetKind: 'code',
+          effectiveOrigin: 'project_authored',
+        },
+      },
+    }),
+    /simulated code-trust effect failure/,
+  );
+  assert.equal(await fs.readFile(path.join(effectWorkspace, 'note.txt'), 'utf8'), 'after-effect\n');
+  assert.equal(effectOps.getOperation(effectPreview.id).state, 'applying');
+  assert.equal(effectOps.getOperation(effectPreview.id).codeTrustEffect.status, 'failed');
+  failEffect = false;
+  const effectReloaded = new OperationStore({
+    sessionStore: effectSessions,
+    storageFilePath: path.join(effectDir, 'operations.json'),
+    finalizeEffect: async (record, { phase }) => {
+      effectCalls += 1;
+      return {
+        status: phase === 'undo' ? 'reverted' : 'recorded',
+        artifact: effectArtifact(record, phase),
+      };
+    },
+  });
+  await effectReloaded.loadOperations();
+  const finalized = effectReloaded.getOperation(effectPreview.id);
+  assert.equal(finalized.state, 'applied');
+  assert.equal(finalized.codeTrustEffect.status, 'recorded');
+  assert.ok(effectCalls >= 2);
+  await fs.rm(effectDir, { recursive: true, force: true });
+
+  const recordedCrashDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-recorded-crash-'));
+  const recordedWorkspace = path.join(recordedCrashDir, 'workspace');
+  await fs.mkdir(recordedWorkspace);
+  await fs.writeFile(path.join(recordedWorkspace, 'note.txt'), 'before-recorded\n', 'utf8');
+  const recordedSessions = new SessionStore({
+    storageFilePath: path.join(recordedCrashDir, 'sessions.json'),
+  });
+  await recordedSessions.loadSessions();
+  const recordedSession = await recordedSessions.createSession({
+    name: 'recorded-crash',
+    rootPath: recordedWorkspace,
+  });
+  const recordedOpsPath = path.join(recordedCrashDir, 'operations.json');
+  let recordedEffectCalls = 0;
+  let failRecordedTerminal = false;
+  const recordedEvaluation = {
+    path: 'note.txt',
+    action: 'apply',
+    allowed: true,
+    targetKind: 'code',
+    targetTier: 'project_authored',
+    effectiveOrigin: 'project_authored',
+  };
+  const recordedFinalize = async (record, { phase }) => {
+    recordedEffectCalls += 1;
+    if (phase === 'undo') {
+      return {
+        status: 'reverted',
+        artifact: Object.prototype.hasOwnProperty.call(record.codeTrustEffect, 'priorArtifact')
+          ? record.codeTrustEffect.priorArtifact
+          : null,
+      };
+    }
+    return {
+      status: 'recorded',
+      artifact: {
+        path: record.path,
+        origin: 'project_authored',
+        targetTier: 'project_authored',
+        targetKind: 'code',
+        lastAction: 'apply',
+        updatedAt: new Date().toISOString(),
+        hashAlgorithm: 'sha256',
+        contentHash: sha256Revision('after-recorded\n').slice('sha256:'.length),
+        promotionStatus: 'tracked',
+      },
+    };
+  };
+  const recordedOps = new OperationStore({
+    sessionStore: recordedSessions,
+    storageFilePath: recordedOpsPath,
+    beforePersist: async (payload) => {
+      if (
+        failRecordedTerminal
+        && payload.operations.some((operation) => operation.state === 'applied' || operation.state === 'undone')
+      ) {
+        throw new Error('simulated persistence failure');
+      }
+    },
+    finalizeEffect: recordedFinalize,
+  });
+  await recordedOps.loadOperations();
+  const recordedPreview = await recordedOps.previewFileWrite({
+    sessionId: recordedSession.id,
+    path: 'note.txt',
+    content: 'after-recorded\n',
+    baseRevision: sha256Revision('before-recorded\n'),
+    actor: humanActor,
+  });
+  await recordedOps.approve(recordedPreview.id, { actor: humanActor });
+  failRecordedTerminal = true;
+  await assert.rejects(
+    recordedOps.apply(recordedPreview.id, {
+      actor: humanActor,
+      codeTrust: {
+        actor: 'human',
+        origin: 'project_authored',
+        evaluation: recordedEvaluation,
+      },
+    }),
+    /simulated persistence failure/,
+  );
+  assert.equal(await fs.readFile(path.join(recordedWorkspace, 'note.txt'), 'utf8'), 'after-recorded\n');
+  const recordedDisk = JSON.parse(await fs.readFile(recordedOpsPath, 'utf8'));
+  assert.equal(recordedDisk.operations[0].state, 'applying');
+  assert.equal(recordedDisk.operations[0].codeTrustEffect.status, 'recorded');
+  assert.ok(recordedDisk.operations[0].codeTrustEffect.evaluation);
+  assert.ok(recordedDisk.operations[0].codeTrustEffect.artifact);
+  assert.equal(recordedEffectCalls, 1);
+  failRecordedTerminal = false;
+  const recordedReloaded = new OperationStore({
+    sessionStore: recordedSessions,
+    storageFilePath: recordedOpsPath,
+    beforePersist: async (payload) => {
+      if (
+        failRecordedTerminal
+        && payload.operations.some((operation) => operation.state === 'applied' || operation.state === 'undone')
+      ) {
+        throw new Error('simulated persistence failure');
+      }
+    },
+    finalizeEffect: recordedFinalize,
+  });
+  await recordedReloaded.loadOperations();
+  const recoveredRecorded = recordedReloaded.getOperation(recordedPreview.id);
+  assert.equal(recoveredRecorded.state, 'applied');
+  assert.equal(recoveredRecorded.codeTrustEffect.status, 'recorded');
+  assert.equal(recordedEffectCalls, 1);
+  failRecordedTerminal = true;
+  await assert.rejects(
+    recordedReloaded.undo(recordedPreview.id, { actor: humanActor }),
+    /simulated persistence failure/,
+  );
+  assert.equal(await fs.readFile(path.join(recordedWorkspace, 'note.txt'), 'utf8'), 'before-recorded\n');
+  const revertedDisk = JSON.parse(await fs.readFile(recordedOpsPath, 'utf8'));
+  assert.equal(revertedDisk.operations[0].state, 'undoing');
+  assert.equal(revertedDisk.operations[0].codeTrustEffect.status, 'reverted');
+  assert.equal(recordedEffectCalls, 2);
+  failRecordedTerminal = false;
+  const revertedReloaded = new OperationStore({
+    sessionStore: recordedSessions,
+    storageFilePath: recordedOpsPath,
+    finalizeEffect: recordedFinalize,
+  });
+  await revertedReloaded.loadOperations();
+  const recoveredReverted = revertedReloaded.getOperation(recordedPreview.id);
+  assert.equal(recoveredReverted.state, 'undone');
+  assert.equal(recoveredReverted.codeTrustEffect.status, 'reverted');
+  assert.equal(recordedEffectCalls, 2);
+  await fs.rm(recordedCrashDir, { recursive: true, force: true });
+
+  const barrierDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-barrier-'));
+  const barrierWorkspace = path.join(barrierDir, 'workspace');
+  await fs.mkdir(barrierWorkspace);
+  const barrierFile = path.join(barrierWorkspace, 'race.txt');
+  await fs.writeFile(barrierFile, 'base\n', 'utf8');
+  let releaseRename;
+  const heldRename = new Promise((resolve) => {
+    releaseRename = resolve;
+  });
+  let renameHoldStartedResolve;
+  const renameHoldStarted = new Promise((resolve) => {
+    renameHoldStartedResolve = resolve;
+  });
+  const barrierSessions = new SessionStore({
+    storageFilePath: path.join(barrierDir, 'sessions.json'),
+    beforeAtomicRename: async () => {
+      renameHoldStartedResolve();
+      await heldRename;
+    },
+  });
+  await barrierSessions.loadSessions();
+  const barrierSession = await barrierSessions.createSession({
+    name: 'barrier',
+    rootPath: barrierWorkspace,
+  });
+  const barrierOps = new OperationStore({
+    sessionStore: barrierSessions,
+    storageFilePath: path.join(barrierDir, 'operations.json'),
+  });
+  await barrierOps.loadOperations();
+  const barrierPreview = await barrierOps.previewFileWrite({
+    sessionId: barrierSession.id,
+    path: 'race.txt',
+    content: 'from-apply\n',
+    baseRevision: sha256Revision('base\n'),
+    actor: humanActor,
+  });
+  await barrierOps.approve(barrierPreview.id, { actor: humanActor });
+  const applyPromise = barrierOps.apply(barrierPreview.id, { actor: humanActor });
+  await renameHoldStarted;
+  let directWriteSettled = false;
+  const directWritePromise = barrierSessions.writeTextFileAtomic(
+    barrierSession.id,
+    'race.txt',
+    'from-direct\n',
+  ).then((result) => {
+    directWriteSettled = true;
+    return result;
+  });
+  const blockedState = await Promise.race([
+    directWritePromise.then(() => 'completed'),
+    Promise.resolve('blocked'),
+  ]);
+  assert.equal(blockedState, 'blocked');
+  assert.equal(directWriteSettled, false);
+  releaseRename();
+  const [barrierApplied, barrierWritten] = await Promise.all([applyPromise, directWritePromise]);
+  assert.equal(directWriteSettled, true);
+  assert.equal(barrierApplied.state, 'applied');
+  assert.equal(barrierApplied.appliedRevision, sha256Revision('from-apply\n'));
+  assert.equal(barrierWritten.content, 'from-direct\n');
+  assert.equal(await fs.readFile(barrierFile, 'utf8'), 'from-direct\n');
+  await fs.rm(barrierDir, { recursive: true, force: true });
+
+  const trustEvaluation = {
+    path: 'race.txt',
+    action: 'apply',
+    allowed: true,
+    targetKind: 'code',
+    targetTier: 'project_authored',
+    effectiveOrigin: 'project_authored',
+  };
+  async function operationTrustFinalize(record, { phase }) {
+    if (phase === 'undo') {
+      const restored = await restoreCodeTrustArtifact({
+        rootPath: record.workspaceRoot,
+        relativePath: record.path,
+        priorRecord: Object.prototype.hasOwnProperty.call(record.codeTrustEffect, 'priorArtifact')
+          ? record.codeTrustEffect.priorArtifact
+          : null,
+        expectedCurrent: record.codeTrustEffect.artifact || null,
+      });
+      return {
+        status: 'reverted',
+        artifact: restored.artifact,
+      };
+    }
+    const artifact = await recordCodeTrustArtifact({
+      rootPath: record.workspaceRoot,
+      relativePath: record.path,
+      actor: 'human',
+      origin: 'project_authored',
+      evaluation: record.codeTrustEffect.evaluation,
+    });
+    return {
+      status: artifact ? 'recorded' : 'skipped',
+      artifact,
+    };
+  }
+
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-snapshot-'));
+  const snapshotWorkspace = path.join(snapshotDir, 'workspace');
+  await fs.mkdir(snapshotWorkspace);
+  const snapshotFile = path.join(snapshotWorkspace, 'race.txt');
+  await fs.writeFile(snapshotFile, 'snapshot-base\n', 'utf8');
+  let releaseSnapshotRename;
+  const heldSnapshotRename = new Promise((resolve) => {
+    releaseSnapshotRename = resolve;
+  });
+  let snapshotHoldStartedResolve;
+  const snapshotHoldStarted = new Promise((resolve) => {
+    snapshotHoldStartedResolve = resolve;
+  });
+  const snapshotSessions = new SessionStore({
+    storageFilePath: path.join(snapshotDir, 'sessions.json'),
+    beforeAtomicRename: async () => {
+      snapshotHoldStartedResolve();
+      await heldSnapshotRename;
+    },
+  });
+  await snapshotSessions.loadSessions();
+  const snapshotSession = await snapshotSessions.createSession({
+    name: 'snapshot',
+    rootPath: snapshotWorkspace,
+  });
+  const snapshotOpsPath = path.join(snapshotDir, 'operations.json');
+  const snapshotOps = new OperationStore({
+    sessionStore: snapshotSessions,
+    storageFilePath: snapshotOpsPath,
+    finalizeEffect: operationTrustFinalize,
+  });
+  await snapshotOps.loadOperations();
+  const snapshotPreview = await snapshotOps.previewFileWrite({
+    sessionId: snapshotSession.id,
+    path: 'race.txt',
+    content: 'snapshot-after\n',
+    baseRevision: sha256Revision('snapshot-base\n'),
+    actor: humanActor,
+  });
+  await snapshotOps.approve(snapshotPreview.id, { actor: humanActor });
+  const snapshotApplyPromise = snapshotOps.apply(snapshotPreview.id, {
+    actor: humanActor,
+    codeTrust: {
+      actor: 'human',
+      origin: 'project_authored',
+      evaluation: { ...trustEvaluation, path: 'race.txt' },
+    },
+  });
+  await snapshotHoldStarted;
+  assert.equal(await fs.readFile(snapshotFile, 'utf8'), 'snapshot-base\n');
+  const snapshotDisk = JSON.parse(await fs.readFile(snapshotOpsPath, 'utf8'));
+  assert.equal(snapshotDisk.operations[0].state, 'applying');
+  assert.equal(snapshotDisk.operations[0].codeTrustEffect.status, 'pending');
+  assert.ok(Object.prototype.hasOwnProperty.call(snapshotDisk.operations[0].codeTrustEffect, 'priorArtifact'));
+  releaseSnapshotRename();
+  const snapshotApplied = await snapshotApplyPromise;
+  assert.equal(snapshotApplied.state, 'applied');
+  assert.equal(snapshotApplied.codeTrustEffect.status, 'recorded');
+  assert.equal(await fs.readFile(snapshotFile, 'utf8'), 'snapshot-after\n');
+  await fs.rm(snapshotDir, { recursive: true, force: true });
+
+  const provenanceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-provenance-'));
+  const provenanceWorkspace = path.join(provenanceDir, 'workspace');
+  await fs.mkdir(provenanceWorkspace);
+  const provenanceFile = path.join(provenanceWorkspace, 'race.txt');
+  await fs.writeFile(provenanceFile, 'base\n', 'utf8');
+  let releaseProvenanceRename;
+  const heldProvenanceRename = new Promise((resolve) => {
+    releaseProvenanceRename = resolve;
+  });
+  let provenanceHoldStartedResolve;
+  const provenanceHoldStarted = new Promise((resolve) => {
+    provenanceHoldStartedResolve = resolve;
+  });
+  let holdProvenanceRename = false;
+  const provenanceSessions = new SessionStore({
+    storageFilePath: path.join(provenanceDir, 'sessions.json'),
+    beforeAtomicRename: async () => {
+      if (!holdProvenanceRename) {
+        return;
+      }
+      provenanceHoldStartedResolve();
+      await heldProvenanceRename;
+    },
+  });
+  await provenanceSessions.loadSessions();
+  const provenanceSession = await provenanceSessions.createSession({
+    name: 'provenance',
+    rootPath: provenanceWorkspace,
+  });
+  const provenanceOps = new OperationStore({
+    sessionStore: provenanceSessions,
+    storageFilePath: path.join(provenanceDir, 'operations.json'),
+    finalizeEffect: operationTrustFinalize,
+  });
+  await provenanceOps.loadOperations();
+  await recordCodeTrustArtifact({
+    rootPath: provenanceWorkspace,
+    relativePath: 'race.txt',
+    actor: 'human',
+    origin: 'project_authored',
+    evaluation: trustEvaluation,
+  });
+  const provenancePreview = await provenanceOps.previewFileWrite({
+    sessionId: provenanceSession.id,
+    path: 'race.txt',
+    content: 'from-apply\n',
+    baseRevision: sha256Revision('base\n'),
+    actor: humanActor,
+  });
+  await provenanceOps.approve(provenancePreview.id, { actor: humanActor });
+  const provenanceApplied = await provenanceOps.apply(provenancePreview.id, {
+    actor: humanActor,
+    codeTrust: {
+      actor: 'human',
+      origin: 'project_authored',
+      evaluation: trustEvaluation,
+    },
+  });
+  assert.equal(provenanceApplied.state, 'applied');
+  holdProvenanceRename = true;
+  const undoPromise = provenanceOps.undo(provenancePreview.id, { actor: humanActor });
+  await provenanceHoldStarted;
+  let promoteSettled = false;
+  const promotePromise = provenanceSessions.runSerializedFileMutation(async () => (
+    transitionCodeTrustArtifact({
+      rootPath: provenanceWorkspace,
+      relativePath: 'race.txt',
+      transition: 'promote',
+      decidedBy: 'human',
+      note: 'during-undo',
+    })
+  )).then((artifact) => {
+    promoteSettled = true;
+    return artifact;
+  });
+  const promoteBlockedState = await Promise.race([
+    promotePromise.then(() => 'completed'),
+    Promise.resolve('blocked'),
+  ]);
+  assert.equal(promoteBlockedState, 'blocked');
+  assert.equal(promoteSettled, false);
+  assert.equal(await fs.readFile(provenanceFile, 'utf8'), 'from-apply\n');
+  releaseProvenanceRename();
+  const [provenanceUndone, provenancePromoted] = await Promise.all([undoPromise, promotePromise]);
+  assert.equal(promoteSettled, true);
+  assert.notEqual(provenanceUndone.state, 'conflicted');
+  assert.equal(provenanceUndone.state, 'undone');
+  assert.equal(await fs.readFile(provenanceFile, 'utf8'), 'base\n');
+  assert.equal(provenancePromoted.promotionStatus, 'promoted');
+  assert.equal(provenancePromoted.promotionNote, 'during-undo');
+  await fs.rm(provenanceDir, { recursive: true, force: true });
+
+  const recoveryConflictDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-recovery-conflict-'));
+  const recoveryWorkspace = path.join(recoveryConflictDir, 'workspace');
+  await fs.mkdir(recoveryWorkspace);
+  await fs.writeFile(path.join(recoveryWorkspace, 'race.txt'), 'base\n', 'utf8');
+  const recoverySessions = new SessionStore({
+    storageFilePath: path.join(recoveryConflictDir, 'sessions.json'),
+  });
+  await recoverySessions.loadSessions();
+  const recoverySession = await recoverySessions.createSession({
+    name: 'recovery-conflict',
+    rootPath: recoveryWorkspace,
+  });
+  const recoveryOpsPath = path.join(recoveryConflictDir, 'operations.json');
+  const recoveryOps = new OperationStore({
+    sessionStore: recoverySessions,
+    storageFilePath: recoveryOpsPath,
+    finalizeEffect: operationTrustFinalize,
+  });
+  await recoveryOps.loadOperations();
+  const recoveryPreview = await recoveryOps.previewFileWrite({
+    sessionId: recoverySession.id,
+    path: 'race.txt',
+    content: 'from-apply\n',
+    baseRevision: sha256Revision('base\n'),
+    actor: humanActor,
+  });
+  await recoveryOps.approve(recoveryPreview.id, { actor: humanActor });
+  const recoveryApplied = await recoveryOps.apply(recoveryPreview.id, {
+    actor: humanActor,
+    codeTrust: {
+      actor: 'human',
+      origin: 'project_authored',
+      evaluation: trustEvaluation,
+    },
+  });
+  assert.equal(recoveryApplied.state, 'applied');
+  await fs.writeFile(path.join(recoveryWorkspace, 'race.txt'), 'base\n', 'utf8');
+  await transitionCodeTrustArtifact({
+    rootPath: recoveryWorkspace,
+    relativePath: 'race.txt',
+    transition: 'promote',
+    decidedBy: 'human',
+    note: 'startup-conflict',
+  });
+  const recoveryPayload = JSON.parse(await fs.readFile(recoveryOpsPath, 'utf8'));
+  recoveryPayload.operations[0].state = 'undoing';
+  recoveryPayload.operations[0].codeTrustEffect = {
+    ...recoveryPayload.operations[0].codeTrustEffect,
+    status: 'pending',
+    phase: 'undo',
+    error: null,
+    updatedAt: new Date().toISOString(),
+  };
+  recoveryPayload.operations[0].events.push({
+    type: 'undoing',
+    at: new Date().toISOString(),
+    state: 'undoing',
+    actor: humanActor,
+  });
+  await fs.writeFile(recoveryOpsPath, `${JSON.stringify(recoveryPayload, null, 2)}\n`, 'utf8');
+  const recoveryReloaded = new OperationStore({
+    sessionStore: recoverySessions,
+    storageFilePath: recoveryOpsPath,
+    finalizeEffect: operationTrustFinalize,
+  });
+  await recoveryReloaded.loadOperations();
+  const recoveryConflicted = recoveryReloaded.getOperation(recoveryPreview.id);
+  assert.equal(recoveryConflicted.state, 'conflicted');
+  assert.equal(recoveryConflicted.events.at(-1).type, 'conflicted');
+  assert.equal(recoveryConflicted.events.at(-1).conflict.code, 'code_trust_artifact_conflict');
+  assert.equal(await fs.readFile(path.join(recoveryWorkspace, 'race.txt'), 'utf8'), 'base\n');
+  const recoveryStillPromoted = JSON.parse(
+    await fs.readFile(path.join(recoveryWorkspace, '.shader-forge', 'code-trust-artifacts.json'), 'utf8'),
+  ).artifacts.find((artifact) => artifact.path === 'race.txt');
+  assert.equal(recoveryStillPromoted.promotionStatus, 'promoted');
+  await fs.rm(recoveryConflictDir, { recursive: true, force: true });
+
+  const cliSource = await fs.readFile(path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs'), 'utf8');
+  assert.match(cliSource, /\/api\/code-trust\/artifacts\/transition/);
+  assert.equal(cliSource.includes('transitionCodeTrustArtifact('), false);
+
+  const operationBoundaryContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-boundary-'));
+  const operationBoundaryWorkspace = path.join(operationBoundaryContainer, 'workspace');
+  const operationBoundaryOutside = path.join(operationBoundaryContainer, 'outside');
+  const operationBoundaryLink = path.join(operationBoundaryWorkspace, 'outside-link');
+  await fs.mkdir(operationBoundaryWorkspace);
+  await fs.mkdir(operationBoundaryOutside);
+  await fs.writeFile(path.join(operationBoundaryOutside, 'secret.txt'), 'outside\n', 'utf8');
+  const operationBoundaryLinkCreated = await tryCreateDirectoryLink(
+    operationBoundaryOutside,
+    operationBoundaryLink,
+  );
+  const operationBoundarySession = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
+    name: 'operation-boundary',
+    rootPath: operationBoundaryWorkspace,
+  });
+  if (operationBoundaryLinkCreated) {
+    const escapedPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+      sessionId: operationBoundarySession.session.id,
+      path: 'outside-link/created.txt',
+      content: 'must not escape\n',
+      baseRevision: 'missing',
+      actor: humanActor,
+    });
+    assert.match(escapedPreview.payload.error, /escapes physical session root/i);
+    await assert.rejects(fs.stat(path.join(operationBoundaryOutside, 'created.txt')), { code: 'ENOENT' });
+
+    const escapedExisting = await requestOperation('/api/operations/file-write/preview', 'POST', {
+      sessionId: operationBoundarySession.session.id,
+      path: 'outside-link/secret.txt',
+      content: 'overwrite outside\n',
+      baseRevision: sha256Revision('outside\n'),
+      actor: humanActor,
+    });
+    assert.match(escapedExisting.payload.error, /escapes physical session root/i);
+    assert.equal(
+      await fs.readFile(path.join(operationBoundaryOutside, 'secret.txt'), 'utf8'),
+      'outside\n',
+    );
+  }
+  await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${encodeURIComponent(operationBoundarySession.session.id)}`,
+    'DELETE',
+  );
+  if (operationBoundaryLinkCreated) {
+    await fs.unlink(operationBoundaryLink);
+  }
+  await fs.rm(operationBoundaryContainer, { recursive: true, force: true });
+  await fs.rm(operationRoot, { recursive: true, force: true });
+
   console.log('Engine sessiond smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log(`- Created session for ${path.basename(repoRoot)} and restored it after restarting engine_sessiond`);
@@ -971,6 +2791,11 @@ try {
   console.log(`- Verified runtime start/status/log/${isWindows ? 'stop' : 'pause/resume/stop'} lifecycle`);
   console.log('- Verified runtime build start/log/completion lifecycle');
   console.log('- Verified in-process multi-agent coordination leases, queue promotion, expiry, and isolation');
+  console.log('- Verified revision-safe file-write preview, approval, apply, undo, conflict, persistence, and path-boundary enforcement');
+  console.log('- Verified serialized writers, journal recovery, UTF-8/mode replacement, Origin/actor gates, code-trust apply, and invalid operation records');
+  console.log('- Verified loopback-only bind, immutable session roots, journaled code-trust effects, append-only recovery provenance, and deterministic rename-barrier serialization');
+  console.log('- Verified SessionStore beforeMutation snapshot/provenance, CLI/sessiond one mutation authority, applying/undoing effect-state validation, and persisted legacy rootIdentity migration');
+  console.log('- Verified undo-vs-promote barrier never 409s after source restoration, and applying+recorded / undoing+reverted crash windows finalize without repeating the effect');
 } finally {
   await service.close();
   await fs.rm(sessionStateDir, { recursive: true, force: true });

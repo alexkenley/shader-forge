@@ -739,7 +739,7 @@ Current checkpoint now implemented:
 - policy-relevant artifact writes now record origin plus trust-tier metadata under `<workspace>/.shader-forge/code-trust-artifacts.json`
 - tracked artifacts now also carry content hashes plus inspect-time verification state, and promoted artifacts now deny risky transitions when their current file no longer matches the reviewed hash
 - `engine_sessiond` now also exposes tracked-artifact listing plus explicit promote/quarantine transitions, and those transitions stream through the event bus for shell refresh
-- `engine policy artifacts`, `engine policy promote`, and `engine policy quarantine` now expose artifact verification and trust-promotion control directly from the terminal
+- `engine policy artifacts` inspects tracked artifacts locally, while `engine policy promote` and `engine policy quarantine` now mutate those artifacts through `engine_sessiond`'s HTTP transition route rather than a second in-process writer
 - the shell `Workspace` panel now exposes the active policy source, supported authored hot-reload roots, tracked-artifact verification state, inline promote/quarantine controls, and pending code-trust approvals
 - deterministic coverage now exists through `scripts/test-engine-code-trust-scaffold.mjs` for artifact hashes, promote/quarantine transitions, approval queue listing, approval/deny flows, approved deferred execution, allowed authored-content hot reload, and rejected assistant-triggered engine load transitions
 

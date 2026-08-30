@@ -13,7 +13,6 @@ import {
   evaluateCodeTrustAction,
   inspectCodeTrustState,
   listCodeTrustArtifacts,
-  transitionCodeTrustArtifact,
 } from '../shared/code-trust-policy.mjs';
 import {
   inspectAiProviders,
@@ -51,8 +50,8 @@ Usage:
   engine policy approvals [--session <id>] [--state pending|all] [--base-url <url>]
   engine policy approve <approval-id> [--base-url <url>] [--decision-by <name>]
   engine policy deny <approval-id> [--base-url <url>] [--decision-by <name>]
-  engine policy promote <path> [--root <path>] [--decision-by <name>] [--note <text>]
-  engine policy quarantine <path> [--root <path>] [--decision-by <name>] [--note <text>]
+  engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]
+  engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]
   engine ai providers [--root <path>]
   engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
@@ -412,20 +411,44 @@ async function decidePolicyApproval(positionals, flags, decision) {
   console.log(JSON.stringify(payload, null, 2));
 }
 
+async function resolvePolicyMutationSessionId(flags) {
+  if (flags.session) {
+    return String(flags.session);
+  }
+
+  const payload = await requestJson(resolvedBaseUrl(flags), '/api/sessions', {
+    method: 'POST',
+    body: {
+      name: path.basename(resolvePolicyRoot(flags)) || 'workspace',
+      rootPath: resolvePolicyRoot(flags),
+    },
+  });
+  const sessionId = payload.session?.id;
+  if (!sessionId) {
+    throw new Error('engine_sessiond did not return a session for the policy mutation.');
+  }
+  return sessionId;
+}
+
 async function transitionPolicyArtifact(positionals, flags, transition) {
   const relativePath = positionals.join(' ').trim();
   if (!relativePath) {
     throw new Error(`engine policy ${transition} requires an artifact path.`);
   }
 
-  const artifact = await transitionCodeTrustArtifact({
-    rootPath: resolvePolicyRoot(flags),
-    relativePath,
-    transition,
-    decidedBy: flags['decision-by'] ? String(flags['decision-by']) : 'human',
-    note: flags.note ? String(flags.note) : '',
+  const baseUrl = resolvedBaseUrl(flags);
+  const sessionId = await resolvePolicyMutationSessionId(flags);
+  const payload = await requestJson(baseUrl, '/api/code-trust/artifacts/transition', {
+    method: 'POST',
+    body: {
+      sessionId,
+      path: relativePath,
+      transition,
+      decisionBy: flags['decision-by'] ? String(flags['decision-by']) : 'human',
+      note: flags.note ? String(flags.note) : '',
+    },
   });
-  console.log(JSON.stringify(artifact, null, 2));
+  console.log(JSON.stringify(payload.artifact, null, 2));
 }
 
 async function inspectAiProviderState(flags) {
