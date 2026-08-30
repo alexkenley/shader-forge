@@ -21,8 +21,15 @@ assert.match(cliSource, /engine build \[runtime\|spatial\]/);
 assert.match(cliSource, /engine spatial validate/);
 assert.match(cliSource, /engine spatial cook/);
 assert.match(cliSource, /engine spatial evaluate-rest --attachment/);
+assert.match(cliSource, /engine spatial evaluate-sample --attachment/);
+assert.match(cliSource, /args\.push\('--phase', String\(flags\.phase\), '--normalized-time', String\(flags\['normalized-time'\]\)\)/);
 assert.match(cliSource, /Build it first with/);
 assert.match(animationSourceText, /return utf8Path\(left\) < utf8Path\(right\)/);
+assert.match(animationSourceText, /evaluateSampledAttachment/);
+const toolSourceText = fs.readFileSync(toolSource, 'utf8');
+assert.match(toolSourceText, /evaluate-sample/);
+assert.match(toolSourceText, /clip_sample/);
+assert.match(toolSourceText, /pre_ik_only/);
 
 const help = spawnSync(process.execPath, [cliPath, '--help'], { cwd: repoRoot, encoding: 'utf8' });
 assert.equal(help.status, 0, help.stderr || help.stdout);
@@ -30,6 +37,7 @@ assert.match(help.stdout, /engine build \[runtime\|spatial\]/);
 assert.match(help.stdout, /engine spatial validate \[--animation-root animation\]/);
 assert.match(help.stdout, /engine spatial cook \[--animation-root animation\] \[--output-root build\/cooked\]/);
 assert.match(help.stdout, /engine spatial evaluate-rest --attachment <id>/);
+assert.match(help.stdout, /engine spatial evaluate-sample --attachment <id> --phase <phase> --normalized-time <value>/);
 
 for (const [argumentsList, expectedError] of [
   [['spatial', 'validate', 'other-animation'], /does not accept positional arguments/],
@@ -47,6 +55,12 @@ for (const [argumentsList, expectedError] of [
   [['spatial', 'evaluate-rest', '--attachement', 'weapon.rifle'], /Unknown engine spatial evaluate-rest flag: --attachement/],
   [['spatial', 'evaluate-rest', '--attachment', 'first', '--attachment', 'second'], /Duplicate engine spatial evaluate-rest flag: --attachment/],
   [['spatial', 'evaluate-rest', '--attachment', 'weapon.rifle', '--output-root', 'cooked'], /Unknown engine spatial evaluate-rest flag: --output-root/],
+  [['spatial', 'evaluate-sample'], /requires --attachment/],
+  [['spatial', 'evaluate-sample', '--attachment', 'weapon.rifle'], /requires --phase/],
+  [['spatial', 'evaluate-sample', '--attachment', 'weapon.rifle', '--phase', 'idle'], /requires --normalized-time/],
+  [['spatial', 'evaluate-sample', '--attachment', 'weapon.rifle', '--phase', 'idle', '--normalized-time'], /requires a value for --normalized-time/],
+  [['spatial', 'evaluate-sample', '--attachment', 'weapon.rifle', '--phase', 'idle', '--normalized-time', '0.5', '--phase', 'aim'], /Duplicate engine spatial evaluate-sample flag: --phase/],
+  [['spatial', 'evaluate-sample', '--attachment', 'weapon.rifle', '--phase', 'idle', '--normalized-time', '0.5', '--output-root', 'cooked'], /Unknown engine spatial evaluate-sample flag: --output-root/],
 ]) {
   const invalidCli = spawnSync(process.execPath, [cliPath, ...argumentsList], { cwd: repoRoot, encoding: 'utf8' });
   assert.notEqual(invalidCli.status, 0, `CLI arguments should be rejected: ${argumentsList.join(' ')}`);
@@ -78,6 +92,13 @@ try {
   );
   assert.notEqual(missingEvaluate.status, 0, 'engine spatial evaluate-rest must fail when the native binary is absent');
   assert.match(missingEvaluate.stderr, /Spatial tool was not found/);
+  const missingSample = spawnSync(
+    process.execPath,
+    [cliPath, 'spatial', 'evaluate-sample', '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5', '--build-dir', missingBuildRoot],
+    { cwd: repoRoot, encoding: 'utf8' },
+  );
+  assert.notEqual(missingSample.status, 0, 'engine spatial evaluate-sample must fail when the native binary is absent');
+  assert.match(missingSample.stderr, /Spatial tool was not found/);
 } finally {
   fs.rmSync(missingBuildRoot, { recursive: true, force: true });
 }
@@ -292,6 +313,117 @@ try {
     const handSegment = rest.segments.find((segment) => segment.boneId === 'hand_r');
     assertVectorClose(handSegment.from, [-0.54, 1.47, 0], 'hand segment start');
     assertVectorClose(handSegment.to, [-0.78, 1.47, 0], 'hand segment end');
+    assert.deepEqual(Object.keys(rest.pose), ['kind', 'sampled']);
+    assert.equal(rest.limitations.includes('rest_pose_only'), true);
+    assert.equal(rest.limitations.includes('pre_ik_only'), false);
+
+    const sample = (...args) => {
+      const result = invoke(['evaluate-sample', ...args]);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      return result;
+    };
+    const firstSample = sample(
+      '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--phase', 'idle', '--normalized-time', '0.5',
+    );
+    const secondSample = sample(
+      '--normalized-time', '0.5', '--phase', 'idle',
+      '--attachment', 'weapon.rifle.mk1.humanoid', '--animation-root', fixtureRoot,
+    );
+    assert.equal(secondSample.stdout, firstSample.stdout, 'sampled evaluation must be byte-stable');
+    const sampled = JSON.parse(firstSample.stdout);
+    assert.equal(sampled.schema, 'shader_forge.spatial_attachment_evaluation');
+    assert.equal(sampled.schemaVersion, 1);
+    assert.deepEqual(sampled.pose, {
+      kind: 'clip_sample',
+      sampled: true,
+      phase: 'idle',
+      clip: 'rifle_ready',
+      normalizedTime: 0.5,
+      proceduralLayersRequested: ['primary_attachment', 'secondary_hand_ik'],
+      proceduralLayersApplied: ['primary_attachment'],
+      proceduralLayersUnavailable: ['secondary_hand_ik'],
+    });
+    assert.deepEqual(sampled.coordinateSystem, rest.coordinateSystem);
+    assert.deepEqual(sampled.attachment, rest.attachment);
+    assert.equal(sampled.item.geometry.status, 'unavailable');
+    assert.notDeepEqual(sampled.item.world.translation, rest.item.world.translation, 'sampled item must move at idle 0.5');
+    assert.notDeepEqual(
+      findById(sampled.sockets, 'socket.hand_r.primary').world.translation,
+      findById(rest.sockets, 'socket.hand_r.primary').world.translation,
+      'sampled primary socket must move at idle 0.5',
+    );
+    assert.equal(sampled.diagnostics.secondaryIk.status, 'unavailable');
+    assert.equal(sampled.diagnostics.secondaryIk.reason, 'secondary_hand_ik_not_implemented');
+    assert.deepEqual(sampled.limitations, [
+      'pre_ik_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+      'secondary_hand_ik_unavailable',
+    ]);
+    assert.equal(JSON.stringify(sampled).includes('review packet'), false);
+    assert.equal(JSON.stringify(sampled).includes('capture'), false);
+    assert.deepEqual(Object.keys(sampled).sort(), Object.keys(rest).sort());
+    assert.deepEqual(rest.pose, { kind: 'rest', sampled: false });
+    assert.deepEqual(rest.limitations, [
+      'rest_pose_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+      'secondary_hand_ik_unavailable',
+    ]);
+
+    const oneHandRoot = path.join(tempRoot, 'one hand animation');
+    fs.cpSync(fixtureRoot, oneHandRoot, { recursive: true });
+    fs.appendFileSync(
+      path.join(oneHandRoot, 'attachments', 'pistol_mk1_humanoid.attachment.toml'),
+      '\n[motion_envelope.idle]\nclip = "rifle_ready"\nnormalized_times = [0.5]\n',
+    );
+    const oneHandSample = invoke([
+      'evaluate-sample', '--animation-root', oneHandRoot, '--attachment', 'weapon.pistol.mk1.humanoid',
+      '--phase', 'idle', '--normalized-time', '0.5',
+    ]);
+    assert.equal(oneHandSample.status, 0, oneHandSample.stderr || oneHandSample.stdout);
+    const oneHandSampled = JSON.parse(oneHandSample.stdout);
+    assert.deepEqual(oneHandSampled.pose.proceduralLayersRequested, ['primary_attachment']);
+    assert.deepEqual(oneHandSampled.pose.proceduralLayersApplied, ['primary_attachment']);
+    assert.deepEqual(oneHandSampled.pose.proceduralLayersUnavailable, []);
+    assert.equal(oneHandSampled.diagnostics.secondaryIk.status, 'not_applicable');
+    assert.deepEqual(oneHandSampled.limitations, [
+      'sampled_attachment_schematic_only',
+      'not_review_evidence',
+      'item_mesh_unavailable',
+    ]);
+
+    for (const [argumentsList, expectedError] of [
+      [['evaluate-sample'], /evaluate-sample/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle'], /evaluate-sample/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time'], /evaluate-sample/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalised-time', '0.5'], /unknown or duplicate evaluate-sample flag/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--phase', 'aim'], /unknown or duplicate evaluate-sample flag/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5', '--phase', 'aim'], /evaluate-sample/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0,5'], /locale-independent finite number/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', 'nan'], /locale-independent finite number/],
+      [['evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', 'inf'], /locale-independent finite number/],
+    ]) {
+      const invalidSample = invoke(argumentsList);
+      assert.notEqual(invalidSample.status, 0, `evaluate-sample flags should be rejected: ${argumentsList.join(' ')}`);
+      assert.equal(invalidSample.stdout, '');
+      assert.match(invalidSample.stderr, expectedError);
+    }
+    const unknownPhase = invoke([
+      'evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--phase', 'sprint', '--normalized-time', '0.5',
+    ]);
+    assert.notEqual(unknownPhase.status, 0);
+    assert.equal(unknownPhase.stdout, '');
+    assert.match(unknownPhase.stderr, /Unknown motion-envelope phase "sprint"|Unknown motion-envelope phase 'sprint'/);
+    const unlistedTime = invoke([
+      'evaluate-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--phase', 'idle', '--normalized-time', '0.25',
+    ]);
+    assert.notEqual(unlistedTime.status, 0);
+    assert.equal(unlistedTime.stdout, '');
+    assert.match(unlistedTime.stderr, /not an authored sample/);
 
     fs.writeFileSync(path.join(fixtureRoot, 'skeletons', 'rotation_compose.skeleton.toml'), [
       'schema = "shader_forge.skeleton"',
@@ -440,6 +572,7 @@ console.log('Engine spatial validation tool passed.');
 console.log('- Verified deterministic validation JSON and precise invalid-input diagnostics');
 console.log('- Verified byte-stable complete cooking and invalid-input output preservation');
 console.log('- Verified rest-pose geometry, fixture invariants, and parent-rotated composition');
+console.log('- Verified sampled attachment JSON, pre-IK labels, and unchanged evaluate-rest shape');
 console.log('- Verified CLI strict flags, help, and build-first behavior');
 assert.equal(nativeChecked, true, 'native spatial execution is required');
 console.log('- Compiled and ran shader_forge_spatial against isolated fixtures');

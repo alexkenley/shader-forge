@@ -66,6 +66,7 @@ Usage:
   engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]
   engine spatial evaluate-rest --attachment <id> [--animation-root animation] [--build-dir build/runtime] [--config Debug]
+  engine spatial evaluate-sample --attachment <id> --phase <phase> --normalized-time <value> [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]
   engine spatial approve <operation-id> [--base-url <url>]
   engine spatial reject <operation-id> [--base-url <url>]
@@ -308,8 +309,11 @@ async function runSpatialCommand(subcommand, flags) {
       : path.resolve(process.cwd(), requestedOutputRoot);
     args.push('--output-root', outputRoot);
   }
-  if (subcommand === 'evaluate-rest') {
+  if (subcommand === 'evaluate-rest' || subcommand === 'evaluate-sample') {
     args.push('--attachment', String(flags.attachment));
+  }
+  if (subcommand === 'evaluate-sample') {
+    args.push('--phase', String(flags.phase), '--normalized-time', String(flags['normalized-time']));
   }
   await runCommand(binaryPath, args, { cwd: repoRoot });
 }
@@ -793,7 +797,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (command === 'spatial') {
     const spatialSubcommand = argv[1];
     const { positionals, flags, duplicateFlags } = parseFlags(argv.slice(2));
-    const nativeSubcommands = ['validate', 'cook', 'evaluate-rest'];
+    const nativeSubcommands = ['validate', 'cook', 'evaluate-rest', 'evaluate-sample'];
     const operationSubcommands = ['preview', 'approve', 'reject', 'apply', 'undo'];
     if (![...nativeSubcommands, ...operationSubcommands].includes(spatialSubcommand)) {
       throw new Error(spatialSubcommand
@@ -816,6 +820,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       validate: ['animation-root', 'build-dir', 'config'],
       cook: ['animation-root', 'output-root', 'build-dir', 'config'],
       'evaluate-rest': ['attachment', 'animation-root', 'build-dir', 'config'],
+      'evaluate-sample': ['attachment', 'phase', 'normalized-time', 'animation-root', 'build-dir', 'config'],
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease', 'base-url'],
       approve: ['base-url'],
       reject: ['base-url'],
@@ -824,6 +829,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     };
     const requiredFlagsBySubcommand = {
       'evaluate-rest': ['attachment'],
+      'evaluate-sample': ['attachment', 'phase', 'normalized-time'],
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease'],
       apply: ['agent', 'lease'],
       undo: ['agent', 'lease'],

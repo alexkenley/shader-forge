@@ -52,7 +52,7 @@
                 "Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and future native assistants.",
                 "Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.",
                 "Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.",
-                "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook/rest-schematic, Assets rest-rig workbench, and attachment-preview operation slices plus the deferred sampled/rendered review workflow.",
+                "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook/rest and sampled attachment evaluation with pre-IK two-hand output, Assets rest-rig workbench, and attachment-preview operation slices plus the deferred IK/rendered review workflow.",
                 "Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline."
               ]
             },
@@ -340,10 +340,11 @@
                 "`engine policy approve <approval-id>` and `engine policy deny <approval-id>` now resolve queued code-trust approvals from the terminal.",
                 "`engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now promotes a tracked artifact through `engine_sessiond` and refreshes its trusted hash.",
                 "`engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]` now quarantines a tracked artifact through that same sessiond mutation authority so later risky transitions keep denying it until it is explicitly promoted again.",
-                "`engine build runtime` configures and builds the native runtime with CMake; `engine build spatial` builds the dependency-free native spatial validate/cook/evaluate-rest tool. Both resolve CMake from `SHADER_FORGE_CMAKE` first and then `cmake` on `PATH`.",
+                "`engine build runtime` configures and builds the native runtime with CMake; `engine build spatial` builds the dependency-free native spatial validate/cook/evaluate-rest/evaluate-sample tool. Both resolve CMake from `SHADER_FORGE_CMAKE` first and then `cmake` on `PATH`.",
                 "`engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]` runs the already-built validator and prints deterministic JSON. It gives a build-first error when absent and does not compile, cook, or start a daemon.",
                 "`engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]` validates through the same `AnimationSystem` and atomically stages one byte-stable derived payload at `<output-root>/animation/spatial-authoring.bin`. It does not auto-build, start a daemon, or join generic `engine bake` yet.",
                 "`engine spatial evaluate-rest --attachment <id> [--animation-root animation] [--build-dir build/runtime] [--config Debug]` prints deterministic rest-pose bone/socket/hand/item frames and joint-segment endpoints. `pose.sampled=false`; item geometry plus IK, joint-limit, and clipping diagnostics are unavailable; pole world space is unresolved; and the output is not rendered review evidence.",
+                "`engine spatial evaluate-sample --attachment <id> --phase <phase> --normalized-time <value> [--animation-root animation] [--build-dir build/runtime] [--config Debug]` requires an exact authored envelope sample and prints deterministic sampled attachment geometry. Primary attachment is applied; requested/applied/unavailable procedural layers are explicit; two-hand output is `pre_ik_only`, one-hand output is `sampled_attachment_schematic_only`, and neither is review evidence.",
                 "`engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]` sends a strict BOM-free UTF-8 full-content candidate to sessiond without mutating authored bytes.",
                 "`engine spatial approve|reject <operation-id>` and `engine spatial apply|undo <operation-id> --agent <id> --lease <id>` call the existing operation transitions. Apply/undo require the credential in `SHADER_FORGE_AGENT_CREDENTIAL`; no command performs implicit coordination or approval.",
                 "`engine run <scene>` builds and launches the native runtime and now forwards content, audio, animation, physics, data, save, and tooling roots.",
@@ -573,7 +574,7 @@
                 "`AnimationSystem` now strictly validates v2 skeleton hierarchies, roles, sockets, and canonical quaternions plus v1 attachment profiles while keeping the existing v1 skeleton lane compatible.",
                 "Every animation source path and file must be valid UTF-8 before `AnimationSystem` commits a new generation.",
                 "Generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots.",
-                "The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet."
+                "The current runtime slice validates and resolves default graphs plus entry-clip events. Deterministic schema-v2 clip sampling exists as a native query, but runtime graph playback still does not consume it, blend, or retarget animation."
               ]
             },
             {
@@ -591,7 +592,7 @@
         {
           "id": "spatial-authoring",
           "title": "Spatial Authoring And Attachment Tuning",
-          "summary": "Spatial authoring now has a native schema/query/cook/rest-schematic foundation, lease-gated semantic operations, a strict CLI adapter, and a constrained Assets primary-grip tuner with a native-evaluated rest-rig schematic; sampled pose, IK, rendered capture, and review remain deferred.",
+          "summary": "Spatial authoring now has a native schema/query/cook/rest-schematic foundation, deterministic sampled attachment evaluation, lease-gated semantic operations, strict CLI queries, and a constrained Assets primary-grip tuner with a native-evaluated rest-rig schematic; IK, sampled shell evidence, rendered capture, and review remain deferred.",
           "keywords": [
             "spatial authoring",
             "attachment",
@@ -604,7 +605,8 @@
             "preview-candidate",
             "shader_forge_spatial",
             "engine spatial validate",
-            "engine spatial cook"
+            "engine spatial cook",
+            "engine spatial evaluate-sample"
           ],
           "references": [
             "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
@@ -649,16 +651,18 @@
             },
             {
               "title": "Current Implemented Slice",
-              "keywords": ["v1 compatible", "v2 skeleton", "attachment profile", "typed handles", "native harness", "rest evaluation", "revision"],
+              "keywords": ["v1 compatible", "v2 skeleton", "v2 clip", "attachment profile", "typed handles", "native harness", "rest evaluation", "sampled evaluation", "revision"],
               "items": [
-                "V1 skeleton loading remains compatible while strict v2 skeleton/socket and v1 attachment-profile parsing and validation now exist in `AnimationSystem`.",
+                "V1 skeleton/clip loading remains compatible while strict v2 skeleton/socket/clip-track and v1 attachment-profile parsing and validation now exist in `AnimationSystem`.",
                 "Generation-tagged skeleton, bone, socket, and attachment handles invalidate after a successful reload; a failed reload retains the prior valid generation and snapshots.",
                 "Isolated humanoid/rifle/pistol fixtures live under `animation/fixtures/spatial/`, outside authored and cooked roots.",
                 "`npm run test:spatial-authoring-scaffold` compiles and executes the native parser harness; WSL `g++` is required on Windows.",
                 "`shader_forge_spatial validate --animation-root <path>` reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts plus skeleton/profile metadata with stable relative attachment source paths.",
                 "`shader_forge_spatial cook` validates through the same loader and atomically stages complete socket/profile tables with relative source paths and no query handles or absolute machine paths; `engine spatial cook` exposes that already-built lane.",
                 "`shader_forge_spatial evaluate-rest --animation-root <path> --attachment <id>` composes deterministic rest bone/socket, item, contact/handle, hand, and joint-segment frames using right-handed meters, `+Y` up, `+Z` forward, and `xyzw` canonical quaternions; the strict CLI exposes the same already-built lane.",
+                "`shader_forge_spatial evaluate-sample --animation-root <path> --attachment <id> --phase <phase> --normalized-time <value>` resolves an exact authored motion-envelope sample and composes the same geometry over the deterministic schema-v2 clip sampler. Primary attachment is applied and requested/applied/unavailable procedural layers are explicit.",
                 "Rest evaluation is a schematic query only: `pose.sampled=false`; item mesh geometry plus IK, joint-limit, and clipping diagnostics are unavailable; the v1 pole has unresolved space and no world transform; and the output is not a review packet or rendered review evidence.",
+                "Sampled evaluation is read-only and not review evidence. Two-hand results report unavailable secondary IK and `pre_ik_only`; one-hand results report `sampled_attachment_schematic_only`. Sessiond, Assets, and `sf-mcp` still consume rest evidence only.",
                 "`GET /api/spatial/attachment/evaluate` stages exact current authored bytes, binds the selected source and revision to its validator-selected attachment ID, rechecks the live revision, and returns a transient evaluation without a lease, operation, journal entry, or persisted report.",
                 "`POST /api/operations/spatial-attachment/preview` validates and evaluates exact staged baseline/candidate bytes under their expected old/new IDs, returns those reports transiently, requires exact write-lease coverage, rechecks the lease after evaluation, and only then records a labelled generic file-write candidate with durable public spatial context. A new-file baseline is null and evaluations never enter the journal.",
                 "The Assets workbench binds authored evaluation to active session/path/revision and candidate evaluation to operation/base/proposed/state. Draft changes never move cached geometry; they mark it stale, and conflict remains visibly stale even when numeric values match.",
@@ -671,7 +675,7 @@
                 "Candidates are labelled `NOT APPLIED`; Preview, Approve, Apply, Reject, and Undo use the same sessiond operations. `App` retains one sessiond SSE subscription and Assets uses its event epoch to refetch the active operation with session/selection/id guards. Approval updates actions. Conflict rereads source, preserves stale candidate evidence, and retains its captured connection only after parse/resource checks. Reject/apply/undo clear and reread evidence plus clean up only the connection captured by that event/action, and Undo after apply reacquires a fresh covering lease.",
                 "Every rest schematic is explicitly unsampled and not review evidence. It has no item mesh, solved IK, joint-limit/clipping result, camera, capture, or resolved pole projection.",
                 "`npm run test:spatial-shell` validates exact source rewriting, unsupported-layout rejection with continued lease-free evaluation, complete evaluator-schema/size/projection guards, exact evidence binding, one shared SSE subscription and authoritative operation refetch, Assets-only mounting, explicit locking, operation-only routing, accessible/responsive schematic markers, unresolved-pole exclusion, and credential redaction markers.",
-                "`sf-mcp` now exposes the lease-gated attachment preview/review/apply/undo workflow. Prefab existence, joint/capsule parsing, generic bake/runtime consumption, sampling, IK, rendering/capture, review packets, operation-scoped validation/recapture, and typed MCP validate/recapture/review tools remain deferred."
+                "`sf-mcp` now exposes the lease-gated attachment preview/review/apply/undo workflow. Prefab existence, joint/capsule parsing, generic bake/runtime consumption, secondary-hand IK, sampled sessiond/shell/MCP evidence, rendering/capture, review packets, operation-scoped validation/recapture, and typed MCP validate/recapture/review tools remain deferred."
               ]
             },
             {
@@ -780,8 +784,8 @@
                 "`npm run test:code-trust-scaffold` validates the shared code-trust policy summary, artifact hashes plus verification state, promote/quarantine transitions, approval queue listing/decision flows, allowed authored-content hot reload, approved deferred apply/compile operations, and rejected assistant-triggered engine load paths.",
                 "`npm run test:scene-authoring` validates the shell scene-authoring surface plus deterministic scene/prefab file writes inside a session root.",
                 "`npm run test:scene-runtime-scaffold` validates the first Phase 6 composed-scene and controlled-entity runtime slice.",
-                "`npm run test:spatial-authoring-scaffold` compiles and executes the native v1/v2 skeleton, socket, attachment-profile, cross-reference, quaternion, reload, and typed-handle validation harness; WSL `g++` is required on Windows.",
-                "`npm run test:spatial-tool` requires a native compiler and runs the production validate/cook/evaluate-rest tool against isolated fixtures, checking deterministic validation and cooking, exact rest geometry, non-commuting transform composition, canonical quaternion sign, unresolved pole space, non-finite failure, loader diagnostics, and CLI strict/help/build-first behavior; WSL `g++` is required on Windows and `g++` elsewhere.",
+                "`npm run test:spatial-authoring-scaffold` compiles and executes the native v1/v2 skeleton/clip/socket/attachment harness, including deterministic clip sampling, exact envelope sampling, sampled attachment composition, layer truth, rejection, reload, and typed-handle behavior; WSL `g++` is required on Windows.",
+                "`npm run test:spatial-tool` requires a native compiler and runs the production validate/cook/evaluate-rest/evaluate-sample tool against isolated fixtures, checking deterministic rest/sample geometry, unchanged rest shape, pre-IK/one-hand truth labels, strict native/`engine` CLI behavior, and failure cases; WSL `g++` is required on Windows and `g++` elsewhere.",
                 "`npm run test:spatial-cli` drives the real CLI against an injected-validator sessiond and validates preview/review/apply/undo, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction.",
                 "`npm run test:runtime-scaffold`, `test:save-system-scaffold`, `test:data-foundation-scaffold`, `test:asset-pipeline`, `test:migration-fixtures`, `test:audio-scaffold`, `test:animation-scaffold`, `test:physics-scaffold`, `test:input-scaffold`, and `test:tooling-ui-scaffold` validate the native bring-up and first cook slices."
               ]
@@ -823,7 +827,7 @@
                 "A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.",
                 "A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.",
                 "A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. `sf-mcp` now consumes its lease-gated spatial attachment family; other MCP operation families still require equivalent resource-key contracts. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.",
-                "A native spatial schema/query/cook/rest-schematic slice plus a constrained Assets tuner and accessible native-evaluated three-projection rest-rig schematic with exact evidence binding, guarded SSE reconciliation, and no sampled/rendered review claim.",
+                "A native spatial schema/query/cook/rest and sampled attachment evaluation slice with pre-IK two-hand output, plus a constrained Assets tuner and accessible native-evaluated three-projection rest-rig schematic with exact evidence binding, guarded SSE reconciliation, and no sampled/rendered review claim in the shell.",
                 "A searchable in-app guide and repo-native assistant guide."
               ]
             },
@@ -838,8 +842,8 @@
                 "Packaging still needs auto-build/bake orchestration, archive generation, signing, richer preset families, and real cooked-runtime loading beyond the current release-layout scaffold.",
                 "The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.",
                 "Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.",
-                "Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.",
-                "Spatial authoring still needs prefab-catalog and joint/capsule integration, generic bake/runtime consumption, sampling, IK, attachment rendering/capture, validate/recapture/review-packet operations, and their typed MCP tools beyond the implemented attachment mutation adapter.",
+                "Animation still needs runtime graph consumption of the deterministic sampler, blending, graph-parameter control, root-motion application, and preview tooling on top of the authored graph-definition lane.",
+                "Spatial authoring still needs prefab-catalog and joint/capsule integration, generic bake/runtime consumption, secondary-hand IK, sampled sessiond/shell/MCP evidence, attachment rendering/capture, validate/recapture/review-packet operations, and their typed MCP tools beyond the implemented attachment mutation adapter.",
                 "Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.",
                 "Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.",
                 "Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.",

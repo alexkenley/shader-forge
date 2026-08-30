@@ -221,6 +221,16 @@ struct SpatialAttachmentEvaluationSnapshot {
   std::optional<EvaluatedSecondaryHandFrameSnapshot> secondaryHandFrame;
 };
 
+struct SpatialSampledAttachmentEvaluationSnapshot {
+  SpatialAttachmentEvaluationSnapshot evaluation;
+  std::string phase;
+  std::string clipName;
+  double normalizedTime = 0.0;
+  std::vector<std::string> proceduralLayersRequested;
+  std::vector<std::string> proceduralLayersApplied;
+  std::vector<std::string> proceduralLayersUnavailable;
+};
+
 struct ClipKeyframeSnapshot {
   double normalizedTime = 0.0;
   SpatialVector3Snapshot translation;
@@ -335,6 +345,11 @@ public:
     std::string_view stateName) const;
   std::optional<SpatialAttachmentEvaluationSnapshot> evaluateRestAttachment(
     AttachmentProfileId id,
+    std::string* errorMessage = nullptr) const;
+  std::optional<SpatialSampledAttachmentEvaluationSnapshot> evaluateSampledAttachment(
+    AttachmentProfileId id,
+    std::string_view phase,
+    double normalizedTime,
     std::string* errorMessage = nullptr) const;
   std::optional<SampledClipPoseSnapshot> sampleClipPose(
     std::string_view clipName,

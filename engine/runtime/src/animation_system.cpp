@@ -1653,12 +1653,38 @@ bool loadAttachmentProfileFile(
         if (!parseStringArray(layers->second, &envelope.proceduralLayers)) {
           return fail(errorMessage, "Invalid procedural_layers in " + section);
         }
-      } else if (profile->mode == "two_hand") {
-        envelope.proceduralLayers = {"primary_attachment", "secondary_hand_ik"};
+      } else {
+        envelope.proceduralLayers = profile->mode == "two_hand"
+          ? std::vector<std::string>{"primary_attachment", "secondary_hand_ik"}
+          : std::vector<std::string>{"primary_attachment"};
+      }
+      std::set<std::string> uniqueLayers;
+      for (const auto& layer : envelope.proceduralLayers) {
+        if (layer != "primary_attachment" && layer != "secondary_hand_ik") {
+          return fail(errorMessage, "Unsupported procedural layer '" + layer + "' in " + section);
+        }
+        if (!uniqueLayers.insert(layer).second) {
+          return fail(errorMessage, "Duplicate procedural layer '" + layer + "' in " + section);
+        }
+      }
+      if (!uniqueLayers.contains("primary_attachment")) {
+        return fail(errorMessage, "Motion envelope must request primary_attachment in " + section);
+      }
+      if (envelope.proceduralLayers.front() != "primary_attachment") {
+        return fail(errorMessage, "Motion envelope procedural layers must begin with primary_attachment in " + section);
+      }
+      if (profile->mode != "two_hand" && uniqueLayers.contains("secondary_hand_ik")) {
+        return fail(errorMessage, "One-hand motion envelope cannot request secondary_hand_ik in " + section);
+      }
+      if (profile->mode == "two_hand" && !uniqueLayers.contains("secondary_hand_ik")) {
+        return fail(errorMessage, "Two-hand motion envelope must request secondary_hand_ik in " + section);
       }
       const ClipDefinitionSnapshot* clip = findClipByName(clips, envelope.clip);
       if (clip == nullptr) {
         return fail(errorMessage, "Motion envelope references missing clip '" + envelope.clip + "'.");
+      }
+      if (clip->schemaVersion != 2) {
+        return fail(errorMessage, "Motion envelope requires a sampleable schema-version-2 clip in " + section);
       }
       if (clip->skeletonName != skeleton->id && clip->skeletonName != skeleton->name) {
         return fail(errorMessage, "Motion envelope clip uses a different skeleton in " + section);
@@ -1962,19 +1988,44 @@ const SkeletonSocketSnapshot* palmSocketForBone(
   return found == skeleton.sockets.end() ? nullptr : &*found;
 }
 
-bool evaluateRestAttachmentSnapshot(
+bool classifyProceduralLayers(
+  const std::vector<std::string>& requested,
+  std::vector<std::string>* applied,
+  std::vector<std::string>* unavailable,
+  std::string* errorMessage) {
+  applied->clear();
+  unavailable->clear();
+  for (const auto& layer : requested) {
+    if (layer == "primary_attachment") {
+      applied->push_back(layer);
+      continue;
+    }
+    if (layer == "secondary_hand_ik") {
+      unavailable->push_back(layer);
+      continue;
+    }
+    return fail(errorMessage, "Unsupported procedural layer '" + layer + "'.");
+  }
+  return true;
+}
+
+bool composeAttachmentEvaluation(
   const AttachmentProfileSnapshot& profile,
   const SkeletonDefinitionSnapshot& skeleton,
+  const std::vector<EvaluatedBonePoseSnapshot>& posedBones,
   SpatialAttachmentEvaluationSnapshot* evaluation,
   std::string* errorMessage) {
-  std::map<std::string, const SkeletonBoneSnapshot*> bonesById;
-  for (const auto& bone : skeleton.boneDefinitions) bonesById.emplace(bone.id, &bone);
+  if (posedBones.size() != skeleton.boneDefinitions.size()) {
+    return fail(errorMessage, "Spatial evaluation pose does not match the skeleton bone table.");
+  }
 
-  std::map<std::string, SpatialTransformSnapshot> locals;
   std::map<std::string, SpatialTransformSnapshot> worlds;
-  std::set<std::string> visiting;
-  for (const auto& bone : skeleton.boneDefinitions) {
-    if (!resolveBoneWorld(bone.id, bonesById, &locals, &worlds, &visiting, errorMessage)) return false;
+  for (std::size_t index = 0; index < posedBones.size(); ++index) {
+    const auto& bone = posedBones[index];
+    if (bone.id != skeleton.boneDefinitions[index].id || bone.parent != skeleton.boneDefinitions[index].parent) {
+      return fail(errorMessage, "Spatial evaluation pose is not in stable skeleton order.");
+    }
+    worlds.emplace(bone.id, bone.world);
   }
 
   evaluation->skeletonId = skeleton.id;
@@ -1987,31 +2038,34 @@ bool evaluateRestAttachmentSnapshot(
   evaluation->mode = profile.mode;
   evaluation->perspective = profile.perspective;
   evaluation->primaryGripSocket = profile.primaryGrip.socket;
+  evaluation->bones = posedBones;
 
-  for (const auto& bone : skeleton.boneDefinitions) {
-    evaluation->bones.push_back({
-      bone.id,
-      bone.parent,
-      bone.role,
-      locals.at(bone.id),
-      worlds.at(bone.id),
-    });
-    if (!bone.parent.empty()) {
-      evaluation->segments.push_back({
-        bone.parent,
-        bone.id,
-        worlds.at(bone.parent).translation,
-        worlds.at(bone.id).translation,
-      });
+  for (const auto& bone : posedBones) {
+    if (bone.parent.empty()) {
+      continue;
     }
+    const auto parentWorld = worlds.find(bone.parent);
+    if (parentWorld == worlds.end()) {
+      return fail(errorMessage, "Spatial evaluation could not resolve parent bone '" + bone.parent + "'.");
+    }
+    evaluation->segments.push_back({
+      bone.parent,
+      bone.id,
+      parentWorld->second.translation,
+      bone.world.translation,
+    });
   }
 
   std::map<std::string, SpatialTransformSnapshot> socketWorlds;
   for (const auto& socket : skeleton.sockets) {
+    const auto boneWorld = worlds.find(socket.bone);
+    if (boneWorld == worlds.end()) {
+      return fail(errorMessage, "Spatial evaluation could not resolve socket bone '" + socket.bone + "'.");
+    }
     SpatialTransformSnapshot local;
     SpatialTransformSnapshot world;
     if (!makeTransform(socket.translation, socket.rotation, &local, errorMessage)
-        || !composeTransforms(worlds.at(socket.bone), local, &world, errorMessage)) {
+        || !composeTransforms(boneWorld->second, local, &world, errorMessage)) {
       return false;
     }
     socketWorlds.emplace(socket.id, world);
@@ -2088,6 +2142,35 @@ bool evaluateRestAttachmentSnapshot(
     evaluation->secondaryHandFrame = std::move(hand);
   }
   return true;
+}
+
+bool evaluateRestAttachmentSnapshot(
+  const AttachmentProfileSnapshot& profile,
+  const SkeletonDefinitionSnapshot& skeleton,
+  SpatialAttachmentEvaluationSnapshot* evaluation,
+  std::string* errorMessage) {
+  std::map<std::string, const SkeletonBoneSnapshot*> bonesById;
+  for (const auto& bone : skeleton.boneDefinitions) bonesById.emplace(bone.id, &bone);
+
+  std::map<std::string, SpatialTransformSnapshot> locals;
+  std::map<std::string, SpatialTransformSnapshot> worlds;
+  std::set<std::string> visiting;
+  for (const auto& bone : skeleton.boneDefinitions) {
+    if (!resolveBoneWorld(bone.id, bonesById, &locals, &worlds, &visiting, errorMessage)) return false;
+  }
+
+  std::vector<EvaluatedBonePoseSnapshot> posedBones;
+  posedBones.reserve(skeleton.boneDefinitions.size());
+  for (const auto& bone : skeleton.boneDefinitions) {
+    posedBones.push_back({
+      bone.id,
+      bone.parent,
+      bone.role,
+      locals.at(bone.id),
+      worlds.at(bone.id),
+    });
+  }
+  return composeAttachmentEvaluation(profile, skeleton, posedBones, evaluation, errorMessage);
 }
 
 }  // namespace
@@ -2382,6 +2465,72 @@ std::optional<SpatialAttachmentEvaluationSnapshot> AnimationSystem::evaluateRest
   SpatialAttachmentEvaluationSnapshot evaluation;
   if (!evaluateRestAttachmentSnapshot(*profile, *skeleton, &evaluation, errorMessage)) return std::nullopt;
   return evaluation;
+}
+
+std::optional<SpatialSampledAttachmentEvaluationSnapshot> AnimationSystem::evaluateSampledAttachment(
+  AttachmentProfileId id,
+  std::string_view phase,
+  double normalizedTime,
+  std::string* errorMessage) const {
+  if (phase.empty()) {
+    fail(errorMessage, "Motion-envelope phase must not be empty.");
+    return std::nullopt;
+  }
+  if (!std::isfinite(normalizedTime)) {
+    fail(errorMessage, "Attachment sample time must be a finite value.");
+    return std::nullopt;
+  }
+
+  const auto profile = snapshotAttachmentProfile(id);
+  if (!profile) {
+    fail(errorMessage, "Unknown attachment handle.");
+    return std::nullopt;
+  }
+  const auto skeleton = snapshotSkeleton(profile->skeletonHandle);
+  if (!skeleton) {
+    fail(errorMessage, "Attachment references a missing skeleton handle.");
+    return std::nullopt;
+  }
+
+  const AttachmentMotionEnvelopeSnapshot* envelope = nullptr;
+  for (const auto& candidate : profile->motionEnvelopes) {
+    if (candidate.phase == phase) {
+      envelope = &candidate;
+      break;
+    }
+  }
+  if (envelope == nullptr) {
+    fail(errorMessage, "Unknown motion-envelope phase '" + std::string(phase) + "'.");
+    return std::nullopt;
+  }
+  if (std::find(envelope->normalizedTimes.begin(), envelope->normalizedTimes.end(), normalizedTime)
+      == envelope->normalizedTimes.end()) {
+    fail(errorMessage, "Normalized time is not an authored sample of motion-envelope phase '" + envelope->phase + "'.");
+    return std::nullopt;
+  }
+
+  std::vector<std::string> applied;
+  std::vector<std::string> unavailable;
+  if (!classifyProceduralLayers(envelope->proceduralLayers, &applied, &unavailable, errorMessage)) {
+    return std::nullopt;
+  }
+
+  const auto sampledPose = sampleClipPose(envelope->clip, normalizedTime, errorMessage);
+  if (!sampledPose) {
+    return std::nullopt;
+  }
+
+  SpatialSampledAttachmentEvaluationSnapshot result;
+  if (!composeAttachmentEvaluation(*profile, *skeleton, sampledPose->bones, &result.evaluation, errorMessage)) {
+    return std::nullopt;
+  }
+  result.phase = envelope->phase;
+  result.clipName = sampledPose->clipName;
+  result.normalizedTime = sampledPose->normalizedTime;
+  result.proceduralLayersRequested = envelope->proceduralLayers;
+  result.proceduralLayersApplied = std::move(applied);
+  result.proceduralLayersUnavailable = std::move(unavailable);
+  return result;
 }
 
 std::optional<SampledClipPoseSnapshot> AnimationSystem::sampleClipPose(

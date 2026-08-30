@@ -1,5 +1,7 @@
 #include "shader_forge/runtime/animation_system.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -23,6 +25,7 @@ using shader_forge::runtime::AnimationConfig;
 using shader_forge::runtime::AnimationSystem;
 using shader_forge::runtime::AttachmentProfileSnapshot;
 using shader_forge::runtime::SpatialAttachmentEvaluationSnapshot;
+using shader_forge::runtime::SpatialSampledAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SkeletonDefinitionSnapshot;
 using shader_forge::runtime::SpatialQuaternionSnapshot;
 using shader_forge::runtime::SpatialTransformSnapshot;
@@ -346,12 +349,10 @@ bool writeCookedPayload(
   return true;
 }
 
-void appendRestEvaluation(
+void appendAttachmentEvaluationFields(
   std::ostringstream& out,
   const SpatialAttachmentEvaluationSnapshot& evaluation) {
-  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":1"
-      << ",\"pose\":{\"kind\":\"rest\",\"sampled\":false}"
-      << ",\"coordinateSystem\":{\"units\":\"meters\",\"handedness\":\"right\",\"up\":\"+Y\",\"forward\":\"+Z\",\"quaternionOrder\":\"xyzw\"}"
+  out << ",\"coordinateSystem\":{\"units\":\"meters\",\"handedness\":\"right\",\"up\":\"+Y\",\"forward\":\"+Z\",\"quaternionOrder\":\"xyzw\"}"
       << ",\"skeleton\":{\"id\":" << jsonString(evaluation.skeletonId)
       << ",\"name\":" << jsonString(evaluation.skeletonName)
       << ",\"rootBone\":" << jsonString(evaluation.rootBone) << '}'
@@ -463,17 +464,73 @@ void appendRestEvaluation(
   }
   out << ','
       << "\"jointLimits\":{\"status\":\"unavailable\",\"reason\":\"joint_limits_not_authored\"},"
-      << "\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}"
-      << ",\"limitations\":[\"rest_pose_only\",\"not_review_evidence\",\"item_mesh_unavailable\"";
+      << "\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}";
+}
+
+void appendEvaluationLimitations(
+  std::ostringstream& out,
+  const SpatialAttachmentEvaluationSnapshot& evaluation,
+  std::string_view poseLimitation) {
+  out << ",\"limitations\":[" << jsonString(poseLimitation)
+      << ",\"not_review_evidence\",\"item_mesh_unavailable\"";
   if (evaluation.mode == "two_hand") out << ",\"secondary_hand_ik_unavailable\"";
   out << "]}\n";
+}
+
+void appendRestEvaluation(
+  std::ostringstream& out,
+  const SpatialAttachmentEvaluationSnapshot& evaluation) {
+  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":1"
+      << ",\"pose\":{\"kind\":\"rest\",\"sampled\":false}";
+  appendAttachmentEvaluationFields(out, evaluation);
+  appendEvaluationLimitations(out, evaluation, "rest_pose_only");
+}
+
+void appendSampledEvaluation(
+  std::ostringstream& out,
+  const SpatialSampledAttachmentEvaluationSnapshot& sampled) {
+  out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":1"
+      << ",\"pose\":{\"kind\":\"clip_sample\",\"sampled\":true"
+      << ",\"phase\":" << jsonString(sampled.phase)
+      << ",\"clip\":" << jsonString(sampled.clipName)
+      << ",\"normalizedTime\":";
+  appendNumber(out, sampled.normalizedTime);
+  out << ",\"proceduralLayersRequested\":";
+  appendStringArray(out, sampled.proceduralLayersRequested);
+  out << ",\"proceduralLayersApplied\":";
+  appendStringArray(out, sampled.proceduralLayersApplied);
+  out << ",\"proceduralLayersUnavailable\":";
+  appendStringArray(out, sampled.proceduralLayersUnavailable);
+  out << '}';
+  appendAttachmentEvaluationFields(out, sampled.evaluation);
+  const bool awaitsSecondaryIk = std::find(
+    sampled.proceduralLayersUnavailable.begin(),
+    sampled.proceduralLayersUnavailable.end(),
+    "secondary_hand_ik") != sampled.proceduralLayersUnavailable.end();
+  appendEvaluationLimitations(
+    out,
+    sampled.evaluation,
+    awaitsSecondaryIk ? "pre_ik_only" : "sampled_attachment_schematic_only");
+}
+
+bool parseCliFiniteNumber(std::string_view raw, double* value) {
+  if (raw.empty()) return false;
+  std::istringstream stream{std::string(raw)};
+  stream.imbue(std::locale::classic());
+  double parsed = 0.0;
+  if (!(stream >> parsed) || !std::isfinite(parsed)) return false;
+  stream >> std::ws;
+  if (!stream.eof()) return false;
+  *value = parsed;
+  return true;
 }
 
 int usageError(std::string_view message) {
   std::cerr << "shader_forge_spatial: " << message << '\n'
             << "usage: shader_forge_spatial validate --animation-root <path>\n"
             << "       shader_forge_spatial cook --animation-root <path> --output-root <path>\n"
-            << "       shader_forge_spatial evaluate-rest --animation-root <path> --attachment <attachment-id>\n";
+            << "       shader_forge_spatial evaluate-rest --animation-root <path> --attachment <attachment-id>\n"
+            << "       shader_forge_spatial evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value>\n";
   return 2;
 }
 
@@ -500,11 +557,13 @@ bool resolvePath(
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 2) return usageError("expected validate, cook, or evaluate-rest");
+  if (argc < 2) return usageError("expected validate, cook, evaluate-rest, or evaluate-sample");
   const std::string_view command = argv[1];
   std::filesystem::path requestedAnimationRoot;
   std::filesystem::path requestedOutputRoot;
   std::string requestedAttachmentId;
+  std::string requestedPhase;
+  double requestedNormalizedTime = 0.0;
   if (command == "validate") {
     if (argc != 4 || std::string_view(argv[2]) != "--animation-root" || std::string_view(argv[3]).empty()) {
       return usageError("expected validate --animation-root <path>");
@@ -550,8 +609,43 @@ int main(int argc, char** argv) {
     if (!hasAnimationRoot || !hasAttachment) {
       return usageError("evaluate-rest requires --animation-root and --attachment");
     }
+  } else if (command == "evaluate-sample") {
+    if (argc != 10) {
+      return usageError("expected evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value>");
+    }
+    bool hasAnimationRoot = false;
+    bool hasAttachment = false;
+    bool hasPhase = false;
+    bool hasNormalizedTime = false;
+    std::string requestedNormalizedTimeRaw;
+    for (int index = 2; index < argc; index += 2) {
+      const std::string_view flag = argv[index];
+      const std::string_view value = argv[index + 1];
+      if (value.empty()) return usageError("evaluate-sample flag values must not be empty");
+      if (flag == "--animation-root" && !hasAnimationRoot) {
+        requestedAnimationRoot = value;
+        hasAnimationRoot = true;
+      } else if (flag == "--attachment" && !hasAttachment) {
+        requestedAttachmentId = value;
+        hasAttachment = true;
+      } else if (flag == "--phase" && !hasPhase) {
+        requestedPhase = value;
+        hasPhase = true;
+      } else if (flag == "--normalized-time" && !hasNormalizedTime) {
+        requestedNormalizedTimeRaw = value;
+        hasNormalizedTime = true;
+      } else {
+        return usageError("unknown or duplicate evaluate-sample flag");
+      }
+    }
+    if (!hasAnimationRoot || !hasAttachment || !hasPhase || !hasNormalizedTime) {
+      return usageError("evaluate-sample requires --animation-root, --attachment, --phase, and --normalized-time");
+    }
+    if (!parseCliFiniteNumber(requestedNormalizedTimeRaw, &requestedNormalizedTime)) {
+      return usageError("evaluate-sample --normalized-time must be a locale-independent finite number");
+    }
   } else {
-    return usageError("expected validate, cook, or evaluate-rest");
+    return usageError("expected validate, cook, evaluate-rest, or evaluate-sample");
   }
 
   std::filesystem::path animationRoot;
@@ -583,6 +677,27 @@ int main(int argc, char** argv) {
     out.imbue(std::locale::classic());
     out << std::setprecision(std::numeric_limits<double>::max_digits10);
     appendRestEvaluation(out, *evaluation);
+    std::cout << out.str();
+    return 0;
+  }
+  if (command == "evaluate-sample") {
+    const auto attachmentId = animation.findAttachmentProfileId(requestedAttachmentId);
+    if (!attachmentId) {
+      std::cerr << "shader_forge_spatial: evaluate-sample failed: unknown attachment "
+                << jsonString(requestedAttachmentId) << "\n";
+      return 1;
+    }
+    const auto evaluation = animation.evaluateSampledAttachment(
+      *attachmentId, requestedPhase, requestedNormalizedTime, &error);
+    if (!evaluation) {
+      std::cerr << "shader_forge_spatial: evaluate-sample failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
+    appendSampledEvaluation(out, *evaluation);
     std::cout << out.str();
     return 0;
   }

@@ -18,12 +18,16 @@ assert.match(header, /SkeletonSocketSnapshot/);
 assert.match(header, /findAttachmentProfile/);
 assert.match(header, /ClipKeyframeSnapshot/);
 assert.match(header, /sampleClipPose/);
+assert.match(header, /evaluateSampledAttachment/);
+assert.match(header, /SpatialSampledAttachmentEvaluationSnapshot/);
 assert.match(source, /loadSkeletonV2File/);
 assert.match(source, /loadClipV2File/);
 assert.match(source, /loadAttachmentProfileFile/);
 assert.match(source, /nextAttachmentProfiles/);
 assert.match(source, /sampleClipTrack/);
 assert.match(source, /nlerpQuaternions/);
+assert.match(source, /evaluateSampledAttachment/);
+assert.match(source, /composeAttachmentEvaluation/);
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shader-forge-spatial-'));
 const driverPath = path.join(tempRoot, 'spatial_driver.cpp');
@@ -57,6 +61,7 @@ using shader_forge::runtime::ClipDefinitionSnapshot;
 using shader_forge::runtime::EvaluatedBonePoseSnapshot;
 using shader_forge::runtime::SampledClipPoseSnapshot;
 using shader_forge::runtime::SpatialAttachmentEvaluationSnapshot;
+using shader_forge::runtime::SpatialSampledAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SpatialQuaternionSnapshot;
 using shader_forge::runtime::SpatialTransformSnapshot;
 using shader_forge::runtime::SpatialVector3Snapshot;
@@ -129,6 +134,48 @@ bool sampledMatchesRest(const SampledClipPoseSnapshot& pose, const SpatialAttach
         || !sameTransform(pose.bones[index].world, rest.bones[index].world)) {
       return false;
     }
+  }
+  return true;
+}
+
+const EvaluatedBonePoseSnapshot* findEvaluationBone(const SpatialAttachmentEvaluationSnapshot& evaluation, const std::string& id) {
+  return findPoseBone(evaluation.bones, id);
+}
+
+bool sameAttachmentGeometry(const SpatialAttachmentEvaluationSnapshot& left, const SpatialAttachmentEvaluationSnapshot& right) {
+  if (left.bones.size() != right.bones.size() || left.sockets.size() != right.sockets.size()
+      || left.segments.size() != right.segments.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < left.bones.size(); ++index) {
+    if (left.bones[index].id != right.bones[index].id
+        || left.bones[index].parent != right.bones[index].parent
+        || !sameTransform(left.bones[index].local, right.bones[index].local)
+        || !sameTransform(left.bones[index].world, right.bones[index].world)) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < left.sockets.size(); ++index) {
+    if (left.sockets[index].id != right.sockets[index].id
+        || !sameTransform(left.sockets[index].local, right.sockets[index].local)
+        || !sameTransform(left.sockets[index].world, right.sockets[index].world)) {
+      return false;
+    }
+  }
+  if (!sameTransform(left.itemWorld, right.itemWorld)) return false;
+  if (left.primaryContactWorld.has_value() != right.primaryContactWorld.has_value()) return false;
+  if (left.primaryContactWorld && !sameTransform(*left.primaryContactWorld, *right.primaryContactWorld)) return false;
+  if (left.dominantHandFrame.has_value() != right.dominantHandFrame.has_value()) return false;
+  if (left.dominantHandFrame && !sameTransform(left.dominantHandFrame->world, right.dominantHandFrame->world)) return false;
+  if (left.secondaryHandFrame.has_value() != right.secondaryHandFrame.has_value()) return false;
+  if (left.secondaryHandFrame) {
+    if (!sameTransform(left.secondaryHandFrame->world, right.secondaryHandFrame->world)) return false;
+    if (left.secondaryHandFrame->targetWorld.has_value() != right.secondaryHandFrame->targetWorld.has_value()) return false;
+    if (left.secondaryHandFrame->targetWorld
+        && !sameTransform(*left.secondaryHandFrame->targetWorld, *right.secondaryHandFrame->targetWorld)) {
+      return false;
+    }
+    if (left.secondaryHandFrame->preSolveDistanceMeters != right.secondaryHandFrame->preSolveDistanceMeters) return false;
   }
   return true;
 }
@@ -296,6 +343,48 @@ int main(int argc, char** argv) {
   }
 
   error.clear();
+  const auto sampledIdleStart = system.evaluateSampledAttachment(*profileHandle, "idle", 0.0, &error);
+  const auto sampledIdleMid = system.evaluateSampledAttachment(*profileHandle, "idle", 0.5, &error);
+  const auto sampledIdleEnd = system.evaluateSampledAttachment(*profileHandle, "idle", 1.0, &error);
+  if (!sampledIdleStart || !sampledIdleMid || !sampledIdleEnd) return fail("valid sampled attachment evaluation was rejected: " + error);
+  if (sampledIdleStart->phase != "idle" || sampledIdleStart->clipName != "rifle_ready" || sampledIdleStart->normalizedTime != 0.0
+      || sampledIdleMid->phase != "idle" || sampledIdleMid->clipName != "rifle_ready" || sampledIdleMid->normalizedTime != 0.5
+      || sampledIdleEnd->phase != "idle" || sampledIdleEnd->clipName != "rifle_ready" || sampledIdleEnd->normalizedTime != 1.0) {
+    return fail("sampled attachment phase/clip/time metadata was not exact");
+  }
+  if (sampledIdleMid->proceduralLayersRequested != std::vector<std::string>{"primary_attachment", "secondary_hand_ik"}
+      || sampledIdleMid->proceduralLayersApplied != std::vector<std::string>{"primary_attachment"}
+      || sampledIdleMid->proceduralLayersUnavailable != std::vector<std::string>{"secondary_hand_ik"}) {
+    return fail("sampled attachment layer truth was not exact");
+  }
+  if (!sameAttachmentGeometry(sampledIdleStart->evaluation, *rest) || !sameAttachmentGeometry(sampledIdleEnd->evaluation, *rest)) {
+    return fail("sampled idle endpoints did not match rest attachment geometry");
+  }
+  if (!sampledMatchesRest(*readyMid, sampledIdleMid->evaluation)) {
+    return fail("sampled attachment did not reuse the clip-sample pose");
+  }
+  const auto restPrimarySocket = std::find_if(rest->sockets.begin(), rest->sockets.end(), [](const auto& socket) {
+    return socket.id == "socket.hand_r.primary";
+  });
+  const auto midPrimarySocket = std::find_if(sampledIdleMid->evaluation.sockets.begin(), sampledIdleMid->evaluation.sockets.end(), [](const auto& socket) {
+    return socket.id == "socket.hand_r.primary";
+  });
+  if (restPrimarySocket == rest->sockets.end() || midPrimarySocket == sampledIdleMid->evaluation.sockets.end()) {
+    return fail("primary grip socket was missing from sampled attachment evaluation");
+  }
+  if (!rest->dominantHandFrame
+      || sameTransform(sampledIdleMid->evaluation.itemWorld, rest->itemWorld)
+      || sameTransform(midPrimarySocket->world, restPrimarySocket->world)
+      || !sampledIdleMid->evaluation.dominantHandFrame
+      || sameTransform(sampledIdleMid->evaluation.dominantHandFrame->world, rest->dominantHandFrame->world)) {
+    return fail("sampled idle midpoint did not move item/socket/hand geometry");
+  }
+  const auto* sampledMidHand = findEvaluationBone(sampledIdleMid->evaluation, "hand_r");
+  if (!sampledMidHand || !sameTransform(sampledMidHand->world, midHand->world)) {
+    return fail("sampled attachment hand geometry did not follow the sampled pose");
+  }
+
+  error.clear();
   const auto aimStart = system.sampleClipPose("rifle_aim", 0.0, &error);
   const auto aimMid = system.sampleClipPose("rifle_aim", 0.5, &error);
   const auto aimEnd = system.sampleClipPose("rifle_aim", 1.0, &error);
@@ -364,6 +453,75 @@ int main(int argc, char** argv) {
       && system.findAttachmentProfileId(retainedProfile) == profileHandle
       && system.snapshotAttachmentProfile(*profileHandle).has_value();
   };
+  error.clear();
+  if (system.evaluateSampledAttachment(*profileHandle, "sprint", 0.5, &error)
+      || error.find("phase") == std::string::npos
+      || !stateWasRetained()) {
+    return fail("unknown motion-envelope phase was accepted or leaked state");
+  }
+  error.clear();
+  if (system.evaluateSampledAttachment(*profileHandle, "idle", 0.25, &error)
+      || error.find("authored sample") == std::string::npos
+      || !stateWasRetained()) {
+    return fail("unlisted envelope time was accepted or leaked state");
+  }
+  error.clear();
+  if (system.evaluateSampledAttachment(*profileHandle, "idle", std::numeric_limits<double>::quiet_NaN(), &error)
+      || system.evaluateSampledAttachment(*profileHandle, "idle", std::numeric_limits<double>::infinity(), &error)
+      || error.empty()
+      || !stateWasRetained()) {
+    return fail("non-finite sampled attachment time was accepted or leaked state");
+  }
+  const auto v1EnvelopeRoot = std::filesystem::temp_directory_path() / "shader_forge_spatial_v1_envelope_clip";
+  std::filesystem::remove_all(v1EnvelopeRoot);
+  std::filesystem::copy(sourceRoot, v1EnvelopeRoot, std::filesystem::copy_options::recursive);
+  writeFile(v1EnvelopeRoot / "clips/rifle_legacy.anim.toml",
+    "schema = \"shader_forge.animation_clip\"\n"
+    "schema_version = 1\n"
+    "name = \"rifle_legacy\"\n"
+    "owner_system = \"animation_system\"\n"
+    "skeleton = \"humanoid.standard.v2\"\n"
+    "duration_seconds = 1.0\n"
+    "loop = true\n"
+    "root_motion_meters = 0.0\n");
+  std::string v1EnvelopeAttachment = readFile(v1EnvelopeRoot / "attachments/rifle_mk1_humanoid.attachment.toml");
+  if (!replaceOnce(&v1EnvelopeAttachment, "clip = \"rifle_ready\"", "clip = \"rifle_legacy\"")) {
+    return fail("v1 envelope clip fixture mutation failed");
+  }
+  writeFile(v1EnvelopeRoot / "attachments/rifle_mk1_humanoid.attachment.toml", v1EnvelopeAttachment);
+  AnimationSystem v1EnvelopeSystem;
+  error.clear();
+  if (v1EnvelopeSystem.loadFromDisk(AnimationConfig{v1EnvelopeRoot}, &error)
+      || error.find("sampleable schema-version-2 clip") == std::string::npos) {
+    return fail("schema-v1 envelope clip was accepted by validation");
+  }
+  std::filesystem::remove_all(v1EnvelopeRoot);
+  if (!stateWasRetained()) return fail("schema-v1 envelope clip evaluation leaked original state");
+
+  const auto oneHandEnvelopeRoot = std::filesystem::temp_directory_path() / "shader_forge_spatial_one_hand_envelope";
+  std::filesystem::remove_all(oneHandEnvelopeRoot);
+  std::filesystem::copy(sourceRoot, oneHandEnvelopeRoot, std::filesystem::copy_options::recursive);
+  const auto oneHandAttachmentPath = oneHandEnvelopeRoot / "attachments/pistol_mk1_humanoid.attachment.toml";
+  std::string oneHandAttachment = readFile(oneHandAttachmentPath);
+  oneHandAttachment += "\n[motion_envelope.idle]\nclip = \"rifle_ready\"\nnormalized_times = [0.5]\n";
+  writeFile(oneHandAttachmentPath, oneHandAttachment);
+  AnimationSystem oneHandEnvelopeSystem;
+  error.clear();
+  if (!oneHandEnvelopeSystem.loadFromDisk(AnimationConfig{oneHandEnvelopeRoot}, &error)) {
+    return fail("one-hand envelope without explicit procedural layers was rejected: " + error);
+  }
+  const auto oneHandEnvelopeHandle = oneHandEnvelopeSystem.findAttachmentProfileId("weapon.pistol.mk1.humanoid");
+  const auto oneHandEvaluation = oneHandEnvelopeHandle
+    ? oneHandEnvelopeSystem.evaluateSampledAttachment(*oneHandEnvelopeHandle, "idle", 0.5, &error)
+    : std::nullopt;
+  if (!oneHandEvaluation
+      || oneHandEvaluation->proceduralLayersRequested != std::vector<std::string>{"primary_attachment"}
+      || oneHandEvaluation->proceduralLayersApplied != std::vector<std::string>{"primary_attachment"}
+      || !oneHandEvaluation->proceduralLayersUnavailable.empty()) {
+    return fail("one-hand envelope did not default to primary_attachment truth: " + error);
+  }
+  std::filesystem::remove_all(oneHandEnvelopeRoot);
+  if (!stateWasRetained()) return fail("one-hand envelope evaluation leaked original state");
   auto rejectMutation = [&](const std::filesystem::path& relative, const std::string& from, const std::string& to) -> bool {
     const auto caseRoot = std::filesystem::temp_directory_path() / ("shader_forge_spatial_case_" + std::to_string(++caseIndex));
     std::filesystem::remove_all(caseRoot);
@@ -427,6 +585,21 @@ int main(int argc, char** argv) {
   if (!rejectMutation(attachmentFile, "reach_meters = 0.04", "reach_meters = -0.01")) return fail("invalid tolerance range accepted");
   if (!rejectMutation(attachmentFile, "space = \"socket\"", "space = \"socket\"\nspace = \"socket\"")) return fail("duplicate key accepted");
   if (!rejectMutation(attachmentFile, "[motion_envelope.idle]", "[unknown_section]")) return fail("unknown section accepted");
+  if (!rejectMutation(attachmentFile, "procedural_layers = [\"primary_attachment\", \"secondary_hand_ik\"]", "procedural_layers = [\"primary_attachment\", \"root_motion\"]")) {
+    return fail("unsupported procedural layer accepted");
+  }
+  if (!rejectMutation(attachmentFile, "procedural_layers = [\"primary_attachment\", \"secondary_hand_ik\"]", "procedural_layers = [\"secondary_hand_ik\"]")) {
+    return fail("motion envelope without primary_attachment accepted");
+  }
+  if (!rejectMutation(attachmentFile, "procedural_layers = [\"primary_attachment\", \"secondary_hand_ik\"]", "procedural_layers = [\"primary_attachment\", \"primary_attachment\"]")) {
+    return fail("duplicate procedural layer accepted");
+  }
+  if (!rejectMutation(attachmentFile, "procedural_layers = [\"primary_attachment\", \"secondary_hand_ik\"]", "procedural_layers = [\"secondary_hand_ik\", \"primary_attachment\"]")) {
+    return fail("reversed procedural layer order accepted");
+  }
+  if (!rejectMutation(attachmentFile, "procedural_layers = [\"primary_attachment\", \"secondary_hand_ik\"]", "procedural_layers = [\"primary_attachment\"]")) {
+    return fail("two-hand envelope without secondary_hand_ik accepted");
+  }
   if (!rejectMutation(clipFile, "skeleton = \"humanoid.standard.v2\"", "skeleton = \"debug_humanoid\"")) return fail("envelope skeleton mismatch accepted");
   if (!rejectMutation(clipFile, "name = \"rifle_ready\"", "name = \"debug_idle\"")) return fail("duplicate clip name accepted");
   if (!rejectMutation(clipFile, "schema_version = 2", "schema_version = 99")) return fail("unknown clip version accepted");
@@ -554,6 +727,7 @@ try {
 console.log('Engine spatial authoring scaffold passed.');
 console.log('- Verified strict v2 skeleton/socket and v1 attachment-profile contracts');
 console.log('- Verified v1 clip compatibility and v2 clip sampling, rest fallback, and quaternion interpolation');
+console.log('- Verified sampled attachment evaluation over authored envelope phase/time and layer truth');
 console.log('- Verified dotted IDs, representative rejection cases, and transactional reload state');
 console.log(nativeChecked
   ? '- Compiled and ran the native spatial parser harness'
