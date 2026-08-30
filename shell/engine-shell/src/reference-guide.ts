@@ -1,6 +1,7 @@
 import guideJson from '../../../docs/reference/ENGINE-REFERENCE-GUIDE.json';
 
 export const engineOperationsSpecPath = 'docs/specs/ENGINE-OPERATIONS-SPEC.md';
+export const engineSpatialAuthoringSpecPath = 'docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md';
 
 export interface ReferenceGuideSection {
   title: string;

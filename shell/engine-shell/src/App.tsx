@@ -1514,6 +1514,7 @@ function renderCenterContent(
   showLegacyBridge: boolean,
   onToggleLegacyBridge: () => void,
   activeSession: EngineSession | null,
+  operationEventEpoch: number,
   runtimeStatus: RuntimeStatus,
   buildStatus: BuildStatus,
   launchScene: string,
@@ -1537,7 +1538,12 @@ function renderCenterContent(
   }
 
   if (activeTab === 'Assets') {
-    return <SpatialAttachmentEditorView activeSession={activeSession} />;
+    return (
+      <SpatialAttachmentEditorView
+        activeSession={activeSession}
+        operationEventEpoch={operationEventEpoch}
+      />
+    );
   }
 
   if (activeTab === 'World') {
@@ -1818,6 +1824,7 @@ export default function App() {
   const [pendingRunAfterBuild, setPendingRunAfterBuild] = useState(false);
   const [viewerBridgeEvents, setViewerBridgeEvents] = useState<ViewerBridgeEvent[]>([]);
   const [operations, setOperations] = useState<EngineOperation[]>([]);
+  const [operationEventEpoch, setOperationEventEpoch] = useState(0);
   const [selectedOperationId, setSelectedOperationId] = useState('');
   const [selectedOperation, setSelectedOperation] = useState<EngineOperation | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -2403,7 +2410,10 @@ export default function App() {
         || event.type === 'operation.undone'
         || event.type === 'operation.conflicted'
       ) {
-        if (event.data.sessionId === activeSessionId) void refreshOperations(activeSessionId, false);
+        if (event.data.sessionId === activeSessionId) {
+          setOperationEventEpoch((current) => current + 1);
+          void refreshOperations(activeSessionId, false);
+        }
       }
     });
 
@@ -3750,6 +3760,7 @@ export default function App() {
                 showLegacyBridge,
                 () => setShowLegacyBridge((current) => !current),
                 activeSession,
+                operationEventEpoch,
                 runtimeStatus,
                 buildStatus,
                 launchScene,

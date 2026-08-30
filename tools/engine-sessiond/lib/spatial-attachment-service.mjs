@@ -20,6 +20,9 @@ const animationDirectories = Object.freeze({
 const attachmentPathPattern = /^animation\/attachments\/([^/]+\.attachment\.toml)$/;
 const revisionPattern = /^sha256:[a-f0-9]{64}$/;
 const actorKinds = new Set(['human', 'shell', 'cli', 'mcp']);
+const restEvaluationSchema = 'shader_forge.spatial_attachment_evaluation';
+const restEvaluationMaxBytes = 8 * 1024 * 1024;
+const unitTolerance = 1e-6;
 
 function serviceError(statusCode, code, message, extras = {}) {
   const error = new Error(message);
@@ -127,6 +130,290 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function evaluationProtocolError() {
+  throw serviceError(
+    500,
+    'spatial_evaluator_protocol_error',
+    'Spatial evaluator returned an invalid rest-pose evaluation.',
+  );
+}
+
+function requireExactObject(value, keys) {
+  if (!isPlainObject(value)) evaluationProtocolError();
+  const actualKeys = Object.keys(value);
+  if (
+    actualKeys.length !== keys.length
+    || keys.some((key) => !Object.prototype.hasOwnProperty.call(value, key))
+  ) {
+    evaluationProtocolError();
+  }
+  return value;
+}
+
+function requireString(value, { allowEmpty = false } = {}) {
+  if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) {
+    evaluationProtocolError();
+  }
+  return value;
+}
+
+function requireFiniteTuple(value, length) {
+  if (
+    !Array.isArray(value)
+    || value.length !== length
+    || value.some((entry) => typeof entry !== 'number' || !Number.isFinite(entry))
+  ) {
+    evaluationProtocolError();
+  }
+  return value;
+}
+
+function dot(left, right) {
+  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+function cross(left, right) {
+  return [
+    left[1] * right[2] - left[2] * right[1],
+    left[2] * right[0] - left[0] * right[2],
+    left[0] * right[1] - left[1] * right[0],
+  ];
+}
+
+function vectorClose(left, right) {
+  return left.every((entry, index) => Math.abs(entry - right[index]) <= unitTolerance);
+}
+
+function requireUnitVector(value) {
+  const vector = requireFiniteTuple(value, 3);
+  if (Math.abs(Math.hypot(...vector) - 1) > unitTolerance) evaluationProtocolError();
+  return vector;
+}
+
+function requireCanonicalQuaternion(value) {
+  const rotation = requireFiniteTuple(value, 4);
+  if (Math.abs(Math.hypot(...rotation) - 1) > unitTolerance || rotation[3] < 0) {
+    evaluationProtocolError();
+  }
+  return rotation;
+}
+
+function rotateVector(rotation, vector) {
+  const axis = rotation.slice(0, 3);
+  const twiceCross = cross(axis, vector).map((entry) => entry * 2);
+  const secondCross = cross(axis, twiceCross);
+  return vector.map((entry, index) => (
+    entry + rotation[3] * twiceCross[index] + secondCross[index]
+  ));
+}
+
+function requireTransform(value) {
+  const transform = requireExactObject(value, ['translation', 'rotation', 'axes']);
+  requireFiniteTuple(transform.translation, 3);
+  const rotation = requireCanonicalQuaternion(transform.rotation);
+  const axes = requireExactObject(transform.axes, ['x', 'y', 'z']);
+  const x = requireUnitVector(axes.x);
+  const y = requireUnitVector(axes.y);
+  const z = requireUnitVector(axes.z);
+  if (
+    Math.abs(dot(x, y)) > unitTolerance
+    || Math.abs(dot(y, z)) > unitTolerance
+    || Math.abs(dot(z, x)) > unitTolerance
+    || !vectorClose(cross(x, y), z)
+    || !vectorClose(x, rotateVector(rotation, [1, 0, 0]))
+    || !vectorClose(y, rotateVector(rotation, [0, 1, 0]))
+    || !vectorClose(z, rotateVector(rotation, [0, 0, 1]))
+  ) {
+    evaluationProtocolError();
+  }
+}
+
+function requireOptionalTransform(value) {
+  if (value !== null) requireTransform(value);
+}
+
+function requireStatusReason(value, status, reason) {
+  const result = requireExactObject(value, ['status', 'reason']);
+  if (result.status !== status || result.reason !== reason) evaluationProtocolError();
+}
+
+function requireRestEvaluationShape(report, expectedAttachmentId) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(report);
+  } catch {
+    evaluationProtocolError();
+  }
+  if (
+    typeof serialized !== 'string'
+    || Buffer.byteLength(serialized, 'utf8') > restEvaluationMaxBytes
+  ) {
+    evaluationProtocolError();
+  }
+
+  const evaluation = requireExactObject(report, [
+    'schema', 'schemaVersion', 'pose', 'coordinateSystem', 'skeleton', 'attachment',
+    'bones', 'segments', 'sockets', 'item', 'hands', 'diagnostics', 'limitations',
+  ]);
+  if (evaluation.schema !== restEvaluationSchema || evaluation.schemaVersion !== 1) {
+    evaluationProtocolError();
+  }
+
+  const pose = requireExactObject(evaluation.pose, ['kind', 'sampled']);
+  if (pose.kind !== 'rest' || pose.sampled !== false) evaluationProtocolError();
+
+  const coordinateSystem = requireExactObject(
+    evaluation.coordinateSystem,
+    ['units', 'handedness', 'up', 'forward', 'quaternionOrder'],
+  );
+  if (
+    coordinateSystem.units !== 'meters'
+    || coordinateSystem.handedness !== 'right'
+    || coordinateSystem.up !== '+Y'
+    || coordinateSystem.forward !== '+Z'
+    || coordinateSystem.quaternionOrder !== 'xyzw'
+  ) {
+    evaluationProtocolError();
+  }
+
+  const skeleton = requireExactObject(evaluation.skeleton, ['id', 'name', 'rootBone']);
+  requireString(skeleton.id);
+  requireString(skeleton.name);
+  requireString(skeleton.rootBone);
+
+  const attachment = requireExactObject(evaluation.attachment, [
+    'id', 'name', 'itemPrefabId', 'dominantHand', 'mode', 'perspective', 'primaryGripSocket',
+  ]);
+  if (
+    requireString(attachment.id) !== expectedAttachmentId
+    || !['left', 'right'].includes(attachment.dominantHand)
+    || !['one_hand', 'two_hand'].includes(attachment.mode)
+    || !['first_person', 'third_person', 'both'].includes(attachment.perspective)
+  ) {
+    evaluationProtocolError();
+  }
+  requireString(attachment.name);
+  requireString(attachment.itemPrefabId);
+  requireString(attachment.primaryGripSocket);
+
+  if (!Array.isArray(evaluation.bones)) evaluationProtocolError();
+  for (const value of evaluation.bones) {
+    const bone = requireExactObject(value, ['id', 'parent', 'role', 'local', 'world']);
+    requireString(bone.id);
+    requireString(bone.parent, { allowEmpty: true });
+    requireString(bone.role, { allowEmpty: true });
+    requireTransform(bone.local);
+    requireTransform(bone.world);
+  }
+
+  if (!Array.isArray(evaluation.segments)) evaluationProtocolError();
+  for (const value of evaluation.segments) {
+    const segment = requireExactObject(value, ['parentBoneId', 'boneId', 'from', 'to']);
+    requireString(segment.parentBoneId);
+    requireString(segment.boneId);
+    requireFiniteTuple(segment.from, 3);
+    requireFiniteTuple(segment.to, 3);
+  }
+
+  if (!Array.isArray(evaluation.sockets)) evaluationProtocolError();
+  for (const value of evaluation.sockets) {
+    const socket = requireExactObject(value, ['id', 'boneId', 'role', 'local', 'world']);
+    requireString(socket.id);
+    requireString(socket.boneId);
+    requireString(socket.role, { allowEmpty: true });
+    requireTransform(socket.local);
+    requireTransform(socket.world);
+  }
+
+  const item = requireExactObject(
+    evaluation.item,
+    ['prefabId', 'world', 'geometry', 'primaryContactWorld', 'handleAxisWorld'],
+  );
+  if (requireString(item.prefabId) !== attachment.itemPrefabId) evaluationProtocolError();
+  requireTransform(item.world);
+  requireStatusReason(item.geometry, 'unavailable', 'item_prefab_geometry_not_integrated');
+  requireOptionalTransform(item.primaryContactWorld);
+  if (item.handleAxisWorld !== null) {
+    const handle = requireExactObject(item.handleAxisWorld, ['origin', 'direction']);
+    requireFiniteTuple(handle.origin, 3);
+    requireUnitVector(handle.direction);
+  }
+
+  const hands = requireExactObject(evaluation.hands, ['dominant', 'secondary']);
+  if (hands.dominant !== null) {
+    const dominant = requireExactObject(hands.dominant, ['boneId', 'role', 'world', 'palmWorld']);
+    requireString(dominant.boneId);
+    requireString(dominant.role, { allowEmpty: true });
+    requireTransform(dominant.world);
+    requireOptionalTransform(dominant.palmWorld);
+  }
+  if (hands.secondary !== null) {
+    const secondary = requireExactObject(hands.secondary, [
+      'enabled', 'boneId', 'role', 'world', 'palmWorld', 'targetWorld', 'pole',
+      'preSolveDistanceMeters',
+    ]);
+    if (typeof secondary.enabled !== 'boolean') evaluationProtocolError();
+    requireString(secondary.boneId);
+    requireString(secondary.role, { allowEmpty: true });
+    requireTransform(secondary.world);
+    requireOptionalTransform(secondary.palmWorld);
+    requireOptionalTransform(secondary.targetWorld);
+    if (secondary.pole !== null) {
+      const pole = requireExactObject(secondary.pole, ['translation', 'space', 'world', 'reason']);
+      requireFiniteTuple(pole.translation, 3);
+      if (
+        pole.space !== 'unresolved'
+        || pole.world !== null
+        || pole.reason !== 'pole_space_not_authored'
+      ) {
+        evaluationProtocolError();
+      }
+    }
+    if (
+      secondary.preSolveDistanceMeters !== null
+      && (
+        typeof secondary.preSolveDistanceMeters !== 'number'
+        || !Number.isFinite(secondary.preSolveDistanceMeters)
+        || secondary.preSolveDistanceMeters < 0
+      )
+    ) {
+      evaluationProtocolError();
+    }
+  }
+
+  const diagnostics = requireExactObject(
+    evaluation.diagnostics,
+    ['secondaryIk', 'jointLimits', 'clipping'],
+  );
+  requireStatusReason(
+    diagnostics.secondaryIk,
+    attachment.mode === 'two_hand' ? 'unavailable' : 'not_applicable',
+    attachment.mode === 'two_hand'
+      ? 'secondary_hand_ik_not_implemented'
+      : 'one_hand_attachment',
+  );
+  requireStatusReason(diagnostics.jointLimits, 'unavailable', 'joint_limits_not_authored');
+  requireStatusReason(
+    diagnostics.clipping,
+    'unavailable',
+    'item_and_capsule_geometry_not_integrated',
+  );
+
+  const expectedLimitations = [
+    'rest_pose_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+    ...(attachment.mode === 'two_hand' ? ['secondary_hand_ik_unavailable'] : []),
+  ];
+  if (
+    !Array.isArray(evaluation.limitations)
+    || evaluation.limitations.length !== expectedLimitations.length
+    || evaluation.limitations.some((value, index) => value !== expectedLimitations[index])
+  ) {
+    evaluationProtocolError();
+  }
+}
+
 function isEvaluatorInfrastructureError(error) {
   return Boolean(
     error?.killed
@@ -184,30 +471,8 @@ function requiredProfileId(profile, code, message) {
 }
 
 function publicEvaluation(report, expectedAttachmentId) {
-  if (
-    !isPlainObject(report)
-    || report.schema !== 'shader_forge.spatial_attachment_evaluation'
-    || report.schemaVersion !== 1
-    || !isPlainObject(report.pose)
-    || report.pose.kind !== 'rest'
-    || report.pose.sampled !== false
-    || !isPlainObject(report.attachment)
-    || report.attachment.id !== expectedAttachmentId
-    || !Array.isArray(report.bones)
-    || !Array.isArray(report.segments)
-    || !Array.isArray(report.sockets)
-    || !isPlainObject(report.item)
-    || !isPlainObject(report.hands)
-    || !isPlainObject(report.diagnostics)
-  ) {
-    throw serviceError(
-      500,
-      'spatial_evaluator_protocol_error',
-      'Spatial evaluator returned an invalid rest-pose evaluation.',
-    );
-  }
-  const { animationRoot: _discardedRoot, ...publicReport } = report;
-  return structuredClone(publicReport);
+  requireRestEvaluationShape(report, expectedAttachmentId);
+  return structuredClone(report);
 }
 
 function resolveSpatialBinaryPath() {

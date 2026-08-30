@@ -813,6 +813,133 @@ export async function releaseCoordinationLease(leaseId: string, agentId: string,
   return payload.lease;
 }
 
+export type SpatialEvaluationVec3 = [number, number, number];
+export type SpatialEvaluationQuat = [number, number, number, number];
+
+export type SpatialEvaluationTransform = {
+  translation: SpatialEvaluationVec3;
+  rotation: SpatialEvaluationQuat;
+  axes: {
+    x: SpatialEvaluationVec3;
+    y: SpatialEvaluationVec3;
+    z: SpatialEvaluationVec3;
+  };
+};
+
+export type SpatialEvaluationDiagnostic = {
+  status: 'unavailable' | 'not_applicable';
+  reason: string;
+};
+
+export type SpatialAttachmentEvaluation = {
+  schema: 'shader_forge.spatial_attachment_evaluation';
+  schemaVersion: 1;
+  pose: { kind: 'rest'; sampled: false };
+  coordinateSystem: {
+    units: 'meters';
+    handedness: 'right';
+    up: '+Y';
+    forward: '+Z';
+    quaternionOrder: 'xyzw';
+  };
+  skeleton: { id: string; name: string; rootBone: string };
+  attachment: {
+    id: string;
+    name: string;
+    itemPrefabId: string;
+    dominantHand: string;
+    mode: string;
+    perspective: string;
+    primaryGripSocket: string;
+  };
+  bones: Array<{
+    id: string;
+    parent: string;
+    role: string;
+    local: SpatialEvaluationTransform;
+    world: SpatialEvaluationTransform;
+  }>;
+  segments: Array<{
+    parentBoneId: string;
+    boneId: string;
+    from: SpatialEvaluationVec3;
+    to: SpatialEvaluationVec3;
+  }>;
+  sockets: Array<{
+    id: string;
+    boneId: string;
+    role: string;
+    local: SpatialEvaluationTransform;
+    world: SpatialEvaluationTransform;
+  }>;
+  item: {
+    prefabId: string;
+    world: SpatialEvaluationTransform;
+    geometry: { status: 'unavailable'; reason: string };
+    primaryContactWorld: SpatialEvaluationTransform | null;
+    handleAxisWorld: {
+      origin: SpatialEvaluationVec3;
+      direction: SpatialEvaluationVec3;
+    } | null;
+  };
+  hands: {
+    dominant: {
+      boneId: string;
+      role: string;
+      world: SpatialEvaluationTransform;
+      palmWorld: SpatialEvaluationTransform | null;
+    } | null;
+    secondary: {
+      enabled: boolean;
+      boneId: string;
+      role: string;
+      world: SpatialEvaluationTransform;
+      palmWorld: SpatialEvaluationTransform | null;
+      targetWorld: SpatialEvaluationTransform | null;
+      pole: {
+        translation: SpatialEvaluationVec3;
+        space: 'unresolved';
+        world: null;
+        reason: string;
+      } | null;
+      preSolveDistanceMeters: number | null;
+    } | null;
+  };
+  diagnostics: {
+    secondaryIk: SpatialEvaluationDiagnostic;
+    jointLimits: SpatialEvaluationDiagnostic;
+    clipping: SpatialEvaluationDiagnostic;
+  };
+  limitations: string[];
+};
+
+export type SpatialAttachmentEvaluationResult = {
+  evaluation: SpatialAttachmentEvaluation;
+  path: string;
+  revision: string;
+};
+
+export type SpatialAttachmentPreviewResult = {
+  operation: EngineOperation;
+  validation: unknown;
+  evaluation: {
+    baseline: SpatialAttachmentEvaluation | null;
+    candidate: SpatialAttachmentEvaluation;
+  };
+};
+
+export async function evaluateSpatialAttachment(
+  sessionId: string,
+  path: string,
+  baseRevision: string,
+) {
+  const query = new URL('/api/spatial/attachment/evaluate', getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  query.searchParams.set('path', path);
+  query.searchParams.set('baseRevision', baseRevision);
+  return requestJson<SpatialAttachmentEvaluationResult>(`${query.pathname}${query.search}`);
+}
+
 export async function previewSpatialAttachment(options: {
   sessionId: string;
   path: string;
@@ -823,7 +950,7 @@ export async function previewSpatialAttachment(options: {
   leaseId: string;
   credential: string;
 }) {
-  return requestJson<{ operation: EngineOperation; validation: unknown }>('/api/operations/spatial-attachment/preview', {
+  return requestJson<SpatialAttachmentPreviewResult>('/api/operations/spatial-attachment/preview', {
     method: 'POST',
     headers: credentialHeader(options.credential),
     body: JSON.stringify({

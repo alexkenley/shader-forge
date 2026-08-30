@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SessionStore, textContentRevision } from '../tools/engine-sessiond/lib/session-store.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
+import { restEvaluation } from './lib/spatial-evaluation-fixture.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MCP_REQUEST_TIMEOUT_MS = 5_000;
@@ -149,18 +150,7 @@ async function validateAnimationRoot(animationRoot) {
 }
 
 async function evaluateRestAttachment(_animationRoot, attachmentId) {
-  return {
-    schema: 'shader_forge.spatial_attachment_evaluation',
-    schemaVersion: 1,
-    pose: { kind: 'rest', sampled: false },
-    attachment: { id: attachmentId },
-    bones: [],
-    segments: [],
-    sockets: [],
-    item: {},
-    hands: {},
-    diagnostics: {},
-  };
+  return restEvaluation(attachmentId);
 }
 
 async function main() {

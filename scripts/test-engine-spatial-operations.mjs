@@ -29,19 +29,94 @@ function profileId(content) {
   return /^id\s*=\s*"([^"]+)"/m.exec(content)?.[1] || '';
 }
 
+function identityTransform() {
+  return {
+    translation: [0, 0, 0],
+    rotation: [0, 0, 0, 1],
+    axes: {
+      x: [1, 0, 0],
+      y: [0, 1, 0],
+      z: [0, 0, 1],
+    },
+  };
+}
+
 function restEvaluation(attachmentId) {
   return {
     schema: 'shader_forge.spatial_attachment_evaluation',
     schemaVersion: 1,
     pose: { kind: 'rest', sampled: false },
-    attachment: { id: attachmentId },
-    bones: [],
+    coordinateSystem: {
+      units: 'meters',
+      handedness: 'right',
+      up: '+Y',
+      forward: '+Z',
+      quaternionOrder: 'xyzw',
+    },
+    skeleton: {
+      id: 'test.skeleton',
+      name: 'test',
+      rootBone: 'hand_r',
+    },
+    attachment: {
+      id: attachmentId,
+      name: 'Test Attachment',
+      itemPrefabId: 'test.item',
+      dominantHand: 'right',
+      mode: 'one_hand',
+      perspective: 'third_person',
+      primaryGripSocket: 'socket.hand_r.primary',
+    },
+    bones: [{
+      id: 'hand_r',
+      parent: '',
+      role: 'hand_r',
+      local: identityTransform(),
+      world: identityTransform(),
+    }],
     segments: [],
-    sockets: [],
-    item: {},
-    hands: {},
-    diagnostics: {},
+    sockets: [{
+      id: 'socket.hand_r.primary',
+      boneId: 'hand_r',
+      role: 'primary_grip',
+      local: identityTransform(),
+      world: identityTransform(),
+    }],
+    item: {
+      prefabId: 'test.item',
+      world: identityTransform(),
+      geometry: {
+        status: 'unavailable',
+        reason: 'item_prefab_geometry_not_integrated',
+      },
+      primaryContactWorld: null,
+      handleAxisWorld: {
+        origin: [0, 0, 0],
+        direction: [0, 0, 1],
+      },
+    },
+    hands: {
+      dominant: {
+        boneId: 'hand_r',
+        role: 'hand_r',
+        world: identityTransform(),
+        palmWorld: null,
+      },
+      secondary: null,
+    },
+    diagnostics: {
+      secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
+      jointLimits: { status: 'unavailable', reason: 'joint_limits_not_authored' },
+      clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
+    },
+    limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],
   };
+}
+
+function mutateRestEvaluation(attachmentId, mutate) {
+  const evaluation = restEvaluation(attachmentId);
+  mutate(evaluation);
+  return evaluation;
 }
 
 function attachmentEvaluatePath(query) {
@@ -295,7 +370,15 @@ try {
   assert.equal(baselineEvaluate.payload.revision, originalRevision);
   assert.equal(baselineEvaluate.payload.evaluation.schema, 'shader_forge.spatial_attachment_evaluation');
   assert.deepEqual(baselineEvaluate.payload.evaluation.pose, { kind: 'rest', sampled: false });
+  assert.deepEqual(baselineEvaluate.payload.evaluation.coordinateSystem, {
+    units: 'meters', handedness: 'right', up: '+Y', forward: '+Z', quaternionOrder: 'xyzw',
+  });
   assert.equal(baselineEvaluate.payload.evaluation.attachment.id, 'weapon.rifle.old');
+  assert.equal(baselineEvaluate.payload.evaluation.item.geometry.status, 'unavailable');
+  assert.deepEqual(baselineEvaluate.payload.evaluation.item.handleAxisWorld.direction, [0, 0, 1]);
+  assert.deepEqual(baselineEvaluate.payload.evaluation.limitations, [
+    'rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable',
+  ]);
   assert.equal('operation' in baselineEvaluate.payload, false);
   assert.equal('capture' in baselineEvaluate.payload, false);
   assert.equal(evaluatedCalls.at(-1).attachmentId, 'weapon.rifle.old');
@@ -308,6 +391,58 @@ try {
   const wrongIdEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
   assert.equal(wrongIdEvaluate.status, 500);
   assert.equal(wrongIdEvaluate.payload.code, 'spatial_evaluator_protocol_error');
+
+  const malformedSemanticCases = [
+    ['legacy empty nested objects', (id) => ({
+      schema: 'shader_forge.spatial_attachment_evaluation',
+      schemaVersion: 1,
+      pose: { kind: 'rest', sampled: false },
+      attachment: { id },
+      bones: [],
+      segments: [],
+      sockets: [],
+      item: {},
+      hands: {},
+      diagnostics: {},
+    })],
+    ['unexpected nested key', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.world.axes.extra = [0, 0, 0];
+    })],
+    ['non-unit quaternion', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.world.rotation = [0, 0, 0, 0.5];
+    })],
+    ['negative-w quaternion', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.world.rotation = [0, 0, 0, -1];
+    })],
+    ['left-handed axes', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.world.axes.z = [0, 0, -1];
+    })],
+    ['axes inconsistent with quaternion', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.world.axes = { x: [0, 0, -1], y: [0, 1, 0], z: [1, 0, 0] };
+    })],
+    ['non-normalized handle direction', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.handleAxisWorld.direction = [0, 0, 2];
+    })],
+    ['non-finite geometry', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.item.world.translation = [Number.POSITIVE_INFINITY, 0, 0];
+    })],
+    ['wrong diagnostic contract', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'unknown' };
+    })],
+    ['oversized report', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.attachment.name = 'n'.repeat(8 * 1024 * 1024);
+    })],
+  ];
+  for (const [label, factory] of malformedSemanticCases) {
+    evaluateImpl = async (_animationRoot, attachmentId) => factory(attachmentId);
+    const malformedEvaluate = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
+    assert.equal(malformedEvaluate.status, 500, label);
+    assert.equal(malformedEvaluate.payload.code, 'spatial_evaluator_protocol_error', label);
+    assert.equal(malformedEvaluate.payload.error.length < 200, true, label);
+    assert.equal('evaluation' in malformedEvaluate.payload, false, label);
+  }
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  evaluateImpl = normalEvaluate;
 
   evaluateImpl = async () => {
     const error = new Error('unavailable');
@@ -445,6 +580,34 @@ try {
     },
   });
   assert.equal(bothKeys.payload.lease.status, 'granted');
+
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    if (attachmentId === 'weapon.rifle.old') evaluation.item.world.rotation = [0, 0, 0, 0.5];
+    return evaluation;
+  };
+  const malformedBaselinePreview = await request(
+    service.baseUrl,
+    '/api/operations/spatial-attachment/preview',
+    { method: 'POST', credential, body: { ...previewBody, leaseId: bothKeys.payload.lease.id } },
+  );
+  assert.equal(malformedBaselinePreview.status, 500);
+  assert.equal(malformedBaselinePreview.payload.code, 'spatial_evaluator_protocol_error');
+  assert.deepEqual(service.operationStore.listOperations(), []);
+
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    if (attachmentId === 'weapon.rifle.new') evaluation.item.handleAxisWorld.direction = [0, 0, 2];
+    return evaluation;
+  };
+  const malformedCandidatePreview = await request(
+    service.baseUrl,
+    '/api/operations/spatial-attachment/preview',
+    { method: 'POST', credential, body: { ...previewBody, leaseId: bothKeys.payload.lease.id } },
+  );
+  assert.equal(malformedCandidatePreview.status, 500);
+  assert.equal(malformedCandidatePreview.payload.code, 'spatial_evaluator_protocol_error');
+  assert.deepEqual(service.operationStore.listOperations(), []);
 
   evaluateImpl = async (animationRoot, attachmentId) => {
     const evaluation = await normalEvaluate(animationRoot, attachmentId);

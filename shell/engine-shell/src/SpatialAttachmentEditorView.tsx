@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   disconnectCoordinationAgent,
+  evaluateSpatialAttachment,
   fetchCoordinationLease,
   fetchOperation,
   heartbeatCoordinationAgent,
@@ -17,13 +18,20 @@ import {
   type EngineOperation,
   type EngineSession,
   type SessionFileEntry,
+  type SpatialAttachmentEvaluation,
 } from './lib/sessiond';
 import {
   parseSpatialAttachment,
+  sameSpatialConnection,
+  shouldCloseSpatialConnection,
+  spatialActionStillCurrent,
+  spatialLeaseCoversAttachment,
+  spatialOperationReconciliation,
   updateSpatialAttachmentTransform,
   type SpatialAttachmentDraft,
   type SpatialVector3,
 } from './spatial-attachment-authoring';
+import { SpatialRestSchematic } from './SpatialRestSchematic';
 
 const attachmentRoot = 'animation/attachments';
 
@@ -34,15 +42,64 @@ type Connection = {
   path: string;
 };
 
+type EvaluatedValues = {
+  translation: SpatialVector3;
+  rotation: SpatialVector3;
+};
+
+type AuthoredEvidence = {
+  sessionId: string;
+  path: string;
+  revision: string;
+  evaluation: SpatialAttachmentEvaluation;
+  values: EvaluatedValues | null;
+};
+
+type CandidateEvidence = {
+  sessionId: string;
+  path: string;
+  operationId: string;
+  baseRevision: string;
+  proposedRevision: string;
+  evaluation: SpatialAttachmentEvaluation;
+  values: EvaluatedValues;
+};
+
+type SchematicSource = 'authored' | 'candidate';
+
+const EVALUATION_ERROR_LIMIT = 800;
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function boundedText(value: string, limit = EVALUATION_ERROR_LIMIT) {
+  const text = value.trim();
+  return text.length <= limit ? text : `${text.slice(0, limit)}...`;
 }
 
 function vectorCopy(value: SpatialVector3): SpatialVector3 {
   return [...value] as SpatialVector3;
 }
 
-export function SpatialAttachmentEditorView({ activeSession }: { activeSession: EngineSession | null }) {
+function vectorEqual(left: SpatialVector3, right: SpatialVector3) {
+  return left.every((value, index) => value === right[index]);
+}
+
+function evaluatedValues(parsed: SpatialAttachmentDraft): EvaluatedValues {
+  return {
+    translation: vectorCopy(parsed.translation),
+    rotation: vectorCopy(parsed.rotationDegrees),
+  };
+}
+
+export function SpatialAttachmentEditorView({
+  activeSession,
+  operationEventEpoch,
+}: {
+  activeSession: EngineSession | null;
+  operationEventEpoch: number;
+}) {
   const [files, setFiles] = useState<SessionFileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState('');
   const [source, setSource] = useState('');
@@ -53,40 +110,130 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
   const [lease, setLease] = useState<CoordinationLease | null>(null);
   const [operation, setOperation] = useState<EngineOperation | null>(null);
   const [candidate, setCandidate] = useState('');
+  const [authoredEvidence, setAuthoredEvidence] = useState<AuthoredEvidence | null>(null);
+  const [candidateEvidence, setCandidateEvidence] = useState<CandidateEvidence | null>(null);
+  const [schematicSource, setSchematicSource] = useState<SchematicSource>('authored');
+  const [evaluationError, setEvaluationError] = useState('');
+  const [evaluationBusy, setEvaluationBusy] = useState(false);
+  const [sourceLayoutError, setSourceLayoutError] = useState('');
   const [status, setStatus] = useState('Select an attachment profile to begin.');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const connectionRef = useRef<Connection | null>(null);
   const selectionKeyRef = useRef('');
+  const authoredEvaluationRequestRef = useRef(0);
+  const sourceReadRequestRef = useRef(0);
+  const operationEventRequestRef = useRef(0);
+  const actionRequestRef = useRef(0);
+  const operationRef = useRef<EngineOperation | null>(null);
   selectionKeyRef.current = `${activeSession?.id || ''}:${selectedPath}`;
+
+  function setActiveOperation(next: EngineOperation | null) {
+    operationRef.current = next;
+    setOperation(next);
+  }
+
+  function clearCandidateEvidence() {
+    setCandidate('');
+    setCandidateEvidence(null);
+    setSchematicSource('authored');
+  }
+
+  async function refreshAuthoredEvaluation(
+    sessionId: string,
+    path: string,
+    baseRevision: string,
+    values: EvaluatedValues | null,
+    expectedSelection: string,
+  ) {
+    const requestId = ++authoredEvaluationRequestRef.current;
+    setAuthoredEvidence(null);
+    setEvaluationError('');
+    setEvaluationBusy(true);
+    try {
+      const result = await evaluateSpatialAttachment(sessionId, path, baseRevision);
+      if (authoredEvaluationRequestRef.current !== requestId || selectionKeyRef.current !== expectedSelection) return;
+      if (result.path !== path || result.revision !== baseRevision) {
+        throw new Error('Sessiond returned rest evaluation for a different attachment revision.');
+      }
+      setAuthoredEvidence({ sessionId, path, revision: baseRevision, evaluation: result.evaluation, values });
+    } catch (caught) {
+      if (authoredEvaluationRequestRef.current !== requestId || selectionKeyRef.current !== expectedSelection) return;
+      setEvaluationError(boundedText(errorMessage(caught)));
+    } finally {
+      if (authoredEvaluationRequestRef.current === requestId && selectionKeyRef.current === expectedSelection) {
+        setEvaluationBusy(false);
+      }
+    }
+  }
 
   async function reread(path: string, expectedSelection = `${activeSession?.id || ''}:${path}`) {
     if (!activeSession) return;
-    const next = await readFile(activeSession.id, path);
-    if (selectionKeyRef.current !== expectedSelection) throw new Error('Attachment selection changed.');
-    const parsed = parseSpatialAttachment(next.content);
+    const readGeneration = ++sourceReadRequestRef.current;
+    authoredEvaluationRequestRef.current += 1;
+    setAuthoredEvidence(null);
+    setEvaluationError('');
+    setEvaluationBusy(true);
+    let next;
+    try {
+      next = await readFile(activeSession.id, path);
+    } catch (caught) {
+      if (
+        sourceReadRequestRef.current === readGeneration
+        && selectionKeyRef.current === expectedSelection
+      ) {
+        setEvaluationBusy(false);
+        setEvaluationError('The attachment source could not be read for rest evaluation.');
+      }
+      throw caught;
+    }
+    if (
+      sourceReadRequestRef.current !== readGeneration
+      || selectionKeyRef.current !== expectedSelection
+    ) throw new Error('Attachment source read was superseded.');
     setSource(next.content);
     setRevision(next.revision);
-    setDraft(parsed);
-    setTranslation(vectorCopy(parsed.translation));
-    setRotationDegrees(vectorCopy(parsed.rotationDegrees));
+    let parsed: SpatialAttachmentDraft | null = null;
+    try {
+      parsed = parseSpatialAttachment(next.content);
+      setDraft(parsed);
+      setTranslation(vectorCopy(parsed.translation));
+      setRotationDegrees(vectorCopy(parsed.rotationDegrees));
+      setSourceLayoutError('');
+    } catch (caught) {
+      setDraft(null);
+      setSourceLayoutError(boundedText(errorMessage(caught)));
+    }
+    void refreshAuthoredEvaluation(
+      activeSession.id,
+      path,
+      next.revision,
+      parsed ? evaluatedValues(parsed) : null,
+      expectedSelection,
+    );
     return { file: next, parsed };
   }
 
-  async function closeConnection() {
-    const connection = connectionRef.current;
+  async function closeConnection(expectedConnection?: Connection | null) {
+    const expectedWasCaptured = expectedConnection !== undefined;
+    if (!shouldCloseSpatialConnection(connectionRef.current, expectedConnection || null, expectedWasCaptured)) return false;
+    const connection = expectedWasCaptured ? expectedConnection || null : connectionRef.current;
     connectionRef.current = null;
     setLease(null);
-    if (!connection) return;
+    if (!connection) return true;
     await releaseCoordinationLease(connection.lease.id, connection.agentId, connection.credential).catch(() => undefined);
     await disconnectCoordinationAgent(connection.agentId, connection.credential).catch(() => undefined);
+    return true;
   }
 
   async function refreshGrantedSource(grantedLease: CoordinationLease) {
     const latest = await reread(selectedPath);
     if (!latest) throw new Error('The attachment source could not be read.');
-    const required = `spatial/attachment/${latest.parsed.id.toLowerCase()}`;
-    if (!grantedLease.resources.includes(required)) {
+    if (!latest.parsed) {
+      await closeConnection();
+      throw new Error('The refreshed source layout cannot be safely edited by the constrained tuner.');
+    }
+    if (!spatialLeaseCoversAttachment(grantedLease.resources, latest.parsed.id)) {
       await closeConnection();
       throw new Error('The attachment id changed while its lock was queued. Begin tuning again for the refreshed profile.');
     }
@@ -121,31 +268,134 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
 
   useEffect(() => {
     let cancelled = false;
+    authoredEvaluationRequestRef.current += 1;
+    sourceReadRequestRef.current += 1;
+    operationEventRequestRef.current += 1;
+    actionRequestRef.current += 1;
     void closeConnection();
     setSource('');
     setRevision('');
     setDraft(null);
     setLease(null);
-    setOperation(null);
-    setCandidate('');
+    setActiveOperation(null);
+    clearCandidateEvidence();
+    setAuthoredEvidence(null);
+    setEvaluationError('');
+    setEvaluationBusy(Boolean(activeSession && selectedPath));
+    setSourceLayoutError('');
     setError('');
-    if (!activeSession || !selectedPath) return;
+    if (!activeSession || !selectedPath) {
+      setEvaluationBusy(false);
+      return;
+    }
     setBusy(true);
-    void reread(selectedPath).then(() => {
-      if (!cancelled) setStatus('Profile loaded read-only. Choose Begin tuning to request its write lock.');
+    void reread(selectedPath).then((result) => {
+      if (!cancelled) {
+        setStatus(result?.parsed
+          ? 'Profile loaded read-only. Choose Begin tuning to request its write lock.'
+          : 'Profile loaded read-only. Rest evaluation remains available, but this source layout cannot be safely tuned here.');
+      }
     }).catch((caught) => {
       if (!cancelled) {
         setError(errorMessage(caught));
-        setStatus('This profile uses a source layout the constrained tuner cannot safely edit.');
+        setStatus('The selected attachment source could not be loaded.');
+        setEvaluationBusy(false);
       }
     }).finally(() => {
       if (!cancelled) setBusy(false);
     });
     return () => {
       cancelled = true;
+      authoredEvaluationRequestRef.current += 1;
+      sourceReadRequestRef.current += 1;
+      operationEventRequestRef.current += 1;
+      operationRef.current = null;
       void closeConnection();
     };
   }, [activeSession, selectedPath]);
+
+  useEffect(() => {
+    if (operationEventEpoch <= 0 || !activeSession || !selectedPath) return;
+    const currentOperation = operationRef.current;
+    if (
+      !currentOperation
+      || currentOperation.sessionId !== activeSession.id
+      || currentOperation.path !== selectedPath
+    ) return;
+
+    const requestId = ++operationEventRequestRef.current;
+    const expectedSelection = selectionKeyRef.current;
+    const expectedSessionId = activeSession.id;
+    const expectedOperationId = currentOperation.id;
+    const requestStillCurrent = () => (
+      operationEventRequestRef.current === requestId
+      && selectionKeyRef.current === expectedSelection
+    );
+    const stillCurrent = () => (
+      requestStillCurrent()
+      && operationRef.current?.id === expectedOperationId
+    );
+    const terminalStillCurrent = () => (
+      requestStillCurrent()
+      && (operationRef.current === null || operationRef.current.id === expectedOperationId)
+    );
+
+    void fetchOperation(expectedOperationId).then(async (authoritative) => {
+      if (!stillCurrent()) return;
+      if (
+        authoritative.id !== expectedOperationId
+        || authoritative.sessionId !== expectedSessionId
+        || authoritative.path !== selectedPath
+      ) {
+        throw new Error('Sessiond returned a different active spatial operation.');
+      }
+
+      setActiveOperation(authoritative);
+      if (authoritative.state === 'approved') {
+        setStatus('Candidate approved externally, still NOT APPLIED. Apply writes the reviewed bytes.');
+        return;
+      }
+      const reconciliation = spatialOperationReconciliation(authoritative.state);
+      if (!reconciliation.refreshAuthored) return;
+
+      actionRequestRef.current += 1;
+      setBusy(true);
+      const eventConnection = connectionRef.current;
+      if (authoritative.state !== 'rejected') setAuthoredEvidence(null);
+      if (reconciliation.clearCandidate) clearCandidateEvidence();
+      if (reconciliation.clearOperation) setActiveOperation(null);
+      try {
+        const refreshed = await reread(selectedPath, expectedSelection);
+        if (
+          authoritative.state === 'conflicted'
+          && eventConnection
+          && sameSpatialConnection(connectionRef.current, eventConnection)
+          && (!refreshed?.parsed || !spatialLeaseCoversAttachment(eventConnection.lease.resources, refreshed.parsed.id))
+        ) {
+          await closeConnection(eventConnection);
+        }
+      } catch (caught) {
+        if (authoritative.state === 'conflicted') await closeConnection(eventConnection);
+        throw caught;
+      } finally {
+        if (reconciliation.closeConnection) await closeConnection(eventConnection);
+        if (terminalStillCurrent()) setBusy(false);
+      }
+      if (!terminalStillCurrent()) return;
+      if (authoritative.state === 'conflicted') {
+        setStatus('The active operation conflicted. Authored bytes were refreshed; its candidate remains visible as stale evidence for comparison.');
+      } else if (authoritative.state === 'rejected') {
+        setStatus('Candidate rejected externally. The authored file was not changed, and its write lock was released.');
+      } else if (authoritative.state === 'applied') {
+        setStatus('Candidate applied externally. Its write lock was released; Undo reacquires a fresh lock explicitly.');
+      } else {
+        setStatus('Operation undone externally. The previous authored bytes were restored.');
+      }
+    }).catch((caught) => {
+      if (!terminalStillCurrent()) return;
+      setError(`Could not refresh the active spatial operation: ${boundedText(errorMessage(caught))}`);
+    });
+  }, [operationEventEpoch, activeSession?.id, selectedPath]);
 
   useEffect(() => {
     if (!lease || lease.status !== 'queued') return;
@@ -200,6 +450,59 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
     : false;
   const canEdit = Boolean(draft && leaseGranted && !busy && !operationLocksEditing);
   const numericValid = [...translation, ...rotationDegrees].every(Number.isFinite);
+  const draftDiffersFrom = (values: EvaluatedValues | null) => Boolean(
+    draft
+    && values
+    && (!vectorEqual(translation, values.translation) || !vectorEqual(rotationDegrees, values.rotation)),
+  );
+  const authoredIdentityStale = Boolean(
+    authoredEvidence
+    && (
+      authoredEvidence.sessionId !== activeSession?.id
+      || authoredEvidence.path !== selectedPath
+      || authoredEvidence.revision !== revision
+    ),
+  );
+  const authoredStale = authoredIdentityStale || draftDiffersFrom(authoredEvidence?.values || null);
+  const candidateOperationStale = Boolean(
+    candidateEvidence
+    && (
+      operation?.id !== candidateEvidence.operationId
+      || operation?.baseRevision !== candidateEvidence.baseRevision
+      || operation?.proposedRevision !== candidateEvidence.proposedRevision
+      || !['previewed', 'approved'].includes(operation?.state || '')
+    ),
+  );
+  const candidateIdentityStale = Boolean(
+    candidateEvidence
+    && (
+      candidateEvidence.sessionId !== activeSession?.id
+      || candidateEvidence.path !== selectedPath
+      || candidateEvidence.baseRevision !== revision
+    ),
+  );
+  const candidateStale = candidateOperationStale
+    || candidateIdentityStale
+    || draftDiffersFrom(candidateEvidence?.values || null);
+  const showingCandidate = schematicSource === 'candidate' && Boolean(candidateEvidence);
+  const activeEvidence = showingCandidate ? candidateEvidence : authoredEvidence;
+  const activeRevision = showingCandidate ? candidateEvidence?.proposedRevision || '' : authoredEvidence?.revision || revision;
+  const activePath = activeEvidence?.path || selectedPath;
+  const schematicStale = showingCandidate ? candidateStale : authoredStale;
+  const evidenceLabel = showingCandidate
+    ? `${schematicStale ? 'STALE ' : ''}PREVIEW CANDIDATE - NOT APPLIED`
+    : 'AUTHORED REST';
+  const staleReason = showingCandidate
+    ? operation?.state === 'conflicted'
+      ? 'operation conflicted; source or operation state changed after evaluation'
+      : candidateIdentityStale
+        ? 'source revision changed after candidate evaluation'
+        : candidateOperationStale
+          ? 'candidate no longer matches the active operation'
+          : 'current input values differ from this evaluated candidate'
+    : authoredIdentityStale
+      ? 'displayed evidence does not match the current source revision'
+      : 'draft values are not evaluated; display remains on the authored revision';
 
   function setAxis(kind: 'translation' | 'rotation', index: number, value: string) {
     const parsed = value.trim() ? Number(value) : Number.NaN;
@@ -222,28 +525,38 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
     return connection;
   }
 
-  async function runAction(action: () => Promise<void>, expectedSelection = selectionKeyRef.current) {
+  async function runAction(
+    action: (stillCurrent: () => boolean) => Promise<void>,
+    expectedSelection = selectionKeyRef.current,
+  ) {
+    const actionGeneration = ++actionRequestRef.current;
+    const stillCurrent = () => spatialActionStillCurrent(
+      actionRequestRef.current,
+      actionGeneration,
+      selectionKeyRef.current,
+      expectedSelection,
+    );
     setBusy(true);
     setError('');
     try {
-      await action();
+      await action(stillCurrent);
     } catch (caught) {
-      if (selectionKeyRef.current !== expectedSelection) return;
+      if (!stillCurrent()) return;
       if (caught instanceof SessiondRequestError && caught.operation) {
-        setOperation(caught.operation);
+        setActiveOperation(caught.operation);
       } else if (caught instanceof SessiondRequestError && caught.status === 409 && operation) {
         const authoritative = await fetchOperation(operation.id).catch(() => null);
-        if (selectionKeyRef.current !== expectedSelection) return;
-        if (authoritative) setOperation(authoritative);
+        if (!stillCurrent()) return;
+        if (authoritative) setActiveOperation(authoritative);
       }
       if (caught instanceof SessiondRequestError && (caught.status === 409 || caught.conflict)) {
         if (selectedPath) await reread(selectedPath).catch(() => undefined);
-        if (selectionKeyRef.current !== expectedSelection) return;
+        if (!stillCurrent()) return;
         setStatus('The authored source or operation changed. The old candidate remains visible for comparison; review the refreshed values and preview again.');
       }
       setError(errorMessage(caught));
     } finally {
-      if (selectionKeyRef.current === expectedSelection) setBusy(false);
+      if (stillCurrent()) setBusy(false);
     }
   }
 
@@ -253,6 +566,7 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
     await closeConnection();
     const latest = await reread(selectedPath, expectedSelection);
     if (!latest) throw new Error('The attachment source could not be read.');
+    if (!latest.parsed) throw new Error('The refreshed source layout cannot be safely edited by the constrained tuner.');
     const registration = await registerCoordinationAgent(activeSession.id);
     try {
       if (selectionKeyRef.current !== expectedSelection) throw new Error('Attachment selection changed.');
@@ -292,7 +606,7 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
 
   function handlePreview() {
     const expectedSelection = selectionKeyRef.current;
-    void runAction(async () => {
+    void runAction(async (stillCurrent) => {
       if (!activeSession || !draft || !selectedPath) throw new Error('Select a valid attachment profile.');
       if (!numericValid) throw new Error('Every translation and rotation value must be a finite number.');
       const connection = await requireCurrentConnection(expectedSelection);
@@ -307,16 +621,48 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
         leaseId: connection.lease.id,
         credential: connection.credential,
       });
-      if (selectionKeyRef.current !== expectedSelection) throw new Error('Attachment selection changed.');
+      if (!stillCurrent()) return;
+      if (
+        result.operation.sessionId !== activeSession.id
+        || result.operation.path !== selectedPath
+        || result.operation.baseRevision !== revision
+      ) {
+        throw new Error('Sessiond returned candidate evidence for a different attachment revision.');
+      }
       setCandidate(nextCandidate);
-      setOperation(result.operation);
+      setActiveOperation(result.operation);
+      setCandidateEvidence({
+        sessionId: activeSession.id,
+        path: selectedPath,
+        operationId: result.operation.id,
+        baseRevision: result.operation.baseRevision,
+        proposedRevision: result.operation.proposedRevision,
+        evaluation: result.evaluation.candidate,
+        values: {
+          translation: vectorCopy(translation),
+          rotation: vectorCopy(rotationDegrees),
+        },
+      });
+      if (result.evaluation.baseline) {
+        authoredEvaluationRequestRef.current += 1;
+        setEvaluationBusy(false);
+        setEvaluationError('');
+        setAuthoredEvidence({
+          sessionId: activeSession.id,
+          path: selectedPath,
+          revision: result.operation.baseRevision,
+          evaluation: result.evaluation.baseline,
+          values: draft ? evaluatedValues(draft) : null,
+        });
+      }
+      setSchematicSource('candidate');
       setStatus('Candidate previewed. NOT APPLIED. Approve it to enable Apply, or reject it.');
     }, expectedSelection);
   }
 
   function handleTransition(action: 'approve' | 'reject' | 'apply' | 'undo') {
     const expectedSelection = selectionKeyRef.current;
-    void runAction(async () => {
+    void runAction(async (stillCurrent) => {
       if (!operation) throw new Error('No spatial operation is active.');
       if (action === 'undo' && !leaseGranted) {
         const acquired = await acquireTuningLease(operation.context?.resourceKeys);
@@ -328,6 +674,7 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
       const coordination = action === 'apply' || action === 'undo'
         ? await requireCurrentConnection(expectedSelection)
         : null;
+      const actionConnection = connectionRef.current;
       const result = await transitionOperation(
         operation.id,
         action,
@@ -340,34 +687,42 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
           } : undefined,
         },
       );
-      if (selectionKeyRef.current !== expectedSelection) throw new Error('Attachment selection changed.');
-      setOperation(result.operation);
+      if (!stillCurrent()) return;
+      if (!shouldCloseSpatialConnection(connectionRef.current, actionConnection, true)) return;
+      if (operationRef.current && operationRef.current.id !== operation.id) return;
+      setActiveOperation(result.operation);
       if (action === 'approve') {
         setStatus('Candidate approved, still NOT APPLIED. Apply writes the reviewed bytes.');
       } else if (action === 'reject') {
-        setCandidate('');
-        setOperation(null);
+        clearCandidateEvidence();
+        setActiveOperation(null);
         try {
-          await reread(selectedPath);
+          await reread(selectedPath, expectedSelection);
         } finally {
-          await closeConnection();
+          await closeConnection(actionConnection);
         }
+        if (!stillCurrent()) return;
         setStatus('Candidate rejected. The authored file was not changed.');
       } else if (action === 'apply') {
+        setAuthoredEvidence(null);
+        clearCandidateEvidence();
         try {
-          await reread(selectedPath);
+          await reread(selectedPath, expectedSelection);
         } finally {
-          await closeConnection();
+          await closeConnection(actionConnection);
         }
+        if (!stillCurrent()) return;
         setStatus('Candidate applied. Its write lock was released; Undo reacquires a fresh lock explicitly.');
       } else {
-        setCandidate('');
-        setOperation(null);
+        setAuthoredEvidence(null);
+        clearCandidateEvidence();
+        setActiveOperation(null);
         try {
-          await reread(selectedPath);
+          await reread(selectedPath, expectedSelection);
         } finally {
-          await closeConnection();
+          await closeConnection(actionConnection);
         }
+        if (!stillCurrent()) return;
         setStatus('Operation undone. The previous authored bytes were restored.');
       }
     }, expectedSelection);
@@ -415,6 +770,11 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
           <section className="spatial-tuner" aria-label="Primary grip tuner">
             {error ? <div className="spatial-alert" role="alert">{error}</div> : null}
             <div className="spatial-status" aria-live="polite">{status}</div>
+            {sourceLayoutError ? (
+              <div className="spatial-alert" role="status">
+                Read-only rest evaluation remains available, but this source cannot be edited by the constrained tuner: {sourceLayoutError}
+              </div>
+            ) : null}
             {draft ? (
               <>
                 <section className="spatial-identity" aria-label="Read-only attachment identity">
@@ -486,9 +846,40 @@ export function SpatialAttachmentEditorView({ activeSession }: { activeSession: 
                   <button className="ghost-button" disabled={busy || lease?.status === 'queued' || operation?.state !== 'applied'} onClick={() => handleTransition('undo')} type="button">Undo</button>
                 </div>
               </>
-            ) : selectedPath ? (
+            ) : selectedPath && busy ? (
               <div className="spatial-empty">Loading and validating the selected attachment source...</div>
             ) : null}
+          </section>
+
+          <section className="spatial-schematic-pane" aria-label="Rest-pose rig schematic workbench">
+            <div className="spatial-schematic-source" role="group" aria-label="Rest schematic evidence source">
+              <button
+                aria-pressed={!showingCandidate}
+                disabled={!authoredEvidence && !evaluationBusy}
+                onClick={() => setSchematicSource('authored')}
+                type="button"
+              >
+                Authored
+              </button>
+              <button
+                aria-pressed={showingCandidate}
+                disabled={!candidateEvidence}
+                onClick={() => setSchematicSource('candidate')}
+                type="button"
+              >
+                Candidate (NOT APPLIED)
+              </button>
+            </div>
+            <SpatialRestSchematic
+              busy={evaluationBusy && !showingCandidate}
+              error={showingCandidate ? '' : evaluationError}
+              evaluation={activeEvidence?.evaluation || null}
+              evidenceLabel={evidenceLabel}
+              path={activePath}
+              revision={activeRevision}
+              stale={schematicStale}
+              staleReason={staleReason}
+            />
           </section>
         </div>
       )}

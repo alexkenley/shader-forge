@@ -2175,14 +2175,15 @@ pre {
 
 .spatial-editor__body {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(210px, 250px) minmax(300px, 0.85fr) minmax(380px, 1.2fr);
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
 .spatial-profile-pane,
-.spatial-tuner {
+.spatial-tuner,
+.spatial-schematic-pane {
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -2193,6 +2194,8 @@ pre {
   border-right: 1px solid var(--border);
   background: rgba(8, 13, 18, 0.64);
 }
+
+.spatial-tuner { border-right: 1px solid var(--border); }
 
 .spatial-profile-list { display: grid; gap: 6px; margin-top: 12px; }
 
@@ -2222,7 +2225,8 @@ pre {
   font-size: 10px;
 }
 
-.spatial-tuner { display: grid; align-content: start; gap: 12px; }
+.spatial-tuner,
+.spatial-schematic-pane { display: grid; align-content: start; gap: 12px; }
 
 .spatial-status,
 .spatial-alert,
@@ -2293,7 +2297,10 @@ pre {
 .spatial-vector input:focus-visible,
 .spatial-profile-list button:focus-visible,
 .spatial-actions button:focus-visible,
-.spatial-lock-help button:focus-visible {
+.spatial-lock-help button:focus-visible,
+.spatial-schematic-source button:focus-visible,
+.spatial-rest-schematic__projections button:focus-visible,
+.spatial-rest-schematic summary:focus-visible {
   outline: 2px solid #38bdf8;
   outline-offset: 2px;
 }
@@ -2323,6 +2330,184 @@ pre {
   background: #171b20;
   box-shadow: 0 -10px 18px rgba(0, 0, 0, 0.24);
 }
+
+.spatial-schematic-pane {
+  background: radial-gradient(circle at 50% 25%, rgba(14, 165, 233, 0.06), transparent 45%);
+}
+
+.spatial-schematic-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.spatial-schematic-source button,
+.spatial-rest-schematic__projections button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.spatial-schematic-source button[aria-pressed="true"],
+.spatial-rest-schematic__projections button[aria-pressed="true"] {
+  border-color: rgba(56, 189, 248, 0.58);
+  background: rgba(14, 165, 233, 0.14);
+  color: #d9f2ff;
+}
+
+.spatial-schematic-source button:disabled,
+.spatial-rest-schematic__projections button:disabled { cursor: not-allowed; opacity: 0.48; }
+
+.spatial-rest-schematic {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(8, 13, 18, 0.78);
+}
+
+.spatial-rest-schematic.is-stale { border-color: rgba(251, 191, 36, 0.58); }
+
+.spatial-rest-schematic__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.spatial-rest-schematic__header > div:first-child { display: grid; gap: 4px; }
+.spatial-rest-schematic__header strong { font-size: 12px; letter-spacing: 0.08em; }
+.spatial-rest-schematic__header > div:first-child span { color: #f7d37b; font-size: 11px; font-weight: 700; }
+
+.spatial-rest-schematic__badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.spatial-rest-schematic__badges span {
+  padding: 3px 6px;
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  border-radius: 999px;
+  color: #f7d37b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.spatial-rest-schematic__identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  margin: 10px 0;
+}
+
+.spatial-rest-schematic__identity div {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.spatial-rest-schematic__identity dt { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.spatial-rest-schematic__identity dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: 11px; }
+
+.spatial-rest-schematic__toolbar { display: grid; gap: 7px; margin-bottom: 9px; }
+.spatial-rest-schematic__projections { display: flex; flex-wrap: wrap; gap: 6px; }
+.spatial-rest-schematic__toolbar p,
+.spatial-rest-schematic figcaption { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+.spatial-rest-schematic__stale,
+.spatial-rest-schematic__error {
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid rgba(251, 191, 36, 0.42);
+  border-radius: 4px;
+  background: rgba(120, 75, 10, 0.18);
+  color: #fde68a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.spatial-rest-schematic__error {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(127, 29, 29, 0.2);
+  color: #fecaca;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.spatial-rest-schematic__live,
+.spatial-rest-schematic__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.spatial-rest-schematic__frame {
+  display: grid;
+  min-height: 300px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    #0c1116;
+  background-size: 20px 20px;
+}
+
+.spatial-rest-schematic__svg { display: block; width: 100%; max-height: 460px; }
+.spatial-rest-schematic__empty { max-width: 320px; margin: 0; padding: 24px; color: var(--muted); text-align: center; }
+.spatial-rest-schematic figcaption { margin-top: 8px; }
+
+.spatial-rest-schematic__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin: 10px 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 11px;
+  list-style: none;
+}
+
+.spatial-rest-schematic__legend li { display: inline-flex; align-items: center; gap: 5px; }
+.spatial-rest-schematic__legend li span { width: 8px; height: 8px; border-radius: 50%; }
+.spatial-rest-schematic__data { display: grid; gap: 7px; }
+
+.spatial-rest-schematic__data details {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.spatial-rest-schematic__data summary { padding: 8px; color: #c7d5e2; cursor: pointer; font-size: 11px; font-weight: 700; }
+.spatial-rest-schematic__table-wrap { max-height: 250px; overflow: auto; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+.spatial-rest-schematic table { width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; }
+.spatial-rest-schematic th,
+.spatial-rest-schematic td { padding: 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); vertical-align: top; }
+.spatial-rest-schematic th { color: #c7d5e2; }
+.spatial-rest-schematic td { color: var(--muted); overflow-wrap: anywhere; }
+.spatial-rest-schematic code { color: #9cdcfe; white-space: nowrap; }
+
+.spatial-rest-schematic__diagnostics { margin: 0; padding: 0 8px 8px; }
+.spatial-rest-schematic__diagnostics div { display: grid; grid-template-columns: minmax(110px, 0.4fr) minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid rgba(255, 255, 255, 0.05); }
+.spatial-rest-schematic__diagnostics dt { color: #c7d5e2; font-size: 11px; }
+.spatial-rest-schematic__diagnostics dd { margin: 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 
 /* Activity */
 .activity-dock {
@@ -3247,6 +3432,10 @@ pre {
     position: static;
   }
 
+  .spatial-editor__body {
+    grid-template-columns: minmax(190px, 220px) minmax(280px, 0.85fr) minmax(340px, 1.15fr);
+  }
+
 }
 
 @media (max-width: 1100px) {
@@ -3264,6 +3453,31 @@ pre {
 
   .workspace-layout--triptych {
     grid-template-columns: 1.35fr 0.82fr;
+  }
+
+  .spatial-editor { overflow: auto; }
+
+  .spatial-editor__body {
+    grid-template-columns: 1fr;
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .spatial-profile-pane,
+  .spatial-tuner,
+  .spatial-schematic-pane { overflow: visible; }
+
+  .spatial-profile-pane,
+  .spatial-tuner {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .spatial-actions {
+    position: static;
+    margin-bottom: 0;
+    box-shadow: none;
   }
 }
 
@@ -3349,12 +3563,23 @@ pre {
   }
 
   .spatial-profile-pane,
-  .spatial-tuner { overflow: visible; }
+  .spatial-tuner,
+  .spatial-schematic-pane { overflow: visible; }
 
   .spatial-profile-pane {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+
+  .spatial-rest-schematic__header,
+  .spatial-rest-schematic__diagnostics div {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .spatial-rest-schematic__header { flex-direction: column; }
+  .spatial-rest-schematic__badges { justify-content: flex-start; }
+  .spatial-rest-schematic__frame { min-height: 240px; }
 
   .activity-dock__layout,
   .activity-detail dl {

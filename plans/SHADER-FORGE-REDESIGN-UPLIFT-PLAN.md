@@ -15,6 +15,7 @@ Current execution status:
 - Shader Forge MCP (`sf-mcp`) is the current process-scoped stdio adapter for external clients
 - `sf-mcp` now exposes the first lease-gated spatial attachment preview/review/apply/undo workflow through the shared operation contract; generic mutation remains disabled
 - the native spatial tool now emits deterministic rest-pose bone/socket/hand/item frames and joint-segment endpoints for one attachment; sessiond exposes that schematic through a revision-safe transient GET and exact baseline/candidate preview responses, with expected-ID binding and no persisted evaluation or false review-evidence claim
+- the Assets workspace now exposes that native evaluation in an accessible responsive three-pane rest-rig workbench with exact revision/operation evidence binding, three orthographic projections, coordinates/diagnostics, fail-closed report guards, fixed cached visuals, and authoritative operation reconciliation through App's one SSE subscription
 
 ## 1. Executive Decision
 
@@ -345,6 +346,8 @@ Required content:
 - generated/cooked status separated from source assets
 - conflict-safe handling of agent and human asset operations
 
+Implemented specialized slice: attachment profiles open in a three-pane workbench with profile selection, constrained primary-grip tuning, and a native-evaluated rest-rig schematic. Browsing and evaluation acquire no lease; editing begins only after explicit exact-profile coordination. Authored evidence is path/revision-bound and candidate evidence is operation/base/proposed/state-bound. Front X/Y, Side Z/Y, and Top X/Z show only evaluator frames, with exact coordinates, diagnostics, accessible status/error text, and responsive stacking. Draft edits never move cached geometry. The schematic is unsampled, not review evidence, and has no item mesh, solved IK, joint-limit/clipping result, camera, or capture.
+
 Specialized material, animation, audio, or VFX editors should be added only after their runtime pipeline is functional and a generic inspector is demonstrably insufficient.
 
 ### 7.6 Inspector
@@ -596,7 +599,7 @@ The shell redesign alone will not make Shader Forge an alternative to Unreal or 
 | Input | remappable actions, keyboard, mouse, controller, context handling |
 | Physics | 3D and 2D integration appropriate to supported game claims |
 | Animation | skeletal import, graphs/state machines, blending, events, root motion |
-| Spatial authoring | foundation implemented: skeleton sockets, attachment profiles, deterministic rest-pose schematic evaluation, revision-safe transient sessiond evaluation, exact baseline/candidate preview reports, semantic operations, constrained Assets tuning, and shared CLI/MCP apply. Sampling, IK, geometry/joint/clipping diagnostics, rendered capture, and immutable review packets remain open; proxy-card rendering and every unsampled schematic are not review evidence. |
+| Spatial authoring | foundation implemented: skeleton sockets, attachment profiles, deterministic rest-pose schematic evaluation, revision-safe transient sessiond evaluation, exact baseline/candidate preview reports, semantic operations, constrained Assets tuning with exact three-projection rest-rig schematic, and shared CLI/MCP apply. Sampling, IK, prefab/item geometry, available joint/clipping diagnostics, native camera/capture, immutable review packets, and typed MCP spatial read/review remain open; proxy-card rendering and every unsampled schematic are not review evidence. |
 | Audio | spatial audio, buses, mixing, streaming, events |
 | Game UI | layout, styling, input, localization path, accessibility hooks |
 | Assets | import, cook, cache, dependencies, reimport, provenance |
@@ -654,7 +657,7 @@ Exit criteria:
 
 ### Gate 1.5: Establish Spatial Authoring Truth
 
-Status: native schema/query/cook/rest-schematic evaluation, revision-safe transient sessiond GET, exact baseline/candidate preview evaluation, semantic attachment operations, CLI, constrained Assets tuner, and first `sf-mcp` mutation adapter implemented. GET creates no lease or journal state; preview rechecks its lease after evaluation and persists no evaluation report. Every schematic reports `pose.sampled=false` and no item geometry, IK, joint-limit, or clipping evidence. Sampling, rendered capture, and review packets remain open. Canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
+Status: native schema/query/cook/rest-schematic evaluation, revision-safe transient sessiond GET, exact baseline/candidate preview evaluation, semantic attachment operations, CLI, constrained Assets tuner with exact rest-rig schematic, and first `sf-mcp` mutation adapter implemented. GET creates no lease or journal state; preview rechecks its lease after evaluation and persists no evaluation report. Assets deep-validates bounded reports, fixes evidence to exact revision/operation identity, and reconciles operation notifications through App's one SSE subscription. External conflict rereads authored bytes and preserves the captured lease only after successful parse and resource coverage; terminal cleanup closes only the connection captured by that action/reconciliation. Every schematic reports `pose.sampled=false` and no item mesh, solved IK, joint-limit/clipping result, camera, capture, or review evidence. Sampling, prefab geometry, rendered capture, immutable review packets, and typed MCP spatial review/read surfaces remain open. Canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
 This gate is ordered after the operation layer and before broad World/Assets visual polish. Shell Code/Playtest work and unrelated capability tracks may proceed in parallel. World/Assets gizmos must not invent a second grip or socket persistence path while this gate is open.
 
@@ -676,6 +679,7 @@ Exit criteria:
 - VLM or visual scores never apply
 - denied approvals, stale revisions, and undo match the existing mutation contract
 - current proxy-card rendering is not presented as spatial-review evidence
+- the Assets rest-rig schematic remains explicitly unsampled and cannot satisfy review-packet or capture gates
 
 ### Gate 2: Establish the New Shell Foundation
 
@@ -916,6 +920,7 @@ The direction-setting shell and coordination work is now implemented. Continue w
 9. completed: expose lease-gated `sf-mcp` spatial attachment preview/review/apply/undo with process-owned identity and credentials, selected-workspace checks, structured conflict recovery, and no generic write bypass
 10. completed: add deterministic native and CLI rest-pose attachment evaluation with machine-readable bone/socket/hand/item frames and joint segments, while labelling it unsampled and not review evidence
 11. completed: expose revision-safe transient sessiond evaluation plus exact baseline/candidate preview reports with expected-ID binding, no GET lease/journal/persistence, and a post-evaluation preview lease recheck
-12. next: implement rendered spatial sampling, diagnostics, capture, and review packets, then expose their MCP adapters only after shell/CLI operations exist; widen other MCP mutation families only when they carry equivalent resource keys
+12. completed: add the Assets native-evaluated rest-rig schematic with exact authored/candidate binding, fixed cached evidence, Front/Side/Top projections, deep fail-closed guards, exact coordinates/diagnostics, accessible responsive layout, and one-SSE authoritative operation reconciliation with captured-connection cleanup
+13. next: implement real pose sampling, secondary-hand IK, prefab/item geometry, available joint/clipping diagnostics, native cameras/capture, and immutable review packets, then expose typed MCP spatial read/validation/recapture/review adapters only after shell/CLI operations exist; widen other MCP mutation families only when they carry equivalent resource keys
 
 Do not begin broad MCP mutation tools before their engine-owned operations and resource keys exist. Spatial visual work can now build on the shared authored truth and mutation path without introducing another persistence backend.

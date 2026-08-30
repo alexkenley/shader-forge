@@ -9,6 +9,54 @@ export type SpatialAttachmentDraft = {
   rotationDegrees: SpatialVector3;
 };
 
+export type SpatialOperationReconciliation = {
+  refreshAuthored: boolean;
+  clearCandidate: boolean;
+  clearOperation: boolean;
+  closeConnection: boolean;
+};
+
+export function spatialOperationReconciliation(state: string): SpatialOperationReconciliation {
+  if (state === 'conflicted') {
+    return { refreshAuthored: true, clearCandidate: false, clearOperation: false, closeConnection: false };
+  }
+  if (state === 'rejected') {
+    return { refreshAuthored: true, clearCandidate: true, clearOperation: true, closeConnection: true };
+  }
+  if (state === 'applied') {
+    return { refreshAuthored: true, clearCandidate: true, clearOperation: false, closeConnection: true };
+  }
+  if (state === 'undone') {
+    return { refreshAuthored: true, clearCandidate: true, clearOperation: true, closeConnection: true };
+  }
+  return { refreshAuthored: false, clearCandidate: false, clearOperation: false, closeConnection: false };
+}
+
+export function sameSpatialConnection<T extends object>(current: T | null, expected: T | null) {
+  return expected !== null && current === expected;
+}
+
+export function shouldCloseSpatialConnection<T extends object>(
+  current: T | null,
+  expected: T | null,
+  expectedWasCaptured: boolean,
+) {
+  return !expectedWasCaptured || current === expected;
+}
+
+export function spatialActionStillCurrent(
+  currentGeneration: number,
+  expectedGeneration: number,
+  currentSelection: string,
+  expectedSelection: string,
+) {
+  return currentGeneration === expectedGeneration && currentSelection === expectedSelection;
+}
+
+export function spatialLeaseCoversAttachment(resources: readonly string[], attachmentId: string) {
+  return resources.includes(`spatial/attachment/${attachmentId.toLowerCase()}`);
+}
+
 type SourceLine = {
   text: string;
   start: number;

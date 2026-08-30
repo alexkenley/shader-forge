@@ -28,4 +28,6 @@ The current first slice in the repo now includes:
 
 Dear ImGui docking is still the target frontend, but the current slice is the substrate and persistence groundwork rather than a full Dear ImGui renderer integration.
 
-Planned spatial overlays show labelled candidates, axis probes, and numeric diagnostics, but never persist assets directly. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).
+The implemented Assets rest-rig schematic is a React shell surface, not this native tooling layer. It consumes bounded sessiond rest evaluations and shows exact evaluator frames, coordinates, and unavailable diagnostics in three orthographic projections; it is unsampled and not review evidence, and it has no item mesh, solved IK, joint-limit/clipping result, camera, or capture.
+
+Planned native spatial overlays may later show labelled candidates, axis probes, sampled-pose diagnostics, and capture state, but they must consume the same spatial operations and never persist assets directly. Native overlay work must not promote the current shell schematic into review evidence or invent a second attachment path. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).

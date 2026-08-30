@@ -52,7 +52,7 @@
                 "Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and future native assistants.",
                 "Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.",
                 "Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.",
-                "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook/rest-schematic and attachment-preview operation slices plus the deferred visual tuning workflow.",
+                "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook/rest-schematic, Assets rest-rig workbench, and attachment-preview operation slices plus the deferred sampled/rendered review workflow.",
                 "Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline."
               ]
             },
@@ -160,7 +160,7 @@
                 "Use `Code` when you need the preserved Monaco bridge and repo workspace context.",
                 "Use `Playtest` when you are driving the external native runtime window from the shell, with runtime/build/workspace tools grouped beside that runtime-facing surface.",
                 "Use `World` for repo-backed scene and prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.",
-                "Use `Assets` to open the existing asset authoring tool directly.",
+                "Use `Assets` for the constrained attachment-profile tuner and native-evaluated rest-rig schematic. Browsing/evaluation is lease-free; editing starts only after `Begin tuning` acquires the exact attachment lease.",
                 "If `Build` or `Build + Run` fails because `cmake` is missing, the shell now surfaces that as setup guidance; the clean-start scripts also auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible, while plain `Run` still depends on an already-built runtime binary under `build/runtime/bin`.",
                 "A successful native build can still be a stub runtime if SDL3 or Vulkan are missing; the shell now surfaces that separately as native dependency setup rather than another CMake problem.",
                 "Use `Help` to open the Guide as a secondary searchable reference surface.",
@@ -216,6 +216,8 @@
                 "Operation lifecycle events stream on `/api/events`. `sf-mcp` spatial mutation tools now use process-owned coordinator credentials and leases through this same contract; non-spatial MCP mutation remains disabled.",
                 "`GET /api/spatial/attachment/evaluate` reads an existing attachment at an exact SHA-256 revision, rejects symbolic paths, stages exact authored animation bytes, validates the source-to-profile mapping, evaluates that expected ID, and rechecks the live revision before returning. It requires no lease and creates no operation, journal entry, persisted evaluation, SSE event, or authored/cooked write.",
                 "Spatial preview validates and evaluates exact staged baseline/candidate bytes, binds evaluator output to validator-selected IDs, and rechecks its write lease after evaluation immediately before operation creation. A new-file baseline is null. Evaluation reports are immediate response data only and remain `pose.sampled=false`, not review evidence.",
+                "Assets binds authored evaluations to active session/path/revision and candidate evaluations to operation/base/proposed/state. Draft edits mark cached geometry stale instead of moving it. The complete report is bounded and deep-validated before rendering; malformed nested data or unsafe projection bounds make the schematic unavailable.",
+                "`App` retains one sessiond SSE subscription. Assets receives an active-session operation epoch and authoritatively refetches its current operation with session/selection/operation guards. Approval updates actions. Conflict rereads authored bytes, keeps the candidate visibly stale, and retains its captured connection only after successful parse and refreshed resource coverage. Reject/apply/undo clear and reread evidence while releasing/disconnecting only the connection captured by that event/action, never a newer one. Undo after apply requests a fresh lease.",
                 "The shell `Activity` bottom-dock tab lists durable operations for the active workspace, reads selected public detail, refreshes from operation SSE events, and supports fixed-shell-actor Approve/Reject. It has no Apply, Undo, lease, registration, or credential path.",
                 "Activity shows only public preview counts/summary, revisions, context, actor provenance, code-trust effect status, and lifecycle. Exact before/proposed bytes, exact diff, and validation/test evidence are not public and are not claimed by the UI.",
                 "See `docs/specs/ENGINE-OPERATIONS-SPEC.md` for the canonical contract.",
@@ -589,7 +591,7 @@
         {
           "id": "spatial-authoring",
           "title": "Spatial Authoring And Attachment Tuning",
-          "summary": "Spatial authoring now has a native schema/query/cook/rest-schematic foundation, lease-gated semantic operations, a strict CLI adapter, and a constrained Assets primary-grip tuner; sampled pose, IK, rendered capture, and review remain deferred.",
+          "summary": "Spatial authoring now has a native schema/query/cook/rest-schematic foundation, lease-gated semantic operations, a strict CLI adapter, and a constrained Assets primary-grip tuner with a native-evaluated rest-rig schematic; sampled pose, IK, rendered capture, and review remain deferred.",
           "keywords": [
             "spatial authoring",
             "attachment",
@@ -628,6 +630,7 @@
             "scripts/test-engine-spatial-cli.mjs",
             "scripts/test-engine-spatial-shell.mjs",
             "shell/engine-shell/src/SpatialAttachmentEditorView.tsx",
+            "shell/engine-shell/src/SpatialRestSchematic.tsx",
             "shell/engine-shell/src/spatial-attachment-authoring.ts",
             "plans/ENGINE-IMPLEMENTATION-PLAN.md",
             "plans/SHADER-FORGE-REDESIGN-UPLIFT-PLAN.md"
@@ -655,16 +658,19 @@
                 "`shader_forge_spatial validate --animation-root <path>` reuses `AnimationSystem::loadFromDisk` and emits deterministic JSON counts plus skeleton/profile metadata with stable relative attachment source paths.",
                 "`shader_forge_spatial cook` validates through the same loader and atomically stages complete socket/profile tables with relative source paths and no query handles or absolute machine paths; `engine spatial cook` exposes that already-built lane.",
                 "`shader_forge_spatial evaluate-rest --animation-root <path> --attachment <id>` composes deterministic rest bone/socket, item, contact/handle, hand, and joint-segment frames using right-handed meters, `+Y` up, `+Z` forward, and `xyzw` canonical quaternions; the strict CLI exposes the same already-built lane.",
-                "Rest evaluation is a schematic query only: `pose.sampled=false`; item geometry plus IK, joint-limit, and clipping diagnostics are unavailable; the v1 pole has unresolved space and no world transform; and the output is not a review packet or visual evidence.",
+                "Rest evaluation is a schematic query only: `pose.sampled=false`; item mesh geometry plus IK, joint-limit, and clipping diagnostics are unavailable; the v1 pole has unresolved space and no world transform; and the output is not a review packet or rendered review evidence.",
                 "`GET /api/spatial/attachment/evaluate` stages exact current authored bytes, binds the selected source and revision to its validator-selected attachment ID, rechecks the live revision, and returns a transient evaluation without a lease, operation, journal entry, or persisted report.",
                 "`POST /api/operations/spatial-attachment/preview` validates and evaluates exact staged baseline/candidate bytes under their expected old/new IDs, returns those reports transiently, requires exact write-lease coverage, rechecks the lease after evaluation, and only then records a labelled generic file-write candidate with durable public spatial context. A new-file baseline is null and evaluations never enter the journal.",
+                "The Assets workbench binds authored evaluation to active session/path/revision and candidate evaluation to operation/base/proposed/state. Draft changes never move cached geometry; they mark it stale, and conflict remains visibly stale even when numeric values match.",
+                "Front X/Y, Side Z/Y, and Top X/Z projections show only native evaluator frames. Exact coordinates, diagnostics, path/revision identity, accessible live/error text, responsive stacking, and direction-glyph limitations accompany the SVG. A bounded deep validator rejects malformed nested fields, oversized payloads, non-finite transforms, and unsafe projection bounds.",
                 "Spatial apply and undo require a currently granted matching lease and credential; a renewed lease is accepted when it covers every persisted resource key.",
                 "`engine spatial preview|approve|reject|apply|undo` are strict adapters over that same sessiond contract. Preview consumes a strict BOM-free UTF-8 content file; preview/apply/undo use only the environment-provided coordinator credential and never acquire coordination or bypass sessiond.",
                 "`npm run test:spatial-operations` covers revision-safe no-lease GET, path/symlink and exact-byte staging, expected-ID/schema binding, final revision drift, journal absence, bounded evaluator failures, transient preview evaluations, new-file baseline, post-evaluation lease loss, operation persistence boundaries, CORS, and temp cleanup.",
                 "`npm run test:spatial-cli` drives the real CLI against injected deterministic validator/evaluator seams and validates preview/review/apply/undo, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction.",
-                "The Assets workspace lists attachment profiles read-only. Explicit `Begin tuning` requests the exact profile lease and refreshes source after grant; only primary-grip translation and degree-displayed rotation are editable through strict byte-preserving source replacement.",
-                "Candidates are labelled `NOT APPLIED`; Preview, Approve, Apply, Reject, and Undo use the same sessiond operations. Apply releases coordination and Undo reacquires a fresh covering lease. Credentials remain memory-only headers and are redacted from client errors.",
-                "`npm run test:spatial-shell` validates exact source rewriting, unsupported-layout rejection, Assets-only mounting, explicit locking, operation-only routing, and credential redaction markers.",
+                "The Assets workspace lists attachment profiles read-only. Lease-free native evaluation is still attempted when a readable source cannot be rewritten by the constrained parser. Explicit `Begin tuning` requests the exact profile lease and refreshes source after grant; only primary-grip translation and degree-displayed rotation are editable through strict byte-preserving source replacement.",
+                "Candidates are labelled `NOT APPLIED`; Preview, Approve, Apply, Reject, and Undo use the same sessiond operations. `App` retains one sessiond SSE subscription and Assets uses its event epoch to refetch the active operation with session/selection/id guards. Approval updates actions. Conflict rereads source, preserves stale candidate evidence, and retains its captured connection only after parse/resource checks. Reject/apply/undo clear and reread evidence plus clean up only the connection captured by that event/action, and Undo after apply reacquires a fresh covering lease.",
+                "Every rest schematic is explicitly unsampled and not review evidence. It has no item mesh, solved IK, joint-limit/clipping result, camera, capture, or resolved pole projection.",
+                "`npm run test:spatial-shell` validates exact source rewriting, unsupported-layout rejection with continued lease-free evaluation, complete evaluator-schema/size/projection guards, exact evidence binding, one shared SSE subscription and authoritative operation refetch, Assets-only mounting, explicit locking, operation-only routing, accessible/responsive schematic markers, unresolved-pole exclusion, and credential redaction markers.",
                 "`sf-mcp` now exposes the lease-gated attachment preview/review/apply/undo workflow. Prefab existence, joint/capsule parsing, generic bake/runtime consumption, sampling, IK, rendering/capture, review packets, operation-scoped validation/recapture, and typed MCP validate/recapture/review tools remain deferred."
               ]
             },
@@ -817,7 +823,7 @@
                 "A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.",
                 "A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.",
                 "A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. `sf-mcp` now consumes its lease-gated spatial attachment family; other MCP operation families still require equivalent resource-key contracts. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.",
-                "A native spatial schema/query/cook/rest-schematic slice with compatible v1 skeletons, strict v2 skeleton/socket and v1 attachment validation, generation-safe handles, isolated fixtures, deterministic validation, an atomic derived payload, and deterministic attachment frame/segment evaluation.",
+                "A native spatial schema/query/cook/rest-schematic slice plus a constrained Assets tuner and accessible native-evaluated three-projection rest-rig schematic with exact evidence binding, guarded SSE reconciliation, and no sampled/rendered review claim.",
                 "A searchable in-app guide and repo-native assistant guide."
               ]
             },
