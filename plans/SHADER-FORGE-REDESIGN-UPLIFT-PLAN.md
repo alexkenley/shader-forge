@@ -13,7 +13,7 @@ Current execution status:
 - `engine_sessiond` now also owns a hardened revision-safe text-file write operation workflow with preview, SHA-256 revisions, structured conflicts, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filtering, provenance, SSE events, and restart-safe history
 - the shell now exposes durable active-workspace operation provenance and lease-free summary review through the global Activity bottom dock; exact public diffs and Activity apply/undo remain gated
 - Shader Forge MCP (`sf-mcp`) is the current process-scoped stdio adapter for external clients
-- the first `sf-mcp` surface is deliberately read-and-coordinate only; MCP mutation tools remain disabled until coordinator credentials and leases are wired through that same operation contract
+- `sf-mcp` now exposes the first lease-gated spatial attachment preview/review/apply/undo workflow through the shared operation contract; generic mutation remains disabled
 
 ## 1. Executive Decision
 
@@ -128,15 +128,15 @@ The coordinator does not run or chat with agents. It provides the concurrency, i
 
 Shader Forge MCP, shortened to `sf-mcp`, starts as a process-scoped stdio MCP server launched by each client. It accepts stable `--root`, `--session`, `--base-url`, and `--name` startup inputs, registers one coordinator agent per process, keeps its credential private, heartbeats while connected, and disconnects on shutdown.
 
-The first surface exposes `shaderforge://project`, `shaderforge://coordination`, project/file inspection, coordination inspection, lease request/status/release, and explicit heartbeat. It is read-and-coordinate only.
+The base surface exposes `shaderforge://project`, `shaderforge://coordination`, project/file inspection, coordination inspection, lease request/status/release, and explicit heartbeat. The first mutation widening adds bounded operation list/read, spatial attachment preview, separate approve/reject, and spatial-only apply/undo. MCP identity and credentials come from process state, while every spatial mutation requires an owned granted covering lease and repeats authorization inside sessiond.
 
-The shared text-file preview, revision, structured diff, journaled apply, approval, provenance, validation, conflict, and recovery contract now exists in `engine_sessiond`. All supported mutations, including CLI provenance promote/quarantine, go through that sessiond mutation authority and the serialized SessionStore lane. Code-trust artifact recording is a journaled idempotent effect that must succeed before apply is durable; prior-artifact snapshots persist before source bytes change, and undo provenance precheck plus restore cannot interleave with a later transition. Artifact files use serialized atomic replacement. Workspace identity is path plus filesystem identity. Session roots are immutable after creation, bind hosts stay loopback-only, and recovery appends events instead of rewriting history. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee. File or scene writes, build/runtime mutation, and HTTP transport stay excluded from MCP until that contract is consumed with coordinator credentials and leases. Actor strings are local provenance, not cryptographic attribution. If HTTP transport later becomes required, bind it to loopback, require an unguessable session credential, restrict origins, and expose only the MCP operation surface.
+The shared text-file preview, revision, structured diff, journaled apply, approval, provenance, validation, conflict, and recovery contract now exists in `engine_sessiond`. All supported mutations, including CLI provenance promote/quarantine and MCP spatial attachment operations, go through that sessiond mutation authority and the serialized SessionStore lane. Code-trust artifact recording is a journaled idempotent effect that must succeed before apply is durable; prior-artifact snapshots persist before source bytes change, and undo provenance precheck plus restore cannot interleave with a later transition. Artifact files use serialized atomic replacement. Workspace identity is path plus filesystem identity. Session roots are immutable after creation, bind hosts stay loopback-only, and recovery appends events instead of rewriting history. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee. Generic file or scene writes, build/runtime mutation, and HTTP transport stay excluded from MCP until their operation families carry authoritative resource keys and policies. Actor strings are local provenance, not cryptographic attribution. If HTTP transport later becomes required, bind it to loopback, require an unguessable session credential, restrict origins, and expose only the MCP operation surface.
 
 Do not expose the current broad `engine_sessiond` filesystem and PTY authority directly as the public MCP boundary.
 
 ### 4.3 Target MCP Resources After Safety Gates
 
-These widen beyond the first `sf-mcp` read-and-coordinate surface only as the underlying engine contracts become safe and shared:
+These widen beyond the current base and spatial-mutation surface only as the underlying engine contracts become safe and shared:
 
 - project identity, configuration, and revision
 - scene graph and selected entity
@@ -166,7 +166,7 @@ The following is the intended product surface, not the currently exposed first s
 - `agent_session_register`, `agent_session_heartbeat`, `agent_session_disconnect`
 - `work_lease_request`, `work_lease_status`, `work_lease_release`
 - `change_set_create`, `change_set_validate`, `change_set_merge`
-- spatial authoring tools only after engine spatial operations exist: `spatial_attachment_read`, `spatial_attachment_preview`, `spatial_attachment_validate`, `spatial_review_read`, `spatial_review_recapture`, plus the generic operation approve/apply/undo tools
+- implemented spatial mutation tools: `spatial_attachment_preview`, `operation_approve`, `operation_reject`, and spatial-only `operation_apply` / `operation_undo`; typed spatial read/validate/review/recapture tools remain gated on their matching engine operations
 
 Names may be refined in the MCP specification, but the contract must remain small, composable, typed, and versioned. Spatial MCP tools are adapter-only. They are specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) and must not wrap `/api/files/write` or scrape a live camera.
 
@@ -631,7 +631,7 @@ Exit criteria:
 
 ### Gate 1: Make Mutations Safe and Observable
 
-Current status: the hardened text-file write operation contract is implemented in `engine_sessiond`, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, and loopback-only bind. The shell now consumes its durable list/detail and event views in a review-only Activity dock. Scene/asset operations, exact public diffs, Activity apply/undo coordination, and authenticated MCP mutation tools remain open.
+Current status: the hardened text-file write operation contract is implemented in `engine_sessiond`, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, and loopback-only bind. The shell consumes durable list/detail and event views in a review-only Activity dock, and `sf-mcp` consumes the lease-gated spatial attachment workflow. Scene/asset operations, exact public diffs, Activity apply/undo coordination, and non-spatial MCP mutation tools remain open.
 
 Actions:
 
@@ -653,7 +653,7 @@ Exit criteria:
 
 ### Gate 1.5: Establish Spatial Authoring Truth
 
-Status: specified, not implemented. Canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
+Status: native schema/query/cook, semantic attachment operations, CLI, constrained Assets tuner, and first `sf-mcp` mutation adapter implemented. Sampling, IK, rendered capture, and review packets remain open. Canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
 This gate is ordered after the operation layer and before broad World/Assets visual polish. Shell Code/Playtest work and unrelated capability tracks may proceed in parallel. World/Assets gizmos must not invent a second grip or socket persistence path while this gate is open.
 
@@ -748,7 +748,7 @@ Exit criteria:
 
 ### Gate 6: Expose the MCP Control Plane
 
-Current status: the process-scoped stdio adapter and its read-and-coordinate surface are the active first slice. The shell Activity dock now consumes operation history and lease-free review events; MCP mutation, build/runtime tools, coordinated apply/undo, and full parity scenarios remain open.
+Current status: the process-scoped stdio adapter now covers read/coordination plus lease-gated spatial attachment preview/review/apply/undo. The shell Activity dock consumes operation history and lease-free review events. Generic scene/asset/code mutation, build/runtime tools, Activity apply/undo, and full parity scenarios remain open.
 
 Actions:
 
@@ -912,6 +912,7 @@ The direction-setting shell and coordination work is now implemented. Continue w
 6. completed: implement and harden the sessiond-owned text-file mutation preview, revision, line-oriented diff summary, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filter, and operation-event contract
 7. completed: add a constrained Assets primary-grip tuner over the semantic spatial operation, with explicit exact-profile locking, visible unapplied candidates, separate review/apply, and fresh-lease undo
 8. completed: add the global Activity history and summary-review state model over authoritative operation list/detail reads, public operation events, and lease-free approve/reject
-9. next: widen MCP only through that shared file-write operation contract after coordinator credentials and leases are the exposure gate, then later scene/asset operations, then rendered interaction and accessibility checks for the complete path
+9. completed: expose lease-gated `sf-mcp` spatial attachment preview/review/apply/undo with process-owned identity and credentials, selected-workspace checks, structured conflict recovery, and no generic write bypass
+10. next: implement rendered spatial sampling, diagnostics, capture, and review packets, then expose their MCP adapters only after shell/CLI operations exist; widen other MCP mutation families only when they carry equivalent resource keys
 
-Do not begin visual polish, a real viewport, or broad MCP mutation tools before the remaining operation consumers exist. Authenticated MCP actor/lease enforcement is still the next exposure gate. That ordering prevents a polished shell from becoming a façade over unreliable engine state.
+Do not begin broad MCP mutation tools before their engine-owned operations and resource keys exist. Spatial visual work can now build on the shared authored truth and mutation path without introducing another persistence backend.

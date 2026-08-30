@@ -28,6 +28,7 @@ Key docs:
 - [Engine Implementation Plan](plans/ENGINE-IMPLEMENTATION-PLAN.md)
 - [Engine Systems Index](docs/specs/ENGINE-SYSTEMS-INDEX.md)
 - [Engine Harness Testing](docs/guides/ENGINE-HARNESS-TESTING.md)
+- [Shader Forge MCP Setup](docs/guides/SHADER-FORGE-MCP-SETUP.md)
 
 Quick start:
 

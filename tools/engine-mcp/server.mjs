@@ -9,6 +9,43 @@ const AGENT_CREDENTIAL_HEADER = 'x-shader-forge-agent-credential';
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const SESSIOND_REQUEST_TIMEOUT_MS = 5_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
+const MAX_OPERATION_LIST_RESULTS = 100;
+const MAX_SPATIAL_ATTACHMENT_BYTES = 1024 * 1024;
+const OPERATION_STATES = [
+  'all',
+  'previewed',
+  'approved',
+  'rejected',
+  'applying',
+  'applied',
+  'undoing',
+  'undone',
+  'conflicted',
+];
+const SPATIAL_ATTACHMENT_PATH = /^animation\/attachments\/[^/]+\.attachment\.toml$/;
+const REVISION = /^(?:missing|sha256:[a-f0-9]{64})$/;
+const PUBLIC_ERROR_FIELDS = [
+  'code',
+  'diagnostic',
+  'conflict',
+  'lease',
+  'operation',
+  'approval',
+  'codeTrust',
+];
+
+class SessiondRequestError extends Error {
+  constructor(message, status, details = {}) {
+    super(message);
+    this.name = 'SessiondRequestError';
+    this.status = status;
+    this.details = details;
+  }
+}
+
+function boundaryError(status, code, message, details = {}) {
+  return new SessiondRequestError(message, status, { code, ...details });
+}
 
 function usage() {
   return [
@@ -103,7 +140,15 @@ async function requestJson(baseUrl, pathname, {
   }
   if (!response.ok) {
     const message = typeof payload?.error === 'string' ? payload.error : `${response.status} ${response.statusText}`;
-    throw new Error(`engine_sessiond rejected ${method} ${pathname}: ${message}`);
+    const details = {};
+    for (const field of PUBLIC_ERROR_FIELDS) {
+      if (payload?.[field] !== undefined) details[field] = payload[field];
+    }
+    throw new SessiondRequestError(
+      `engine_sessiond rejected ${method} ${pathname}: ${message}`,
+      response.status,
+      details,
+    );
   }
   return payload;
 }
@@ -135,6 +180,27 @@ function toolResult(value) {
   };
 }
 
+function toolFailure(error, authoritativeOperation) {
+  const failure = {
+    ok: false,
+    status: Number.isInteger(error?.status) ? error.status : 500,
+    error: error instanceof Error ? error.message : String(error),
+  };
+  const details = error instanceof SessiondRequestError ? error.details : {};
+  for (const field of PUBLIC_ERROR_FIELDS) {
+    if (details[field] !== undefined) failure[field] = details[field];
+  }
+  if (authoritativeOperation) failure.authoritativeOperation = authoritativeOperation;
+  return {
+    ...toolResult(failure),
+    isError: true,
+  };
+}
+
+function resourceKeyCovers(held, required) {
+  return held === required || required.startsWith(`${held}/`);
+}
+
 function registerSurface(server, state) {
   const readProject = async () => {
     const [health, session] = await Promise.all([
@@ -152,6 +218,97 @@ function registerSurface(server, state) {
   const readCoordination = () => requestJson(
     state.baseUrl,
     `/api/coordination/state?sessionId=${encodeURIComponent(state.session.id)}`,
+  );
+  const operationActor = () => ({
+    kind: 'mcp',
+    id: state.agent.id,
+    name: state.agent.name || 'sf-mcp',
+  });
+  const readOperation = async (operationId) => {
+    const payload = await requestJson(
+      state.baseUrl,
+      `/api/operations/${encodeURIComponent(operationId)}`,
+    );
+    if (payload.operation?.sessionId !== state.session.id) {
+      throw boundaryError(403, 'operation_session_mismatch', 'Operation belongs to a different Shader Forge workspace session.');
+    }
+    return payload.operation;
+  };
+  const requireGrantedWriteLease = async (leaseId, requiredResources = []) => {
+    if (!state.leaseIds.has(leaseId)) {
+      throw boundaryError(403, 'lease_not_owned', `Lease is not owned by this sf-mcp process: ${leaseId}`);
+    }
+    await state.heartbeat();
+    const payload = await requestJson(
+      state.baseUrl,
+      `/api/coordination/leases/${encodeURIComponent(leaseId)}`,
+    );
+    const { lease } = payload;
+    if (lease?.agentId !== state.agent.id || lease?.sessionId !== state.session.id) {
+      throw boundaryError(403, 'lease_owner_mismatch', 'Lease is not owned by this sf-mcp workspace agent.', { lease });
+    }
+    if (lease.status !== 'granted') {
+      throw boundaryError(409, 'lease_not_granted', `Lease ${leaseId} is ${lease.status}, not granted.`, { lease });
+    }
+    if (lease.mode !== 'write') {
+      throw boundaryError(409, 'lease_write_required', 'A granted write lease is required.', { lease });
+    }
+    const uncovered = requiredResources.filter((required) => (
+      !lease.resources.some((held) => resourceKeyCovers(held, required))
+    ));
+    if (uncovered.length) {
+      throw boundaryError(
+        409,
+        'lease_resource_mismatch',
+        `Lease does not cover required resources: ${uncovered.join(', ')}`,
+        { lease },
+      );
+    }
+    return lease;
+  };
+  const safeOperationAction = (action, { requireSpatialLease = false } = {}) => (
+    async ({ operationId, leaseId }) => {
+      let operation;
+      try {
+        operation = await readOperation(operationId);
+        if (requireSpatialLease) {
+          if (operation.context?.type !== 'spatial_attachment') {
+            throw boundaryError(
+              409,
+              'operation_not_spatial_attachment',
+              'sf-mcp apply and undo are limited to lease-gated spatial attachment operations.',
+              { operation },
+            );
+          }
+          await requireGrantedWriteLease(leaseId, operation.context.resourceKeys);
+        }
+        const payload = await requestJson(
+          state.baseUrl,
+          `/api/operations/${encodeURIComponent(operationId)}/${action}`,
+          {
+            method: 'POST',
+            ...(requireSpatialLease ? { credential: state.credential } : {}),
+            body: {
+              actor: operationActor(),
+              ...(requireSpatialLease
+                ? { agentId: state.agent.id, leaseId }
+                : {}),
+            },
+          },
+        );
+        return toolResult(payload);
+      } catch (error) {
+        let authoritativeOperation = error?.details?.operation || operation;
+        if (error?.status === 409) {
+          try {
+            authoritativeOperation = await readOperation(operationId);
+          } catch {
+            // Keep the operation returned by the failed transition when a refresh is unavailable.
+          }
+        }
+        return toolFailure(error, authoritativeOperation);
+      }
+    }
   );
 
   server.registerResource(
@@ -259,6 +416,138 @@ function registerSurface(server, state) {
     { title: 'Agent heartbeat', description: 'Refresh this MCP process coordinator registration.', inputSchema: z.object({}) },
     async () => toolResult(await state.heartbeat()),
   );
+  server.registerTool(
+    'operation_list',
+    {
+      title: 'List operations',
+      description: 'List recent engine-owned operations for this Shader Forge workspace. File contents are never returned.',
+      inputSchema: z.object({
+        state: z.enum(OPERATION_STATES).default('all'),
+        limit: z.number().int().min(1).max(MAX_OPERATION_LIST_RESULTS).default(50),
+      }).strict(),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ state: operationState, limit }) => {
+      try {
+        const payload = await requestJson(
+          state.baseUrl,
+          `/api/operations?sessionId=${encodeURIComponent(state.session.id)}&state=${encodeURIComponent(operationState)}`,
+        );
+        if (payload.operations.some((operation) => operation.sessionId !== state.session.id)) {
+          throw boundaryError(
+            502,
+            'operation_list_session_mismatch',
+            'engine_sessiond returned an operation from a different workspace session.',
+          );
+        }
+        return toolResult({ operations: payload.operations.slice(0, limit) });
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
+    'operation_read',
+    {
+      title: 'Read operation',
+      description: 'Read one engine-owned operation from this Shader Forge workspace without exposing staged file contents.',
+      inputSchema: z.object({ operationId: z.string().trim().min(1).max(128) }).strict(),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ operationId }) => {
+      try {
+        return toolResult({ operation: await readOperation(operationId) });
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
+    'spatial_attachment_preview',
+    {
+      title: 'Preview spatial attachment change',
+      description: 'Validate and preview a full authored attachment candidate under an owned write lease. This does not apply file bytes.',
+      inputSchema: z.object({
+        path: z.string().trim().regex(SPATIAL_ATTACHMENT_PATH),
+        content: z.string().refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= MAX_SPATIAL_ATTACHMENT_BYTES,
+          `content must be at most ${MAX_SPATIAL_ATTACHMENT_BYTES} UTF-8 bytes`,
+        ),
+        baseRevision: z.string().regex(REVISION),
+        label: z.string().trim().min(1).max(200),
+        leaseId: z.string().trim().min(1).max(128),
+      }).strict(),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ path: relativePath, content, baseRevision, label, leaseId }) => {
+      try {
+        await requireGrantedWriteLease(leaseId);
+        const payload = await requestJson(state.baseUrl, '/api/operations/spatial-attachment/preview', {
+          method: 'POST',
+          credential: state.credential,
+          body: {
+            sessionId: state.session.id,
+            path: relativePath,
+            content,
+            baseRevision,
+            label,
+            actor: operationActor(),
+            agentId: state.agent.id,
+            leaseId,
+          },
+        });
+        return toolResult(payload);
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
+    'operation_approve',
+    {
+      title: 'Approve operation',
+      description: 'Approve one previewed operation. Approval does not apply it.',
+      inputSchema: z.object({ operationId: z.string().trim().min(1).max(128) }).strict(),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    safeOperationAction('approve'),
+  );
+  server.registerTool(
+    'operation_reject',
+    {
+      title: 'Reject operation',
+      description: 'Reject one previewed or approved operation without changing project files.',
+      inputSchema: z.object({ operationId: z.string().trim().min(1).max(128) }).strict(),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    safeOperationAction('reject'),
+  );
+  server.registerTool(
+    'operation_apply',
+    {
+      title: 'Apply spatial attachment operation',
+      description: 'Apply one approved spatial attachment operation under an owned covering write lease.',
+      inputSchema: z.object({
+        operationId: z.string().trim().min(1).max(128),
+        leaseId: z.string().trim().min(1).max(128),
+      }).strict(),
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    safeOperationAction('apply', { requireSpatialLease: true }),
+  );
+  server.registerTool(
+    'operation_undo',
+    {
+      title: 'Undo spatial attachment operation',
+      description: 'Undo one applied spatial attachment operation under an owned covering write lease.',
+      inputSchema: z.object({
+        operationId: z.string().trim().min(1).max(128),
+        leaseId: z.string().trim().min(1).max(128),
+      }).strict(),
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    safeOperationAction('undo', { requireSpatialLease: true }),
+  );
 }
 
 async function start(options) {
@@ -339,7 +628,7 @@ async function start(options) {
   process.stdin.once('end', () => void shutdown(0));
 
   handle = serveStdio(() => {
-    const server = new McpServer({ name: 'sf-mcp', title: 'Shader Forge MCP', version: '0.1.0' });
+    const server = new McpServer({ name: 'sf-mcp', title: 'Shader Forge MCP', version: '0.2.0' });
     registerSurface(server, state);
     return server;
   }, {

@@ -44,7 +44,7 @@ If a value affects how an item sits in a hand, it lives in an attachment profile
 
 The loader retains `item_prefab` as a stable reference but does not yet validate prefab existence because `AnimationSystem` does not own the prefab catalogue. Bone joint limits and diagnostic capsules are also not parsed in this slice.
 
-Still deferred: generic `engine bake` integration, cooked-runtime loading, sampling, blending, IK, attachment rendering, spatial diagnostics, workbench capture and review packets, spatial `engine_sessiond` operations, the shell tuner, and `sf-mcp` spatial resources or tools.
+Still deferred: generic `engine bake` integration, cooked-runtime loading, sampling, blending, IK, attachment rendering, spatial diagnostics, workbench capture and review packets, operation-scoped validation/recapture, native overlay tuning, and typed `sf-mcp` validation/review resources. The semantic attachment mutation operation, constrained shell tuner, and `sf-mcp` preview/review/apply/undo adapter are implemented.
 
 ## Goals
 
@@ -104,9 +104,9 @@ Required before capture, IK diagnostics, and review packets can pass:
 - A runtime capture path that can render the staging workbench to image files. The current projected debug-proxy cards are not an acceptable stand-in.
 - Promotion of the isolated humanoid/rifle fixture into a real authored/cooked runtime lane only when sampling and rendering can consume it; `debug_humanoid` remains the compatible v1 metadata asset.
 
-Required before `sf-mcp` spatial tools:
+Required before `sf-mcp` capture and review tools:
 
-- Engine spatial operations, including preview, validate, apply, undo, and review-packet read, already working from shell and CLI against `engine_sessiond`.
+- Engine spatial validate/recapture/review-packet operations already working from shell and CLI against `engine_sessiond`.
 
 Must not wait for:
 
@@ -620,7 +620,7 @@ Planned Dear ImGui diagnostics: candidate label, axis-probe readout, reach/joint
 
 ### `sf-mcp`
 
-`sf-mcp` stays an adapter. Spatial MCP tools are forbidden until the sessiond operations above exist and shell/CLI already call them.
+`sf-mcp` stays an adapter. The implemented attachment preview/review/apply/undo tools call the same sessiond operations already used by the CLI and Assets tuner. Session, actor, agent id, and credential are process-owned; preview/apply/undo require an owned granted write lease, and apply/undo reject non-spatial operations.
 
 Planned resources, after that gate:
 
@@ -628,18 +628,22 @@ Planned resources, after that gate:
 - `shaderforge://spatial/attachment/{attachmentId}`
 - `shaderforge://spatial/review/{reviewId}`
 
-Planned tools, after that gate:
+Implemented tools:
 
-- `spatial_attachment_read`
 - `spatial_attachment_preview`
+- generic `operation_approve`
+- generic `operation_reject`
+- spatial-only `operation_apply`
+- spatial-only `operation_undo`
+
+Planned after the corresponding sessiond operations exist:
+
+- `spatial_attachment_read` as a typed view beyond the existing project-file read
 - `spatial_attachment_validate`
 - `spatial_review_read`
 - `spatial_review_recapture`
-- generic `operation_approve`
-- generic `operation_apply`
-- generic `operation_undo`
 
-These tools must send coordinator credentials and hold the resource keys in this spec. They must not wrap `/api/files/write`. Current `sf-mcp` remains read-and-coordinate only.
+Mutation tools send the private coordinator credential and hold the resource keys in this spec. They do not wrap `/api/files/write`, auto-acquire, auto-approve, retry, or apply. Structured conflicts direct the caller to reread and create a new preview.
 
 ## Storage
 
@@ -815,7 +819,7 @@ A complete spatial-authoring workflow requires all gates below. The implemented 
 7. Two-hand evaluation order is sampled pose, primary grip, secondary IK.
 8. Diagnostics are numeric and profile-driven.
 9. Unrelated profiles concurrent; overlapping keys queue; capture lease is short and exclusive.
-10. `sf-mcp` tools, if exposed, call those operations and no other write path.
+10. `sf-mcp` attachment mutation tools call those operations and no other write path. **Implemented for preview/review/apply/undo.**
 11. The native schema and production validate/cook command harnesses pass; later capture verification must remain independent of cross-GPU exact PNG hashes. **Schema, validation, and deterministic cooker portions implemented.**
 12. Current three-bone metadata and proxy-card rendering are still described honestly wherever they remain.
 
@@ -829,12 +833,12 @@ Dependency order, with no calendar estimates. This work starts after the operati
 2. **Typed loader handles — implemented.** Generation-tagged skeleton, bone, socket, and attachment handles plus snapshot/query APIs, with transactional reload behavior and no sampling.
 3. **Read-only native validation command — implemented.** One `shader_forge_spatial` executable reuses `AnimationSystem`, emits deterministic JSON, and is exposed by CLI build and validate commands without auto-build or daemon state.
 4. **Deterministic cooker — implemented as an explicit spatial command.** `shader_forge_spatial cook` validates through `AnimationSystem` and atomically stages one complete socket/profile payload under `build/cooked/animation/`. Generic `engine bake` integration and runtime consumption remain deferred.
-5. **Spatial operations.** Preview/validate/apply/undo over `engine_sessiond` for attachment TOML only. Label candidates. No fake captures.
+5. **Spatial operations — attachment mutation implemented.** Preview/apply/undo over `engine_sessiond` for attachment TOML only, with separate review transitions and labelled candidates. Operation-scoped validate/recapture/review packets remain deferred. No fake captures.
 6. **Humanoid fixture — implemented for validation only.** Isolated humanoid, rifle, pistol, and clip fixtures plus the executable native harness now prove the schema without entering authored or cooked roots.
 7. **Sampling and procedural layers.** Native sampler, primary attachment, secondary-hand IK, diagnostics. This is the animation-runtime widening spatial authoring depends on.
 8. **Workbench and recapture.** Deterministic staging scene, explicit cameras, immutable packets, clean/optional-annotated captures. Fail closed until capture exists.
-9. **Constrained tuner.** Shell inspector plus native overlay for single-axis, numeric, snap, reset, and probe edits over the operation kinds.
-10. **`sf-mcp` adapter.** Resources and tools from this spec, only after shell and CLI already use the operations.
+9. **Constrained tuner — first shell slice implemented.** The Assets inspector edits exact primary-grip translation/rotation fields through the operation workflow. Native overlay, probes, and rendered evidence remain deferred.
+10. **`sf-mcp` adapter — attachment mutation implemented.** Process-owned identity and credentials plus explicit leases adapt preview/review/apply/undo. Typed spatial resources and validation/recapture/review tools remain deferred until their engine operations exist.
 11. **World/Assets visual polish.** Gizmos and viewport chrome may then consume the same candidate/operation contract. They must not introduce a second persistence path.
 
 If World/Assets polish starts first, it must not ship free-drag attachment editing, proxy-card reviews, or prefab-copied grips.

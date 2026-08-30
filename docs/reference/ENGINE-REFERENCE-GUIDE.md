@@ -12,6 +12,7 @@ Primary searchable sources:
 - `plans/ENGINE-IMPLEMENTATION-PLAN.md`
 - `docs/specs/ENGINE-SYSTEMS-INDEX.md`
 - `docs/specs/ENGINE-MCP-SPEC.md`
+- `docs/guides/SHADER-FORGE-MCP-SETUP.md`
 - `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`
 - `AGENTS.md`
 
@@ -23,6 +24,7 @@ Assistant entry points:
 - `plans/ENGINE-IMPLEMENTATION-PLAN.md`
 - `docs/specs/ENGINE-SYSTEMS-INDEX.md`
 - `docs/specs/ENGINE-MCP-SPEC.md`
+- `docs/guides/SHADER-FORGE-MCP-SETUP.md`
 - `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`
 
 ## Getting Started
@@ -110,7 +112,7 @@ Assistant entry points:
 - Persisted operations validate coherent applying/apply and undoing/undo effect shapes. A fabricated `applying`+`recorded` record without evaluation/artifact is skipped. `applying`+`recorded` and `undoing`+`reverted` crash windows finalize without repeating the effect. Legacy session `rootIdentity` is persisted during load.
 - `engine_sessiond` binds only loopback hosts. Non-loopback bind hosts including `0.0.0.0` and `::` are rejected until an authenticated remote mode exists.
 - Non-loopback browser Origins are rejected at the sessiond HTTP boundary. No-Origin native CLI/MCP requests and loopback shell Origins remain allowed. This is a local trust boundary, not client authentication.
-- Operation lifecycle events stream on `/api/events`. MCP mutation tools remain disabled until coordinator credentials and leases are wired through this same contract.
+- Operation lifecycle events stream on `/api/events`. `sf-mcp` spatial mutation tools now use process-owned coordinator credentials and leases through this same contract; non-spatial MCP mutation remains disabled.
 - `POST /api/operations/spatial-attachment/preview` creates a labelled generic file-write candidate only after a stale-revision precheck, isolated baseline/candidate native validation, stable source-to-profile mapping, and a granted write lease. Attachment-ID renames require both old and new canonical resource keys. Preview never writes authored or cooked data.
 - Spatial operation context (label, authoritative subject ID, resource keys, preview lease ID) survives sessiond restart; credentials never persist. Spatial apply/undo accept a renewed matching lease but re-authenticate and recheck it immediately before mutation.
 - The shell `Activity` bottom-dock tab now lists durable operations for the active workspace, reads selected public detail, refreshes from operation SSE events, and supports fixed-shell-actor Approve/Reject. It has no Apply, Undo, lease, registration, or credential path.
@@ -143,13 +145,14 @@ Assistant entry points:
 - The current resources are `shaderforge://project` and `shaderforge://coordination`.
 - Current read tools are `project_status`, `project_files_list`, `project_file_read`, and `coordination_state`.
 - Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.
-- Planned spatial resources and tools in `ENGINE-SPATIAL-AUTHORING-SPEC.md` remain adapter-only and must wire coordinator credentials and leases through the implemented spatial operations. They are not part of the current `sf-mcp` surface.
+- Current operation tools are bounded `operation_list`, `operation_read`, `spatial_attachment_preview`, separate `operation_approve` / `operation_reject`, and spatial-only `operation_apply` / `operation_undo`.
+- The MCP actor, agent id, session id, and credential come from process state. Preview/apply/undo require an owned granted write lease; apply/undo also require coverage for every persisted spatial resource key and sessiond rechecks immediately before mutation.
 - Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical writes queue through `engine_sessiond` instead of running over each other.
-- This first version is read-and-coordinate only. It does not expose file or scene writes, build/runtime mutation, arbitrary commands, or HTTP transport.
-- `engine_sessiond` now has the hardened shared file-write preview/revision/apply/undo contract, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery, and loopback-only bind, but MCP mutation tools remain disabled until they call that workflow with coordinator credentials and leases. Cooperative clients are covered; OS syscall-boundary filesystem swaps are not an adversarial security guarantee.
+- The mutation surface is limited to semantic spatial attachments. Generic file/scene/code writes, build/runtime mutation, arbitrary commands, and HTTP transport remain excluded.
+- `sf-mcp` never calls `/api/files/write`, accepts caller-provided identity or credentials, or automatically leases, approves, retries, applies, undoes, or releases. Structured 409 results preserve safe conflict data plus a refreshed authoritative operation when available.
 - Shader Forge MCP does not contain a built-in assistant, model execution, provider picker, or prompt UI. External clients own the AI experience.
-- Run `npm run test:mcp` for the deterministic stdio, resource, tool, file-boundary, coordination, and disconnect-cleanup harness.
-- See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and current widening gate.
+- Run `npm run test:mcp` for deterministic stdio, boundary, coordination, full spatial operation, structured-conflict, and disconnect-cleanup coverage.
+- See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and `docs/guides/SHADER-FORGE-MCP-SETUP.md` for Codex/Grok setup.
 
 ### Engine CLI Surfaces
 
@@ -286,7 +289,7 @@ Assistant entry points:
 - Preview candidates must be labelled. Cooked data is derived and non-editable. Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.
 - Two-hand weapons use dominant-hand item drive then off-hand IK. VLM or visual scores never apply.
 - In `Assets`, profile selection is read-only until `Begin tuning` requests `spatial/attachment/<id>`. The source is refreshed after grant; only primary-grip translation and degree-displayed rotation are editable. Preview is visibly `NOT APPLIED`, Approve and Apply are separate, Apply releases coordination, and Undo reacquires a fresh lease. All writes use the semantic operation path, never raw file write.
-- Prefab existence, joint/capsule parsing, generic `engine bake` and runtime-consumption integration, sampling, IK, rendering/capture, review packets, and `sf-mcp` spatial tools remain deferred.
+- `sf-mcp` now exposes the lease-gated attachment preview/review/apply/undo workflow. Prefab existence, joint/capsule parsing, generic `engine bake` and runtime-consumption integration, sampling, IK, rendering/capture, review packets, and typed MCP validate/recapture/review tools remain deferred.
 - Implementation is ordered after the existing operation layer and before broad World/Assets visual polish.
 
 ### Physics Foundation
@@ -343,7 +346,7 @@ Assistant entry points:
 - A first CLI and shell/sessiond profiling lane that captures workspace diagnostics plus live runtime/build log context into JSON reports under `build/profiling/captures/`.
 - A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, and now converts the current fixtures into first-pass Shader Forge project skeletons.
 - A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.
-- A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. MCP exposure of that workflow is still the next credential/lease gate. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+- A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. `sf-mcp` now consumes its lease-gated spatial attachment family; other MCP operation families still require equivalent resource-key contracts. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
 - A native spatial schema/query/cook slice with compatible v1 skeletons, strict v2 skeleton/socket and v1 attachment validation, generation-safe handles, isolated fixtures, deterministic validation, and an atomic derived payload.
 - A searchable in-app guide plus repo-native markdown and JSON assistant guides.
 
@@ -357,10 +360,10 @@ Assistant entry points:
 - The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.
 - Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.
 - Animation still needs the real sampling/blending backend, graph-parameter control, root-motion application, and preview tooling on top of the new authored graph-definition lane.
-- Spatial authoring still needs prefab-catalog and joint/capsule integration, generic bake/runtime consumption, sampling, IK, attachment rendering/capture, validate/recapture/review-packet operations, and MCP tools beyond the constrained shell tuner.
+- Spatial authoring still needs prefab-catalog and joint/capsule integration, generic bake/runtime consumption, sampling, IK, attachment rendering/capture, validate/recapture/review-packet operations, and their typed MCP tools beyond the implemented attachment mutation adapter.
 - Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.
 - Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.
 - Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.
-- Activity still needs an explicit public exact-diff/evidence contract and safe coordination before it can apply or undo; MCP mutation tools likewise still need coordinator credentials and leases before exposure. Scene and asset operations are not in this slice.
+- Activity still needs an explicit public exact-diff/evidence contract and safe coordination before it can apply or undo. Non-spatial MCP mutation likewise needs engine-owned resource keys and lease enforcement; scene and general asset operations are not in this slice.
 - Profiling still needs Tracy/RenderDoc integration, GPU and memory diagnostics, native profiling panels, and deeper performance-regression workflows beyond the current diagnostics snapshot lane.
 - Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels.

@@ -18,6 +18,7 @@ Rules:
 | --- | --- | --- |
 | `scripts/test-engine-shell-smoke.mjs` | Serves `shell/engine-shell/web`, validates the shell assets load, and verifies the preserved inline file search plus current shell scene-authoring controls remain present in source | deterministic |
 | `scripts/test-engine-sessiond.mjs` | Starts the local backend in-process, creates a project session, and validates safe file list/read behavior over HTTP | deterministic |
+| `scripts/test-engine-mcp.mjs` | Starts sessiond plus the real stdio `sf-mcp`, validates resources/read tools, coordinator lifecycle, queued/owned leases, lease-gated spatial preview/review/apply/undo, selected-session boundaries, structured conflicts, generic-mutation refusal, and cleanup | deterministic |
 | `scripts/test-engine-viewer-bridge.mjs` | Starts the local backend in-process, validates viewer-bridge SSE/runtime/build flows, and checks the shell bridge surfaces remain present | deterministic |
 | `scripts/test-engine-scene-authoring.mjs` | Starts the local backend in-process, validates the shell scene-authoring surface stays present, and checks deterministic scene, prefab, placed-entity, transform, and prefab-component file writes inside a session root | deterministic |
 | `scripts/test-engine-scene-runtime-scaffold.mjs` | Validates the first Phase 6 scene-runtime composition slice, controlled-entity runtime hooks, and fallback syntax-only compilation of the widened native runtime sources | deterministic |
@@ -44,6 +45,8 @@ Rules:
 npm test
 node scripts/test-engine-shell-smoke.mjs
 node scripts/test-engine-sessiond.mjs
+npm run test:mcp
+node scripts/test-engine-mcp.mjs
 node scripts/test-engine-viewer-bridge.mjs
 npm run test:scene-authoring
 node scripts/test-engine-scene-authoring.mjs

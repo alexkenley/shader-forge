@@ -1,6 +1,6 @@
 # Shader Forge MCP Spec
 
-Status: first read-and-coordinate slice
+Status: read, coordinate, and lease-gated spatial mutation slice
 
 Date: 2026-08-30
 
@@ -64,6 +64,18 @@ Coordination tools:
 - `work_lease_release` releases a lease owned by the current process agent
 - `agent_heartbeat` refreshes the current process agent explicitly; the server also heartbeats automatically
 
+Operation tools:
+
+- `operation_list` returns a bounded recent operation view for the selected workspace
+- `operation_read` returns one selected-workspace operation without staged file contents
+- `spatial_attachment_preview` validates a full attachment candidate and records a no-write preview under an owned granted write lease
+- `operation_approve` and `operation_reject` perform separate review transitions; neither applies file bytes
+- `operation_apply` and `operation_undo` accept only spatial attachment operations and require an owned granted write lease covering every persisted resource key
+
+The MCP actor is fixed from the process coordinator registration as `kind: mcp`. Tool callers cannot provide an actor, agent id, or credential. Preview, apply, and undo heartbeat first, verify the process-owned lease view, then send the private credential to `engine_sessiond`, which repeats the authoritative lease, resource, revision, workspace, state, and policy checks.
+
+Operation failures are structured MCP error results. HTTP status, safe code/diagnostic/conflict/lease/operation/approval/code-trust fields, and a refreshed authoritative operation on transition conflicts are retained without exposing request bodies, headers, staged content, or credentials. Conflict recovery is explicit: reread the source and operation, then create a new preview. The adapter never retries or applies automatically.
+
 Tool results are structured, bounded to the selected workspace, and do not expose the coordinator credential.
 
 ## Multi-Agent Use
@@ -81,17 +93,17 @@ This is the engine-native equivalent of the buddy-system orchestrator: agents re
 
 ## Current Safety Boundary
 
-The first version is intentionally read-and-coordinate only.
+The current mutation boundary is deliberately limited to the implemented semantic spatial attachment operation.
 
 It does not expose:
 
-- file, scene, entity, asset, or code mutations
+- generic file, scene, entity, asset, or code mutations
 - build, cook, package, or runtime mutation
 - shell, PTY, or arbitrary command execution
 - an HTTP MCP endpoint
 - built-in model execution, assistant chat, prompts, or provider selection
 
-Write and exclusive-operation tools land only after they call the shared engine-owned operation contracts. The hardened file-write contract now exists in `engine_sessiond`; MCP still does not expose it. Authenticated MCP actor identity plus coordinator credential and lease enforcement is the next exposure gate. A lease grants coordination ownership; it is not authority to bypass those contracts.
+`sf-mcp` never calls `POST /api/files/write`. Its first mutation tools adapt the same spatial preview/review/apply/undo workflow already used by the CLI and Assets tuner. Generic operations have no persisted lease context, so MCP apply/undo rejects them even if the caller supplies a lease id. A lease grants coordination ownership; it is not authority to bypass the operation journal, revision checks, native validation, approval state, or code-trust policy.
 
 ## Verification
 
@@ -103,6 +115,10 @@ The deterministic MCP harness must:
 - enumerate and call the documented resources and tools
 - verify file reads stay inside the session root
 - verify coordinator registration, lease use, and disconnect cleanup
+- verify queued, foreign, released, and resource-mismatched lease refusal
+- verify no-write spatial preview, MCP actor provenance, explicit approve/apply/undo/reject, and exact restored bytes
+- verify selected-session operation boundaries and rejection of generic apply/undo
+- verify structured revision and transition conflict recovery without credential leakage
 - verify stdout contains protocol messages only
 - shut down all child processes cleanly
 
@@ -110,11 +126,11 @@ Run it with `npm run test:mcp`.
 
 ## Next Widening Gate
 
-`engine_sessiond` now owns a hardened revision-safe text-file write operation contract (preview, revision hashes, structured conflict, journaled apply/undo, journaled code-trust effects, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filter). All supported mutations, including CLI provenance promote/quarantine, go through that sessiond mutation authority and the serialized SessionStore lane; artifact files use atomic replacement, and workspace identity is path plus filesystem identity. That contract is not yet exposed through MCP tools. The next MCP slice should add mutation tools only by calling those shared engine-owned operations with coordinator credentials and leases, not by wrapping `/api/files/write` or opening a second write path. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` itself still refuses non-loopback bind hosts such as `0.0.0.0` and `::`. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+The next MCP widening requires an engine-owned coordinated context for each additional operation family. Do not expose generic file apply/undo while context-free file operations lack persisted resource keys and authoritative lease checks. Scene, asset, build, runtime, validation, and review-packet tools land only after their matching sessiond operations define those keys and policies. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` remains loopback-only. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
 
 ## Planned Spatial Authoring Adapter
 
-Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md) and is not implemented. `sf-mcp` remains adapter-only. Spatial resources and tools are forbidden until engine spatial operations exist and shell/CLI already call them.
+Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). The first attachment preview/review/apply/undo operation is implemented and now exposed through `sf-mcp`; rendered validation, capture, and immutable review packets remain deferred. `sf-mcp` remains adapter-only.
 
 Planned resources after that gate:
 
@@ -122,15 +138,21 @@ Planned resources after that gate:
 - `shaderforge://spatial/attachment/{attachmentId}`
 - `shaderforge://spatial/review/{reviewId}`
 
-Planned tools after that gate:
+Implemented tools:
 
-- `spatial_attachment_read`
 - `spatial_attachment_preview`
+- `operation_approve`
+- `operation_reject`
+- `operation_apply`
+- `operation_undo`
+
+Planned after matching sessiond operations exist:
+
+- `spatial_attachment_read` as a typed view beyond the existing project-file read
 - `spatial_attachment_validate`
 - `spatial_review_read`
 - `spatial_review_recapture`
-- generic `operation_approve`
-- generic `operation_apply`
-- generic `operation_undo`
 
-Those tools must use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. Capture also holds the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.
+Current mutation tools use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. Capture will also hold the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.
+
+See [SHADER-FORGE-MCP-SETUP.md](../guides/SHADER-FORGE-MCP-SETUP.md) for Codex and Grok CLI registration and verification.

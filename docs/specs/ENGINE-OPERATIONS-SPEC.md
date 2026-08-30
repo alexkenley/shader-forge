@@ -8,9 +8,9 @@ Date: 2026-08-30
 
 Shader Forge mutations must be previewable, revision-checked, attributable, atomically applied, and undoable before shell, CLI, and MCP clients share a write path.
 
-This spec is the canonical contract for engine-owned operations. The implemented slice is a workspace-scoped text-file write workflow owned by `engine_sessiond`. It is the shared backend for later Activity/Changes UI and later MCP mutation tools. It does not replace `POST /api/files/write`.
+This spec is the canonical contract for engine-owned operations. The implemented slice is a workspace-scoped text-file write workflow owned by `engine_sessiond`. It is the shared backend for Activity review, the spatial CLI and Assets tuner, and the first lease-gated `sf-mcp` spatial mutation tools. It does not replace `POST /api/files/write`.
 
-MCP exposure remains disabled until coordinator credentials and leases are wired as the next exposure gate. `sf-mcp` stays read-and-coordinate only. Actor strings recorded on operations are local provenance, not cryptographic attribution.
+`sf-mcp` exposes only the spatial attachment operation family because it has durable resource keys and authoritative lease checks. Generic MCP file apply/undo remains disabled. Actor strings recorded on operations are local provenance, not cryptographic attribution.
 
 ## Current Implemented Slice
 
@@ -169,19 +169,27 @@ The event log is append-only. Apply/undo failure and recovery never replace or d
 
 The bind-host and Origin checks are a local trust boundary. They are not cryptographic client authentication and do not attribute actors.
 
-MCP mutation tools remain disabled until coordinator credentials and leases are wired through the same operation contract.
+MCP spatial mutation tools now wire process-owned coordinator credentials and leases through this same operation contract. Other operation families remain disabled until they define equivalent durable resource keys and authoritative checks.
 
 ## Spatial CLI Adapter
 
 The implemented `engine spatial preview|approve|reject|apply|undo` commands are thin clients of these HTTP routes. Preview reads a strict BOM-free UTF-8 `--content-file` and sends full candidate content; it never writes the source file. Preview/apply/undo read the coordinator credential only from `SHADER_FORGE_AGENT_CREDENTIAL`, while agent and lease IDs remain explicit arguments. Approve/reject are lease-free review transitions. Every command uses the fixed CLI actor and prints the returned JSON.
 
-The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. MCP mutations, operation-scoped spatial validation, capture, diagnostics, and review packets remain deferred.
+The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. `sf-mcp` now adapts the same spatial preview/review/apply/undo routes with its process-owned agent and credential; operation-scoped spatial validation, capture, diagnostics, and review packets remain deferred.
 
 ## Spatial Shell Adapter
 
 The `Assets` workspace now adapts the same semantic spatial preview and generic transitions. It never calls `/api/files/write`. File selection is read-only; explicit `Begin tuning` registers the fixed shell actor and requests the exact attachment write lease. Source is reread after grant, and each preview/apply/undo heartbeats the agent and rechecks the live lease immediately before the request.
 
 Candidate values are labelled `NOT APPLIED`. Approve and Apply are separate buttons, Reject is available before apply, and editing locks after preview. Apply releases the lease and disconnects instead of holding coordination indefinitely. Undo explicitly reacquires a fresh lease covering the operation resource keys. The opaque credential exists only in memory and the credential header; client errors preserve status/code/diagnostic/conflict while redacting it.
+
+## Spatial MCP Adapter
+
+The process-scoped `sf-mcp` server exposes `operation_list`, `operation_read`, `spatial_attachment_preview`, `operation_approve`, `operation_reject`, `operation_apply`, and `operation_undo` over this same contract. Session id, MCP actor, coordinator agent id, and credential come from process state rather than model-provided arguments.
+
+Preview, apply, and undo heartbeat and inspect the process-owned lease before calling sessiond. Apply and undo accept only spatial attachment operations, require coverage for every persisted `context.resourceKeys` entry, and are rechecked authoritatively inside sessiond immediately before mutation. Operation ids are resolved against the process-selected workspace before every transition. A 409 returns safe structured conflict data plus a refreshed authoritative operation when available; the adapter does not retry, approve, apply, undo, acquire, or release implicitly.
+
+Generic file-write apply/undo remains unavailable through MCP because context-free file operations do not persist authoritative lease resource keys. The adapter never calls `POST /api/files/write`.
 
 ## Activity Shell Adapter
 
@@ -206,7 +214,7 @@ Payloads are operation views. They do not include file contents or credentials.
 
 Operations reuse `SessionStore` path resolution. Symlinks and junctions cannot escape the session root. This slice does not introduce a second path resolver.
 
-`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, exact public diffs, Activity apply/undo coordination, and MCP mutation tools are later slices.
+`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, exact public diffs, Activity apply/undo coordination, and non-spatial MCP mutation tools are later slices.
 
 ## Persistence Validation
 
