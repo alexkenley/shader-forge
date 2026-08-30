@@ -111,3 +111,26 @@ Run it with `npm run test:mcp`.
 ## Next Widening Gate
 
 `engine_sessiond` now owns a hardened revision-safe text-file write operation contract (preview, revision hashes, structured conflict, journaled apply/undo, journaled code-trust effects, immutable workspace identity, append-only recovery provenance, loopback-only bind, local Origin filter). All supported mutations, including CLI provenance promote/quarantine, go through that sessiond mutation authority and the serialized SessionStore lane; artifact files use atomic replacement, and workspace identity is path plus filesystem identity. That contract is not yet exposed through MCP tools. The next MCP slice should add mutation tools only by calling those shared engine-owned operations with coordinator credentials and leases, not by wrapping `/api/files/write` or opening a second write path. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` itself still refuses non-loopback bind hosts such as `0.0.0.0` and `::`. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+
+## Planned Spatial Authoring Adapter
+
+Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md) and is not implemented. `sf-mcp` remains adapter-only. Spatial resources and tools are forbidden until engine spatial operations exist and shell/CLI already call them.
+
+Planned resources after that gate:
+
+- `shaderforge://spatial/skeleton/{skeletonId}`
+- `shaderforge://spatial/attachment/{attachmentId}`
+- `shaderforge://spatial/review/{reviewId}`
+
+Planned tools after that gate:
+
+- `spatial_attachment_read`
+- `spatial_attachment_preview`
+- `spatial_attachment_validate`
+- `spatial_review_read`
+- `spatial_review_recapture`
+- generic `operation_approve`
+- generic `operation_apply`
+- generic `operation_undo`
+
+Those tools must use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. Capture also holds the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.

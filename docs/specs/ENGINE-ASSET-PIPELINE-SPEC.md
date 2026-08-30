@@ -30,6 +30,8 @@ The current first slice in the repo now includes:
 - staged cooked physics layer, material, and body metadata under `build/cooked/physics/`
 
 The animation lane also validates clip-to-skeleton, graph-to-clip, graph entry-state, and clip `audio_event` bindings during bake so later runtime sampling work can rely on a real staged catalog instead of ad-hoc file discovery.
+
+Planned spatial authoring adds cooked skeleton-socket and attachment-profile tables under `build/cooked/animation/`; generated review packets under `build/spatial-reviews/<review-id>/` remain non-authored artifacts. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).
 The physics lane validates layer/material/body relationships and preserves primitive-query metadata in the cooked layout so later backend integration can replace the implementation without changing authored roots or tool paths.
 The prefab lane now validates `procgeo` and `effect` component references and stages those component payloads into cooked prefab outputs so later runtime composition can target a stable cooked shape.
 

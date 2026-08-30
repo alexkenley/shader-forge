@@ -29,6 +29,7 @@ The current runtime slice is the first real native bring-up pass:
 - engine-owned audio loading from `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml`
 - runtime startup now resolves a `runtime_boot` audio event and logs engine-owned audio event requests such as `ui_accept`
 - engine-owned animation loading from `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml`
+- the current animation load path is metadata-only: `debug_humanoid` is a three-bone `hips, spine, head` list with no sockets, no attachment profiles, and no pose sampling. Planned spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md) and is not implemented
 - runtime startup now resolves a default animation graph, logs animation graph/state/event catalog data, and routes entry-clip `audio_event` hooks through the engine-owned audio-event API
 - movement can now drive a first runtime animation-state lane by resolving authored named graph states such as `idle` and `walk`, with walk clip `audio_event` hooks firing during movement-driven playback
 - engine-owned physics loading from `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml`
@@ -62,6 +63,8 @@ The current runtime slice is the first real native bring-up pass:
 Current boundary:
 
 - the runtime now has first visible composed-scene rendering through projected debug proxies, but not a full mesh/material/shader pipeline yet
+- those debug-proxy cards are not spatial-review evidence and must not be captured as attachment-tuning screenshots
+- planned spatial authoring needs a later sampling/IK/capture path in this native process; it does not add a second daemon
 - the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, first projected physics-debug lane, first multi-slot quick-save/quick-load lane, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, full world-state persistence, or deeper mounted-project/package layering yet
 - Dear ImGui-native panels, real asset-backed geometry submission, and player-facing game UI are still later widening passes
 

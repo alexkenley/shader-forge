@@ -48,6 +48,7 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 - input subsystem
 - audio subsystem
 - animation subsystem
+- spatial authoring and attachment-tuning subsystem (planned; spec only)
 - physics subsystem
 - tooling UI subsystem
 - game UI subsystem
@@ -71,6 +72,7 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 - [Engine Input Spec](../docs/specs/ENGINE-INPUT-SPEC.md): Phase 4.2 and Phase 6 gameplay integration
 - [Engine Audio Spec](../docs/specs/ENGINE-AUDIO-SPEC.md): Phase 5.7
 - [Engine Animation Spec](../docs/specs/ENGINE-ANIMATION-SPEC.md): Phase 5.72
+- [Engine Spatial Authoring Spec](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md): Phase 5.73 planned spatial authoring and attachment tuning; specified, not implemented
 - [Engine Physics Spec](../docs/specs/ENGINE-PHYSICS-SPEC.md): Phase 5.74 and Phase 6
 - [Engine Renderer Spec](../docs/specs/ENGINE-RENDERER-SPEC.md): Phase 3 renderer bring-up, Phase 5 shader-toolchain work, and Phase 6 materials/shaders
 - [Engine Sessiond Spec](../docs/specs/ENGINE-SESSIOND-SPEC.md): Phase 2 and Phase 4 coordination surfaces
@@ -104,6 +106,7 @@ Current implementation status:
 - Phase 5.85 has now started through an explicit Unreal offline fallback lane with raw-project detection, lower-confidence migration-lane reporting, Blueprint package-name manifests, and dedicated fixture coverage.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph plus named-state resolution, and staged cooked animation metadata.
+- Phase 5.73 is planned, not started: the spatial-authoring and attachment-tuning contract now lives in `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`. Implementation is ordered after the existing operation layer and before broad World/Assets visual polish. Current animation remains three-bone `debug_humanoid` metadata with no sockets, sampling, or attachment profiles.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, first projected physics debug visualization, and staged cooked physics metadata.
 - Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
 - Phase 5.9 has now started through source-controlled AI provider manifests, a shared provider inspection/smoke-test core, deterministic fake-provider coverage, an optional local Ollama inspection path, shell/sessiond/CLI AI inspection surfaces, and a dedicated deterministic scaffold harness.
@@ -162,6 +165,7 @@ Where the build is currently up to:
 - Phase 5.85 groundwork now exists through an explicit Unreal offline fallback lane with raw-project `.uproject`/`.umap` detection plus low-confidence Blueprint package manifests, but real `.uasset` graph parsing, exporter-manifest ingestion, and richer actor/component extraction still remain
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs plus runtime-side default-graph and named-state resolution, first movement-driven runtime state selection, and animation-event-to-audio-event hooks, but no real sampling/blending backend, graph-parameter control, root-motion application, or preview tooling exists yet
+- Phase 5.73 spatial authoring is specified and not implemented. There are no attachment profiles, skeleton sockets, review packets, or spatial captures. The current three-bone metadata skeleton and projected debug-proxy cards are not that workbench.
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
 - Phase 5.9 groundwork now exists through source-controlled provider manifests, shared provider inspection plus smoke-test execution, deterministic fake coverage, optional Ollama readiness checks, and shell/sessiond/CLI inspection surfaces, but queued request lifecycle, hosted-provider execution, budgets, tool/skill registries, and gameplay-facing/native-assistant integration still remain
@@ -532,6 +536,41 @@ Implemented first slice:
 - `engine bake` scanning plus staged cooked animation output under `build/cooked/animation/`
 - deterministic `scripts/test-engine-animation-scaffold.mjs` coverage plus widened runtime and asset-pipeline harnesses
 
+## Phase 5.73: Spatial Authoring And Attachment Tuning
+
+Goal:
+- establish one authored-truth contract for skeleton sockets, attachment profiles, pose-stable review packets, and constrained attachment tuning so native runtime, cooked data, shell, CLI, and `sf-mcp` share the same assets
+
+Status:
+- specified, not implemented
+- canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md)
+- depends on the existing `engine_sessiond` revision-safe operation layer
+- must land its contract-sensitive slices before broad World/Assets visual polish invents a second grip path
+
+Scope:
+- skeleton schema version 2 with explicit bone hierarchy, semantic roles, and sockets
+- `animation/attachments/*.attachment.toml` profiles with primary grip, optional secondary-hand IK target/pole/tolerances, and named motion-envelope phases
+- typed native handles, validator/loader/cooker
+- immutable `reviewId` packets with explicit cameras instead of cursor/camera scraping
+- preview/validate/approve/apply/recapture/undo over existing operations
+- hierarchical leases for skeleton/socket/attachment/review/runtime-capture
+- `sf-mcp` adapter resources/tools only after engine operations exist
+- deterministic harness with a real humanoid bone chain and two-hand weapon, not `debug_humanoid`'s three-bone list
+
+Current boundary this phase must not paper over:
+
+- `debug_humanoid` is still `hips, spine, head` metadata
+- `AnimationSystem` does not sample poses or evaluate IK
+- the runtime still draws projected debug-proxy cards, which are not spatial-review captures
+- shell `Review` is still a discard-only scene stance, not a spatial review packet
+- screenshot capture and `sf-mcp` mutation tools are still deferred
+
+Exit criteria:
+- the acceptance gates in the spatial-authoring spec pass for the implemented slice
+- attachment values live in source-controlled TOML, not C++ constants, prefab copies, or hidden editor databases
+- visual scores never apply
+- unrelated profiles can proceed concurrently while overlapping edits queue
+
 ## Phase 5.74: Physics And Collision
 
 Goal:
@@ -596,6 +635,7 @@ Current checkpoint now implemented:
 Still ahead inside this phase:
 - transform gizmos, in-viewport manipulation, and broader scene/component payload authoring
 - procedural bake-back into editable scene subtrees or reusable prefabs
+- World/Assets visual polish must not ship attachment or held-item editing that bypasses [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) or copies grip fields into prefabs
 
 Reference inputs:
 - for authoring UX and prefab/scene editing patterns, consult the [Godot guide](../docs/guides/ENGINE-GODOT-BORROW-GUIDE.md), [Fyrox guide](../docs/guides/ENGINE-FYROX-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), [Stride guide](../docs/guides/ENGINE-STRIDE-BORROW-GUIDE.md), the [s&box borrow guide](../docs/guides/ENGINE-SBOX-BORROW-GUIDE.md), and the [Hell2025 borrow plan](../docs/guides/ENGINE-HELL2025-BORROW-PLAN.md)
@@ -932,17 +972,18 @@ Every major subsystem needs:
 8. assets and procedural geometry
 9. audio system
 10. animation system
-11. physics and collision
-12. project migration foundation
-13. level authoring
-14. source-engine conversion
-15. offline Unreal fallback
-16. code access, trust, and hot reload safety
-17. reusable AI subsystem
-18. game-ready loop
-19. save and runtime persistence
-20. packaging and export
-21. profiling, diagnostics, and performance
+11. spatial authoring and attachment tuning (planned; after the operation layer, before broad World/Assets visual polish)
+12. physics and collision
+13. project migration foundation
+14. level authoring
+15. source-engine conversion
+16. offline Unreal fallback
+17. code access, trust, and hot reload safety
+18. reusable AI subsystem
+19. game-ready loop
+20. save and runtime persistence
+21. packaging and export
+22. profiling, diagnostics, and performance
 
 ## Current Focus
 
@@ -957,6 +998,7 @@ Current build target:
 - Phase 5.6 start: extend migration detection into actual content mapping and provenance-backed conversion fixtures without claiming parity early
 - Phase 5.7 start: widen the authored-audio lane into real playback, bus control, and preview tooling without skipping the engine-owned event API
 - Phase 5.72 start: widen the authored-animation lane into real sampling, graph-parameter control, root motion, and preview tooling without discarding the text-backed graph/event contracts
+- Phase 5.73 planned: implement spatial authoring from the new spec after operations and sampling prerequisites, and before World/Assets visual polish copies grips into prefabs or gizmos. Do not treat the current three-bone metadata slice as that work.
 - Phase 5.74 start: widen the authored-physics lane into a real backend, sweeps, debug draw, and gameplay-facing body control without discarding the text-backed layer/material/body contracts
 - Phase 5.9 start: widen the new provider/status/test foundation into queued requests, hosted-provider execution, budgets, and shared tool/skill registries while staying behind the Phase 5.95 trust boundary for risky assistant actions
 - Phase 5.95 continuation: widen the new code-trust lane from hash-backed verification and promote/quarantine controls into signed artifacts, stronger plugin verification, and explicit hotload contracts before Phase 5.9 assistant workflows expand

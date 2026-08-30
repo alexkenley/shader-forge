@@ -36,12 +36,14 @@ Recommended first artifacts:
 - `animation/clips/<name>.anim.toml`
 - `animation/graphs/<name>.animgraph.toml`
 - `animation/masks/<name>.mask.toml`
+- `animation/attachments/<name>.attachment.toml` once spatial authoring is implemented
 
 Authoring rules:
 
 - animation clips, graph states, transitions, events, masks, and procedural-layer settings live in text assets
 - gameplay code should drive graph parameters and named animation events rather than hardcoding opaque animation state
 - shell, CLI, and future native tools should be able to preview and inspect the same assets
+- later spatial attachment edits must use the same assets through `engine_sessiond` operations rather than a private editor or MCP write path
 - imported clips may exist, but imported data must be editable, overridable, or replaceable inside Shader Forge
 - native code or structured CLI flows should be able to generate repetitive graph setup and procedural layers
 
@@ -55,6 +57,7 @@ Authoring rules:
 - root motion extraction and application hooks
 - animation events and notifies
 - procedural layers such as look-at, aim, IK, or recoil correction
+- skeleton sockets and attachment-profile evaluation once spatial authoring lands
 - runtime graph-parameter control
 - deterministic cook metadata for runtime loading
 
@@ -91,6 +94,8 @@ The current Phase 5.72 slice now exists as a first engine-owned animation founda
 
 This is still a widening slice, not the final animation runtime. There is not yet a real sampling/blending backend, broader graph-parameter mutation from gameplay, root-motion application, retargeting, or native preview tooling.
 
+The current skeleton lane is three-bone metadata only: `debug_humanoid` stores `hips, spine, head` with no parent table, rest pose, semantic roles, or sockets. Attachment profiles, two-hand IK, review packets, and spatial capture are specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md) and are not implemented. That contract is planned/foundational. It must not be satisfied by presenting the current metadata skeleton or projected debug-proxy cards as an attachment tuner.
+
 ## Later Scope
 
 Later animation work should add:
@@ -103,6 +108,8 @@ Later animation work should add:
 - keyframe/timeline editing UI
 - animation debugging overlays, scrubbers, and per-bone inspection
 - tighter shell/native-tool preview and edit workflows
+- skeleton schema version 2 with explicit bone hierarchy, semantic roles, and sockets
+- attachment-profile evaluation, dominant-hand item drive, secondary-hand IK, and spatial review packets as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
 
 ## Runtime Model
 
@@ -126,6 +133,7 @@ Source path:
 
 - text-backed animation assets under `animation/`
 - optional imported animation sources under project content roots
+- planned attachment profiles under `animation/attachments/` as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md); that root is not in the repo yet
 
 Cook path:
 
@@ -133,6 +141,7 @@ Cook path:
 - resolve clip and skeleton references
 - emit cooked runtime animation tables and clip data
 - preserve deterministic identifiers for states, parameters, and events
+- later cook socket tables and attachment profiles into `build/cooked/animation/`; generated spatial reviews stay under `build/spatial-reviews/` and are not authored source
 
 SQLite may track indexing and preview metadata, but not replace text-backed authored animation assets.
 
@@ -166,7 +175,8 @@ The animation system should expose structured operations through CLI and future 
 
 - Phase 5.5 establishes the text-data and cook foundations animation depends on
 - Phase 5.72 introduces the engine animation subsystem
-- Phase 5.75 and later authoring work should expose animation preview and asset editing
+- Phase 5.73 is the planned spatial-authoring and attachment-tuning contract; it is specified, not implemented, and depends on the existing operation layer plus later sampling
+- Phase 5.75 and later authoring work should expose animation preview and asset editing, but broad World/Assets visual polish must not invent a second attachment-truth path
 - Phase 6 integrates animation deeply with gameplay, audio, VFX, and runtime tools
 
 ## Non-Goals

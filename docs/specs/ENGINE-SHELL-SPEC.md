@@ -107,6 +107,18 @@ Current implemented bridge surfaces:
 
 The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.
 
+## Planned Spatial Authoring Surface
+
+Spatial authoring is a planned/foundational contract, not a current shell workspace. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).
+
+When it lands, the shell inspects and tunes the same `animation/skeletons/*.skeleton.toml` and `animation/attachments/*.attachment.toml` files as CLI and `sf-mcp`, only through `engine_sessiond` revision-safe operations. Preview candidates must be visibly labelled. Humans and agents share a `reviewId` and an immutable review packet with explicit cameras; the shell must not scrape the live World camera, cursor, or selection to invent that packet.
+
+This surface must not:
+
+- ship as part of broad World/Assets visual polish before the spatial operation kinds exist
+- add a built-in assistant, VLM apply button, or provider-specific Saved/Codex capture path
+- write attachment bytes through a private file-write path that bypasses operations once spatial operations exist
+
 ## Preservation Rule
 
 The preserved code-editor implementation under `shell/engine-shell/web/` is the compatibility baseline.
@@ -142,5 +154,6 @@ The shell should eventually talk to:
 - `engine_runtime` through structured runtime control and viewer protocols
 - `engine_cli` through normal shell terminals and explicit command surfaces
 - a process-scoped MCP adapter backed by engine-owned multi-agent coordination, revision checks, change previews, validation, and approval policies
+- later spatial-authoring inspection and constrained tuning over the same `engine_sessiond` operations used by CLI and `sf-mcp`, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). That surface is planned, not implemented.
 
 The shell should not be reused as the native tooling UI layer or the shipped in-game UI framework.

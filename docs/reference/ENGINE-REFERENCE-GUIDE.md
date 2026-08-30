@@ -12,6 +12,7 @@ Primary searchable sources:
 - `plans/ENGINE-IMPLEMENTATION-PLAN.md`
 - `docs/specs/ENGINE-SYSTEMS-INDEX.md`
 - `docs/specs/ENGINE-MCP-SPEC.md`
+- `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`
 - `AGENTS.md`
 
 Assistant entry points:
@@ -22,6 +23,7 @@ Assistant entry points:
 - `plans/ENGINE-IMPLEMENTATION-PLAN.md`
 - `docs/specs/ENGINE-SYSTEMS-INDEX.md`
 - `docs/specs/ENGINE-MCP-SPEC.md`
+- `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`
 
 ## Getting Started
 
@@ -32,6 +34,7 @@ Assistant entry points:
 - Use `shell/engine-shell/src/reference-guide.ts` as the shell adapter that imports the structured guide data.
 - Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.
 - Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.
+- Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the planned skeleton-socket and attachment-tuning contract. It is specified, not implemented.
 - Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline.
 
 ### Assistant Lookup Workflow
@@ -135,6 +138,7 @@ Assistant entry points:
 - The current resources are `shaderforge://project` and `shaderforge://coordination`.
 - Current read tools are `project_status`, `project_files_list`, `project_file_read`, and `coordination_state`.
 - Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.
+- Planned spatial resources and tools in `ENGINE-SPATIAL-AUTHORING-SPEC.md` are adapter-only and must wait until engine spatial operations exist. They are not part of the current `sf-mcp` surface.
 - Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical writes queue through `engine_sessiond` instead of running over each other.
 - This first version is read-and-coordinate only. It does not expose file or scene writes, build/runtime mutation, arbitrary commands, or HTTP transport.
 - `engine_sessiond` now has the hardened shared file-write preview/revision/apply/undo contract, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery, and loopback-only bind, but MCP mutation tools remain disabled until they call that workflow with coordinator credentials and leases. Cooperative clients are covered; OS syscall-boundary filesystem swaps are not an adversarial security guarantee.
@@ -213,6 +217,7 @@ Assistant entry points:
 - `content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.
 - `audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.
 - `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes.
+- `animation/attachments/*.attachment.toml` is the planned spatial-authoring attachment-profile lane. It is specified, not present in the repo.
 - `physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml` are the initial authored physics lanes.
 - `saved/runtime/*.runtime-save.toml` is now the initial runtime-persistence lane and is intentionally separate from authored source assets.
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
@@ -253,9 +258,22 @@ Assistant entry points:
 ### Animation Foundation
 
 - `animation/skeletons/*.skeleton.toml` defines named authored skeletons with root-bone and bone-list metadata.
+- The current `debug_humanoid` skeleton is three-bone metadata only: `hips, spine, head`. There is no parent table, rest pose, semantic role map, or socket list.
 - `animation/clips/*.anim.toml` defines named clips with skeleton ownership, looping/root-motion metadata, and text-backed clip events.
 - `animation/graphs/*.animgraph.toml` defines named animation graphs with float parameters, named states, and explicit entry-state selection.
 - The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet.
+
+### Spatial Authoring And Attachment Tuning
+
+- Spatial authoring is a planned/foundational contract, not an implemented workbench. See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md`.
+- Native engine code will own behavior, typed schemas, validation, and runtime execution. Source-controlled TOML will own tuning values. Shell, CLI, and `sf-mcp` will edit those same assets only through `engine_sessiond` revision-safe operations.
+- Planned authored roots are `animation/skeletons/*.skeleton.toml` schema version 2 with sockets, plus `animation/attachments/*.attachment.toml`.
+- Humans and agents will share one `reviewId` and an immutable review packet with explicit cameras, resolution/framing, lighting, pose samples, source revisions, evaluated transforms/bounds, diagnostics, captures, operation id, and all lease ids. Do not scrape a live cursor or camera.
+- Preview candidates must be labelled. Cooked data is derived and non-editable. Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.
+- Two-hand weapons use dominant-hand item drive then off-hand IK. VLM or visual scores never apply.
+- Current projected debug-proxy cards and the three-bone metadata skeleton are not spatial-review evidence.
+- `sf-mcp` spatial tools are adapter-only and wait until engine operations exist.
+- Implementation is ordered after the existing operation layer and before broad World/Assets visual polish.
 
 ### Physics Foundation
 

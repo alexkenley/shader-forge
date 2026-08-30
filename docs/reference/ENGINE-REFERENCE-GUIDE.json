@@ -8,6 +8,7 @@
     "docs/specs/ENGINE-SYSTEMS-INDEX.md",
     "docs/specs/ENGINE-MCP-SPEC.md",
     "docs/specs/ENGINE-OPERATIONS-SPEC.md",
+    "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
     "AGENTS.md"
   ],
   "assistantEntryPoints": [
@@ -17,7 +18,8 @@
     "plans/ENGINE-IMPLEMENTATION-PLAN.md",
     "docs/specs/ENGINE-SYSTEMS-INDEX.md",
     "docs/specs/ENGINE-MCP-SPEC.md",
-    "docs/specs/ENGINE-OPERATIONS-SPEC.md"
+    "docs/specs/ENGINE-OPERATIONS-SPEC.md",
+    "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md"
   ],
   "categories": [
     {
@@ -36,6 +38,7 @@
             "docs/reference/ENGINE-REFERENCE-GUIDE.json",
             "plans/ENGINE-IMPLEMENTATION-PLAN.md",
             "docs/specs/ENGINE-SYSTEMS-INDEX.md",
+            "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
             "AGENTS.md"
           ],
           "sections": [
@@ -47,6 +50,7 @@
                 "Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and future native assistants.",
                 "Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.",
                 "Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.",
+                "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the planned skeleton-socket and attachment-tuning contract. It is specified, not implemented.",
                 "Use `AGENTS.md` for repo workflow rules, documentation obligations, and required update discipline."
               ]
             },
@@ -247,6 +251,7 @@
             "docs/specs/ENGINE-MCP-SPEC.md",
             "docs/specs/ENGINE-SESSIOND-SPEC.md",
             "docs/specs/ENGINE-OPERATIONS-SPEC.md",
+            "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
             "scripts/test-engine-mcp.mjs"
           ],
           "sections": [
@@ -267,6 +272,7 @@
                 "The current resources are `shaderforge://project` and `shaderforge://coordination`.",
                 "Current read tools are `project_status`, `project_files_list`, `project_file_read`, and `coordination_state`.",
                 "Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.",
+                "Planned spatial resources and tools in `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` are adapter-only and must wait until engine spatial operations exist. They are not part of the current `sf-mcp` surface.",
                 "Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical work queues through `engine_sessiond`."
               ]
             },
@@ -389,7 +395,7 @@
       "id": "runtime-and-authoring",
       "title": "Runtime And Authoring",
       "description": "The native runtime is past pure scaffolding, and the content data lanes now affect runtime startup behavior for real.",
-      "keywords": ["runtime", "vulkan", "scene", "prefab", "data", "bootstrap"],
+      "keywords": ["runtime", "vulkan", "scene", "prefab", "data", "bootstrap", "spatial authoring", "attachment"],
       "pages": [
         {
           "id": "runtime-and-viewer",
@@ -474,6 +480,7 @@
             "docs/specs/ENGINE-PROCGEO-SPEC.md",
             "docs/specs/ENGINE-AUDIO-SPEC.md",
             "docs/specs/ENGINE-ANIMATION-SPEC.md",
+            "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
             "docs/specs/ENGINE-PHYSICS-SPEC.md",
             "docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md",
             "docs/specs/ENGINE-SAVE-SYSTEM-SPEC.md"
@@ -490,6 +497,7 @@
                 "`content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.",
                 "`audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.",
                 "`animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes.",
+                "`animation/attachments/*.attachment.toml` is the planned spatial-authoring attachment-profile lane. It is specified, not present in the repo.",
                 "`physics/layers.toml`, `physics/materials/*.physics-material.toml`, and `physics/bodies/*.physics-body.toml` are the initial authored physics lanes.",
                 "`saved/runtime/*.runtime-save.toml` is now the initial runtime-persistence lane and is intentionally separate from authored source assets."
               ]
@@ -542,6 +550,7 @@
               "keywords": ["skeletons", "clips", "graphs", "root motion", "events"],
               "items": [
                 "`animation/skeletons/*.skeleton.toml` defines named authored skeletons with root-bone and bone-list metadata.",
+                "The current `debug_humanoid` skeleton is three-bone metadata only: `hips, spine, head`. There is no parent table, rest pose, semantic role map, or socket list.",
                 "`animation/clips/*.anim.toml` defines named clips with skeleton ownership, looping/root-motion metadata, and text-backed clip events.",
                 "`animation/graphs/*.animgraph.toml` defines named animation graphs with float parameters, named states, and explicit entry-state selection.",
                 "The current runtime slice validates and resolves default graphs plus entry-clip events, but it does not sample, blend, or retarget animation yet."
@@ -556,6 +565,74 @@
                 "`physics/bodies/*.physics-body.toml` defines primitive scene bodies with scene ownership, layer/material references, motion type, and box or sphere shape data.",
                 "The current runtime slice validates and resolves deterministic raycast and overlap queries over those primitive bodies, but it does not run a full simulation backend yet."
               ]
+            }
+          ]
+        },
+        {
+          "id": "spatial-authoring",
+          "title": "Spatial Authoring And Attachment Tuning",
+          "summary": "Spatial authoring is a planned/foundational contract for skeleton sockets, attachment profiles, immutable review packets, and constrained tuning. It is specified, not implemented. The current three-bone metadata skeleton and projected debug-proxy cards are not that workbench.",
+          "keywords": [
+            "spatial authoring",
+            "attachment",
+            "socket",
+            "review packet",
+            "reviewId",
+            "grip",
+            "two-hand",
+            "IK",
+            "preview-candidate"
+          ],
+          "references": [
+            "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
+            "docs/specs/ENGINE-ANIMATION-SPEC.md",
+            "docs/specs/ENGINE-OPERATIONS-SPEC.md",
+            "docs/specs/ENGINE-SESSIOND-SPEC.md",
+            "docs/specs/ENGINE-MCP-SPEC.md",
+            "docs/specs/ENGINE-RUNTIME-SPEC.md",
+            "docs/specs/ENGINE-SHELL-SPEC.md",
+            "docs/specs/ENGINE-ASSET-PIPELINE-SPEC.md",
+            "docs/specs/ENGINE-SCENE-SPEC.md",
+            "animation/skeletons/debug_humanoid.skeleton.toml",
+            "plans/ENGINE-IMPLEMENTATION-PLAN.md",
+            "plans/SHADER-FORGE-REDESIGN-UPLIFT-PLAN.md"
+          ],
+          "sections": [
+            {
+              "title": "Authored-Truth Contract",
+              "keywords": ["native code", "typed assets", "sessiond", "preview-candidate", "cooked data"],
+              "items": [
+                "Native engine code owns behavior, typed schemas, validation, and runtime execution.",
+                "Source-controlled typed assets own project tuning values.",
+                "Shell, CLI, and `sf-mcp` edit those exact assets only through `engine_sessiond` revision-safe operations.",
+                "Preview candidates are transient and must be visibly labelled. Cooked data is derived, reproducible, and non-editable.",
+                "Hidden editor databases, duplicated C++ grip constants, editable generated code, runtime-object mutation plus opaque serialization, and prefabs that copy profile fields are forbidden."
+              ]
+            },
+            {
+              "title": "Current Reality",
+              "keywords": ["debug_humanoid", "three-bone", "proxy-card", "not implemented"],
+              "items": [
+                "This contract is planned/foundational. No attachment profiles, sockets, review packets, or spatial captures exist in the repo.",
+                "`debug_humanoid` is still `hips, spine, head` metadata with no parent table, rest pose, semantic roles, or sockets.",
+                "`AnimationSystem` does not sample poses or evaluate IK.",
+                "The native window still projects debug-proxy cards. Those frames are not spatial-review evidence.",
+                "Shell `Review` is still a discard-only scene stance, not a spatial `reviewId` packet."
+              ]
+            },
+            {
+              "title": "Planned Assets And Review Packets",
+              "keywords": ["skeleton.toml", "attachment.toml", "reviewId", "cameras", "two-hand"],
+              "items": [
+                "Planned authored roots are `animation/skeletons/*.skeleton.toml` schema version 2 with sockets, plus `animation/attachments/*.attachment.toml`.",
+                "Humans and agents share one `reviewId` and an immutable review packet with explicit cameras, resolution and framing, lighting, pose samples, source revisions, evaluated transforms and bounds, diagnostics, captures, operation id, and all lease ids.",
+                "Do not scrape a live cursor or camera to invent a packet.",
+                "Two-hand weapons use dominant-hand item drive, then off-hand IK. VLM or visual scores never apply.",
+                "Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.",
+                "`sf-mcp` spatial tools are adapter-only and wait until engine operations exist.",
+                "Implementation is ordered after the existing operation layer and before broad World/Assets visual polish."
+              ],
+              "note": "See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the full schema, rifle example, native handle example, harness gates, and staged implementation order."
             }
           ]
         }
@@ -668,6 +745,7 @@
           "keywords": ["boundaries", "limitations", "next steps", "widening"],
           "references": [
             "plans/ENGINE-IMPLEMENTATION-PLAN.md",
+            "docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md",
             "docs/reference/ENGINE-REFERENCE-GUIDE.md",
             "docs/reference/ENGINE-REFERENCE-GUIDE.json"
           ],

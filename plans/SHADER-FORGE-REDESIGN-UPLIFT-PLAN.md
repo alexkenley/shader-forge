@@ -148,6 +148,7 @@ These widen beyond the first `sf-mcp` read-and-coordinate surface only as the un
 - engine reference guide and capability manifest
 - pending change sets, approvals, and operation history
 - connected agent sessions, active leases, declared scopes, and queued operations
+- later spatial skeleton, attachment-profile, and immutable `reviewId` packet resources, only after engine spatial operations exist. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
 ### 4.4 Target MCP Tools After Safety Gates
 
@@ -164,8 +165,9 @@ The following is the intended product surface, not the currently exposed first s
 - `agent_session_register`, `agent_session_heartbeat`, `agent_session_disconnect`
 - `work_lease_request`, `work_lease_status`, `work_lease_release`
 - `change_set_create`, `change_set_validate`, `change_set_merge`
+- spatial authoring tools only after engine spatial operations exist: `spatial_attachment_read`, `spatial_attachment_preview`, `spatial_attachment_validate`, `spatial_review_read`, `spatial_review_recapture`, plus the generic operation approve/apply/undo tools
 
-Names may be refined in the MCP specification, but the contract must remain small, composable, typed, and versioned.
+Names may be refined in the MCP specification, but the contract must remain small, composable, typed, and versioned. Spatial MCP tools are adapter-only. They are specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) and must not wrap `/api/files/write` or scrape a live camera.
 
 ### 4.5 Mutation Contract
 
@@ -592,6 +594,7 @@ The shell redesign alone will not make Shader Forge an alternative to Unreal or 
 | Input | remappable actions, keyboard, mouse, controller, context handling |
 | Physics | 3D and 2D integration appropriate to supported game claims |
 | Animation | skeletal import, graphs/state machines, blending, events, root motion |
+| Spatial authoring | planned/foundational: skeleton sockets, attachment profiles, immutable review packets, constrained tuning, shared shell/CLI/MCP apply. Not implemented. Current three-bone metadata and proxy-card rendering are not this track. |
 | Audio | spatial audio, buses, mixing, streaming, events |
 | Game UI | layout, styling, input, localization path, accessibility hooks |
 | Assets | import, cook, cache, dependencies, reimport, provenance |
@@ -647,6 +650,31 @@ Exit criteria:
 - representative scene, asset, and code changes can be previewed and validated
 - non-overlapping agents can work concurrently while conflicting and runtime-exclusive work is queued deterministically
 
+### Gate 1.5: Establish Spatial Authoring Truth
+
+Status: specified, not implemented. Canonical contract: [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
+
+This gate is ordered after the operation layer and before broad World/Assets visual polish. Shell Code/Playtest work and unrelated capability tracks may proceed in parallel. World/Assets gizmos must not invent a second grip or socket persistence path while this gate is open.
+
+Actions:
+
+- widen skeleton assets to explicit bone hierarchy, semantic roles, and sockets without pretending the current `hips, spine, head` metadata already is that schema
+- add source-controlled attachment profiles with primary grip, optional secondary-hand target/pole/tolerances, and named motion-envelope phases
+- keep native code as the only runtime interpreter; assets own tuning values
+- add spatial preview/validate/approve/apply/recapture/undo as operation kinds on the existing `engine_sessiond` journal
+- share one `reviewId` and an immutable review packet with explicit cameras, resolution/framing, lighting, pose samples, revisions, evaluated transforms/bounds, diagnostics, captures, operation id, and all lease ids
+- use hierarchical leases for skeleton, socket, attachment, review, and short runtime-capture exclusivity
+- expose `sf-mcp` spatial tools only as an adapter after shell and CLI already call those operations
+- add a deterministic harness with a real humanoid bone chain and two-hand weapon; do not retarget `debug_humanoid` or require cross-GPU PNG hashes
+
+Exit criteria:
+
+- attachment values are not duplicated as native constants, prefab copies, generated editable code, or hidden editor databases
+- preview candidates are labelled and do not apply until the operation journal says so
+- VLM or visual scores never apply
+- denied approvals, stale revisions, and undo match the existing mutation contract
+- current proxy-card rendering is not presented as spatial-review evidence
+
 ### Gate 2: Establish the New Shell Foundation
 
 Actions:
@@ -691,6 +719,7 @@ Actions:
 - connect a real viewport only when selection, camera control, and gizmos work end to end
 - implement the asset browser, import queue, inspection, dependency view, and safe file operations
 - expose agent-proposed scene and asset changes through Changes
+- consume the spatial-authoring contract for held items, sockets, and attachment tuning instead of copying grip fields into prefabs or scraping the live camera. Broad visual polish of World/Assets must not precede that contract for attachment editing. See Gate 1.5 and [ENGINE-SPATIAL-AUTHORING-SPEC.md](../docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
 Exit criteria:
 
@@ -798,6 +827,7 @@ Run the same scenario against shell, CLI, and MCP adapters and compare resulting
 - patch transform
 - edit source file
 - import asset
+- preview/validate/apply an attachment-profile candidate once spatial operations exist, including stale-revision and approval-denial cases
 - build and run
 - execute tests
 - package project

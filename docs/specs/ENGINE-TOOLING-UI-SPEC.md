@@ -27,3 +27,5 @@ The current first slice in the repo now includes:
 - input-driven overlay and panel toggles wired through the engine-owned action map
 
 Dear ImGui docking is still the target frontend, but the current slice is the substrate and persistence groundwork rather than a full Dear ImGui renderer integration.
+
+Planned spatial overlays show labelled candidates, axis probes, and numeric diagnostics, but never persist assets directly. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).

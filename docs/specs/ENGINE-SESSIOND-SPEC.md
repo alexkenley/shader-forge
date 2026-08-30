@@ -144,9 +144,11 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - operation lifecycle events stream through the existing SSE bus; credentials and file contents are not persisted in public views
 - MCP mutation tools remain disabled until coordinator credentials and leases are wired through this same contract
 - the canonical contract lives in [ENGINE-OPERATIONS-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-OPERATIONS-SPEC.md)
+- planned spatial-authoring operations, specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) and not implemented, reuse this same journal, actor, revision, conflict, and lease model. They do not add a daemon. Capture holds the spatial keys plus the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers, then rechecks source revisions before publishing. Review artifacts belong under project `build/spatial-reviews/<review-id>/`, not provider-specific Saved/Codex paths.
 
 ## Future AI APIs
 
 - a process-scoped MCP adapter over the engine-owned coordination and mutation contracts
 - MCP exposure of the existing file-write operation workflow, plus later scene/asset/multi-file change sets
 - MCP resources for project, scene, asset, code, runtime, test, diagnostics, coordination, and activity state
+- later spatial-authoring resources and tools only as an adapter over sessiond spatial operations, after those operations exist for shell and CLI. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).

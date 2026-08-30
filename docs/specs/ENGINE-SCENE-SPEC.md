@@ -64,6 +64,7 @@ Current boundary:
 
 - this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, first prefab component payloads, a first runtime composition path, first projected debug-proxy visibility, first session-root editor/runtime handoff, first authored-content reload/manual iteration, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, and first interaction-trigger feedback on effect-capable entities, but not full rendered mesh/material instancing yet
 - transform gizmos, broader scene/component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
+- planned spatial attachment profiles reference prefabs by ID; prefabs must not copy grip values. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
 ## Non-Goals
 
