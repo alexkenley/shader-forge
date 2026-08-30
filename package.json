@@ -45,6 +45,8 @@
     "test:ollama-smoke": "node scripts/test-ollama-smoke.mjs"
   },
   "dependencies": {
-    "node-pty": "^1.1.0"
+    "@modelcontextprotocol/server": "2.0.0",
+    "node-pty": "^1.1.0",
+    "zod": "4.5.4"
   }
 }
