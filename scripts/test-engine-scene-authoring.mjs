@@ -43,6 +43,11 @@ try {
   assert.match(sceneEditorView, /sceneDirty && !\(await handleSaveScene\(\)\)/);
   assert.match(sceneEditorView, /prefabDirty && !\(await handleSavePrefab\(\)\)/);
   assert.match(sceneEditorView, /onClick=\{\(\) => void handlePlay\(\)\}/);
+  assert.match(sceneEditorView, /activeSessionIdRef\.current !== targetSessionId/);
+  assert.match(sceneEditorView, /sceneDraftPathRef\.current !== targetPath/);
+  assert.match(sceneEditorView, /prefabDraftPathRef\.current !== targetPath/);
+  assert.match(sceneEditorView, /Apply and restart/);
+  assert.match(sceneEditorView, /primaryActionRef\.current\?\.focus\(\)/);
   assert.match(sceneEditorView, /Run existing build/);
   assert.match(sceneEditorView, /Use for world/);
   assert.match(sceneEditorView, /Add object/);

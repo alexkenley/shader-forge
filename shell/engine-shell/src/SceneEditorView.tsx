@@ -274,6 +274,10 @@ export function SceneEditorView({
   preferredSidebarTab,
 }: SceneEditorViewProps) {
   const sceneShellRef = useRef<HTMLDivElement | null>(null);
+  const primaryActionRef = useRef<HTMLButtonElement | null>(null);
+  const activeSessionIdRef = useRef(activeSession?.id || '');
+  const sceneDraftPathRef = useRef('');
+  const prefabDraftPathRef = useRef('');
   const [mode, setMode] = useState<EditorMode>('edit');
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Select a workspace to open a world.');
@@ -295,6 +299,9 @@ export function SceneEditorView({
   const currentSnapshot = history[historyIndex] || emptySnapshot;
   const sceneDraft = currentSnapshot.scene;
   const prefabDraft = currentSnapshot.prefab;
+  activeSessionIdRef.current = activeSession?.id || '';
+  sceneDraftPathRef.current = sceneDraft?.path || '';
+  prefabDraftPathRef.current = prefabDraft?.path || '';
   const selectedEntity =
     sceneDraft?.entities.find((entity) => entity.id === selectedEntityId) || null;
   const sceneTreeRows = useMemo(
@@ -742,13 +749,18 @@ export function SceneEditorView({
       return false;
     }
 
+    const targetSessionId = activeSession.id;
+    const targetPath = sceneDraft.path;
     setBusy(true);
     try {
       const savedPayload = await writeFile(
-        activeSession.id,
-        sceneDraft.path,
+        targetSessionId,
+        targetPath,
         formatSceneAssetDocument(sceneDraft),
       );
+      if (activeSessionIdRef.current !== targetSessionId || sceneDraftPathRef.current !== targetPath) {
+        return false;
+      }
       const nextScene = parseSceneAssetDocument(savedPayload);
       setSceneSaved(nextScene);
       setSceneDocuments((current) =>
@@ -765,6 +777,7 @@ export function SceneEditorView({
       setStatusMessage(`Saved ${nextScene.title || nextScene.name}.`);
       onLaunchSceneChange(nextScene.name);
       onBackendStatus('connected', `Saved ${nextScene.title || nextScene.name}.`);
+      primaryActionRef.current?.focus();
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -781,13 +794,18 @@ export function SceneEditorView({
       return false;
     }
 
+    const targetSessionId = activeSession.id;
+    const targetPath = prefabDraft.path;
     setBusy(true);
     try {
       const savedPayload = await writeFile(
-        activeSession.id,
-        prefabDraft.path,
+        targetSessionId,
+        targetPath,
         formatPrefabAssetDocument(prefabDraft),
       );
+      if (activeSessionIdRef.current !== targetSessionId || prefabDraftPathRef.current !== targetPath) {
+        return false;
+      }
       const nextPrefab = parsePrefabAssetDocument(savedPayload);
       setPrefabSaved(nextPrefab);
       setPrefabDocuments((current) =>
@@ -799,6 +817,7 @@ export function SceneEditorView({
       });
       setStatusMessage(`Saved reusable object ${nextPrefab.name}.`);
       onBackendStatus('connected', `Saved reusable object ${nextPrefab.name}.`);
+      primaryActionRef.current?.focus();
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -923,6 +942,7 @@ export function SceneEditorView({
       : 'Reverted unsaved changes.';
     setStatusMessage(message);
     onBackendStatus('connected', message);
+    primaryActionRef.current?.focus();
   }
 
   function handleUndo() {
@@ -954,7 +974,8 @@ export function SceneEditorView({
         ? 'Object'
         : 'Reusable object';
   const worldTitle = sceneDraft?.title || sceneDraft?.name || 'No world open';
-  const canPlay = Boolean(sceneDraft) && !busy && buildStatus.state !== 'running' && runtimeStatus.state === 'stopped';
+  const canPlay = Boolean(sceneDraft) && !busy && buildStatus.state !== 'running';
+  const canApplyAndRestart = canPlay && runtimeStatus.state !== 'stopped' && (sceneDirty || prefabDirty);
   const canRestartRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
   const canStopRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
   const buildRequiresCmake = /cmake is required/i.test(buildStatus.error || '');
@@ -1005,19 +1026,33 @@ export function SceneEditorView({
                   className="ghost-button ghost-button--sm ghost-button--primary"
                   disabled={!canPlay}
                   onClick={() => void handlePlay()}
+                  ref={primaryActionRef}
                   type="button"
                 >
                   Play
                 </button>
               ) : (
-                <button
-                  className="ghost-button ghost-button--sm"
-                  disabled={!canStopRuntime}
-                  onClick={onStopRuntime}
-                  type="button"
-                >
-                  Stop
-                </button>
+                <>
+                  {canApplyAndRestart ? (
+                    <button
+                      className="ghost-button ghost-button--sm ghost-button--primary"
+                      onClick={() => void handlePlay()}
+                      ref={primaryActionRef}
+                      type="button"
+                    >
+                      Apply and restart
+                    </button>
+                  ) : null}
+                  <button
+                    className="ghost-button ghost-button--sm"
+                    disabled={!canStopRuntime}
+                    onClick={onStopRuntime}
+                    ref={canApplyAndRestart ? undefined : primaryActionRef}
+                    type="button"
+                  >
+                    Stop
+                  </button>
+                </>
               )}
             </div>
             <div className="scene-toolbar__group">
@@ -1295,6 +1330,7 @@ export function SceneEditorView({
                       sceneDocuments.map((document) => (
                         <button
                           className={`scene-list__item${selectedScenePath === document.path ? ' is-active' : ''}`}
+                          disabled={busy}
                           key={document.path}
                           onClick={() => handleSelectScene(document)}
                           type="button"
@@ -1763,6 +1799,7 @@ export function SceneEditorView({
                         <div className="scene-asset" key={document.path}>
                           <button
                             className={`scene-asset__main${prefabDraft?.path === document.path ? ' is-active' : ''}`}
+                            disabled={busy}
                             onClick={() => inspectPrefab(document)}
                             type="button"
                           >
