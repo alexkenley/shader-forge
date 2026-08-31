@@ -94,6 +94,8 @@ Spatial attachment preview accepts only `animation/attachments/*.attachment.toml
 
 Both GET routes require no lease because they are read-only and create no operation, journal entry, persisted evaluation, SSE event, authored write, or cooked output. Preview and the rest GET retain `pose.sampled=false`. The sampled GET returns `pose.sampled=true` and numeric IK truth, but it remains schematic, carries `not_review_evidence`, and provides no rendered capture or review packet.
 
+Rest and sampled reports may include diagnose-only joint-limit evidence. Sessiond accepts only the exact unavailable `no_joint_limits_authored` form or a complete ordered per-bone report whose roles, ranges, violations, labels, counts, and maximum agree with recomputed evaluator truth. This evidence remains transient and never becomes operation validation, a clamp request, or review evidence.
+
 ## State Machine
 
 Supported states: `previewed`, `approved`, `rejected`, `applying`, `applied`, `undoing`, `undone`, `conflicted`.
@@ -285,4 +287,4 @@ Invalid records are skipped. They cannot be listed as applicable operations.
 - persisted legacy session `rootIdentity` migration plus same-path root replacement
 - malformed persisted records skipped on load, including preview-schema, event-sequence, and final-event/state corruption
 
-`npm run test:spatial-operations` additionally covers the revision-safe GET, strict path/symlink and source-ID binding, exact staged baseline/candidate bytes, new-file `baseline: null`, final-read revision drift, malformed or wrong-ID evaluator output, bounded unavailable/infrastructure errors, temporary cleanup, journal absence for GET, non-persistence of preview evaluations, and the post-evaluation preview lease recheck.
+`npm run test:spatial-operations` additionally covers the revision-safe GET, strict path/symlink and source-ID binding, exact staged baseline/candidate bytes, exact fail-closed joint-limit protocol and recomputed truth, new-file `baseline: null`, final-read revision drift, malformed or wrong-ID evaluator output, bounded unavailable/infrastructure errors, temporary cleanup, journal absence for GET, non-persistence of preview evaluations, and the post-evaluation preview lease recheck.
