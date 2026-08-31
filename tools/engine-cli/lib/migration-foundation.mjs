@@ -572,7 +572,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
     if (detection.engine === 'unity') {
       warnings.push('Unity conversion maps text-YAML hierarchy, valid perspective Camera optics, valid BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
-      warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, and valid CollisionShape3D BoxShape3D geometry; transform matrices, resource instances, other component payloads, camera enabled/current semantics, and physics-body/disabled/layer/material semantics are still ahead.');
+      warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, valid CollisionShape3D BoxShape3D geometry, and node script ExtResource bindings; transform matrices, resource instances, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled/layer/material semantics are still ahead.');
     }
   }
   return warnings;
@@ -653,8 +653,30 @@ function parseGodotBoxShapes(source) {
   return shapes;
 }
 
+function parseGodotScriptResources(source) {
+  const resources = new Map();
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = trim(rawLine);
+    if (!line.startsWith('[ext_resource ')) continue;
+    const type = line.match(/\btype="([^"]+)"/)?.[1] || '';
+    const resourceId = line.match(/\bid="([^"]+)"/)?.[1] || '';
+    const sourcePath = line.match(/\bpath="([^"]+)"/)?.[1] || '';
+    const projectPath = sourcePath.startsWith('res://') ? sourcePath.slice('res://'.length) : '';
+    if (type === 'Script'
+        && resourceId
+        && projectPath
+        && !projectPath.startsWith('/')
+        && !projectPath.includes('\\')
+        && !projectPath.split('/').includes('..')) {
+      resources.set(resourceId, projectPath);
+    }
+  }
+  return resources;
+}
+
 function parseGodotSceneNodes(source) {
   const boxShapes = parseGodotBoxShapes(source);
+  const scriptResources = parseGodotScriptResources(source);
   const nodes = [];
   let current = null;
   for (const rawLine of source.split(/\r?\n/)) {
@@ -679,6 +701,7 @@ function parseGodotSceneNodes(source) {
           ? { projection: 0, verticalFovDegrees: null, nearMeters: null, farMeters: null }
           : null,
         collisionShapeId: '',
+        scriptResourceId: '',
       };
       nodes.push(current);
       continue;
@@ -700,6 +723,8 @@ function parseGodotSceneNodes(source) {
       current.collisionShapeId = line.match(/^shape\s*=\s*SubResource\("([^"]+)"\)$/)?.[1]
         || current.collisionShapeId;
     }
+    current.scriptResourceId = line.match(/^script\s*=\s*ExtResource\("([^"]+)"\)$/)?.[1]
+      || current.scriptResourceId;
   }
 
   const rootName = nodes.find((node) => !node.parent)?.name || nodes[0]?.name || 'Root';
@@ -716,6 +741,12 @@ function parseGodotSceneNodes(source) {
       ? node.camera
       : null,
     collision: boxShapes.get(node.collisionShapeId) || null,
+    scriptBindings: scriptResources.has(node.scriptResourceId)
+      ? [{
+          sourceResourceId: node.scriptResourceId,
+          sourceResourcePath: scriptResources.get(node.scriptResourceId),
+        }]
+      : [],
     sourceNodePath: !node.parent
       ? node.name
       : node.parent === '.'
@@ -1249,6 +1280,8 @@ function buildScriptPortManifestDocument(manifest) {
     ...(manifest.sourceNodePath ? { source_node: manifest.sourceNodePath } : {}),
     ...(manifest.sourceObjectId ? { source_object_id: manifest.sourceObjectId } : {}),
     ...(manifest.sourceComponentId ? { source_component_id: manifest.sourceComponentId } : {}),
+    ...(manifest.sourceResourceId ? { source_resource_id: manifest.sourceResourceId } : {}),
+    ...(manifest.sourceResourcePath ? { source_resource_path: manifest.sourceResourcePath } : {}),
     extraction_confidence: manifest.extractionConfidence || 'medium',
     strategy: manifest.strategy || 'best_effort_manifest_only',
     status: manifest.status || 'manual_review_required',
@@ -1428,6 +1461,10 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
   const files = walkFiles(projectRoot);
   const sceneFiles = files.filter((filePath) => filePath.endsWith('.tscn') || filePath.endsWith('.scn'));
   const scriptFiles = files.filter((filePath) => filePath.endsWith('.gd') || filePath.endsWith('.cs'));
+  const scriptByProjectPath = new Map(scriptFiles.map((filePath) => [
+    sourceProjectPath(projectRoot, filePath),
+    { filePath, sourceSymbol: extractScriptSymbols(filePath, 'godot')[0] || basenameWithoutExtension(filePath) },
+  ]));
 
   const sourceScenes = stableSceneNames(sceneFiles.map((filePath, index) => {
     const source = fs.readFileSync(filePath, 'utf8');
@@ -1506,14 +1543,39 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
     collision: entity.collision,
   }))), (item) => item.name);
 
-  const scriptManifests = uniqueBy(scriptFiles.flatMap((filePath) =>
+  const sourceScriptManifests = scriptFiles.flatMap((filePath) =>
     extractScriptSymbols(filePath, 'godot').map((symbol) => ({
       name: normalizeToken(symbol) || 'godot_script',
       sourcePath: relativePathFromRepo(repoRoot, filePath),
       sourceSymbol: symbol,
       sourceEngine: 'godot',
       sourceKind: 'source_script',
-    }))), (item) => item.name);
+    })));
+  const bindingManifests = sourceScenes.flatMap((scene) => scene.nodes.flatMap((node) =>
+    (node.scriptBindings || []).map((binding) => {
+      const script = scriptByProjectPath.get(binding.sourceResourcePath);
+      const sourceSymbol = script?.sourceSymbol || 'unresolved_script';
+      return {
+        name: normalizeToken(`${sourceSymbol}_${scene.name}_${node.sourceNodePath.split('/').join('_')}`),
+        sourcePath: script ? relativePathFromRepo(repoRoot, script.filePath) : scene.sourcePath,
+        sourceSymbol,
+        sourceEngine: 'godot',
+        sourceKind: 'scene_script_binding',
+        sourceScene: scene.sourceProjectPath,
+        sourceNodePath: node.sourceNodePath,
+        sourceResourceId: binding.sourceResourceId,
+        sourceResourcePath: binding.sourceResourcePath,
+        extractionConfidence: script ? 'high' : 'low',
+        strategy: 'godot_scene_binding_manifest',
+        notes: [
+          script
+            ? 'Resolved the Godot node script ExtResource to a source script.'
+            : 'The Godot node script ExtResource did not resolve to a source script in the project.',
+          'Port the node fields and gameplay behavior manually before claiming parity.',
+        ],
+      };
+    })));
+  const scriptManifests = uniqueBy([...sourceScriptManifests, ...bindingManifests], (item) => item.name);
 
   return {
     scenes: ensureFallbackScenesForPrefabs(scenes, prefabs, 'godot'),

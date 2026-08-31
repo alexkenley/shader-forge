@@ -50,6 +50,7 @@ Implemented now:
 - migration manifests and reports include `mapped_scene_entities`, `mapped_prefab_components`, and `mapped_script_bindings`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
 - Unity `MonoBehaviour` records now resolve script GUIDs through `.cs.meta` files and emit per-component binding manifests with source scene, node path, GameObject file ID, component file ID, and resolution confidence; C# behavior and serialized fields remain manual
+- Godot node script `ExtResource` references now resolve `res://` project paths and emit per-node binding manifests with source scene, node path, resource ID/path, and resolution confidence; GDScript behavior and node fields remain manual
 - the Unreal offline fallback now derives scene/prefab/script outputs from `.uproject`, `.umap`, `.uasset` package names, and C++ class symbols when no exporter-assisted data is available
 - deterministic Unity, Unreal, Unreal offline fallback, and Godot fixture projects under `fixtures/migration/`
 
@@ -194,9 +195,10 @@ Current implemented pass:
 - explicit `Vector3` position, rotation, and scale fields map to Shader Forge transforms; rotation is converted from radians to degrees
 - valid explicit perspective `Camera3D` `fov`, `near`, and `far` values map into `[component.camera]`
 - `CollisionShape3D` nodes that reference valid `BoxShape3D` subresources map size into `[component.collision]`; the node transform preserves the collider offset/orientation
+- node script `ExtResource` references resolve safe `res://` paths into binding-specific script-porting provenance
 - generated scene and prefab comments retain source node paths and node types for review
 - binary `.scn` files retain the existing placeholder path; their serialized contents are not parsed
-- matrices, instanced resources, other component payloads, camera enabled/current semantics, and physics-body/disabled/layer/material semantics remain manual and are reported as such
+- matrices, instanced resources, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled/layer/material semantics remain manual and are reported as such
 
 ## Shader Forge Output
 
@@ -287,7 +289,7 @@ Required harnesses:
 
 - Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, perspective Camera optics, BoxCollider geometry, MonoBehaviour-to-`.cs.meta` GUID binding provenance, and production-bakeable generated prefabs
 - Unreal offline fallback migration smoke, including `GameDefaultMap` binding for both C++ and package-only fixtures
-- Godot text-scene migration smoke, including exact `res://` binding, explicit perspective Camera3D optics, CollisionShape3D/BoxShape3D geometry, explicit-unresolved fail-closed behavior, and no-declaration approximation
+- Godot text-scene migration smoke, including exact startup and node-script `res://` binding, explicit perspective Camera3D optics, CollisionShape3D/BoxShape3D geometry, explicit-unresolved fail-closed behavior, and no-declaration approximation
 - migration manifest/report provenance and project-setting count validation
 - production asset-pipeline bake validation for the generated scene, prefab, and optional runtime-bootstrap records
 

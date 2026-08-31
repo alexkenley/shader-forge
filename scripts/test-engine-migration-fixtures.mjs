@@ -291,6 +291,7 @@ assert.match(godotRun.stdout, /Source engine: godot/);
 assert.match(godotRun.stdout, /Migration conversion run complete\./);
 assert.match(godotRun.stdout, /Mapped scene entities: 4/);
 assert.match(godotRun.stdout, /Mapped prefab components: 2/);
+assert.match(godotRun.stdout, /Mapped script bindings: 1/);
 const godotRoot = path.join(tempRoot, 'godot-lane');
 const godotManifest = fs.readFileSync(path.join(godotRoot, 'migration-manifest.toml'), 'utf8');
 const godotReport = fs.readFileSync(path.join(godotRoot, 'report.toml'), 'utf8');
@@ -308,6 +309,8 @@ assert.match(godotManifest, /mapped_scene_entities = 4/);
 assert.match(godotReport, /mapped_scene_entities = 4/);
 assert.match(godotManifest, /mapped_prefab_components = 2/);
 assert.match(godotReport, /mapped_prefab_components = 2/);
+assert.match(godotManifest, /mapped_script_bindings = 1/);
+assert.match(godotReport, /mapped_script_bindings = 1/);
 assert.match(godotScene, /# migration_source_node = "Main\/Player"[\s\S]*\[entity\.main_main_player_instance\]/);
 assert.match(godotScene, /\[entity\.main_main_player_instance\][\s\S]*parent = "main_root_instance"/);
 assert.match(godotScene, /\[entity\.main_main_player_instance\][\s\S]*position = "1, 0\.5, -2"/);
@@ -339,7 +342,41 @@ assert.match(
   fs.readFileSync(path.join(godotRoot, 'shader-forge-project', 'content', 'data', 'migrated', 'godot', 'runtime_bootstrap.data.toml'), 'utf8'),
   /default_scene = "main"/,
 );
+const godotScriptBindingPath = path.join(godotRoot, 'script-porting', 'player_main_main_player.port.toml');
+assert.ok(fs.existsSync(godotScriptBindingPath), 'Expected Godot node script-binding manifest.');
+const godotScriptBinding = fs.readFileSync(godotScriptBindingPath, 'utf8');
+assert.match(godotScriptBinding, /source_path = "fixtures\/migration\/godot-minimal\/scripts\/player\.gd"/);
+assert.match(godotScriptBinding, /source_kind = "scene_script_binding"/);
+assert.match(godotScriptBinding, /source_scene = "scenes\/main\.tscn"/);
+assert.match(godotScriptBinding, /source_node = "Main\/Player"/);
+assert.match(godotScriptBinding, /source_resource_id = "1_player"/);
+assert.match(godotScriptBinding, /source_resource_path = "scripts\/player\.gd"/);
+assert.match(godotScriptBinding, /extraction_confidence = "high"/);
 await assertMigratedProjectBakes(path.join(godotRoot, 'shader-forge-project'), 'godot', 'godot-lane');
+
+const unsafeGodotScriptFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-unsafe-script-path');
+fs.cpSync(godotFixtureRoot, unsafeGodotScriptFixtureRoot, { recursive: true });
+const unsafeGodotScenePath = path.join(unsafeGodotScriptFixtureRoot, 'scenes', 'main.tscn');
+fs.writeFileSync(
+  unsafeGodotScenePath,
+  fs.readFileSync(unsafeGodotScenePath, 'utf8').replace('res://scripts/player.gd', 'res://../outside.gd'),
+  'utf8',
+);
+const unsafeGodotScriptRun = runCli([
+  'migrate',
+  'godot',
+  unsafeGodotScriptFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'godot-unsafe-script-path',
+]);
+assert.match(unsafeGodotScriptRun.stdout, /Mapped script bindings: 0/);
+assert.equal(
+  fs.existsSync(path.join(tempRoot, 'godot-unsafe-script-path', 'script-porting', 'outside_main_main_player.port.toml')),
+  false,
+  'Unsafe Godot script paths must not emit node binding manifests.',
+);
 
 const collidingGodotFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-colliding-node-names');
 fs.cpSync(godotFixtureRoot, collidingGodotFixtureRoot, { recursive: true });
@@ -522,4 +559,4 @@ fs.rmSync(tempRoot, { recursive: true, force: true });
 console.log('Engine migration fixtures harness passed.');
 console.log(`- Verified migration fixtures under ${path.join(repoRoot, 'fixtures', 'migration')}`);
 console.log(`- Verified CLI migration detect/report surfaces through ${cliPath}`);
-console.log('- Verified normalized migration outputs, Unity/Godot hierarchy, transforms, component provenance, Unity script bindings, and both Unreal conversion lanes');
+console.log('- Verified normalized migration outputs, Unity/Godot hierarchy, transforms, component/script provenance, and both Unreal conversion lanes');
