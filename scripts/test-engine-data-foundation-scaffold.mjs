@@ -293,6 +293,22 @@ int main(int argc, char** argv) {
   writeFile(cameraPath, originalCamera);
   const std::filesystem::path cameraScenePath = std::filesystem::path(argv[1]) / "scenes/camera.scene.toml";
   const std::string originalCameraScene = readFile(cameraScenePath);
+  const std::vector<std::pair<std::string, std::string>> sceneVectorMutations{
+    {"position = \"1, 2, 3\"", "position = 1, 2, 3"},
+    {"position = \"1, 2, 3\"", "position = \"1junk, 2, 3\""},
+    {"rotation = \"4, 5, 6\"", "rotation = \"0x10, 5, 6\""},
+    {"scale = \"1, 1, 1\"", "scale = \"1e100, 1, 1\""},
+    {"scale = \"1, 1, 1\"", "scale = \"1e-40, 1, 1\""},
+  };
+  for (const auto& [from, to] : sceneVectorMutations) {
+    std::string candidate = originalCameraScene;
+    if (!replaceOnce(&candidate, from, to)) return 18;
+    writeFile(cameraScenePath, candidate);
+    DataFoundation rejectedVector;
+    error.clear();
+    if (rejectedVector.loadFromDisk(config, &error) || error.empty()) return 19;
+  }
+  writeFile(cameraScenePath, originalCameraScene);
   writeFile(cameraScenePath, originalCameraScene + "\n[entity.camera_two]\ndisplay_name = \"Camera Two\"\nsource_prefab = \"debug_camera\"\nposition = \"0, 0, 0\"\nrotation = \"0, 0, 0\"\nscale = \"1, 1, 1\"\n");
   DataFoundation duplicateCameraScene;
   error.clear();

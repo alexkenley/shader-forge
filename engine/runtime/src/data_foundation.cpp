@@ -105,8 +105,14 @@ bool parseFloatValue(const std::string& rawValue, float* result) {
   }
 }
 
+bool parseCompleteFiniteFloat(std::string_view token, float* result);
+
 bool parseVector3Value(const std::string& rawValue, std::array<float, 3>* result) {
-  std::istringstream parts(parseStringValue(rawValue));
+  const std::string value = trim(rawValue);
+  if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
+    return false;
+  }
+  std::istringstream parts(value.substr(1, value.size() - 2));
   std::string token;
   std::array<float, 3> parsed{0.0F, 0.0F, 0.0F};
   std::size_t index = 0;
@@ -116,9 +122,7 @@ bool parseVector3Value(const std::string& rawValue, std::array<float, 3>* result
       return false;
     }
 
-    try {
-      parsed[index] = std::stof(trim(token));
-    } catch (...) {
+    if (!parseCompleteFiniteFloat(token, &parsed[index])) {
       return false;
     }
     index += 1;

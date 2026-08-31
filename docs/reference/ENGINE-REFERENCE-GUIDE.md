@@ -264,6 +264,7 @@ Assistant entry points:
 - `data/foundation/engine-data-layout.toml` defines the current `TOML -> FlatBuffers -> SQLite` split.
 - The runtime validates the content roots through `DataFoundation` before startup continues.
 - Scene-to-prefab relationships are validated across the catalog.
+- Scene entity position, rotation, and scale use strict quoted three-number vectors; catalog loading and baking reject trailing junk, radix notation, non-finite values, float32 overflow, and subnormal values.
 - Prefabs may optionally author one strict perspective `[component.camera]` with float32-compatible vertical FOV and near/far clips. A scene may reference at most one root or parented `player_camera`; malformed lines, unknown `component.*` tables, duplicate camera fields/tables, invalid bounds, and invalid hierarchy fail validation and cook.
 - Camera validation and staged camera cooking use the same native float32 values, so authored optics cannot change when the final FlatBuffers writer replaces the current JSON staging format.
 - The runtime composes authored scene entities plus prefab payloads into a runtime scene snapshot with true parent/local TRS world transforms: scaled local translation is parent-rotated and added to parent position, rotations compose, and scales multiply component-wise.

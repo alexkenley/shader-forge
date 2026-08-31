@@ -197,15 +197,19 @@ function parseListValue(rawValue) {
 }
 
 function parseVector3Value(rawValue) {
-  const parts = parseStringValue(rawValue)
+  const value = trim(rawValue);
+  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"')) {
+    return null;
+  }
+  const parts = value.slice(1, -1)
     .split(',')
     .map((item) => trim(item))
     .filter((item) => item.length > 0);
   if (parts.length !== 3) {
     return null;
   }
-  const values = parts.map((part) => Number.parseFloat(part));
-  return values.every((value) => Number.isFinite(value)) ? values : null;
+  const values = parts.map((part) => finiteFloat32Value(parseStrictFiniteNumberValue(part)));
+  return values.every((part) => part !== null) ? values : null;
 }
 
 function defaultFoundationManifest() {

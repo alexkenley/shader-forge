@@ -40,6 +40,7 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - `.scene.toml` metadata is already present under `content/scenes/`
 - scenes can declare a primary prefab relationship into `content/prefabs/`
 - scenes can now declare deterministic `[entity.<id>]` sections with stable ids, `source_prefab`, `parent`, `position`, `rotation`, and `scale`
+- entity `position`, `rotation`, and `scale` are strict quoted three-number vectors; native catalog and JS bake validation reject numeric prefixes, alternate radices, non-finite values, float32 overflow, and subnormal values before composition
 - the shared data foundation validates those scene-to-prefab references
 - prefab assets can now declare first-pass `[component.render]` and `[component.effect]` sections that reference authored `procgeo` and `effect` assets
 - prefab assets can optionally declare one strict `[component.camera]` with `projection = "perspective"`, finite float32-compatible `vertical_fov_degrees`, `near_meters`, and `far_meters`, a field of view strictly between 0 and 180 degrees, and `0 < near_meters < far_meters`

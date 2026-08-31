@@ -332,6 +332,35 @@ assert.equal(
 
 fs.writeFileSync(invalidCameraPath, debugCamera);
 const parentedScenePath = path.join(invalidContentRoot, 'scenes', 'sandbox.scene.toml');
+const validSandboxScene = fs.readFileSync(parentedScenePath, 'utf8');
+for (const [label, from, to] of [
+  ['unquoted', 'position = "0, 1.6, -4"', 'position = 0, 1.6, -4'],
+  ['trailing-junk', 'position = "0, 1.6, -4"', 'position = "0junk, 1.6, -4"'],
+  ['radix', 'rotation = "0, 0, 0"', 'rotation = "0x10, 0, 0"'],
+  ['overflow', 'scale = "1, 1, 1"', 'scale = "1e100, 1, 1"'],
+  ['subnormal', 'scale = "1, 1, 1"', 'scale = "1e-40, 1, 1"'],
+]) {
+  fs.writeFileSync(parentedScenePath, validSandboxScene.replace(from, to));
+  const vectorOutputRoot = path.join(tempRoot, `invalid-scene-vector-${label}-output`);
+  const vectorReportPath = path.join(tempRoot, `invalid-scene-vector-${label}-report.json`);
+  const vectorRun = spawnSync(process.execPath, [
+    cliPath,
+    'bake',
+    '--content-root', invalidContentRoot,
+    '--audio-root', 'audio',
+    '--animation-root', 'animation',
+    '--physics-root', 'physics',
+    '--data-foundation', 'data/foundation/engine-data-layout.toml',
+    '--output-root', vectorOutputRoot,
+    '--report', vectorReportPath,
+  ], { cwd: repoRoot, encoding: 'utf8' });
+  assert.equal(vectorRun.status, 1, vectorRun.stderr || vectorRun.stdout);
+  const vectorReport = JSON.parse(fs.readFileSync(vectorReportPath, 'utf8'));
+  const invalidScene = vectorReport.invalidAssets.find((asset) => asset.kind === 'scene' && asset.name === 'sandbox');
+  assert.match(invalidScene?.problems.join('\n') || '', /must be a quoted "x, y, z" vector/);
+  assert.equal(fs.existsSync(path.join(vectorOutputRoot, 'scenes', 'sandbox.bin')), false);
+}
+fs.writeFileSync(parentedScenePath, validSandboxScene);
 fs.writeFileSync(parentedScenePath, fs.readFileSync(parentedScenePath, 'utf8').replace(
   'parent = ""',
   'parent = "crate_focus"',

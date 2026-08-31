@@ -30,6 +30,7 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - prefab sources may now declare one strict optional `[component.collision]` box with finite item-local `center`, canonical unit `xyzw` `rotation`, and positive finite `dimensions`; `DataFoundation` exposes it as typed optional snapshot truth and rejects malformed, duplicate, unknown-key, or non-prefab use
 - prefab sources may now declare one strict optional `[component.camera]` perspective camera with float32-compatible vertical FOV and near/far clips; native catalog validation and `engine bake` share the same fail-closed acceptance domain and cook the same canonical float32 values
 - scene relationship validation permits at most one `player_camera`; root and parented cameras use the same composed world-transform path
+- scene transform vectors share one strict quoted, complete, finite float32 acceptance domain across native catalog loading and `engine bake`
 - the spatial evaluator reuses this same prefab-to-render-procgeo chain to expose exact authored box corners for attachment tuning; it does not create a second prefab geometry schema, and the visual box is not collision geometry
 - authored prefab collision is independent of render procgeo and is not yet consumed by runtime physics, the spatial evaluator, clipping diagnostics, or the staged prefab cook lane
 - procgeo dimensions must be finite positive numbers before a source can become valid evaluator or cook input
