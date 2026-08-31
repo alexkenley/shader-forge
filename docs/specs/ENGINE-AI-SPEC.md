@@ -284,6 +284,7 @@ Current implemented behavior:
 - the first engine-facing registry tool reuses the existing `profile:live` service, and `engine.workspace.health.inspect` composes provider, usage, runtime, build, workspace, packaging, and profiling evidence without copying those subsystem implementations
 - declared clients narrow intended use but are not an authentication identity on the loopback backend; this slice grants no mutation authority, and later mutating tools must use the existing operation, lease, review, and code-trust controls
 - the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
+- `sf-mcp` now exposes that existing live summary through read-only `project_diagnostics`, pinned to the process-selected workspace without provider selection or model execution
 - the CLI now exposes direct `engine ai providers|test|request`, queued `submit|jobs|status|cancel`, and read-only `history|usage` commands
 - deterministic coverage now exists through `npm run test:ai-scaffold`
 
@@ -293,7 +294,7 @@ Still ahead in Phase 5.9:
 - token/spend budget enforcement and pricing beyond the current durable monthly queued-request admission cap, per-request output ceiling, and token-usage evidence
 - additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
 - mutating tool/skill permission enforcement through existing engine operations, broader action schemas, and game-runtime exposure beyond the current schema-validated read-only registry execution
-- gameplay-facing AI integrations
+- broader typed external-agent MCP coverage and gameplay-facing AI integrations
 
 External development agents use `sf-mcp` and the engine operation/code-trust boundary. They never receive implicit compile, hot-reload, plugin-install, apply, or filesystem authority from this subsystem.
 

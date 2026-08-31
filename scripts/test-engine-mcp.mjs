@@ -401,6 +401,7 @@ async function main() {
         'operation_read',
         'operation_reject',
         'operation_undo',
+        'project_diagnostics',
         'project_file_read',
         'project_files_list',
         'project_status',
@@ -416,6 +417,12 @@ async function main() {
       ],
     );
     assert.equal(JSON.stringify(tools.tools.map((tool) => tool.inputSchema)).includes('credential'), false);
+    const projectDiagnosticsTool = tools.tools.find((tool) => tool.name === 'project_diagnostics');
+    assert.deepEqual(projectDiagnosticsTool.annotations, {
+      readOnlyHint: true,
+      idempotentHint: true,
+    });
+    assert.equal(projectDiagnosticsTool.inputSchema.additionalProperties, false);
     const spatialReadTool = tools.tools.find((tool) => tool.name === 'spatial_attachment_read');
     assert.ok(spatialReadTool);
     assert.deepEqual(spatialReadTool.annotations, {
@@ -475,6 +482,13 @@ async function main() {
     assert.equal(status.structuredContent.shortName, 'sf-mcp');
     assert.equal(status.structuredContent.service.ok, true);
     assert.equal(JSON.parse(status.content[0].text).session.id, project.session.id);
+    const diagnostics = await call('project_diagnostics');
+    assert.equal(diagnostics.structuredContent.schema, 'shader_forge.profile_live');
+    assert.equal(diagnostics.structuredContent.sessionId, project.session.id);
+    assert.equal(path.resolve(diagnostics.structuredContent.rootPath), path.resolve(workspaceRoot));
+    assert.equal(diagnostics.structuredContent.workspace.ai.providerCount > 0, true);
+    const injectedDiagnosticsAuthority = await call('project_diagnostics', { sessionId: otherSession.id });
+    assert.equal(injectedDiagnosticsAuthority.isError, true);
 
     const listed = await call('project_files_list', { path: 'src' });
     assert.deepEqual(listed.structuredContent.entries.map((entry) => entry.name), ['fixture.txt']);

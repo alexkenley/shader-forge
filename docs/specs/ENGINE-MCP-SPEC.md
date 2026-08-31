@@ -1,6 +1,6 @@
 # Shader Forge MCP Spec
 
-Status: project/coordination reads, typed spatial rest/sample read, and lease-gated spatial mutation slice
+Status: project/coordination/diagnostic reads, typed spatial rest/sample read, and lease-gated spatial mutation slice
 
 Date: 2026-08-30
 
@@ -55,6 +55,7 @@ Returns the credential-free coordination view for the selected workspace, includ
 Read tools:
 
 - `project_status` reads the selected project/session and backend status
+- `project_diagnostics` reads the selected workspace's live runtime, build, package, trust, bounded AI-readiness, and profiling summary
 - `project_files_list` lists files or directories inside the session root
 - `project_file_read` reads a UTF-8 file inside the session root
 - `spatial_attachment_read` reads exact revision-bound native rest or sampled attachment evidence through the selected session's transient sessiond evaluator
@@ -79,7 +80,7 @@ The MCP actor is fixed from the process coordinator registration as `kind: mcp`.
 
 Operation failures are structured MCP error results. HTTP status, safe code/diagnostic/conflict/lease/operation/approval/code-trust fields, and a refreshed authoritative operation on transition conflicts are retained without exposing request bodies, headers, staged content, or credentials. Conflict recovery is explicit: reread the source and operation, then create a new preview. The adapter never retries or applies automatically.
 
-Tool results are structured, bounded to the selected workspace, and do not expose the coordinator credential.
+Tool results are structured, bounded to the selected workspace, and do not expose the coordinator credential. `project_diagnostics` injects the process-selected session into the existing read-only `/api/profile/live` service; callers cannot select another session, provider, prompt, or model.
 
 ### Typed spatial read contract
 
@@ -122,6 +123,7 @@ The deterministic MCP harness must:
 - attach `sf-mcp` to a real temporary session
 - complete MCP initialization over stdio
 - enumerate and call the documented resources and tools
+- verify `project_diagnostics` is read-only, pins the selected session, and rejects caller-supplied session authority
 - verify file reads stay inside the session root
 - verify strict typed rest/sample `spatial_attachment_read`, source-revision passthrough, selected-session pinning, clipping schema, and stale/path/sample/authority-injection rejection without coordination or operation side effects
 - verify coordinator registration, lease use, and disconnect cleanup

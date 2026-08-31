@@ -779,12 +779,13 @@ Current checkpoint now implemented:
 - the shell `Workspace` panel now surfaces AI manifest source, ready-provider counts, provider diagnostics, and an inline smoke-test action
 - deterministic coverage now exists through `scripts/test-engine-ai-scaffold.mjs`
 - the committed `.agents/mcp_config.json` connects Google Antigravity to the separate `sf-mcp` external-agent lane with portable relative paths and no credential
+- `sf-mcp` now exposes read-only `project_diagnostics` through the existing live profile service, pinned to its process-selected workspace and separate from provider/model execution
 
 Still ahead inside this phase:
 - resumable queued requests beyond the current process-scoped submit/status/cancel/event lifecycle, bounded retry/fallback, and durable terminal metadata history
 - additional hosted-provider execution, token/spend budget enforcement and pricing, and secure key storage beyond environment-backed OpenRouter BYOK plus its current monthly request-admission cap, per-request output ceiling, and durable token-usage evidence
 - mutating tool/skill permission enforcement through the existing operation/code-trust path, broader action-schema validation, and game-runtime exposure beyond the current read-only registry execution
-- typed external-agent MCP coverage and gameplay-facing AI integration
+- broader typed external-agent MCP coverage and gameplay-facing AI integration
 
 ## Phase 5.95: Code Access, Trust, And Hot Reload Safety
 

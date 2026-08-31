@@ -661,6 +661,19 @@ function registerSurface(server, state) {
     async () => toolResult(await readProject()),
   );
   server.registerTool(
+    'project_diagnostics',
+    {
+      title: 'Project diagnostics',
+      description: 'Read the current workspace runtime, build, package, trust, AI-readiness, and profiling diagnostics.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    },
+    async () => toolResult(await requestJson(
+      state.baseUrl,
+      `/api/profile/live?sessionId=${encodeURIComponent(state.session.id)}`,
+    )),
+  );
+  server.registerTool(
     'project_files_list',
     {
       title: 'List project files',
