@@ -93,6 +93,8 @@ Do not promote Assets schematics, debug proxy cards, or browser screenshots as r
 
 ### 5. Finish lifecycle safety and the remaining uplift backlog
 
+Status: in progress. Runtime/build requests now use generation guards so newer commands or authoritative SSE events win, stopping a build cancels its pending auto-run, and runtime telemetry no longer replaces the authored World selection.
+
 - Finish any remaining World lifecycle safety beyond the active-session priority-1 guard, with the same stale-response discipline as Code.
 - Continue the sparse World/Playtest/Assets UX, rendered QA, accessibility, runtime identity/race cleanup, and documentation consistency.
 - Expand migration from current Unity/Unreal/Godot skeleton conversion into useful asset/material/hierarchy/component/script mapping, conflict-safe reimport, provenance review, and exporter-assisted Unreal extraction.

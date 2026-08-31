@@ -2075,6 +2075,8 @@ export default function App() {
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
   const activeSessionIdRef = useRef('');
+  const runtimeLifecycleRequestRef = useRef(0);
+  const buildLifecycleRequestRef = useRef(0);
   const pendingRunRequestRef = useRef<{ id: number; sessionId: string; scene: string } | null>(null);
   const runRequestCounterRef = useRef(0);
   const selectedOperationIdRef = useRef('');
@@ -2625,11 +2627,15 @@ export default function App() {
             setDirPickerPath(nextPlatformInfo.defaultBrowsePath);
           }
         }
-        const nextRuntimeStatus = await fetchRuntimeStatus().catch(() => stoppedRuntimeStatus);
-        const nextBuildStatus = await fetchBuildStatus().catch(() => idleBuildStatus);
+        const runtimeRequestId = runtimeLifecycleRequestRef.current;
+        const buildRequestId = buildLifecycleRequestRef.current;
+        const [nextRuntimeStatus, nextBuildStatus] = await Promise.all([
+          fetchRuntimeStatus().catch(() => stoppedRuntimeStatus),
+          fetchBuildStatus().catch(() => idleBuildStatus),
+        ]);
         if (!cancelled) {
-          setRuntimeStatus(nextRuntimeStatus);
-          setBuildStatus(nextBuildStatus);
+          if (runtimeLifecycleRequestRef.current === runtimeRequestId) setRuntimeStatus(nextRuntimeStatus);
+          if (buildLifecycleRequestRef.current === buildRequestId) setBuildStatus(nextBuildStatus);
         }
         const nextSessions = await listSessions();
         if (cancelled) {
@@ -2740,14 +2746,13 @@ export default function App() {
       }
 
       if (event.type === 'runtime.status' || event.type === 'runtime.started') {
+        runtimeLifecycleRequestRef.current += 1;
         setRuntimeStatus(event.data);
-        if (event.data.scene) {
-          setLaunchScene(event.data.scene);
-        }
         return;
       }
 
       if (event.type === 'runtime.exit') {
+        runtimeLifecycleRequestRef.current += 1;
         setRuntimeStatus({
           ...stoppedRuntimeStatus,
           executablePath: event.data.executablePath,
@@ -2776,6 +2781,7 @@ export default function App() {
         event.type === 'build.started' ||
         event.type === 'build.completed'
       ) {
+        buildLifecycleRequestRef.current += 1;
         setBuildStatus(event.data);
         if (event.data.buildDir) {
           setBuildDir(event.data.buildDir);
@@ -2857,8 +2863,10 @@ export default function App() {
       const requestedScene = runRequest.scene;
       const requestedSessionId = runRequest.sessionId || undefined;
       if (runtimeStatus.state === 'running' || runtimeStatus.state === 'paused') {
+        const requestId = ++runtimeLifecycleRequestRef.current;
         void restartRuntime(requestedScene, requestedSessionId)
           .then((nextStatus) => {
+            if (runtimeLifecycleRequestRef.current !== requestId) return;
             setRuntimeStatus(nextStatus);
             recordViewerBridgeEvent({
               title: 'Runtime restarted after build',
@@ -2870,6 +2878,7 @@ export default function App() {
             selectBottomTab('Logs');
           })
           .catch((error) => {
+            if (runtimeLifecycleRequestRef.current !== requestId) return;
             recordViewerBridgeEvent({
               title: 'Restart after build failed',
               detail: error instanceof Error ? error.message : String(error),
@@ -2883,8 +2892,10 @@ export default function App() {
         return;
       }
 
+      const requestId = ++runtimeLifecycleRequestRef.current;
       void startRuntime(requestedScene, requestedSessionId)
         .then((nextStatus) => {
+          if (runtimeLifecycleRequestRef.current !== requestId) return;
           setRuntimeStatus(nextStatus);
           recordViewerBridgeEvent({
             title: 'Runtime started after build',
@@ -2896,6 +2907,7 @@ export default function App() {
           selectBottomTab('Logs');
         })
         .catch((error) => {
+          if (runtimeLifecycleRequestRef.current !== requestId) return;
           recordViewerBridgeEvent({
             title: 'Start after build failed',
             detail: error instanceof Error ? error.message : String(error),
@@ -3463,8 +3475,10 @@ export default function App() {
   }
 
   async function handleStartRuntime() {
+    const requestId = ++runtimeLifecycleRequestRef.current;
     try {
       const nextStatus = await startRuntime(launchScene, activeSessionId || undefined);
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       setRuntimeStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Runtime started',
@@ -3475,6 +3489,7 @@ export default function App() {
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested\n`));
       selectBottomTab('Logs');
     } catch (error) {
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       recordViewerBridgeEvent({
         title: 'Runtime start failed',
         detail: error instanceof Error ? error.message : String(error),
@@ -3488,8 +3503,10 @@ export default function App() {
   }
 
   async function handleStopRuntime() {
+    const requestId = ++runtimeLifecycleRequestRef.current;
     try {
       const nextStatus = await stopRuntime();
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       setRuntimeStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Runtime stopped',
@@ -3500,6 +3517,7 @@ export default function App() {
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] stop requested\n`));
       selectBottomTab('Logs');
     } catch (error) {
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       recordViewerBridgeEvent({
         title: 'Runtime stop failed',
         detail: error instanceof Error ? error.message : String(error),
@@ -3513,8 +3531,10 @@ export default function App() {
   }
 
   async function handlePauseRuntime() {
+    const requestId = ++runtimeLifecycleRequestRef.current;
     try {
       const nextStatus = await pauseRuntime();
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       setRuntimeStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Runtime paused',
@@ -3525,6 +3545,7 @@ export default function App() {
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] pause requested\n`));
       selectBottomTab('Logs');
     } catch (error) {
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       recordViewerBridgeEvent({
         title: 'Runtime pause failed',
         detail: error instanceof Error ? error.message : String(error),
@@ -3538,8 +3559,10 @@ export default function App() {
   }
 
   async function handleResumeRuntime() {
+    const requestId = ++runtimeLifecycleRequestRef.current;
     try {
       const nextStatus = await resumeRuntime();
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       setRuntimeStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Runtime resumed',
@@ -3550,6 +3573,7 @@ export default function App() {
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] resume requested\n`));
       selectBottomTab('Logs');
     } catch (error) {
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       recordViewerBridgeEvent({
         title: 'Runtime resume failed',
         detail: error instanceof Error ? error.message : String(error),
@@ -3563,8 +3587,10 @@ export default function App() {
   }
 
   async function handleRestartRuntime() {
+    const requestId = ++runtimeLifecycleRequestRef.current;
     try {
       const nextStatus = await restartRuntime(launchScene, activeSessionId || undefined);
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       setRuntimeStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Runtime restarted',
@@ -3575,6 +3601,7 @@ export default function App() {
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested\n`));
       selectBottomTab('Logs');
     } catch (error) {
+      if (runtimeLifecycleRequestRef.current !== requestId) return;
       recordViewerBridgeEvent({
         title: 'Runtime restart failed',
         detail: error instanceof Error ? error.message : String(error),
@@ -3588,6 +3615,7 @@ export default function App() {
   }
 
   async function requestRuntimeBuild(runAfterBuild = false) {
+    const requestId = ++buildLifecycleRequestRef.current;
     const runRequest = runAfterBuild
       ? {
           id: runRequestCounterRef.current + 1,
@@ -3599,9 +3627,10 @@ export default function App() {
       runRequestCounterRef.current = runRequest.id;
     }
     pendingRunRequestRef.current = runRequest;
+    setPendingRunAfterBuild(runAfterBuild);
     try {
       const nextStatus = await startRuntimeBuild(buildConfig, buildDir.trim() || undefined);
-      setPendingRunAfterBuild(runAfterBuild);
+      if (buildLifecycleRequestRef.current !== requestId) return;
       setBuildStatus(nextStatus);
       recordViewerBridgeEvent({
         title: runAfterBuild ? 'Build + Run queued' : 'Build requested',
@@ -3615,6 +3644,7 @@ export default function App() {
       selectBottomTab('Output');
       selectRightTab('Build');
     } catch (error) {
+      if (buildLifecycleRequestRef.current !== requestId) return;
       if (!runRequest || pendingRunRequestRef.current?.id === runRequest.id) {
         pendingRunRequestRef.current = null;
         setPendingRunAfterBuild(false);
@@ -3651,8 +3681,12 @@ export default function App() {
   }
 
   async function handleStopBuild() {
+    const requestId = ++buildLifecycleRequestRef.current;
+    pendingRunRequestRef.current = null;
+    setPendingRunAfterBuild(false);
     try {
       const nextStatus = await stopBuild();
+      if (buildLifecycleRequestRef.current !== requestId) return;
       setBuildStatus(nextStatus);
       recordViewerBridgeEvent({
         title: 'Build stopped',
@@ -3665,6 +3699,7 @@ export default function App() {
       setBuildLog((current) => trimTerminalOutput(`${current}[build] stop requested\n`));
       selectBottomTab('Output');
     } catch (error) {
+      if (buildLifecycleRequestRef.current !== requestId) return;
       recordViewerBridgeEvent({
         title: 'Build stop failed',
         detail: error instanceof Error ? error.message : String(error),
