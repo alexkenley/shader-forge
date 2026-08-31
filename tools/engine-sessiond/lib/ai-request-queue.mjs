@@ -7,12 +7,14 @@ const jobStatuses = new Set(['queued', 'running', ...terminalStatuses]);
 export class AiRequestQueue {
   constructor({
     execute = testAiProvider,
+    admitRequest = null,
     recordUsage = null,
     recordHistory = null,
     emitEvent = () => {},
     maxJobs = 128,
   } = {}) {
     this.execute = execute;
+    this.admitRequest = admitRequest;
     this.recordUsage = recordUsage;
     this.recordHistory = recordHistory;
     this.emitEvent = emitEvent;
@@ -51,6 +53,7 @@ export class AiRequestQueue {
       usageError: null,
       historyRecorded: null,
       historyError: null,
+      budgetAdmission: null,
       controller: null,
     };
     this.jobs.set(job.id, job);
@@ -144,6 +147,15 @@ export class AiRequestQueue {
       job.controller = new AbortController();
       this.emit(job);
       try {
+        if (this.admitRequest) {
+          try {
+            const admission = await this.admitRequest(job.rootPath, { providerId: job.providerId });
+            job.budgetAdmission = admission?.status || 'not_required';
+          } catch (error) {
+            job.budgetAdmission = 'denied';
+            throw error;
+          }
+        }
         const result = await this.execute(job.rootPath, {
           providerId: job.providerId,
           prompt: job.prompt,
@@ -194,6 +206,7 @@ export class AiRequestQueue {
       usageError: job.usageError,
       historyRecorded: job.historyRecorded,
       historyError: job.historyError,
+      budgetAdmission: job.budgetAdmission,
     };
     if (includeResult) {
       snapshot.result = job.result;
@@ -235,6 +248,7 @@ export class AiRequestQueue {
       finishedAt: snapshot.finishedAt,
       error: snapshot.error,
       historyRecorded: snapshot.historyRecorded,
+      budgetAdmission: snapshot.budgetAdmission,
     });
   }
 }

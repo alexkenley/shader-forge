@@ -92,6 +92,7 @@ await fs.writeFile(
     '[request]',
     'retry_count = 1',
     'fallback_providers = ["openrouter_glm"]',
+    'monthly_request_limit = 3',
     '',
     '[provider.local_fake]',
     'type = "fake"',
@@ -204,6 +205,7 @@ try {
   assert.deepEqual(bundledProviders.requestPolicy, {
     retryCount: 0,
     fallbackProviderIds: [],
+    monthlyRequestLimit: 0,
     valid: true,
     diagnostics: [],
   });
@@ -214,6 +216,7 @@ try {
   assert.ok(health.capabilities.includes('ai:test'));
   assert.ok(health.capabilities.includes('ai:jobs'));
   assert.ok(health.capabilities.includes('ai:history'));
+  assert.ok(health.capabilities.includes('ai:budget'));
   assert.ok(health.capabilities.includes('ai:tools'));
   assert.ok(health.capabilities.includes('ai:tools:invoke'));
   assert.ok(health.capabilities.includes('ai:skills'));
@@ -235,6 +238,7 @@ try {
   assert.deepEqual(providerSummary.requestPolicy, {
     retryCount: 1,
     fallbackProviderIds: ['openrouter_glm'],
+    monthlyRequestLimit: 3,
     valid: true,
     diagnostics: [],
   });
@@ -254,6 +258,16 @@ try {
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'openrouter_bad_limit')?.status, 'invalid');
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'provider_type_typo')?.status, 'invalid');
   assert.doesNotMatch(JSON.stringify(providerSummary), /test-openrouter-key/);
+
+  const initialBudget = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/budget?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.equal(initialBudget.enabled, true);
+  assert.equal(initialBudget.configuredLimit, 3);
+  assert.equal(initialBudget.admittedRequestCount, 0);
+  assert.equal(initialBudget.remainingRequestCount, 3);
+  const cliInitialBudget = await runCli(['ai', 'budgets', '--session', sessionId, '--base-url', service.baseUrl]);
+  assert.equal(cliInitialBudget.remainingRequestCount, 3);
 
   const toolSummary = await requestJsonNoAuth(
     `${service.baseUrl}/api/ai/tools?sessionId=${encodeURIComponent(sessionId)}`,
@@ -428,6 +442,7 @@ try {
   assert.equal(completedJob.result?.content, 'ready');
   assert.equal(completedJob.error, null);
   assert.equal(completedJob.usageRecorded, null);
+  assert.equal(completedJob.budgetAdmission, 'not_required');
 
   const usageJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
     sessionId,
@@ -530,6 +545,30 @@ try {
   const cliCancelCompleted = await runCli(['ai', 'cancel', cliQueuedJob.id, '--base-url', service.baseUrl]);
   assert.equal(cliCancelCompleted.status, 'completed');
 
+  const budgetedProviderRequestCount = providerRequests.length;
+  const deniedBudgetJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Do not run after the monthly budget is exhausted.',
+  });
+  const deniedBudgetJob = await waitForAiJob(
+    service.baseUrl,
+    deniedBudgetJobPayload.job.id,
+    ['failed'],
+    (job) => job.historyRecorded === true,
+  );
+  assert.equal(deniedBudgetJob.budgetAdmission, 'denied');
+  assert.match(deniedBudgetJob.error || '', /monthly queued-request budget is exhausted/);
+  assert.equal(providerRequests.length, budgetedProviderRequestCount);
+  const exhaustedBudget = await runCli(['ai', 'budgets', '--session', sessionId, '--base-url', service.baseUrl]);
+  assert.equal(exhaustedBudget.admittedRequestCount, 3);
+  assert.equal(exhaustedBudget.remainingRequestCount, 0);
+  const durableBudget = JSON.parse(await fs.readFile(
+    path.join(tempProjectRoot, '.shader-forge', 'ai-budget.json'),
+    'utf8',
+  ));
+  assert.equal(durableBudget.months.at(-1).admittedRequestCount, 3);
+
   const oversizedResponse = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
     providerId: 'openrouter_kimi',
@@ -576,6 +615,18 @@ try {
     providerId: 'local_fake',
   });
   assert.match(invalidRetryPolicy.error || '', /request\.retry_count must be an integer from 0 through 2/);
+  await fs.writeFile(
+    providerConfigPath,
+    validProviderConfig.replace('monthly_request_limit = 3', 'monthly_request_limit = 100001'),
+    'utf8',
+  );
+  const invalidBudgetPolicy = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/budget?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.match(
+    invalidBudgetPolicy.error || '',
+    /request\.monthly_request_limit must be an integer from 0 through 100000/,
+  );
 
   await fs.writeFile(path.join(tempProjectRoot, 'ai', 'registry.json'), JSON.stringify({
     schemaVersion: 1,
@@ -600,6 +651,7 @@ try {
   console.log('- Verified bounded queued AI jobs, list/status/cancel APIs and CLI adapters, pending/running cancellation, and queue recovery');
   console.log('- Verified bounded durable metadata-only AI history through the API and CLI without prompt, response, error, or credential content');
   console.log('- Verified atomic per-workspace provider token usage persistence and API/CLI summaries for successful queued calls');
+  console.log('- Verified durable monthly queued real-model admission budgets, fake-provider exemption, and pre-provider rejection');
   console.log('- Verified bounded read-only tool/skill registry discovery, schemas, client narrowing, and reference validation');
   console.log('- Verified exact read-only tool invocation and ordered skill execution through schema-validated server and CLI adapters');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');

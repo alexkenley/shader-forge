@@ -2,6 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import { AiRequestQueue } from './lib/ai-request-queue.mjs';
+import { AiBudgetStore } from './lib/ai-budget-store.mjs';
 import { AiHistoryStore } from './lib/ai-history-store.mjs';
 import { AiUsageStore } from './lib/ai-usage-store.mjs';
 import { BuildStore } from './lib/build-store.mjs';
@@ -505,6 +506,43 @@ async function invokeReadOnlyAiTool({ registry, toolId, client, input, rootPath,
   };
 }
 
+function selectedAiProvider(summary, providerId) {
+  const explicitId = typeof providerId === 'string' ? providerId.trim() : '';
+  return explicitId
+    ? summary.providers.find((provider) => provider.id === explicitId) || null
+    : summary.providers.find((provider) => provider.id === summary.defaultProviderId)
+      || summary.providers.find((provider) => provider.available)
+      || summary.providers[0]
+      || null;
+}
+
+async function inspectAiBudget(rootPath, aiBudgetStore) {
+  const summary = await inspectAiProviders(rootPath);
+  if (!summary.requestPolicy.valid) {
+    throw new Error(summary.requestPolicy.diagnostics[0]);
+  }
+  return aiBudgetStore.summary(rootPath, summary.requestPolicy.monthlyRequestLimit);
+}
+
+async function admitQueuedAiRequest(rootPath, providerId, aiBudgetStore) {
+  const summary = await inspectAiProviders(rootPath);
+  if (!summary.requestPolicy.valid) {
+    throw new Error(summary.requestPolicy.diagnostics[0]);
+  }
+  const provider = selectedAiProvider(summary, providerId);
+  if (!provider || !provider.enabled || !provider.supportedInSlice || provider.type === 'fake') {
+    return { status: 'not_required' };
+  }
+  if (summary.requestPolicy.monthlyRequestLimit === 0) {
+    return { status: 'not_required' };
+  }
+  const budget = await aiBudgetStore.admit(rootPath, summary.requestPolicy.monthlyRequestLimit);
+  return {
+    status: budget.enabled ? 'admitted' : 'not_required',
+    budget,
+  };
+}
+
 function validateSemanticOperationMutation(
   sceneAssetService,
   spatialAttachmentService,
@@ -756,6 +794,7 @@ function createRouter({
   eventHub,
   diagnosticsRecorder,
   aiRequestQueue,
+  aiBudgetStore,
   aiHistoryStore,
   aiUsageStore,
 }) {
@@ -804,6 +843,7 @@ function createRouter({
           'ai:test',
           'ai:jobs',
           'ai:history',
+          'ai:budget',
           'ai:tools',
           'ai:tools:invoke',
           'ai:skills',
@@ -943,6 +983,16 @@ function createRouter({
           resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
         );
         writeJson(response, 200, summary);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/ai/budget') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const budget = await inspectAiBudget(
+          resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+          aiBudgetStore,
+        );
+        writeJson(response, 200, budget);
         return;
       }
 
@@ -1917,6 +1967,7 @@ export async function startEngineSessiond({
   coordinationStore,
   operationStore,
   aiRequestQueue,
+  aiBudgetStore,
   aiHistoryStore,
   aiUsageStore,
   spatialAttachmentService,
@@ -1978,8 +2029,14 @@ export async function startEngineSessiond({
     captureSampleAttachment,
   });
   const resolvedAiUsageStore = aiUsageStore || new AiUsageStore();
+  const resolvedAiBudgetStore = aiBudgetStore || new AiBudgetStore();
   const resolvedAiHistoryStore = aiHistoryStore || new AiHistoryStore();
   const resolvedAiRequestQueue = aiRequestQueue || new AiRequestQueue({
+    admitRequest: (rootPath, request) => admitQueuedAiRequest(
+      rootPath,
+      request.providerId,
+      resolvedAiBudgetStore,
+    ),
     recordUsage: (rootPath, result) => resolvedAiUsageStore.record(rootPath, result),
     recordHistory: (rootPath, job) => resolvedAiHistoryStore.record(rootPath, job),
     emitEvent: (type, data) => {
@@ -2011,6 +2068,7 @@ export async function startEngineSessiond({
     eventHub,
     diagnosticsRecorder,
     aiRequestQueue: resolvedAiRequestQueue,
+    aiBudgetStore: resolvedAiBudgetStore,
     aiHistoryStore: resolvedAiHistoryStore,
     aiUsageStore: resolvedAiUsageStore,
   }));
@@ -2037,6 +2095,7 @@ export async function startEngineSessiond({
     coordinationStore: resolvedCoordinationStore,
     operationStore: resolvedOperationStore,
     aiRequestQueue: resolvedAiRequestQueue,
+    aiBudgetStore: resolvedAiBudgetStore,
     aiHistoryStore: resolvedAiHistoryStore,
     aiUsageStore: resolvedAiUsageStore,
     close: async () => {

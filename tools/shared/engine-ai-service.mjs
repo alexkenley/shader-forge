@@ -165,6 +165,7 @@ function normalizeAiManifest(parsed) {
     ? configuredFallbacks.map(trim).filter(Boolean)
     : [];
   const policyDiagnostics = [];
+  const monthlyRequestLimit = Number(requestSource.monthly_request_limit ?? 0);
   if (!Number.isInteger(retryCount) || retryCount < 0 || retryCount > 2) {
     policyDiagnostics.push('request.retry_count must be an integer from 0 through 2.');
   }
@@ -175,6 +176,9 @@ function normalizeAiManifest(parsed) {
       || new Set(fallbackProviderIds).size !== fallbackProviderIds.length) {
     policyDiagnostics.push('request.fallback_providers must contain at most two unique non-empty provider IDs.');
   }
+  if (!Number.isInteger(monthlyRequestLimit) || monthlyRequestLimit < 0 || monthlyRequestLimit > 100_000) {
+    policyDiagnostics.push('request.monthly_request_limit must be an integer from 0 through 100000.');
+  }
 
   return {
     defaultProviderId,
@@ -182,6 +186,7 @@ function normalizeAiManifest(parsed) {
     requestPolicy: {
       retryCount: Number.isInteger(retryCount) ? retryCount : 0,
       fallbackProviderIds,
+      monthlyRequestLimit: Number.isInteger(monthlyRequestLimit) ? monthlyRequestLimit : 0,
       diagnostics: policyDiagnostics,
     },
   };
@@ -566,6 +571,7 @@ export async function inspectAiProviders(rootPath, { timeoutMs = 2_500, signal }
     requestPolicy: {
       retryCount: loaded.manifest.requestPolicy.retryCount,
       fallbackProviderIds: loaded.manifest.requestPolicy.fallbackProviderIds,
+      monthlyRequestLimit: loaded.manifest.requestPolicy.monthlyRequestLimit,
       valid: requestPolicyDiagnostics.length === 0,
       diagnostics: requestPolicyDiagnostics,
     },

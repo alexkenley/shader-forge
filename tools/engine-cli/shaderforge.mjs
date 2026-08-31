@@ -66,6 +66,7 @@ Usage:
   engine ai jobs [--session <id>] [--status queued|running|completed|failed|cancelled|all] [--base-url <url>]
   engine ai history [--session <id>] [--status completed|failed|cancelled|all] [--limit <count>] [--base-url <url>]
   engine ai usage [--session <id>] [--base-url <url>]
+  engine ai budgets [--session <id>] [--base-url <url>]
   engine ai status <job-id> [--base-url <url>]
   engine ai cancel <job-id> [--base-url <url>]
   engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]
@@ -821,6 +822,14 @@ async function readAiUsage(flags) {
   console.log(JSON.stringify(payload, null, 2));
 }
 
+async function readAiBudget(flags) {
+  const baseUrl = resolvedBaseUrl(flags);
+  const query = new URL('/api/ai/budget', baseUrl);
+  if (flags.session) query.searchParams.set('sessionId', String(flags.session));
+  const payload = await requestJson(baseUrl, query.pathname + query.search);
+  console.log(JSON.stringify(payload, null, 2));
+}
+
 async function readAiHistory(flags) {
   const baseUrl = resolvedBaseUrl(flags);
   const query = new URL('/api/ai/history', baseUrl);
@@ -1204,6 +1213,10 @@ export async function runCli(argv = process.argv.slice(2)) {
     }
     if (subcommand === 'usage') {
       await readAiUsage(flags);
+      return;
+    }
+    if (subcommand === 'budgets') {
+      await readAiBudget(flags);
       return;
     }
     if (subcommand === 'history') {

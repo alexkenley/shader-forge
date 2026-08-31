@@ -3,6 +3,7 @@ default_provider = "local_fake"
 [request]
 retry_count = 0
 fallback_providers = []
+monthly_request_limit = 0
 
 [provider.local_fake]
 type = "fake"

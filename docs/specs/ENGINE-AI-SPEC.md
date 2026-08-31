@@ -262,6 +262,10 @@ Current implemented behavior:
 - OpenRouter requests use its fixed official HTTPS API root, bearer authentication, the existing chat-completions payload, and a 1 MiB response limit; only the deterministic harness can opt into a loopback endpoint
 - real chat requests carry a manifest-backed `max_output_tokens` ceiling (default 256); OpenRouter requires an integer from 1 through 4096 before becoming ready
 - `[request]` policy can opt into zero through two retries and up to two explicit fallback provider IDs; the bundled defaults perform no retry or fallback
+- `[request].monthly_request_limit` can opt into a durable UTC-month admission cap for queued non-fake jobs; zero disables the cap and is the bundled default
+- admission is persisted under `.shader-forge/ai-budget.json` before provider execution, is not refunded after cancellation or failure, and covers the complete bounded retry/fallback sequence as one queued job
+- `GET /api/ai/budget` and `engine ai budgets` report the configured limit, admitted count, and remaining count; direct provider diagnostics bypass this gameplay-queue guard
+- this request admission cap is not token pricing or a dollar-spend guarantee; provider billing, failed upstream work, and price changes require separate evidence and policy
 - only transient network failures and HTTP 408/425/429/500/502/503/504 responses retry or fall back, using a bounded 100 ms retry delay; cancellation and configuration, authentication, other 4xx, malformed, empty, or oversized responses fail immediately
 - successful results report attempt count, whether fallback was used, and the attempted provider IDs without exposing provider error bodies; explicitly requested unknown providers still fail before fallback
 - real provider results normalize prompt, completion, and total token usage when the provider returns valid non-negative integer counts; deterministic fake results report no fabricated usage
@@ -285,7 +289,7 @@ Current implemented behavior:
 Still ahead in Phase 5.9:
 
 - resumable queued jobs beyond the current process-scoped queue, bounded retry/fallback, cancellation, timeout, status, event lifecycle, and terminal metadata history
-- budget enforcement, spend limits, pricing, and request logging beyond the current per-request output ceiling and durable token-usage evidence
+- token/spend budget enforcement and pricing beyond the current durable monthly queued-request admission cap, per-request output ceiling, and token-usage evidence
 - additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
 - mutating tool/skill permission enforcement through existing engine operations, broader action schemas, and game-runtime exposure beyond the current schema-validated read-only registry execution
 - gameplay-facing AI integrations
