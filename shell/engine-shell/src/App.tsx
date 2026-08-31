@@ -5,6 +5,7 @@ import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
 import { SpatialAttachmentEditorView } from './SpatialAttachmentEditorView';
 import { ActivityDockView } from './ActivityDockView';
+import { CodeWorkspaceView } from './CodeWorkspaceView';
 import {
   captureProfile,
   closeTerminal,
@@ -1447,63 +1448,16 @@ function renderGitGroup(title: string, entries: GitStatus['staged']) {
   );
 }
 
-function renderCodeBridge(
-  showLegacyBridge: boolean,
-  onToggleLegacyBridge: () => void,
-) {
+function renderLegacyCodeBridge() {
   return (
     <div className="workspace-layout workspace-layout--code-focus">
       <section className="surface legacy-surface">
-        <div className="surface-header">
-          <div>
-            <div className="surface-eyebrow">Code Workspace</div>
-            <h2>Code</h2>
-            <p>The preserved Monaco/search work stays intact, but the old app chrome is no longer the default shell.</p>
-          </div>
-          <div className="inline-actions">
-            <button className="ghost-button" onClick={onToggleLegacyBridge} type="button">
-              {showLegacyBridge ? 'Hide legacy bridge' : 'Load legacy bridge'}
-            </button>
-            <a className="surface-link" href={legacyWorkspaceSrc} rel="noreferrer" target="_blank">
-              Open standalone
-            </a>
-          </div>
-        </div>
-        {showLegacyBridge ? (
-          <iframe
-            className="legacy-frame"
-            loading="lazy"
-            src={legacyWorkspaceSrc}
-            title="Shader Forge preserved code workspace"
-          />
-        ) : (
-          <div className="bridge-placeholder">
-            <div className="bridge-placeholder__summary">
-              <strong>Legacy bridge quarantined</strong>
-              <p>
-                The preserved code surface is kept as a compatibility baseline while the real Shader Forge code
-                dock is extracted around it.
-              </p>
-            </div>
-            <div className="bridge-placeholder__grid">
-              <article className="mini-card">
-                <span>Preserved</span>
-                <strong>Monaco editor</strong>
-                <p>Inline find, diffing, and file semantics remain in `web/`.</p>
-              </article>
-              <article className="mini-card">
-                <span>Replacing</span>
-                <strong>Legacy chrome</strong>
-                <p>Guardian-shaped nav, panels, and terminal chrome are being removed.</p>
-              </article>
-              <article className="mini-card">
-                <span>Next</span>
-                <strong>Native code dock</strong>
-                <p>Shader Forge will own the tabs, split panes, and terminal host directly.</p>
-              </article>
-            </div>
-          </div>
-        )}
+        <iframe
+          className="legacy-frame"
+          loading="lazy"
+          src={legacyWorkspaceSrc}
+          title="Shader Forge preserved code workspace"
+        />
       </section>
     </div>
   );
@@ -1511,8 +1465,6 @@ function renderCodeBridge(
 
 function renderCenterContent(
   activeTab: CenterTab,
-  showLegacyBridge: boolean,
-  onToggleLegacyBridge: () => void,
   activeSession: EngineSession | null,
   operationEventEpoch: number,
   runtimeStatus: RuntimeStatus,
@@ -1533,10 +1485,6 @@ function renderCenterContent(
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
 ) {
-  if (activeTab === 'Code') {
-    return renderCodeBridge(showLegacyBridge, onToggleLegacyBridge);
-  }
-
   if (activeTab === 'Assets') {
     return (
       <SpatialAttachmentEditorView
@@ -3735,7 +3683,15 @@ export default function App() {
                 </button>
               </>
             ) : activeCenterTab === 'Code' ? (
-              <div className="guide-toolbar-meta">Preserved Monaco editor and file search stay available through the compatibility bridge.</div>
+              <>
+                <div className="guide-toolbar-meta">Native Code workspace for open, edit, preview, review, apply, and undo. Search the current file beside Inspect.</div>
+                <button className="ghost-button ghost-button--sm" onClick={() => setShowLegacyBridge((current) => !current)} type="button">
+                  {showLegacyBridge ? 'Hide legacy bridge' : 'Load legacy bridge'}
+                </button>
+                <a className="surface-link" href={legacyWorkspaceSrc} rel="noreferrer" target="_blank">
+                  Open standalone
+                </a>
+              </>
             ) : activeCenterTab === 'World' ? (
               <div className="guide-toolbar-meta">Level editor workspace: author in the viewport, then use the visible Run controls inside World to launch the same scene in the native runtime.</div>
             ) : activeCenterTab === 'Assets' ? (
@@ -3754,11 +3710,11 @@ export default function App() {
           >
             {showGuide ? (
               <ReferenceGuideView guide={engineReferenceGuide} />
+            ) : activeCenterTab === 'Code' ? (
+              showLegacyBridge ? renderLegacyCodeBridge() : null
             ) : (
               renderCenterContent(
                 activeCenterTab,
-                showLegacyBridge,
-                () => setShowLegacyBridge((current) => !current),
                 activeSession,
                 operationEventEpoch,
                 runtimeStatus,
@@ -3780,6 +3736,12 @@ export default function App() {
                 handleResumeRuntime,
               )
             )}
+            <div className="code-workspace-host" hidden={showGuide || activeCenterTab !== 'Code' || showLegacyBridge}>
+              <CodeWorkspaceView
+                activeSession={activeSession}
+                operationEventEpoch={operationEventEpoch}
+              />
+            </div>
           </div>
         </section>
 

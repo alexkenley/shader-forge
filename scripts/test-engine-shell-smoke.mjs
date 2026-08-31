@@ -38,6 +38,9 @@ try {
   assert.match(shellApp, /const centerTabs = \['World', 'Code', 'Playtest', 'Assets'\] as const;/);
   assert.doesNotMatch(shellApp, /const centerTabs = \['Scene', 'Game', 'Preview', 'Code', 'Guide'\] as const;/);
   assert.match(shellApp, /web\/index\.html#\/code/);
+  assert.match(shellApp, /CodeWorkspaceView/);
+  assert.match(shellApp, /Load legacy bridge/);
+  assert.doesNotMatch(shellApp, /bridge-placeholder/);
   assert.match(shellApp, /ReferenceGuideView/);
   assert.match(shellApp, /aria-label="Primary workspaces"/);
   assert.match(shellApp, /Playtest shows and controls the external native runtime/);

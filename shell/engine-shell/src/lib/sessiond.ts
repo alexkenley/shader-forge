@@ -1154,6 +1154,25 @@ export async function evaluateSpatialAttachmentSample(
   return requestJson<SpatialAttachmentEvaluationResult>(`${query.pathname}${query.search}`);
 }
 
+export async function previewFileWrite(options: {
+  sessionId: string;
+  path: string;
+  content: string;
+  baseRevision: string;
+}) {
+  const payload = await requestJson<{ operation: EngineOperation }>('/api/operations/file-write/preview', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId: options.sessionId,
+      path: options.path,
+      content: options.content,
+      baseRevision: options.baseRevision,
+      actor: engineShellActor,
+    }),
+  });
+  return payload.operation;
+}
+
 export async function previewSpatialAttachment(options: {
   sessionId: string;
   path: string;
