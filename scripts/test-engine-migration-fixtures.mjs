@@ -132,17 +132,27 @@ assert.match(unityConvertRun.stdout, /Migration conversion run complete\./);
 assert.match(unityConvertRun.stdout, /Source engine: unity/);
 assert.match(unityConvertRun.stdout, /Target project root:/);
 assert.match(unityConvertRun.stdout, /first-pass Shader Forge project skeleton was generated/i);
+assert.match(unityConvertRun.stdout, /Mapped scene entities: 3/);
 
 const unityConvertRoot = path.join(tempRoot, 'unity-convert');
 const unityProjectRoot = path.join(unityConvertRoot, 'shader-forge-project');
 const unityScenePath = path.join(unityProjectRoot, 'content', 'scenes', 'migrated', 'unity', 'sandbox.scene.toml');
 const unityPrefabPath = path.join(unityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'player.prefab.toml');
+const unityRootPrefabPath = path.join(unityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'sandbox_root.prefab.toml');
+const unityPlayerPrefabPath = path.join(unityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'sandbox_sandbox_root_player.prefab.toml');
 const unityDataPath = path.join(unityProjectRoot, 'content', 'data', 'migrated', 'unity', 'runtime_bootstrap.data.toml');
 assert.ok(fs.existsSync(unityScenePath), 'Expected Unity migrated scene output.');
 assert.ok(fs.existsSync(unityPrefabPath), 'Expected Unity migrated prefab output.');
+assert.ok(fs.existsSync(unityRootPrefabPath), 'Expected Unity scene-root prefab output.');
+assert.ok(fs.existsSync(unityPlayerPrefabPath), 'Expected Unity child GameObject prefab output.');
 assert.ok(fs.existsSync(unityDataPath), 'Expected Unity migrated bootstrap data output.');
-assert.match(fs.readFileSync(unityScenePath, 'utf8'), /primary_prefab = "player"/);
+const unityScene = fs.readFileSync(unityScenePath, 'utf8');
+assert.match(unityScene, /primary_prefab = "sandbox_root"/);
+assert.match(unityScene, /# migration_source_object_id = "2"[\s\S]*\[entity\.sandbox_sandbox_root_player_instance\]/);
+assert.match(unityScene, /\[entity\.sandbox_sandbox_root_player_instance\][\s\S]*parent = "sandbox_root_instance"[\s\S]*position = "1, 0\.5, -2"[\s\S]*rotation = "0, 90, 0"/);
+assert.match(unityScene, /\[entity\.sandbox_sandbox_root_player_camera_instance\][\s\S]*parent = "sandbox_sandbox_root_player_instance"[\s\S]*position = "0, 1\.6, 3"/);
 assert.match(fs.readFileSync(unityPrefabPath, 'utf8'), /category = "migrated_unity"/);
+assert.match(fs.readFileSync(unityPlayerPrefabPath, 'utf8'), /# migration_source_node = "SandboxRoot\/Player"[\s\S]*# migration_source_object_id = "2"/);
 assert.match(fs.readFileSync(unityDataPath, 'utf8'), /default_scene = "sandbox"/);
 assert.ok(
   fs.readdirSync(path.join(unityConvertRoot, 'script-porting')).some((name) => name.endsWith('.port.toml')),
@@ -153,12 +163,14 @@ const unityConvertManifest = fs.readFileSync(path.join(unityConvertRoot, 'migrat
 assert.match(unityConvertReport, /current_slice = "project_skeleton_conversion"/);
 assert.match(unityConvertReport, /asset_conversion = "Manual"/);
 assert.match(unityConvertReport, /scene_conversion = "BestEffort"/);
-assert.match(unityConvertReport, /converted_items = 3/);
+assert.match(unityConvertReport, /converted_items = 6/);
+assert.match(unityConvertReport, /mapped_scene_entities = 3/);
 assert.match(unityConvertReport, /converted_project_settings = 1/);
 assert.match(unityConvertReport, /\[startup_scene\][\s\S]*source_file = "ProjectSettings\/EditorBuildSettings\.asset"/);
 assert.match(unityConvertReport, /\[startup_scene\][\s\S]*resolved_source_path = "Assets\/Scenes\/Sandbox\.unity"/);
 assert.match(unityConvertReport, /\[startup_scene\][\s\S]*status = "converted"/);
 assert.match(unityConvertManifest, /\[startup_scene\][\s\S]*target_value = "sandbox"/);
+assert.match(unityConvertManifest, /mapped_scene_entities = 3/);
 await assertMigratedProjectBakes(unityProjectRoot, 'unity', 'unity-convert');
 
 const unrealRun = runCli([
@@ -466,11 +478,11 @@ assert.match(reportRun.stdout, /Engine: unity/);
 assert.match(reportRun.stdout, /Detection support: Supported/);
 assert.match(reportRun.stdout, /Active lane: unity_project_skeleton/);
 assert.match(reportRun.stdout, /Target project root:/);
-assert.match(reportRun.stdout, /Converted items: 3/);
+assert.match(reportRun.stdout, /Converted items: 6/);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 
 console.log('Engine migration fixtures harness passed.');
 console.log(`- Verified migration fixtures under ${path.join(repoRoot, 'fixtures', 'migration')}`);
 console.log(`- Verified CLI migration detect/report surfaces through ${cliPath}`);
-console.log('- Verified normalized migration manifest/report outputs plus first-pass migrated project skeletons, including Godot node hierarchy/transforms and both Unreal conversion lanes');
+console.log('- Verified normalized migration manifest/report outputs plus first-pass migrated project skeletons, including Unity/Godot hierarchy and transforms plus both Unreal conversion lanes');

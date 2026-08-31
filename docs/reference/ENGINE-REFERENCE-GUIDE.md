@@ -219,12 +219,13 @@ Assistant entry points:
 - Pinned engine lanes now generate first-pass migrated `.scene.toml`, `.prefab.toml`, `.data.toml`, and `script-porting/*.port.toml` outputs for the current fixtures.
 - Startup selection now maps Unity's first enabled `ProjectSettings/EditorBuildSettings.asset` scene, Unreal's `[/Script/EngineSettings.GameMapsSettings].GameDefaultMap`, and Godot's `[application].run/main_scene` when it uses `res://`, resolving against exact source-project-relative scene records.
 - Every pinned conversion reports a `[startup_scene]` source/target provenance record plus converted, approximated, and skipped project-setting counts. Duplicate scene basenames receive deterministic source-path-derived target names, so a declared startup scene remains unambiguous.
+- Unity text-YAML scene conversion maps `GameObject` plus `Transform`/`RectTransform` documents into parent-linked entities and scene-owned prefabs, preserves source file IDs, and carries local position/quaternion rotation/scale into reviewable generated records.
 - Godot text-scene conversion maps declared nodes into parent-linked entities, carries explicit position/rotation/scale fields into Shader Forge transforms, derives prefab tags from node types, retains source node/type comments, and reports `mapped_scene_entities`; normalized node-name collisions are disambiguated deterministically.
 - Binary Godot `.scn` files retain a reviewable placeholder but are not parsed or counted as mapped scene entities.
 - An explicit startup scene that does not resolve is fail-closed: no `runtime_bootstrap.data.toml` is emitted, the setting is `skipped`, and warnings/manual work identify the unresolved value. If no startup scene is declared, the first source-relative converted scene is selected deterministically and marked `approximated`.
 - `asset_conversion` is `Manual` until real source payload import exists. Placeholder asset directories do not constitute conversion. The migration fixture harness also feeds emitted scene, prefab, and optional bootstrap records through the production asset-pipeline baker.
 - The Unreal offline fallback currently derives scene and prefab placeholders from `.umap` names, Blueprint-like `.uasset` package names, and available C++ class symbols rather than exported Unreal actor data.
-- The current migration slice now converts project structure plus Godot text-scene hierarchy and explicit vector transforms into a usable Shader Forge skeleton, but it still does not provide full asset, component, or gameplay parity.
+- The current migration slice now converts project structure plus Unity and Godot text-scene hierarchy/local transforms into a usable Shader Forge skeleton. Unity prefab instances, serialized components, source assets, and coordinate-system remediation remain manual alongside the broader asset/component/gameplay parity gap.
 
 ## Runtime And Authoring
 

@@ -530,6 +530,8 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
     return [
       engine === 'godot'
         ? `Review mapped Godot text-scene hierarchy and explicit position, rotation, and scale fields under ${targetRoots.content_scenes}; transform matrices, instanced resources, and component payloads remain manual.`
+        : engine === 'unity'
+          ? `Review mapped Unity text-YAML GameObject hierarchy and local transforms under ${targetRoots.content_scenes}; prefab instances, component payloads, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
       `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
       `Populate real imported art and cooked assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; this slice only emits structure placeholders.`,
@@ -568,7 +570,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
     if (detection.engine === 'unity') {
-      warnings.push('Unity conversion currently extracts scene, prefab, and script identifiers from minimal text assets rather than full serialized component graphs.');
+      warnings.push('Unity conversion maps text-YAML GameObject and Transform/RectTransform hierarchy plus local position, quaternion rotation, and scale; prefab instances, component payloads, assets, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
       warnings.push('Godot conversion maps text-scene node hierarchy plus explicit Vector3 position, rotation, and scale fields; transform matrices, resource instances, and component payload translation are still ahead.');
     }
@@ -668,6 +670,115 @@ function parseGodotSceneNodes(source) {
       : node.parent === '.'
         ? rootName
         : `${rootName}/${node.parent}`,
+  }));
+}
+
+function parseUnityYamlDocuments(source) {
+  const documents = [];
+  let current = null;
+  for (const rawLine of source.split(/\r?\n/)) {
+    const header = rawLine.match(/^---\s+!u!(\d+)\s+&(-?\d+)/);
+    if (header) {
+      current = { classId: Number(header[1]), fileId: header[2], lines: [] };
+      documents.push(current);
+    } else if (current) {
+      current.lines.push(trim(rawLine));
+    }
+  }
+  return documents;
+}
+
+function parseUnityInlineNumbers(lines, key, fields, fallback) {
+  const line = lines.find((candidate) => candidate.startsWith(`${key}:`));
+  const body = line?.match(/\{([^}]*)\}/)?.[1] || '';
+  const values = Object.fromEntries(
+    [...body.matchAll(/([A-Za-z_][A-Za-z0-9_]*):\s*([^,}]+)/g)]
+      .map((match) => [match[1], Number(match[2].trim())]),
+  );
+  return fields.every((field) => Number.isFinite(values[field]))
+    ? fields.map((field) => values[field])
+    : fallback;
+}
+
+function parseUnityFileId(lines, key) {
+  const line = lines.find((candidate) => candidate.startsWith(`${key}:`));
+  return line?.match(/\{\s*fileID:\s*(-?\d+)\s*\}/)?.[1] || '';
+}
+
+function unityQuaternionToEuler(rotation) {
+  const [x, y, z, w] = rotation;
+  const length = Math.hypot(x, y, z, w);
+  if (!Number.isFinite(length) || length === 0) {
+    return '0, 0, 0';
+  }
+  const qx = x / length;
+  const qy = y / length;
+  const qz = z / length;
+  const qw = w / length;
+  const ySin = Math.max(-1, Math.min(1, 2 * ((qw * qy) - (qz * qx))));
+  let xAngle;
+  let yAngle;
+  let zAngle;
+  if (Math.abs(Math.abs(ySin) - 1) < 0.000001) {
+    xAngle = 2 * Math.atan2(qx, qw);
+    yAngle = Math.sign(ySin) * Math.PI / 2;
+    zAngle = 0;
+  } else {
+    xAngle = Math.atan2(2 * ((qw * qx) + (qy * qz)), 1 - (2 * ((qx * qx) + (qy * qy))));
+    yAngle = Math.asin(ySin);
+    zAngle = Math.atan2(2 * ((qw * qz) + (qx * qy)), 1 - (2 * ((qy * qy) + (qz * qz))));
+  }
+  return [xAngle, yAngle, zAngle]
+    .map((value) => formatSceneNumber(value * 180 / Math.PI))
+    .join(', ');
+}
+
+function parseUnitySceneNodes(source) {
+  const documents = parseUnityYamlDocuments(source);
+  const transforms = documents
+    .filter((document) => document.classId === 4 || document.classId === 224)
+    .map((document) => ({
+      fileId: document.fileId,
+      gameObjectId: parseUnityFileId(document.lines, 'm_GameObject'),
+      parentTransformId: parseUnityFileId(document.lines, 'm_Father'),
+      position: parseUnityInlineNumbers(document.lines, 'm_LocalPosition', ['x', 'y', 'z'], [0, 0, 0]),
+      rotation: parseUnityInlineNumbers(document.lines, 'm_LocalRotation', ['x', 'y', 'z', 'w'], [0, 0, 0, 1]),
+      scale: parseUnityInlineNumbers(document.lines, 'm_LocalScale', ['x', 'y', 'z'], [1, 1, 1]),
+    }));
+  const transformByGameObject = new Map(transforms.map((transform) => [transform.gameObjectId, transform]));
+  const gameObjectByTransform = new Map(transforms.map((transform) => [transform.fileId, transform.gameObjectId]));
+  const nodes = documents
+    .filter((document) => document.classId === 1)
+    .map((document) => {
+      const nameLine = document.lines.find((line) => line.startsWith('m_Name:')) || '';
+      const name = trim(nameLine.slice('m_Name:'.length)).replace(/^"|"$/g, '') || `GameObject ${document.fileId}`;
+      const transform = transformByGameObject.get(document.fileId);
+      const parentFileId = transform ? gameObjectByTransform.get(transform.parentTransformId) || '' : '';
+      return {
+        fileId: document.fileId,
+        name,
+        parentFileId,
+        position: (transform?.position || [0, 0, 0]).map(formatSceneNumber).join(', '),
+        rotation: unityQuaternionToEuler(transform?.rotation || [0, 0, 0, 1]),
+        scale: (transform?.scale || [1, 1, 1]).map(formatSceneNumber).join(', '),
+      };
+    });
+  const nodeByFileId = new Map(nodes.map((node) => [node.fileId, node]));
+  const pathCache = new Map();
+  function resolvePath(node, visited = new Set()) {
+    if (pathCache.has(node.fileId)) return pathCache.get(node.fileId);
+    if (visited.has(node.fileId)) return node.name;
+    const parent = nodeByFileId.get(node.parentFileId);
+    const sourceNodePath = parent
+      ? `${resolvePath(parent, new Set([...visited, node.fileId]))}/${node.name}`
+      : node.name;
+    pathCache.set(node.fileId, sourceNodePath);
+    return sourceNodePath;
+  }
+  return nodes.map((node) => ({
+    ...node,
+    sourceNodePath: resolvePath(node),
+    sourceNodeType: 'GameObject',
   }));
 }
 
@@ -858,6 +969,7 @@ function buildSceneToml(scene) {
     lines.push('');
     if (entity.sourceNodePath) lines.push(`# migration_source_node = ${quoteTomlString(entity.sourceNodePath)}`);
     if (entity.sourceNodeType) lines.push(`# migration_source_type = ${quoteTomlString(entity.sourceNodeType)}`);
+    if (entity.sourceObjectId) lines.push(`# migration_source_object_id = ${quoteTomlString(entity.sourceObjectId)}`);
     lines.push(
       `[entity.${entity.id}]`,
       `display_name = ${quoteTomlString(entity.displayName)}`,
@@ -882,6 +994,7 @@ function buildPrefabToml(prefab) {
     ...(prefab.sourcePath ? [`# migration_source_path = ${quoteTomlString(prefab.sourcePath)}`] : []),
     ...(prefab.sourceNodePath ? [`# migration_source_node = ${quoteTomlString(prefab.sourceNodePath)}`] : []),
     ...(prefab.sourceNodeType ? [`# migration_source_type = ${quoteTomlString(prefab.sourceNodeType)}`] : []),
+    ...(prefab.sourceObjectId ? [`# migration_source_object_id = ${quoteTomlString(prefab.sourceObjectId)}`] : []),
     '',
     `category = ${quoteTomlString(prefab.category)}`,
     `spawn_tag = ${quoteTomlString(prefab.spawnTag)}`,
@@ -1025,9 +1138,11 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
     };
   }), (item) => item.name);
 
-  let scenes = stableSceneNames(sceneFiles.map((filePath, index) => {
+  const sourceScenes = stableSceneNames(sceneFiles.map((filePath, index) => {
     const source = fs.readFileSync(filePath, 'utf8');
-    const rootName = firstRegexGroup(source, /m_Name:\s*(.+)/, basenameWithoutExtension(filePath));
+    const nodes = parseUnitySceneNodes(source);
+    const rootNode = nodes.find((node) => !node.parentFileId) || nodes[0];
+    const rootName = rootNode?.name || firstRegexGroup(source, /m_Name:\s*(.+)/, basenameWithoutExtension(filePath));
     const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `unity_scene_${index + 1}`;
     const chosenPrefab = prefabs[Math.min(index, Math.max(prefabs.length - 1, 0))];
     return {
@@ -1038,8 +1153,73 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
       entityDisplayName: chosenPrefab?.displayName || rootName || displayNameFromToken(sceneName),
       sourcePath: relativePathFromRepo(repoRoot, filePath),
       sourceProjectPath: sourceProjectPath(projectRoot, filePath),
+      mappedNodeCount: nodes.length,
+      nodes,
     };
   }));
+
+  const allocatedPrefabNames = new Set(prefabs.map((prefab) => prefab.name));
+  const sceneNodePrefabs = [];
+  let scenes = sourceScenes.map((scene) => {
+    if (scene.nodes.length === 0) {
+      return scene;
+    }
+    const entityIdByFileId = new Map();
+    const prefabNameByFileId = new Map();
+    const primaryRootFileId = scene.nodes.find((node) => !node.parentFileId)?.fileId || scene.nodes[0].fileId;
+    for (const [index, node] of scene.nodes.entries()) {
+      const baseName = node.fileId === primaryRootFileId
+        ? `${scene.name}_root`
+        : `${scene.name}_${node.sourceNodePath
+          .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+          .split('/')
+          .join('_')}`;
+      const normalizedBaseName = normalizeToken(baseName) || `${scene.name}_object_${index + 1}`;
+      let prefabName = normalizedBaseName;
+      if (allocatedPrefabNames.has(prefabName)) {
+        const suffix = createHash('sha256').update(`${node.sourceNodePath}:${node.fileId}`).digest('hex').slice(0, 8);
+        prefabName = `${normalizedBaseName}_${suffix}`;
+      }
+      if (allocatedPrefabNames.has(prefabName)) {
+        prefabName = `${prefabName}_${index + 1}`;
+      }
+      allocatedPrefabNames.add(prefabName);
+      prefabNameByFileId.set(node.fileId, prefabName);
+      entityIdByFileId.set(node.fileId, `${prefabName}_instance`);
+      sceneNodePrefabs.push({
+        name: prefabName,
+        displayName: node.name,
+        category: 'migrated_unity',
+        spawnTag: 'unity_game_object',
+        sourcePath: scene.sourcePath,
+        sourceNodePath: node.sourceNodePath,
+        sourceNodeType: node.sourceNodeType,
+        sourceObjectId: node.fileId,
+      });
+    }
+    const entities = scene.nodes.map((node) => ({
+      id: entityIdByFileId.get(node.fileId),
+      displayName: node.name,
+      sourcePrefab: prefabNameByFileId.get(node.fileId),
+      parent: entityIdByFileId.get(node.parentFileId) || '',
+      position: node.position,
+      rotation: node.rotation,
+      scale: node.scale,
+      sourceNodePath: node.sourceNodePath,
+      sourceNodeType: node.sourceNodeType,
+      sourceObjectId: node.fileId,
+    }));
+    const rootEntity = entities.find((entity) => !entity.parent) || entities[0];
+    return {
+      ...scene,
+      title: rootEntity?.displayName || scene.title,
+      primaryPrefab: rootEntity?.sourcePrefab || scene.primaryPrefab,
+      entityId: rootEntity?.id || scene.entityId,
+      entityDisplayName: rootEntity?.displayName || scene.entityDisplayName,
+      entities,
+    };
+  });
+  prefabs = uniqueBy([...prefabs, ...sceneNodePrefabs], (item) => item.name);
 
   prefabs = ensureFallbackPrefabsForScenes(scenes, prefabs, 'unity');
   scenes = ensureFallbackScenesForPrefabs(scenes, prefabs, 'unity').map((scene) => ({
