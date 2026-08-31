@@ -25,6 +25,7 @@
     "test": "node scripts/test-engine-shell-smoke.mjs",
     "test:harness": "node scripts/test-engine-shell-smoke.mjs",
     "test:shell-smoke": "node scripts/test-engine-shell-smoke.mjs",
+    "test:shell-layout": "node scripts/test-engine-shell-layout.mjs",
     "test:sessiond": "node scripts/test-engine-sessiond.mjs",
     "test:mcp": "node scripts/test-engine-mcp.mjs",
     "test:runtime-scaffold": "node scripts/test-engine-runtime-scaffold.mjs",
