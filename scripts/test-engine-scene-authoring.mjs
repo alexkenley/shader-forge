@@ -33,6 +33,7 @@ try {
   assert.doesNotMatch(sceneEditorView, /Unsaved authoring edits were discarded/);
   assert.match(sceneEditorView, /confirmDiscardChanges/);
   assert.match(sceneEditorView, /window\.confirm/);
+  assert.match(sceneEditorView, /document\.path === prefabDraft\?\.path/);
   assert.match(sceneEditorView, /Save world/);
   assert.match(sceneEditorView, /Save object/);
   assert.match(sceneEditorView, /Reload/);

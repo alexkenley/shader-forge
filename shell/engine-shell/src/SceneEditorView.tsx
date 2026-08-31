@@ -633,14 +633,16 @@ export function SceneEditorView({
   }
 
   function inspectPrefab(document: PrefabAssetDocument) {
-    if (
-      document.path !== prefabDraft?.path
-      && !confirmDiscardChanges(
+    if (document.path === prefabDraft?.path) {
+      setSelectedNode('prefab');
+      setActiveSidebarTab('inspector');
+      return;
+    }
+    if (!confirmDiscardChanges(
         'Select another reusable object and discard the unsaved changes in this one?',
         false,
         true,
-      )
-    ) {
+      )) {
       return;
     }
     overwriteCurrentSnapshot({
