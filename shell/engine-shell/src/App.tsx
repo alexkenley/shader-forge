@@ -2075,6 +2075,7 @@ export default function App() {
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
   const activeSessionIdRef = useRef('');
+  const workspaceSelectionGenerationRef = useRef(0);
   const runtimeLifecycleRequestRef = useRef(0);
   const buildLifecycleRequestRef = useRef(0);
   const explorerRequestRef = useRef(0);
@@ -2426,22 +2427,26 @@ export default function App() {
   async function handleOperationReview(action: 'approve' | 'reject') {
     const operation = selectedOperation;
     if (!operation || activityPendingAction) return;
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     setActivityPendingAction(action);
     setActivityError('');
     setActivityStatus(`${action === 'approve' ? 'Approving' : 'Rejecting'} ${operation.context?.label || operation.id}...`);
     try {
       const result = await transitionOperation(operation.id, action, { actor: engineShellActor });
-      if (activeSessionIdRef.current !== operation.sessionId) return;
-      setSelectedOperation(result.operation);
+      if (!activeWorkspaceIsCurrent(operation.sessionId, workspaceGeneration)) return;
+      if (selectedOperationIdRef.current === operation.id) setSelectedOperation(result.operation);
       await refreshOperations(operation.sessionId, false);
+      if (!activeWorkspaceIsCurrent(operation.sessionId, workspaceGeneration)) return;
       setActivityStatus(`Operation ${action === 'approve' ? 'approved' : 'rejected'}.`);
     } catch (error) {
-      if (activeSessionIdRef.current !== operation.sessionId) return;
+      if (!activeWorkspaceIsCurrent(operation.sessionId, workspaceGeneration)) return;
       const stateChanged = error instanceof SessiondRequestError && error.status === 409;
       if (stateChanged) {
         const authoritative = await fetchOperation(operation.id).catch(() => null);
+        if (!activeWorkspaceIsCurrent(operation.sessionId, workspaceGeneration)) return;
         if (authoritative && selectedOperationIdRef.current === operation.id) setSelectedOperation(authoritative);
         await refreshOperations(operation.sessionId, false);
+        if (!activeWorkspaceIsCurrent(operation.sessionId, workspaceGeneration)) return;
       }
       setActivityError(error instanceof Error ? error.message : String(error));
       setActivityStatus(
@@ -2450,7 +2455,7 @@ export default function App() {
           : 'The review action did not complete.',
       );
     } finally {
-      setActivityPendingAction('');
+      if (activeWorkspaceIsCurrent(operation.sessionId, workspaceGeneration)) setActivityPendingAction('');
     }
   }
 
@@ -2463,18 +2468,34 @@ export default function App() {
 
   function selectActiveSession(sessionId: string) {
     if (activeSessionIdRef.current !== sessionId) {
+      workspaceSelectionGenerationRef.current += 1;
       explorerRequestRef.current += 1;
       gitRequestRef.current += 1;
       codeTrustRequestRef.current += 1;
       codeTrustApprovalsRequestRef.current += 1;
       packageSummaryRequestRef.current += 1;
       profilingRequestRef.current += 1;
+      activityListRequestRef.current += 1;
+      activityDetailRequestRef.current += 1;
+      pendingRunRequestRef.current = null;
       setExplorerBusy(false);
       setGitBusy(false);
       setApprovalsBusy(false);
+      setPackageBusy(false);
+      setProfileBusy(false);
+      setApprovalActionId('');
+      setArtifactActionPath('');
+      setActivityLoading(false);
+      setActivityPendingAction('');
+      setPendingRunAfterBuild(false);
     }
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
+  }
+
+  function activeWorkspaceIsCurrent(sessionId: string, generation: number) {
+    return activeSessionIdRef.current === sessionId
+      && workspaceSelectionGenerationRef.current === generation;
   }
 
   async function refreshExplorer(sessionId: string, relativePath = '.') {
@@ -3314,11 +3335,16 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const targetSessionName = activeSession?.name || 'workspace';
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     try {
-      await refreshCodeTrustApprovals(activeSessionId);
+      await refreshCodeTrustApprovals(targetSessionId);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('connected');
-      setSessiondMessage(`Refreshed code-trust approvals for ${activeSession?.name || 'workspace'}`);
+      setSessiondMessage(`Refreshed code-trust approvals for ${targetSessionName}`);
     } catch (error) {
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     }
@@ -3329,16 +3355,21 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const targetSessionName = activeSession?.name || 'workspace';
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     try {
       setPackageBusy(true);
-      await refreshPackageSummary(activeSessionId);
+      await refreshPackageSummary(targetSessionId);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('connected');
-      setSessiondMessage(`Refreshed export preset for ${activeSession?.name || 'workspace'}`);
+      setSessiondMessage(`Refreshed export preset for ${targetSessionName}`);
     } catch (error) {
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setPackageBusy(false);
+      if (activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) setPackageBusy(false);
     }
   }
 
@@ -3347,13 +3378,17 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     try {
       setPackageBusy(true);
-      const result = await runPackageRelease(activeSessionId);
+      const result = await runPackageRelease(targetSessionId);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       await Promise.all([
-        refreshPackageSummary(activeSessionId),
-        refreshProfiling(activeSessionId),
+        refreshPackageSummary(targetSessionId),
+        refreshProfiling(targetSessionId),
       ]);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('connected');
       setSessiondMessage(
         result.prerequisiteActions.length
@@ -3361,10 +3396,11 @@ export default function App() {
           : `Packaged release layout at ${result.packageRootPath}`,
       );
     } catch (error) {
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setPackageBusy(false);
+      if (activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) setPackageBusy(false);
     }
   }
 
@@ -3373,16 +3409,21 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const targetSessionName = activeSession?.name || 'workspace';
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     try {
       setProfileBusy(true);
-      await refreshProfiling(activeSessionId);
+      await refreshProfiling(targetSessionId);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('connected');
-      setSessiondMessage(`Refreshed diagnostics snapshot for ${activeSession?.name || 'workspace'}`);
+      setSessiondMessage(`Refreshed diagnostics snapshot for ${targetSessionName}`);
     } catch (error) {
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setProfileBusy(false);
+      if (activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) setProfileBusy(false);
     }
   }
 
@@ -3391,17 +3432,22 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     try {
       setProfileBusy(true);
-      const result = await captureProfile(activeSessionId);
-      await refreshProfiling(activeSessionId);
+      const result = await captureProfile(targetSessionId);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
+      await refreshProfiling(targetSessionId);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('connected');
       setSessiondMessage(`Captured diagnostics report at ${result.outputPath}`);
     } catch (error) {
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setProfileBusy(false);
+      if (activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) setProfileBusy(false);
     }
   }
 
@@ -3410,23 +3456,29 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     try {
       setApprovalActionId(approvalId);
       const result = await decideCodeTrustApproval(approvalId, decision);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       await Promise.all([
-        refreshCodeTrust(activeSessionId),
-        refreshCodeTrustApprovals(activeSessionId),
+        refreshCodeTrust(targetSessionId),
+        refreshCodeTrustApprovals(targetSessionId),
       ]);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       if (decision === 'approved' && result.approval.operationType === 'file_write') {
-        await refreshExplorer(activeSessionId, explorerPath);
+        await refreshExplorer(targetSessionId, explorerPath);
+        if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       }
       setSessiondState('connected');
       setSessiondMessage(`${decision === 'approved' ? 'Approved' : 'Denied'} ${result.approval.summary}`);
     } catch (error) {
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setApprovalActionId('');
+      if (activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) setApprovalActionId('');
     }
   }
 
@@ -3435,19 +3487,24 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const workspaceGeneration = workspaceSelectionGenerationRef.current;
     try {
       setArtifactActionPath(path);
-      const result = await transitionCodeTrustArtifact(activeSessionId, path, transition);
-      await refreshCodeTrust(activeSessionId);
+      const result = await transitionCodeTrustArtifact(targetSessionId, path, transition);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
+      await refreshCodeTrust(targetSessionId);
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('connected');
       setSessiondMessage(
         `${transition === 'promote' ? 'Promoted' : 'Quarantined'} ${result.artifact.path}`,
       );
     } catch (error) {
+      if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setArtifactActionPath('');
+      if (activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) setArtifactActionPath('');
     }
   }
 
