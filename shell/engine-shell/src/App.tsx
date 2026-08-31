@@ -4215,11 +4215,11 @@ export default function App() {
                 </a>
               </>
             ) : activeCenterTab === 'World' ? (
-              <div className="guide-toolbar-meta">Level editor workspace: author in the viewport, then use the visible Run controls inside World to launch the same scene in the native runtime.</div>
+              <div className="guide-toolbar-meta">Arrange and tune the world, then press Play to test it.</div>
             ) : activeCenterTab === 'Assets' ? (
               <div className="guide-toolbar-meta">Tune source-owned attachment profiles through lock, preview, approval, apply, and undo operations.</div>
             ) : (
-              <div className="guide-toolbar-meta">Playtest shows and controls the external native runtime. The browser does not embed a renderer.</div>
+              <div className="guide-toolbar-meta">Play, stop, and restart the game in its own window.</div>
             )}
           </div>
 

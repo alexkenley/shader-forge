@@ -58,7 +58,8 @@ try {
   assert.doesNotMatch(shellApp, /bridge-placeholder/);
   assert.match(shellApp, /ReferenceGuideView/);
   assert.match(shellApp, /aria-label="Primary workspaces"/);
-  assert.match(shellApp, /Playtest shows and controls the external native runtime/);
+  assert.match(shellApp, /Play, stop, and restart the game in its own window/);
+  assert.match(shellApp, /Arrange and tune the world, then press Play to test it/);
   assert.match(shellApp, /scene-editor-host/);
   assert.match(shellApp, /hidden=\{showGuide \|\| activeCenterTab !== 'World'\}/);
   assert.match(shellApp, /The game opens in a separate window/);
