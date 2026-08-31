@@ -143,6 +143,7 @@ What is already done:
 - Phase 5 has now started through a first `engine bake` lane that emits staged cooked outputs into `build/cooked/`, plus text-backed procedural geometry assets and generated-mesh preview payloads under `content/procgeo/`.
 - Phase 5.6 has now started through `engine migrate detect|unity|unreal|godot|report`, normalized migration manifest/report outputs under `migration/`, and deterministic Unity, Unreal, and Godot fixture projects.
 - Phase 5.8 has now started through first-pass migrated `shader-forge-project` skeletons under migration run roots, with generated `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifests for the current Unity, Unreal, and Godot fixtures.
+- Phase 5.8 now also preserves source startup-scene intent from Unity's first enabled `EditorBuildSettings` scene, Unreal `GameDefaultMap`, and Godot `res://` `run/main_scene` through exact source-relative binding and setting-level provenance. Explicit unresolved values fail closed without a bootstrap; absent declarations use a deterministic approximation. Generated records pass the production asset baker, while source asset payload conversion remains truthfully `Manual`.
 - Phase 5.85 has now started through `engine migrate unreal` reporting an explicit `unreal_offline_fallback` lane, lower conversion confidence, heuristic Blueprint package manifests from `.uasset` names, and a dedicated `fixtures/migration/unreal-offline-minimal` lane.
 - Phase 5.7 has now started through `audio/buses.toml`, `audio/sounds/*.sound.toml`, `audio/events/*.audio-event.toml`, native audio-system validation/event resolution, and staged cooked audio outputs under `build/cooked/audio/`.
 - Phase 5.72 has now started through `animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, `animation/graphs/*.animgraph.toml`, native animation-system validation/default-graph resolution, and staged cooked animation outputs under `build/cooked/animation/`.
@@ -160,8 +161,8 @@ Where the build is currently up to:
 - the runtime has moved past pure scaffolding into a first native render-loop slice, but still needs full local-toolchain verification, richer rendering, and tighter shell/runtime integration around real project execution
 - engine-owned input has moved past ad-hoc raw-event handling into a first text-backed action/context slice, but rebinding, user overrides, and richer gameplay/tool context switching still remain
 - native tooling UI groundwork now exists behind text-backed layout and registry code, but Dear ImGui docking and actual in-process panel rendering still remain
-- Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture, but no source-project content is converted into Shader Forge-native assets yet
-- Phase 5.8 groundwork now exists through fixture-backed Shader Forge project skeleton conversion, but full asset/material import, richer hierarchy/component mapping, exporter-assisted Unreal actor extraction, and shell-side migration inspection still remain
+- Phase 5.6 groundwork now exists through source-engine detection, normalized manifest/report output, and provenance capture; the `detect` lane itself remains report-only while pinned conversion belongs to Phase 5.8
+- Phase 5.8 groundwork now exists through fixture-backed Shader Forge project skeleton conversion plus exact startup-setting translation/provenance, deterministic duplicate-scene disambiguation, fail-closed unresolved startup handling, deterministic no-declaration fallback, and production-bake validation; full asset/material import, richer hierarchy/component mapping, conflict-safe reimport, exporter-assisted Unreal actor extraction, and shell-side migration inspection still remain
 - Phase 5.85 groundwork now exists through an explicit Unreal offline fallback lane with raw-project `.uproject`/`.umap` detection plus low-confidence Blueprint package manifests, but real `.uasset` graph parsing, exporter-manifest ingestion, and richer actor/component extraction still remain
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs, deterministic schema-v2 bone-track sampling, runtime-side default-graph and named-state resolution, first movement-driven runtime state selection, and animation-event-to-audio-event hooks, but sampled graph playback, blending, graph-parameter control, root-motion application, and preview tooling remain open
@@ -420,7 +421,7 @@ Goal:
 - create the conversion foundation needed to bring Unity, Unreal, and Godot projects into Shader Forge for continued development
 
 Status:
-- first slice now exists through source-engine detection, normalized migration-manifest/report outputs, provenance capture, script-porting manifests/placeholders, fixture projects, and CLI migration report inspection that now feed the first Phase 5.8 conversion lane
+- first slice now exists through source-engine detection, normalized migration-manifest/report outputs, provenance capture, script-porting manifests/placeholders, fixture projects, CLI migration report inspection, and exact startup-setting records that feed the first Phase 5.8 conversion lane
 
 Scope:
 - source-engine detection
@@ -437,6 +438,7 @@ Exit criteria:
 - the repo has a formal migration subsystem spec and fixture strategy
 - the engine can detect supported source engines and emit a normalized migration manifest
 - migrated content can enter the standard asset pipeline with provenance and warning metadata
+- migrated startup-scene settings carry exact source/target provenance and never silently select a different scene when an explicit source value cannot resolve
 
 ## Phase 5.5: Data And Effects
 
@@ -552,7 +554,7 @@ Status:
 - `POST /api/operations/spatial-attachment/preview` now stages authored animation inputs through SessionStore, validates and evaluates exact baseline/candidate bytes, requires exact old/new profile leases, rechecks the lease after evaluation, and journals only a labelled generic file-write candidate with durable spatial context; evaluation reports remain transient and apply/undo require a current matching lease
 - `engine spatial preview|approve|reject|apply|undo` now adapts that same sessiond contract with strict arguments, fatal UTF-8 candidate input, environment-only credentials, and no implicit coordination or write bypass
 - the Assets workspace now tunes only primary-grip translation/rotation through an explicit exact-profile lease and the same preview/approve/apply/reject/undo contract; it preserves unrelated TOML bytes, labels candidates `NOT APPLIED`, releases after apply, and reacquires for undo
-- the Assets third pane consumes only bounded native evaluator reports, binds authored/candidate evidence to exact revision/operation identity, and offers Front X/Y, Side Z/Y, and Top X/Z projections plus exact coordinates, diagnose-only joint-limit aggregate/per-bone PASS/FAIL, and capsule/item surface-clearance aggregate/per-capsule PASS/FAIL with exact unavailable states; cached visuals never follow un-evaluated draft edits
+- the Assets third pane consumes only bounded native evaluator reports, binds authored/candidate evidence to exact revision/operation identity, and offers Front X/Y, Side Z/Y, and Top X/Z projections plus exact coordinates, diagnose-only joint-limit aggregate/per-bone `PASS`/`FAIL`, and capsule/item surface-clearance aggregate/per-capsule `CLEAR`/`OVERLAP` with exact unavailable states; cached visuals never follow un-evaluated draft edits
 - `App` retains one sessiond SSE subscription and passes an operation-event epoch into Assets for guarded authoritative refetch; conflict rereads authored bytes while retaining the captured lease only when the refreshed parse and resource coverage remain valid, and terminal cleanup targets only the connection captured by that reconciliation/action
 - must land its contract-sensitive slices before broad World/Assets visual polish invents a second grip path
 
@@ -570,7 +572,7 @@ Current boundary this phase must not paper over:
 
 - the normal authored/runtime lane still uses the compatible v1 `debug_humanoid`; v2 spatial assets remain fixtures
 - `AnimationSystem` does not own prefab lookup; evaluator-side render-procgeo and collision resolution use `DataFoundation` independently. Optional schema-v2 joint limits and diagnostic capsules parse strictly and cook deterministically; optional prefab box collision parses strictly into separate source truth. Rest/sample reports non-mutating rest-relative cone-swing/signed-twist violations and exact capsule-axis-to-oriented-box surface clearance. `shader_forge_spatial` serializes exact typed aggregates plus stable per-bone/per-capsule records; sessiond and Assets recompute and validate geometry and derived truth fail closed. Missing inputs are exact unavailable states and tangency is clear
-- `AnimationSystem` samples schema-v2 clip poses deterministically and the sampled evaluator applies v2 two-bone IK before joint-limit and clipping evaluation. Assets displays exact authored samples, independent visual/collision boxes, capsule segments, and diagnose-only PASS/FAIL. No current path renders attachments or promotes the diagnostics into runtime collision, camera/capture, or review evidence
+- `AnimationSystem` samples schema-v2 clip poses deterministically and the sampled evaluator applies v2 two-bone IK before joint-limit and clipping evaluation. Assets displays exact authored samples, independent visual/collision boxes, capsule segments, diagnose-only joint-limit `PASS`/`FAIL`, and capsule/item `CLEAR`/`OVERLAP`. No current path renders attachments or promotes the diagnostics into runtime collision, camera/capture, or review evidence
 - the runtime still draws projected debug-proxy cards, which are not spatial-review captures
 - shell `Review` is still a discard-only scene stance, not a spatial review packet
 - generic bake/runtime consumption, runtime collision/physics integration, operation-scoped validate/recapture/review packets, native camera/screenshot capture, rendered spatial tuning, and typed `sf-mcp` validation/review tools are still deferred; authored joint/capsule schema and cooking, native numeric joint-limit and capsule/item surface-clearance diagnostics through CLI/sessiond/Assets, strict prefab collision source truth, prefab-bound visual evidence, native clip sampling, v2 two-bone IK, transient sessiond evidence, read-only revision-bound `spatial_attachment_read`, attachment preview/review/apply/undo, and exact non-review Assets rest/sampled schematics are implemented
@@ -673,6 +675,10 @@ Current checkpoint now implemented:
 - `engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` now emit a self-contained `shader-forge-project/` skeleton under each migration run root
 - the current Unity, Unreal, and Godot fixtures now convert into first-pass `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifest outputs
 - migration reports now record converted, approximated, skipped, and manual counts instead of only detect-only notes
+- startup selection maps Unity's first enabled `ProjectSettings/EditorBuildSettings.asset` scene, Unreal's `[/Script/EngineSettings.GameMapsSettings].GameDefaultMap`, and Godot's `[application].run/main_scene` when it uses `res://`, resolving against exact source-project-relative scene records
+- duplicate scene basenames receive deterministic source-path-derived target names; `[startup_scene]` records source/target provenance and separate converted, approximated, or skipped project-setting counts
+- explicit unresolved startup settings fail closed with no `runtime_bootstrap.data.toml` plus a warning/manual task; projects with no declared startup scene use the first source-relative converted scene and mark the choice `approximated`
+- emitted scene, prefab, and optional bootstrap records pass the production asset-pipeline baker; `asset_conversion` remains `Manual` until actual source payload import exists
 
 Still ahead inside this phase:
 - high-fidelity, rerunnable whole-project migration from Unreal, Unity, and Godot, using source-editor exporters where required, stable source IDs and provenance, conflict-safe reimport, conversion of assets/scenes/gameplay metadata, and a clear validation/remediation report for anything that cannot be converted automatically
@@ -688,6 +694,7 @@ Exit criteria:
 - at least one Unity fixture, one Unreal fixture, and one Godot fixture can be converted into a Shader Forge project skeleton
 - migrated scenes land as `.scene.toml` and migrated prefabs land as `.prefab.toml`
 - each migration run emits a structured report with converted, approximated, skipped, and manual items
+- explicit startup settings either resolve exactly or produce no bootstrap, while absent settings use a deterministic fallback visibly marked as approximated
 
 ## Phase 5.85: Offline Unreal Fallback
 

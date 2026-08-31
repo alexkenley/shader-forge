@@ -16,6 +16,7 @@ Current execution status:
 - `sf-mcp` now exposes the first lease-gated spatial attachment preview/review/apply/undo workflow through the shared operation contract; generic mutation remains disabled
 - the native spatial tool now emits deterministic rest-pose bone/socket/hand/item frames and joint-segment endpoints for one attachment; sessiond exposes that schematic through a revision-safe transient GET and exact baseline/candidate preview responses, with expected-ID binding and no persisted evaluation or false review-evidence claim
 - the Assets workspace now exposes that native evaluation in an accessible responsive three-pane rest-rig workbench with exact revision/operation evidence binding, three orthographic projections, coordinates/diagnostics, fail-closed report guards, fixed cached visuals, and authoritative operation reconciliation through App's one SSE subscription
+- fixture-backed Unity, Unreal, and Godot project migration now preserves startup-scene intent through exact source-setting provenance, deterministic duplicate-scene disambiguation, fail-closed unresolved declarations, and visibly approximated no-declaration fallback; emitted records pass the production asset baker while source asset payload conversion remains `Manual`
 
 ## 1. Executive Decision
 
@@ -346,7 +347,7 @@ Required content:
 - generated/cooked status separated from source assets
 - conflict-safe handling of agent and human asset operations
 
-Implemented specialized slice: attachment profiles open in a three-pane workbench with constrained tuning and native-evaluated rest/sampled rig schematics. Rest/sample evidence binds exact animation, content, and foundation revisions. The evaluator resolves render procgeo and authored prefab collision independently through `DataFoundation`; Assets draws both boxes plus diagnostic capsule segments and shows diagnose-only joint-limit aggregate/per-bone and capsule/item surface-clearance aggregate/per-capsule PASS/FAIL. Missing authored inputs remain exact unavailable evidence, and tangency is clear. This is schematic diagnostic evidence only, never a rendered mesh, runtime collision result, camera capture, or review packet. Draft edits never move cached geometry; v1 two-hand samples remain pre-IK and v2 exposes applied-IK reach/contact/angular/joint/clipping truth.
+Implemented specialized slice: attachment profiles open in a three-pane workbench with constrained tuning and native-evaluated rest/sampled rig schematics. Rest/sample evidence binds exact animation, content, and foundation revisions. The evaluator resolves render procgeo and authored prefab collision independently through `DataFoundation`; Assets draws both boxes plus diagnostic capsule segments and shows diagnose-only joint-limit aggregate/per-bone `PASS`/`FAIL` plus capsule/item surface-clearance aggregate/per-capsule `CLEAR`/`OVERLAP`. Missing authored inputs remain exact unavailable evidence, and tangency is `CLEAR`. This is schematic diagnostic evidence only, never a rendered mesh, runtime collision result, camera capture, or review packet. Draft edits never move cached geometry; v1 two-hand samples remain pre-IK and v2 exposes applied-IK reach/contact/angular/joint/clipping truth.
 
 Specialized material, animation, audio, or VFX editors should be added only after their runtime pipeline is functional and a generic inspector is demonstrably insufficient.
 
@@ -610,6 +611,8 @@ The shell redesign alone will not make Shader Forge an alternative to Unreal or 
 | Extensibility | documented modules and schemas before a plugin marketplace |
 
 Networking, large-world streaming, consoles, VR/XR, cinematics, and live services should be separate proof tracks. Do not imply support until each has a complete reference project and packaging path.
+
+Current migration proof is intentionally narrower than the full Project lifecycle target. Unity's first enabled `EditorBuildSettings` scene, Unreal `GameDefaultMap`, and Godot `res://` `run/main_scene` resolve against exact source-relative scene records and emit setting-level source/target provenance. An explicit unresolved value emits no bootstrap and a manual task; no declaration selects the first source-relative scene deterministically and marks it `approximated`. Duplicate basenames are disambiguated deterministically, emitted records are production-bake validated, and `asset_conversion` remains `Manual` until payload import exists.
 
 ## 14. Dependency-Gated Execution Plan
 
