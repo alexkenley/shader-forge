@@ -140,11 +140,13 @@ const unityScenePath = path.join(unityProjectRoot, 'content', 'scenes', 'migrate
 const unityPrefabPath = path.join(unityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'player.prefab.toml');
 const unityRootPrefabPath = path.join(unityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'sandbox_root.prefab.toml');
 const unityPlayerPrefabPath = path.join(unityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'sandbox_sandbox_root_player.prefab.toml');
+const unityCameraPrefabPath = path.join(unityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'sandbox_sandbox_root_player_camera.prefab.toml');
 const unityDataPath = path.join(unityProjectRoot, 'content', 'data', 'migrated', 'unity', 'runtime_bootstrap.data.toml');
 assert.ok(fs.existsSync(unityScenePath), 'Expected Unity migrated scene output.');
 assert.ok(fs.existsSync(unityPrefabPath), 'Expected Unity migrated prefab output.');
 assert.ok(fs.existsSync(unityRootPrefabPath), 'Expected Unity scene-root prefab output.');
 assert.ok(fs.existsSync(unityPlayerPrefabPath), 'Expected Unity child GameObject prefab output.');
+assert.ok(fs.existsSync(unityCameraPrefabPath), 'Expected Unity Camera prefab output.');
 assert.ok(fs.existsSync(unityDataPath), 'Expected Unity migrated bootstrap data output.');
 const unityScene = fs.readFileSync(unityScenePath, 'utf8');
 assert.match(unityScene, /primary_prefab = "sandbox_root"/);
@@ -153,6 +155,10 @@ assert.match(unityScene, /\[entity\.sandbox_sandbox_root_player_instance\][\s\S]
 assert.match(unityScene, /\[entity\.sandbox_sandbox_root_player_camera_instance\][\s\S]*parent = "sandbox_sandbox_root_player_instance"[\s\S]*position = "0, 1\.6, 3"/);
 assert.match(fs.readFileSync(unityPrefabPath, 'utf8'), /category = "migrated_unity"/);
 assert.match(fs.readFileSync(unityPlayerPrefabPath, 'utf8'), /# migration_source_node = "SandboxRoot\/Player"[\s\S]*# migration_source_object_id = "2"/);
+assert.match(
+  fs.readFileSync(unityCameraPrefabPath, 'utf8'),
+  /# migration_source_component_id = "7"[\s\S]*spawn_tag = "unity_camera"[\s\S]*\[component\.camera\][\s\S]*vertical_fov_degrees = 60[\s\S]*near_meters = 0\.3[\s\S]*far_meters = 500/,
+);
 assert.match(fs.readFileSync(unityDataPath, 'utf8'), /default_scene = "sandbox"/);
 assert.ok(
   fs.readdirSync(path.join(unityConvertRoot, 'script-porting')).some((name) => name.endsWith('.port.toml')),

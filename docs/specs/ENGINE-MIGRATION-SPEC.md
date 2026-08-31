@@ -45,7 +45,7 @@ Implemented now:
 - a declared startup scene that cannot be resolved is fail-closed: no plausible-looking bootstrap is emitted, the setting is marked `skipped`, and the report carries a manual task
 - when no startup scene is declared, the first source-relative converted scene is selected deterministically and the setting is marked `approximated`
 - manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
-- Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance
+- Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; valid perspective `Camera` optics map into the existing strict prefab camera component
 - Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, and preserve source paths/types as generated comments
 - migration manifests and reports include `mapped_scene_entities`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
@@ -62,7 +62,7 @@ Current boundaries:
 - project-setting support is currently limited to startup-scene selection; other engine settings remain manual even when detection finds them
 - `asset_conversion` remains `Manual`: placeholder asset directories are not payload import, conversion, or runtime fidelity
 - the Unreal lane is currently explicit about its fallback status: Blueprint package outputs are low-confidence manifests derived from package names rather than parsed graphs
-- art assets, materials, animation, audio, Unity prefab instances/components/coordinate-system remediation, Unreal hierarchy extraction, Godot transform matrices/resource instances/component payloads, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
+- art assets, materials, animation, audio, Unity prefab instances/non-camera components/orthographic and enabled-state camera semantics/coordinate-system remediation, Unreal hierarchy extraction, Godot transform matrices/resource instances/component payloads, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
 
 ## Primary Targets
 
@@ -152,7 +152,8 @@ Current implemented slice:
 - parse text-YAML `GameObject`, `Transform`, and `RectTransform` documents from `.unity` scenes
 - preserve source file IDs, parent hierarchy, and local position/rotation/scale in generated scene entities and scene-owned placeholder prefabs
 - normalize source quaternions into deterministic Euler-degree output for reviewable generated records
-- leave prefab instances, serialized component payloads, source assets, and coordinate-system remediation explicit manual work
+- map valid perspective `Camera` field-of-view and near/far clip values into `[component.camera]` while retaining the source component ID
+- leave prefab instances, other serialized component payloads, orthographic and enabled-state camera semantics, source assets, and coordinate-system remediation explicit manual work
 
 ### Unreal Engine
 
@@ -278,7 +279,7 @@ The migration subsystem needs deterministic fixture-based coverage.
 
 Required harnesses:
 
-- Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, and production-bakeable generated prefabs
+- Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, perspective Camera optics, and production-bakeable generated prefabs
 - Unreal offline fallback migration smoke, including `GameDefaultMap` binding for both C++ and package-only fixtures
 - Godot text-scene migration smoke, including exact `res://` binding, explicit-unresolved fail-closed behavior, and no-declaration approximation
 - migration manifest/report provenance and project-setting count validation

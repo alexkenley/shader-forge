@@ -531,7 +531,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
       engine === 'godot'
         ? `Review mapped Godot text-scene hierarchy and explicit position, rotation, and scale fields under ${targetRoots.content_scenes}; transform matrices, instanced resources, and component payloads remain manual.`
         : engine === 'unity'
-          ? `Review mapped Unity text-YAML GameObject hierarchy and local transforms under ${targetRoots.content_scenes}; prefab instances, component payloads, assets, and coordinate-system remediation remain manual.`
+          ? `Review mapped Unity text-YAML GameObject hierarchy, local transforms, and supported perspective Camera optics under ${targetRoots.content_scenes}; prefab instances, other component payloads, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
       `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
       `Populate real imported art and cooked assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; this slice only emits structure placeholders.`,
@@ -570,7 +570,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
     if (detection.engine === 'unity') {
-      warnings.push('Unity conversion maps text-YAML GameObject and Transform/RectTransform hierarchy plus local position, quaternion rotation, and scale; prefab instances, component payloads, assets, and coordinate-system remediation are still manual.');
+      warnings.push('Unity conversion maps text-YAML GameObject and Transform/RectTransform hierarchy plus valid perspective Camera optics; orthographic and enabled-state camera semantics, prefab instances, other component payloads, assets, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
       warnings.push('Godot conversion maps text-scene node hierarchy plus explicit Vector3 position, rotation, and scale fields; transform matrices, resource instances, and component payload translation are still ahead.');
     }
@@ -705,6 +705,12 @@ function parseUnityFileId(lines, key) {
   return line?.match(/\{\s*fileID:\s*(-?\d+)\s*\}/)?.[1] || '';
 }
 
+function parseUnityNumber(lines, key, fallback = null) {
+  const line = lines.find((candidate) => candidate.startsWith(`${key}:`));
+  const value = Number(line?.slice(`${key}:`.length).trim());
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function unityQuaternionToEuler(rotation) {
   const [x, y, z, w] = rotation;
   const length = Math.hypot(x, y, z, w);
@@ -747,6 +753,29 @@ function parseUnitySceneNodes(source) {
     }));
   const transformByGameObject = new Map(transforms.map((transform) => [transform.gameObjectId, transform]));
   const gameObjectByTransform = new Map(transforms.map((transform) => [transform.fileId, transform.gameObjectId]));
+  const cameraByGameObject = new Map(documents
+    .filter((document) => document.classId === 20)
+    .map((document) => {
+      const gameObjectId = parseUnityFileId(document.lines, 'm_GameObject');
+      const verticalFovDegrees = parseUnityNumber(document.lines, 'field of view');
+      const nearMeters = parseUnityNumber(document.lines, 'near clip plane');
+      const farMeters = parseUnityNumber(document.lines, 'far clip plane');
+      const perspective = parseUnityNumber(document.lines, 'orthographic', 1) === 0;
+      const valid = [verticalFovDegrees, nearMeters, farMeters]
+        .every((value) => Number.isFinite(value) && Number.isFinite(Math.fround(value)))
+        && perspective
+        && verticalFovDegrees > 0
+        && verticalFovDegrees < 180
+        && nearMeters > 0
+        && farMeters > nearMeters;
+      return [gameObjectId, valid ? {
+        sourceComponentId: document.fileId,
+        verticalFovDegrees,
+        nearMeters,
+        farMeters,
+      } : null];
+    })
+    .filter(([gameObjectId, camera]) => gameObjectId && camera));
   const nodes = documents
     .filter((document) => document.classId === 1)
     .map((document) => {
@@ -761,6 +790,7 @@ function parseUnitySceneNodes(source) {
         position: (transform?.position || [0, 0, 0]).map(formatSceneNumber).join(', '),
         rotation: unityQuaternionToEuler(transform?.rotation || [0, 0, 0, 1]),
         scale: (transform?.scale || [1, 1, 1]).map(formatSceneNumber).join(', '),
+        camera: cameraByGameObject.get(document.fileId) || null,
       };
     });
   const nodeByFileId = new Map(nodes.map((node) => [node.fileId, node]));
@@ -995,9 +1025,18 @@ function buildPrefabToml(prefab) {
     ...(prefab.sourceNodePath ? [`# migration_source_node = ${quoteTomlString(prefab.sourceNodePath)}`] : []),
     ...(prefab.sourceNodeType ? [`# migration_source_type = ${quoteTomlString(prefab.sourceNodeType)}`] : []),
     ...(prefab.sourceObjectId ? [`# migration_source_object_id = ${quoteTomlString(prefab.sourceObjectId)}`] : []),
+    ...(prefab.camera?.sourceComponentId ? [`# migration_source_component_id = ${quoteTomlString(prefab.camera.sourceComponentId)}`] : []),
     '',
     `category = ${quoteTomlString(prefab.category)}`,
     `spawn_tag = ${quoteTomlString(prefab.spawnTag)}`,
+    ...(prefab.camera ? [
+      '',
+      '[component.camera]',
+      'projection = "perspective"',
+      `vertical_fov_degrees = ${formatSceneNumber(prefab.camera.verticalFovDegrees)}`,
+      `near_meters = ${formatSceneNumber(prefab.camera.nearMeters)}`,
+      `far_meters = ${formatSceneNumber(prefab.camera.farMeters)}`,
+    ] : []),
     '',
   ].join('\n');
 }
@@ -1190,11 +1229,12 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
         name: prefabName,
         displayName: node.name,
         category: 'migrated_unity',
-        spawnTag: 'unity_game_object',
+        spawnTag: node.camera ? 'unity_camera' : 'unity_game_object',
         sourcePath: scene.sourcePath,
         sourceNodePath: node.sourceNodePath,
         sourceNodeType: node.sourceNodeType,
         sourceObjectId: node.fileId,
+        camera: node.camera,
       });
     }
     const entities = scene.nodes.map((node) => ({
