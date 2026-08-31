@@ -8,6 +8,7 @@ const DEFAULT_BASE_URL = 'http://127.0.0.1:41741';
 const AGENT_CREDENTIAL_HEADER = 'x-shader-forge-agent-credential';
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const SESSIOND_REQUEST_TIMEOUT_MS = 5_000;
+const SPATIAL_READ_TIMEOUT_MS = 30_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 const MAX_OPERATION_LIST_RESULTS = 100;
 const MAX_SPATIAL_ATTACHMENT_BYTES = 1024 * 1024;
@@ -24,6 +25,7 @@ const OPERATION_STATES = [
 ];
 const SPATIAL_ATTACHMENT_PATH = /^animation\/attachments\/[^/]+\.attachment\.toml$/;
 const REVISION = /^(?:missing|sha256:[a-f0-9]{64})$/;
+const PRESENT_REVISION = /^sha256:[a-f0-9]{64}$/;
 const PUBLIC_ERROR_FIELDS = [
   'code',
   'diagnostic',
@@ -33,6 +35,309 @@ const PUBLIC_ERROR_FIELDS = [
   'approval',
   'codeTrust',
 ];
+
+const finiteNumber = z.number();
+const nonNegativeNumber = finiteNumber.min(0);
+const nonNegativeInteger = z.number().int().min(0);
+const spatialVec3Schema = z.tuple([finiteNumber, finiteNumber, finiteNumber]);
+const spatialQuaternionSchema = z.tuple([
+  finiteNumber,
+  finiteNumber,
+  finiteNumber,
+  finiteNumber,
+]);
+const spatialTransformSchema = z.object({
+  translation: spatialVec3Schema,
+  rotation: spatialQuaternionSchema,
+  axes: z.object({
+    x: spatialVec3Schema,
+    y: spatialVec3Schema,
+    z: spatialVec3Schema,
+  }).strict(),
+}).strict();
+const unavailableSecondaryIkSchema = z.union([
+  z.object({
+    status: z.literal('unavailable'),
+    reason: z.enum(['rest_pose_unsolved', 'secondary_hand_ik_not_implemented']),
+  }).strict(),
+  z.object({
+    status: z.literal('not_applicable'),
+    reason: z.literal('one_hand_attachment'),
+  }).strict(),
+]);
+const appliedSecondaryIkSchema = z.object({
+  status: z.literal('applied'),
+  solved: z.literal(true),
+  reachable: z.boolean(),
+  preSolveDistanceMeters: nonNegativeNumber,
+  targetDistanceMeters: nonNegativeNumber,
+  minReachMeters: nonNegativeNumber,
+  maxReachMeters: nonNegativeNumber,
+  reachResidualMeters: nonNegativeNumber,
+  reachToleranceMeters: nonNegativeNumber,
+  reachWithinTolerance: z.boolean(),
+  postSolveDistanceMeters: nonNegativeNumber,
+  contactToleranceMeters: nonNegativeNumber,
+  contactWithinTolerance: z.boolean(),
+  postSolveAngleDegrees: nonNegativeNumber,
+  angleToleranceDegrees: nonNegativeNumber,
+  angleWithinTolerance: z.boolean(),
+  withinTolerance: z.boolean(),
+}).strict();
+const jointLimitBoneSchema = z.object({
+  boneId: z.string(),
+  role: z.string(),
+  swingDegrees: finiteNumber.min(0).max(180),
+  swingLimitDegrees: finiteNumber.min(0).max(180),
+  twistDegrees: finiteNumber.min(-180).max(180),
+  twistMinDegrees: finiteNumber.min(-180).max(180),
+  twistMaxDegrees: finiteNumber.min(-180).max(180),
+  swingViolationDegrees: nonNegativeNumber.max(180),
+  twistViolationDegrees: nonNegativeNumber.max(360),
+  withinLimits: z.boolean(),
+}).strict();
+const jointLimitsSchema = z.union([
+  z.object({
+    status: z.literal('unavailable'),
+    reason: z.literal('no_joint_limits_authored'),
+    policy: z.literal('diagnose'),
+    evaluatedBoneCount: z.literal(0),
+    violationCount: z.literal(0),
+    maxViolationDegrees: z.literal(0),
+    withinLimits: z.null(),
+    bones: z.tuple([]),
+  }).strict(),
+  z.object({
+    status: z.literal('available'),
+    reason: z.null(),
+    policy: z.literal('diagnose'),
+    evaluatedBoneCount: nonNegativeInteger.min(1),
+    violationCount: nonNegativeInteger,
+    maxViolationDegrees: nonNegativeNumber.max(360),
+    withinLimits: z.boolean(),
+    bones: z.array(jointLimitBoneSchema).min(1),
+  }).strict(),
+]);
+const clippingCapsuleSchema = z.object({
+  boneId: z.string(),
+  role: z.string(),
+  centerWorld: spatialVec3Schema,
+  axisWorld: spatialVec3Schema,
+  radiusMeters: finiteNumber.positive(),
+  halfLengthMeters: finiteNumber.positive(),
+  segmentStartWorld: spatialVec3Schema,
+  segmentEndWorld: spatialVec3Schema,
+  axisDistanceToBoxMeters: nonNegativeNumber,
+  surfaceClearanceMeters: finiteNumber,
+  clearanceViolationMeters: nonNegativeNumber,
+  overlapping: z.boolean(),
+}).strict();
+const clippingItemBoxSchema = z.object({
+  kind: z.literal('authored_collision_box'),
+  prefabId: z.string(),
+  world: spatialTransformSchema,
+  dimensionsMeters: z.tuple([
+    finiteNumber.positive(),
+    finiteNumber.positive(),
+    finiteNumber.positive(),
+  ]),
+  worldCorners: z.tuple([
+    spatialVec3Schema,
+    spatialVec3Schema,
+    spatialVec3Schema,
+    spatialVec3Schema,
+    spatialVec3Schema,
+    spatialVec3Schema,
+    spatialVec3Schema,
+    spatialVec3Schema,
+  ]),
+}).strict();
+const clippingCommonShape = {
+  policy: z.literal('diagnose'),
+  metric: z.literal('capsule_axis_to_oriented_box_clearance'),
+};
+const clippingSchema = z.union([
+  z.object({
+    status: z.literal('unavailable'),
+    reason: z.enum([
+      'item_prefab_not_found',
+      'item_prefab_ambiguous',
+      'item_prefab_invalid',
+      'item_collision_not_authored',
+      'diagnostic_capsules_not_authored',
+    ]),
+    ...clippingCommonShape,
+    evaluatedCapsuleCount: z.literal(0),
+    overlapCount: z.literal(0),
+    maxClearanceViolationMeters: z.literal(0),
+    hasOverlap: z.null(),
+    itemBox: z.null(),
+    capsules: z.tuple([]),
+  }).strict(),
+  z.object({
+    status: z.literal('available'),
+    reason: z.null(),
+    ...clippingCommonShape,
+    evaluatedCapsuleCount: nonNegativeInteger.min(1),
+    overlapCount: nonNegativeInteger,
+    maxClearanceViolationMeters: nonNegativeNumber,
+    hasOverlap: z.boolean(),
+    itemBox: clippingItemBoxSchema,
+    capsules: z.array(clippingCapsuleSchema).min(1),
+  }).strict(),
+]);
+const itemGeometrySchema = z.union([
+  z.object({
+    status: z.literal('unavailable'),
+    reason: z.enum([
+      'item_prefab_not_found',
+      'item_prefab_ambiguous',
+      'item_prefab_visual_geometry_unavailable',
+      'item_prefab_visual_geometry_ambiguous',
+      'item_prefab_visual_geometry_not_box',
+    ]),
+  }).strict(),
+  z.object({
+    status: z.literal('available'),
+    kind: z.literal('authored_visual_box'),
+    procgeoId: z.string(),
+    dimensionsMeters: z.tuple([
+      finiteNumber.positive(),
+      finiteNumber.positive(),
+      finiteNumber.positive(),
+    ]),
+    worldCorners: z.tuple([
+      spatialVec3Schema,
+      spatialVec3Schema,
+      spatialVec3Schema,
+      spatialVec3Schema,
+      spatialVec3Schema,
+      spatialVec3Schema,
+      spatialVec3Schema,
+      spatialVec3Schema,
+    ]),
+  }).strict(),
+]);
+const spatialRestPoseSchema = z.object({
+  kind: z.literal('rest'),
+  sampled: z.literal(false),
+}).strict();
+const spatialSamplePoseSchema = z.object({
+  kind: z.literal('clip_sample'),
+  sampled: z.literal(true),
+  phase: z.string(),
+  clip: z.string(),
+  normalizedTime: finiteNumber.min(0).max(1),
+  proceduralLayersRequested: z.array(z.enum(['primary_attachment', 'secondary_hand_ik'])),
+  proceduralLayersApplied: z.array(z.enum(['primary_attachment', 'secondary_hand_ik'])),
+  proceduralLayersUnavailable: z.array(z.enum(['primary_attachment', 'secondary_hand_ik'])),
+}).strict();
+const evaluatedBoneSchema = z.object({
+  id: z.string(),
+  parent: z.string(),
+  role: z.string(),
+  local: spatialTransformSchema,
+  world: spatialTransformSchema,
+}).strict();
+const spatialEvaluationSchema = z.object({
+  schema: z.literal('shader_forge.spatial_attachment_evaluation'),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
+  pose: z.union([spatialRestPoseSchema, spatialSamplePoseSchema]),
+  coordinateSystem: z.object({
+    units: z.literal('meters'),
+    handedness: z.literal('right'),
+    up: z.literal('+Y'),
+    forward: z.literal('+Z'),
+    quaternionOrder: z.literal('xyzw'),
+  }).strict(),
+  skeleton: z.object({ id: z.string(), name: z.string(), rootBone: z.string() }).strict(),
+  attachment: z.object({
+    id: z.string(),
+    name: z.string(),
+    itemPrefabId: z.string(),
+    dominantHand: z.enum(['left', 'right']),
+    mode: z.enum(['one_hand', 'two_hand']),
+    perspective: z.enum(['first_person', 'third_person', 'both']),
+    primaryGripSocket: z.string(),
+  }).strict(),
+  bones: z.array(evaluatedBoneSchema),
+  segments: z.array(z.object({
+    parentBoneId: z.string(),
+    boneId: z.string(),
+    from: spatialVec3Schema,
+    to: spatialVec3Schema,
+  }).strict()),
+  sockets: z.array(z.object({
+    id: z.string(),
+    boneId: z.string(),
+    role: z.string(),
+    local: spatialTransformSchema,
+    world: spatialTransformSchema,
+  }).strict()),
+  item: z.object({
+    prefabId: z.string(),
+    world: spatialTransformSchema,
+    geometry: itemGeometrySchema,
+    primaryContactWorld: spatialTransformSchema.nullable(),
+    handleAxisWorld: z.object({
+      origin: spatialVec3Schema,
+      direction: spatialVec3Schema,
+    }).strict().nullable(),
+  }).strict(),
+  hands: z.object({
+    dominant: z.object({
+      boneId: z.string(),
+      role: z.string(),
+      world: spatialTransformSchema,
+      palmWorld: spatialTransformSchema.nullable(),
+    }).strict(),
+    secondary: z.object({
+      enabled: z.boolean(),
+      boneId: z.string(),
+      role: z.string(),
+      world: spatialTransformSchema,
+      palmWorld: spatialTransformSchema.nullable(),
+      targetWorld: spatialTransformSchema.nullable(),
+      pole: z.object({
+        translation: spatialVec3Schema,
+        space: z.enum(['unresolved', 'item']),
+        world: spatialVec3Schema.nullable(),
+        reason: z.string().nullable(),
+      }).strict().nullable(),
+      preSolveDistanceMeters: nonNegativeNumber.nullable(),
+    }).strict().nullable(),
+  }).strict(),
+  diagnostics: z.object({
+    secondaryIk: z.union([unavailableSecondaryIkSchema, appliedSecondaryIkSchema]),
+    jointLimits: jointLimitsSchema,
+    clipping: clippingSchema,
+  }).strict(),
+  limitations: z.array(z.string()),
+}).strict();
+const spatialSourceRevisionSchema = z.object({
+  path: z.string(),
+  revision: z.string().regex(PRESENT_REVISION),
+}).strict();
+const spatialReadOutputSchema = z.object({
+  evaluation: spatialEvaluationSchema,
+  path: z.string(),
+  revision: z.string().regex(PRESENT_REVISION),
+  sourceRevisions: z.array(spatialSourceRevisionSchema),
+}).strict();
+const spatialReadInputSchema = z.discriminatedUnion('view', [
+  z.object({
+    view: z.literal('rest'),
+    path: z.string().trim().regex(SPATIAL_ATTACHMENT_PATH),
+    baseRevision: z.string().regex(PRESENT_REVISION),
+  }).strict(),
+  z.object({
+    view: z.literal('sample'),
+    path: z.string().trim().regex(SPATIAL_ATTACHMENT_PATH),
+    baseRevision: z.string().regex(PRESENT_REVISION),
+    phase: z.string().refine((value) => value.trim().length > 0),
+    normalizedTime: finiteNumber.min(0).max(1).refine((value) => !Object.is(value, -0)),
+  }).strict(),
+]);
 
 class SessiondRequestError extends Error {
   constructor(message, status, details = {}) {
@@ -354,6 +659,40 @@ function registerSurface(server, state) {
       state.baseUrl,
       `/api/files/read?sessionId=${encodeURIComponent(state.session.id)}&path=${encodeURIComponent(relativePath)}`,
     )),
+  );
+  server.registerTool(
+    'spatial_attachment_read',
+    {
+      title: 'Read spatial attachment evidence',
+      description: 'Read exact revision-bound rest or sampled spatial attachment evidence from the selected Shader Forge workspace.',
+      inputSchema: spatialReadInputSchema,
+      outputSchema: spatialReadOutputSchema,
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    },
+    async (input) => {
+      try {
+        const query = new URL(
+          input.view === 'rest'
+            ? '/api/spatial/attachment/evaluate'
+            : '/api/spatial/attachment/evaluate-sample',
+          `${state.baseUrl}/`,
+        );
+        query.searchParams.set('sessionId', state.session.id);
+        query.searchParams.set('path', input.path);
+        query.searchParams.set('baseRevision', input.baseRevision);
+        if (input.view === 'sample') {
+          query.searchParams.set('phase', input.phase);
+          query.searchParams.set('normalizedTime', input.normalizedTime.toString());
+        }
+        return toolResult(await requestJson(
+          state.baseUrl,
+          `${query.pathname}${query.search}`,
+          { timeoutMs: SPATIAL_READ_TIMEOUT_MS },
+        ));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
   );
   server.registerTool(
     'coordination_state',

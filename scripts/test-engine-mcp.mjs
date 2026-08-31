@@ -6,12 +6,18 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SessionStore, textContentRevision } from '../tools/engine-sessiond/lib/session-store.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
-import { restEvaluation } from './lib/spatial-evaluation-fixture.mjs';
+import {
+  availableClipping,
+  availableJointLimits,
+  jointLimitBone,
+  restEvaluation,
+} from './lib/spatial-evaluation-fixture.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const spatialFixtureRoot = path.join(repoRoot, 'animation', 'fixtures', 'spatial');
 const MCP_REQUEST_TIMEOUT_MS = 5_000;
 const MCP_EXIT_TIMEOUT_MS = 5_000;
+const sampledEvaluationCalls = [];
 
 function createMcpClient(child) {
   let buffer = '';
@@ -162,6 +168,39 @@ async function evaluateRestAttachment(_animationRoot, _contentRoot, _foundationP
   return restEvaluation(attachmentId);
 }
 
+async function evaluateSampledAttachment(
+  _animationRoot,
+  _contentRoot,
+  _foundationPath,
+  attachmentId,
+  phase,
+  normalizedTime,
+) {
+  sampledEvaluationCalls.push({ attachmentId, phase, normalizedTime });
+  if (phase !== 'idle') {
+    throw new Error(`Unknown motion-envelope phase '${phase}'.`);
+  }
+  const evaluation = restEvaluation(attachmentId);
+  evaluation.pose = {
+    kind: 'clip_sample',
+    sampled: true,
+    phase,
+    clip: 'test.clip',
+    normalizedTime,
+    proceduralLayersRequested: ['primary_attachment'],
+    proceduralLayersApplied: ['primary_attachment'],
+    proceduralLayersUnavailable: [],
+  };
+  evaluation.diagnostics.jointLimits = availableJointLimits([jointLimitBone('hand_r')]);
+  evaluation.diagnostics.clipping = availableClipping();
+  evaluation.limitations = [
+    'sampled_attachment_schematic_only',
+    'not_review_evidence',
+    'item_mesh_unavailable',
+  ];
+  return evaluation;
+}
+
 async function main() {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-mcp-'));
   const workspaceRoot = path.join(tempRoot, 'workspace');
@@ -198,6 +237,12 @@ async function main() {
   await fs.writeFile(path.join(workspaceRoot, 'animation', 'clips', 'test.anim.toml'), 'name = "test"\n', 'utf8');
   await fs.writeFile(path.join(workspaceRoot, 'animation', 'graphs', 'test.animgraph.toml'), 'name = "test"\n', 'utf8');
   await fs.writeFile(path.join(tempRoot, 'outside.txt'), 'outside workspace\n', 'utf8');
+  await fs.cp(workspaceRoot, otherWorkspaceRoot, { recursive: true });
+  await fs.writeFile(
+    path.join(otherWorkspaceRoot, attachmentPath),
+    'schema_version = 1\nid = "weapon.foreign"\ntranslation = [0.0, 0.0, 0.0]\n',
+    'utf8',
+  );
 
   const sessionStore = new SessionStore({ storageFilePath: path.join(tempRoot, 'state', 'sessions.json') });
   const sessiond = await startEngineSessiond({
@@ -206,7 +251,9 @@ async function main() {
     sessionStore,
     validateAnimationRoot,
     evaluateRestAttachment,
+    evaluateSampledAttachment,
   });
+  const otherSession = await sessionStore.createSession({ name: 'other', rootPath: otherWorkspaceRoot });
   let child;
   try {
     child = spawn(process.execPath, [
@@ -263,12 +310,37 @@ async function main() {
         'project_files_list',
         'project_status',
         'spatial_attachment_preview',
+        'spatial_attachment_read',
         'work_lease_release',
         'work_lease_request',
         'work_lease_status',
       ],
     );
     assert.equal(JSON.stringify(tools.tools.map((tool) => tool.inputSchema)).includes('credential'), false);
+    const spatialReadTool = tools.tools.find((tool) => tool.name === 'spatial_attachment_read');
+    assert.ok(spatialReadTool);
+    assert.deepEqual(spatialReadTool.annotations, {
+      readOnlyHint: true,
+      idempotentHint: true,
+    });
+    assert.ok(Array.isArray(spatialReadTool.inputSchema.oneOf));
+    assert.equal(spatialReadTool.inputSchema.oneOf.length, 2);
+    assert.equal(
+      spatialReadTool.inputSchema.oneOf.every((branch) => branch.additionalProperties === false),
+      true,
+    );
+    const advertisedInput = JSON.stringify(spatialReadTool.inputSchema);
+    assert.equal(advertisedInput.includes('sessionId'), false);
+    assert.equal(advertisedInput.includes('credential'), false);
+    assert.equal(advertisedInput.includes('leaseId'), false);
+    assert.equal(spatialReadTool.outputSchema.type, 'object');
+    assert.deepEqual(spatialReadTool.outputSchema.required.sort(), [
+      'evaluation', 'path', 'revision', 'sourceRevisions',
+    ]);
+    const advertisedOutput = JSON.stringify(spatialReadTool.outputSchema);
+    assert.match(advertisedOutput, /no_joint_limits_authored/);
+    assert.match(advertisedOutput, /capsule_axis_to_oriented_box_clearance/);
+    assert.match(advertisedOutput, /authored_collision_box/);
 
     const call = (name, args = {}) => client.request('tools/call', { name, arguments: args });
     const status = await call('project_status');
@@ -299,6 +371,98 @@ async function main() {
     const attachment = await call('project_file_read', { path: attachmentPath });
     assert.equal(attachment.structuredContent.content, originalAttachment);
     assert.equal(attachment.structuredContent.revision, textContentRevision(originalAttachment));
+
+    const coordinationBeforeSpatialReads = await call('coordination_state');
+    const operationsBeforeSpatialReads = await call('operation_list', { state: 'all', limit: 100 });
+    const restRead = await call('spatial_attachment_read', {
+      view: 'rest',
+      path: attachmentPath,
+      baseRevision: attachment.structuredContent.revision,
+    });
+    assert.equal(restRead.isError, undefined);
+    assert.deepEqual(restRead.structuredContent.evaluation.pose, { kind: 'rest', sampled: false });
+    assert.equal(restRead.structuredContent.path, attachmentPath);
+    assert.equal(restRead.structuredContent.revision, attachment.structuredContent.revision);
+    assert.equal(restRead.structuredContent.evaluation.diagnostics.jointLimits.status, 'unavailable');
+    assert.equal(restRead.structuredContent.evaluation.diagnostics.clipping.status, 'unavailable');
+    const sourceRevisionPaths = restRead.structuredContent.sourceRevisions.map((entry) => entry.path);
+    assert.deepEqual(sourceRevisionPaths, [...sourceRevisionPaths].sort());
+    assert.ok(sourceRevisionPaths.includes(attachmentPath));
+    assert.ok(sourceRevisionPaths.includes('data/foundation/engine-data-layout.toml'));
+
+    const sampleRead = await call('spatial_attachment_read', {
+      view: 'sample',
+      path: attachmentPath,
+      baseRevision: attachment.structuredContent.revision,
+      phase: 'idle',
+      normalizedTime: 0.5,
+    });
+    assert.equal(sampleRead.isError, undefined);
+    assert.equal(sampleRead.structuredContent.evaluation.pose.kind, 'clip_sample');
+    assert.equal(sampleRead.structuredContent.evaluation.pose.phase, 'idle');
+    assert.equal(sampleRead.structuredContent.evaluation.pose.normalizedTime, 0.5);
+    assert.equal(sampleRead.structuredContent.evaluation.diagnostics.jointLimits.status, 'available');
+    assert.equal(sampleRead.structuredContent.evaluation.diagnostics.clipping.status, 'available');
+    assert.equal(sampleRead.structuredContent.evaluation.diagnostics.clipping.itemBox.kind, 'authored_collision_box');
+    assert.equal(sampleRead.structuredContent.evaluation.attachment.id, 'weapon.rifle');
+    assert.deepEqual(sampledEvaluationCalls.at(-1), {
+      attachmentId: 'weapon.rifle',
+      phase: 'idle',
+      normalizedTime: 0.5,
+    });
+
+    const paddedSamplePhase = await call('spatial_attachment_read', {
+      view: 'sample',
+      path: attachmentPath,
+      baseRevision: attachment.structuredContent.revision,
+      phase: ' idle ',
+      normalizedTime: 0.5,
+    });
+    assert.equal(paddedSamplePhase.isError, true);
+    assert.equal(sampledEvaluationCalls.at(-1).phase, ' idle ');
+
+    const staleSpatialRead = await call('spatial_attachment_read', {
+      view: 'rest',
+      path: attachmentPath,
+      baseRevision: textContentRevision('stale spatial read'),
+    });
+    assert.equal(staleSpatialRead.isError, true);
+    assert.equal(staleSpatialRead.structuredContent.status, 409);
+    assert.equal(staleSpatialRead.structuredContent.code, 'revision_conflict');
+    assert.equal(
+      staleSpatialRead.structuredContent.conflict.actualRevision,
+      attachment.structuredContent.revision,
+    );
+
+    const invalidSpatialPath = await call('spatial_attachment_read', {
+      view: 'rest',
+      path: '../outside.attachment.toml',
+      baseRevision: attachment.structuredContent.revision,
+    });
+    assert.equal(invalidSpatialPath.isError, true);
+    const invalidSampleTime = await call('spatial_attachment_read', {
+      view: 'sample',
+      path: attachmentPath,
+      baseRevision: attachment.structuredContent.revision,
+      phase: 'idle',
+      normalizedTime: 2,
+    });
+    assert.equal(invalidSampleTime.isError, true);
+    const injectedSpatialAuthority = await call('spatial_attachment_read', {
+      view: 'rest',
+      path: attachmentPath,
+      baseRevision: attachment.structuredContent.revision,
+      sessionId: otherSession.id,
+      leaseId: 'caller-controlled-lease',
+    });
+    assert.equal(injectedSpatialAuthority.isError, true);
+
+    const coordinationAfterSpatialReads = await call('coordination_state');
+    const operationsAfterSpatialReads = await call('operation_list', { state: 'all', limit: 100 });
+    assert.deepEqual(coordinationAfterSpatialReads.structuredContent.granted, coordinationBeforeSpatialReads.structuredContent.granted);
+    assert.deepEqual(coordinationAfterSpatialReads.structuredContent.pending, coordinationBeforeSpatialReads.structuredContent.pending);
+    assert.deepEqual(operationsAfterSpatialReads.structuredContent, operationsBeforeSpatialReads.structuredContent);
+    assert.equal(await fs.readFile(path.join(workspaceRoot, attachmentPath), 'utf8'), originalAttachment);
 
     const readOnlySpatialLease = await call('work_lease_request', {
       resources: ['spatial/attachment/weapon.rifle'],
@@ -424,7 +588,6 @@ async function main() {
     assert.equal(operationRead.structuredContent.operation.id, operationId);
     assert.equal('proposedContent' in operationRead.structuredContent.operation, false);
 
-    const otherSession = await sessionStore.createSession({ name: 'other', rootPath: otherWorkspaceRoot });
     const foreignOperation = await sessiond.operationStore.previewFileWrite({
       sessionId: otherSession.id,
       path: 'foreign.txt',
