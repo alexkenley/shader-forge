@@ -132,7 +132,10 @@ clean_targets=(
 )
 
 printf '[shader-forge] Repo root: %s\n' "$repo_root"
-configure_cmake_environment || true
+cmake_available=0
+if configure_cmake_environment; then
+  cmake_available=1
+fi
 printf '[shader-forge] Cleaning generated outputs before startup...\n'
 
 cd "$repo_root"
@@ -223,6 +226,16 @@ if [[ "$skip_tests" != "1" ]]; then
   npm run test:runtime-scaffold
   printf '[shader-forge] Running shell build validation...\n'
   npm run shell:build
+fi
+
+if [[ "$cmake_available" == "1" ]]; then
+  printf '[shader-forge] Building native DataFoundation validator...\n'
+  if ! npm run engine -- build data; then
+    printf '[shader-forge] Native DataFoundation validator build failed.\n' >&2
+    exit 1
+  fi
+else
+  printf '[shader-forge] CMake is unavailable. World semantic saves require the native DataFoundation validator (shader_forge_data) and will fail closed until it is built.\n'
 fi
 
 sessiond_pid=''

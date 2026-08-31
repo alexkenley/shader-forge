@@ -35,6 +35,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const defaultRuntimeBuildDir = path.join(repoRoot, 'build', 'runtime');
 const runtimeBinaryName = process.platform === 'win32' ? 'shader_forge_runtime.exe' : 'shader_forge_runtime';
 const spatialBinaryName = process.platform === 'win32' ? 'shader_forge_spatial.exe' : 'shader_forge_spatial';
+const dataBinaryName = process.platform === 'win32' ? 'shader_forge_data.exe' : 'shader_forge_data';
 
 function printHelp() {
   console.log(`Shader Forge CLI
@@ -61,7 +62,7 @@ Usage:
   engine profile list [--root <path>] [--session <id>] [--base-url <url>] [--limit <count>]
   engine profile live [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>]
   engine profile capture [--root <path>] [--preset <id>] [--session <id>] [--base-url <url>] [--label <name>] [--output <path>]
-  engine build [runtime|spatial] [--config Debug] [--build-dir build/runtime]
+  engine build [runtime|spatial|data] [--config Debug] [--build-dir build/runtime]
   engine run [scene] [--config Debug] [--build-dir build/runtime] [--input-root input] [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--save-root saved/runtime] [--tooling-layout tooling/layouts/default.tooling-layout.toml] [--tooling-layout-save tooling/layouts/runtime-session.tooling-layout.toml]
   engine spatial validate [--animation-root animation] [--build-dir build/runtime] [--config Debug]
   engine spatial cook [--animation-root animation] [--output-root build/cooked] [--build-dir build/runtime] [--config Debug]
@@ -204,6 +205,10 @@ function spatialBinaryPath(buildDir) {
   return path.join(buildDir, 'bin', spatialBinaryName);
 }
 
+function dataBinaryPath(buildDir) {
+  return path.join(buildDir, 'bin', dataBinaryName);
+}
+
 async function runCommand(command, args, options = {}) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -243,8 +248,15 @@ async function buildNativeTarget(target, flags) {
   }
 
   await runCommand(cmakeCommand, configureArgs);
-  const binaryPath = target === 'runtime' ? runtimeBinaryPath(buildDir) : spatialBinaryPath(buildDir);
+  const binaryPath = target === 'runtime'
+    ? runtimeBinaryPath(buildDir)
+    : target === 'spatial'
+      ? spatialBinaryPath(buildDir)
+      : dataBinaryPath(buildDir);
   await runCommand(cmakeCommand, ['--build', buildDir, '--config', config, '--target', `shader_forge_${target}`]);
+  if (target === 'runtime') {
+    await runCommand(cmakeCommand, ['--build', buildDir, '--config', config, '--target', 'shader_forge_data']);
+  }
 
   return {
     buildDir,
@@ -791,7 +803,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (command === 'build') {
     const { positionals, flags } = parseFlags(argv.slice(1));
     const buildTarget = positionals[0] || 'runtime';
-    if (!['runtime', 'spatial'].includes(buildTarget)) {
+    if (!['runtime', 'spatial', 'data'].includes(buildTarget)) {
       throw new Error(`Unknown build target: ${buildTarget}`);
     }
     await buildNativeTarget(buildTarget, flags);

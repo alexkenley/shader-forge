@@ -46,11 +46,34 @@ const toolingSource = fs.readFileSync(toolingSourcePath, 'utf8');
 const cmakeCommandModule = await import(pathToFileURL(cmakeCommandSourcePath).href);
 
 assert.match(cliSource, /engine build/);
+assert.match(cliSource, /engine build \[runtime\|spatial\|data\] \[--config Debug\] \[--build-dir build\/runtime\]/);
 assert.match(cliSource, /engine run/);
 assert.match(cliSource, /requireCMakeCommand/);
 assert.match(cliSource, /CMAKE_TOOLCHAIN_FILE/);
+assert.match(cliSource, /const dataBinaryName = process\.platform === 'win32' \? 'shader_forge_data\.exe' : 'shader_forge_data'/);
+assert.match(cliSource, /\['runtime', 'spatial', 'data'\]/);
+assert.match(cliSource, /if \(target === 'runtime'\) \{/);
+assert.match(cliSource, /--target', 'shader_forge_data'/);
 assert.match(buildStoreSource, /requireCMakeCommand/);
 assert.match(buildStoreSource, /CMAKE_TOOLCHAIN_FILE/);
+assert.match(buildStoreSource, /--target', 'shader_forge_runtime'/);
+assert.match(buildStoreSource, /--target', 'shader_forge_data'/);
+assert.match(startDevCleanShellSource, /npm run engine -- build data/);
+assert.match(startDevCleanPowerShellSource, /npm run engine -- build data/);
+assert.match(startDevCleanShellSource, /World semantic saves require the native DataFoundation validator \(shader_forge_data\) and will fail closed/);
+assert.match(startDevCleanPowerShellSource, /World semantic saves require the native DataFoundation validator \(shader_forge_data\) and will fail closed/);
+assert.match(startDevCleanShellSource, /Native DataFoundation validator build failed/);
+assert.match(startDevCleanPowerShellSource, /Native DataFoundation validator build failed/);
+assert.ok(
+  startDevCleanShellSource.indexOf('npm run engine -- build data')
+    < startDevCleanShellSource.indexOf('npm run sessiond:start'),
+  'clean-start.sh must provision shader_forge_data before starting sessiond',
+);
+assert.ok(
+  startDevCleanPowerShellSource.indexOf('npm run engine -- build data')
+    < startDevCleanPowerShellSource.indexOf('npm run sessiond:start'),
+  'start-dev-clean.ps1 must provision shader_forge_data before starting sessiond',
+);
 assert.match(cmakeCommandSource, /SHADER_FORGE_CMAKE/);
 assert.match(windowsNativeDepsScriptSource, /Installing or rebuilding SDL3 with Vulkan window support for \$Triplet/i);
 assert.match(windowsNativeDepsScriptSource, /sdl3\[vulkan\]:\$Triplet/i);
@@ -281,6 +304,7 @@ if (!isWindows) {
 console.log('Engine runtime scaffold passed.');
 console.log(`- Verified runtime sources under ${runtimeRoot}`);
 console.log('- Verified CLI runtime build/run command surfaces are present');
+console.log('- Verified engine build data, runtime data-validator provisioning, and clean-start data build contracts');
 console.log('- Verified the runtime source contains swapchain, present, resize-aware render-loop, engine-owned input plumbing, native tooling UI substrate hooks, audio/animation/physics/save-system loading, and data foundation loading');
 console.log(syntaxChecked
   ? '- Verified native runtime C++ sources pass fallback syntax-only compilation'

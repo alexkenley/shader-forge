@@ -52,6 +52,12 @@ function defaultLaunchFactory({ target = 'runtime', config = 'Debug', buildDir }
         args: ['--build', resolvedBuildDir, '--config', config, '--target', 'shader_forge_runtime'],
         cwd: repoRoot,
       },
+      {
+        label: 'Build data',
+        command: cmakeCommand,
+        args: ['--build', resolvedBuildDir, '--config', config, '--target', 'shader_forge_data'],
+        cwd: repoRoot,
+      },
     ],
   };
 }

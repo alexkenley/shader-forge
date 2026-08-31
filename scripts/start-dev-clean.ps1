@@ -63,6 +63,7 @@ function Resolve-CMakeCommand {
 }
 
 function Initialize-CMakeEnvironment {
+    $script:CMakeAvailable = $false
     $cmakeCommand = Resolve-CMakeCommand
     if ($cmakeCommand) {
         $env:SHADER_FORGE_CMAKE = $cmakeCommand
@@ -74,6 +75,7 @@ function Initialize-CMakeEnvironment {
             }
         }
         Write-Host "[shader-forge] Using CMake: $cmakeCommand"
+        $script:CMakeAvailable = $true
         return
     }
 
@@ -322,6 +324,14 @@ try {
         Write-Host "[shader-forge] Running shell build validation..."
         & npm run shell:build
         if ($LASTEXITCODE -ne 0) { throw "Shell build failed" }
+    }
+
+    if ($script:CMakeAvailable) {
+        Write-Host "[shader-forge] Building native DataFoundation validator..."
+        & npm run engine -- build data
+        if ($LASTEXITCODE -ne 0) { throw "Native DataFoundation validator build failed" }
+    } else {
+        Write-Host "[shader-forge] CMake is unavailable. World semantic saves require the native DataFoundation validator (shader_forge_data) and will fail closed until it is built."
     }
 
     # ─── Start services ───
