@@ -529,7 +529,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     return [
       engine === 'godot'
-        ? `Review mapped Godot text-scene hierarchy, explicit transforms, perspective Camera3D optics, and CollisionShape3D BoxShape3D geometry under ${targetRoots.content_scenes}; transform matrices, instanced resources, other components, and physics semantics remain manual.`
+        ? `Review mapped Godot text-scene hierarchy, explicit transforms, perspective Camera3D optics, and enabled CollisionShape3D BoxShape3D geometry under ${targetRoots.content_scenes}; disabled collider preservation, transform matrices, instanced resources, other components, and physics semantics remain manual.`
         : engine === 'unity'
           ? `Review mapped Unity text-YAML hierarchy, local transforms, enabled perspective Camera optics, and enabled BoxCollider geometry under ${targetRoots.content_scenes}; disabled component preservation, prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
@@ -572,7 +572,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
     if (detection.engine === 'unity') {
       warnings.push('Unity conversion maps text-YAML hierarchy, enabled perspective Camera optics, enabled BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, disabled camera/collider preservation, orthographic cameras, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
-      warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, valid CollisionShape3D BoxShape3D geometry, and node script ExtResource bindings; transform matrices, resource instances, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled/layer/material semantics are still ahead.');
+      warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, enabled valid CollisionShape3D BoxShape3D geometry, and node script ExtResource bindings; transform matrices, resource instances, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled-collider/layer/material semantics are still ahead.');
     }
   }
   return warnings;
@@ -701,6 +701,7 @@ function parseGodotSceneNodes(source) {
           ? { projection: 0, verticalFovDegrees: null, nearMeters: null, farMeters: null }
           : null,
         collisionShapeId: '',
+        collisionDisabled: false,
         scriptResourceId: '',
       };
       nodes.push(current);
@@ -720,6 +721,7 @@ function parseGodotSceneNodes(source) {
       current.camera.farMeters = parseGodotNumber(line, 'far', current.camera.farMeters);
     }
     if (current.type === 'CollisionShape3D') {
+      current.collisionDisabled = current.collisionDisabled || line === 'disabled = true';
       current.collisionShapeId = line.match(/^shape\s*=\s*SubResource\("([^"]+)"\)$/)?.[1]
         || current.collisionShapeId;
     }
@@ -740,7 +742,7 @@ function parseGodotSceneNodes(source) {
       && node.camera.farMeters > node.camera.nearMeters
       ? node.camera
       : null,
-    collision: boxShapes.get(node.collisionShapeId) || null,
+    collision: node.collisionDisabled ? null : boxShapes.get(node.collisionShapeId) || null,
     scriptBindings: scriptResources.has(node.scriptResourceId)
       ? [{
           sourceResourceId: node.scriptResourceId,

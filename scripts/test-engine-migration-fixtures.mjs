@@ -358,6 +358,35 @@ assert.match(godotScriptBinding, /source_resource_path = "scripts\/player\.gd"/)
 assert.match(godotScriptBinding, /extraction_confidence = "high"/);
 await assertMigratedProjectBakes(path.join(godotRoot, 'shader-forge-project'), 'godot', 'godot-lane');
 
+const disabledGodotCollisionFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-disabled-collision');
+fs.cpSync(godotFixtureRoot, disabledGodotCollisionFixtureRoot, { recursive: true });
+const disabledGodotCollisionScenePath = path.join(disabledGodotCollisionFixtureRoot, 'scenes', 'main.tscn');
+fs.writeFileSync(
+  disabledGodotCollisionScenePath,
+  fs.readFileSync(disabledGodotCollisionScenePath, 'utf8').replace(
+    'shape = SubResource("BoxShape3D_player")',
+    'disabled = true\nshape = SubResource("BoxShape3D_player")',
+  ),
+  'utf8',
+);
+const disabledGodotCollisionRun = runCli([
+  'migrate',
+  'godot',
+  disabledGodotCollisionFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'godot-disabled-collision',
+]);
+assert.match(disabledGodotCollisionRun.stdout, /Mapped prefab components: 1/);
+assert.doesNotMatch(
+  fs.readFileSync(
+    path.join(tempRoot, 'godot-disabled-collision', 'shader-forge-project', 'content', 'prefabs', 'migrated', 'godot', 'main_main_player_collider.prefab.toml'),
+    'utf8',
+  ),
+  /\[component\.collision\]/,
+);
+
 const unsafeGodotScriptFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-unsafe-script-path');
 fs.cpSync(godotFixtureRoot, unsafeGodotScriptFixtureRoot, { recursive: true });
 const unsafeGodotScenePath = path.join(unsafeGodotScriptFixtureRoot, 'scenes', 'main.tscn');
