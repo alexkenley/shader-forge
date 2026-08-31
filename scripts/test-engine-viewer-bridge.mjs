@@ -148,6 +148,11 @@ try {
   }
   assert.match(shellApp, /function selectActiveSession\(sessionId: string\)/);
   assert.match(shellApp, /const workspaceSelectionGenerationRef = useRef\(0\)/);
+  assert.match(shellApp, /const sessionListRequestRef = useRef\(0\)/);
+  assert.match(shellApp, /const dirPickerRequestRef = useRef\(0\)/);
+  assert.match(shellApp, /requestId !== sessionListRequestRef\.current/);
+  assert.match(shellApp, /requestId !== dirPickerRequestRef\.current/);
+  assert.match(shellApp, /function closeDirPicker\(\) \{\s*dirPickerRequestRef\.current \+= 1;/);
   assert.match(shellApp, /function activeWorkspaceIsCurrent\(sessionId: string, generation: number\)/);
   assert.match(shellApp, /pendingRunRequestRef\.current = null;[\s\S]*setPendingRunAfterBuild\(false\)/);
   assert.ok(
@@ -244,7 +249,7 @@ try {
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log('- Verified shell Playtest surfaces and sessiond bridge contracts are present');
   console.log(`- Verified runtime start/${isWindows ? 'stop' : 'pause/resume/stop'} bridge flow across API, status, and event surfaces`);
-  console.log('- Verified build completion events plus stale runtime/build, World-selection, session-panel, and workspace-action guards');
+  console.log('- Verified build completion events plus stale runtime/build, World-selection, session-list, directory-picker, panel, and workspace-action guards');
 } finally {
   await service.close();
   await fsp.rm(sessionStateDir, { recursive: true, force: true });

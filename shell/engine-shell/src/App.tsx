@@ -2076,6 +2076,8 @@ export default function App() {
   const terminalOpeningRef = useRef(new Set<string>());
   const activeSessionIdRef = useRef('');
   const workspaceSelectionGenerationRef = useRef(0);
+  const sessionListRequestRef = useRef(0);
+  const dirPickerRequestRef = useRef(0);
   const runtimeLifecycleRequestRef = useRef(0);
   const buildLifecycleRequestRef = useRef(0);
   const explorerRequestRef = useRef(0);
@@ -2460,10 +2462,17 @@ export default function App() {
   }
 
   async function refreshSessions() {
-    const nextSessions = await listSessions();
-    setSessions(nextSessions);
-    selectActiveSession(pickPreferredSessionId(nextSessions, activeSessionIdRef.current));
-    return nextSessions;
+    const requestId = ++sessionListRequestRef.current;
+    try {
+      const nextSessions = await listSessions();
+      if (requestId !== sessionListRequestRef.current) return null;
+      setSessions(nextSessions);
+      selectActiveSession(pickPreferredSessionId(nextSessions, activeSessionIdRef.current));
+      return nextSessions;
+    } catch (error) {
+      if (requestId === sessionListRequestRef.current) throw error;
+      return null;
+    }
   }
 
   function selectActiveSession(sessionId: string) {
@@ -2631,18 +2640,21 @@ export default function App() {
   }
 
   async function navigateDirPicker(nextPath: string) {
+    const requestId = ++dirPickerRequestRef.current;
     setDirPickerBusy(true);
     setDirPickerError('');
     setDirPickerPath(nextPath);
     try {
       const listing = await listHostDirectories(nextPath);
+      if (requestId !== dirPickerRequestRef.current) return;
       setDirPickerPath(listing.path);
       setDirPickerEntries(listing.entries);
     } catch (error) {
+      if (requestId !== dirPickerRequestRef.current) return;
       setDirPickerError(error instanceof Error ? error.message : String(error));
       setDirPickerEntries([]);
     } finally {
-      setDirPickerBusy(false);
+      if (requestId === dirPickerRequestRef.current) setDirPickerBusy(false);
     }
   }
 
@@ -2657,6 +2669,7 @@ export default function App() {
   }
 
   function closeDirPicker() {
+    dirPickerRequestRef.current += 1;
     setDirPickerOpen(false);
     setDirPickerPath('/');
     setDirPickerEntries([]);
@@ -2719,8 +2732,9 @@ export default function App() {
           if (runtimeLifecycleRequestRef.current === runtimeRequestId) setRuntimeStatus(nextRuntimeStatus);
           if (buildLifecycleRequestRef.current === buildRequestId) setBuildStatus(nextBuildStatus);
         }
+        const sessionListRequestId = ++sessionListRequestRef.current;
         const nextSessions = await listSessions();
-        if (cancelled) {
+        if (cancelled || sessionListRequestId !== sessionListRequestRef.current) {
           return;
         }
         setSessions(nextSessions);
@@ -3070,11 +3084,11 @@ export default function App() {
         name: newSessionName.trim() || undefined,
         rootPath: newSessionRoot.trim() || undefined,
       });
-      setSessiondState('connected');
-      setSessiondMessage(`Created session ${session.name}`);
-      await refreshSessions();
+      if (!(await refreshSessions())) return;
       await activateSession(session.id);
       resetSessionForm();
+      setSessiondState('connected');
+      setSessiondMessage(`Created session ${session.name}`);
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -3094,11 +3108,11 @@ export default function App() {
         name: newSessionName.trim() || undefined,
         rootPath: newSessionRoot.trim() || undefined,
       });
-      setSessiondState('connected');
-      setSessiondMessage(`Updated session ${session.name}`);
-      await refreshSessions();
+      if (!(await refreshSessions())) return;
       await activateSession(session.id);
       resetSessionForm();
+      setSessiondState('connected');
+      setSessiondMessage(`Updated session ${session.name}`);
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -3120,6 +3134,7 @@ export default function App() {
       setSessionActionBusy(true);
       await deleteSession(sessionId);
       const nextSessions = await refreshSessions();
+      if (!nextSessions) return;
       const nextActiveSessionId = pickPreferredSessionId(
         nextSessions,
         activeSessionId === sessionId ? '' : activeSessionId,
@@ -3156,6 +3171,7 @@ export default function App() {
     try {
       setSessionActionBusy(true);
       const nextSessions = await refreshSessions();
+      if (!nextSessions) return;
       setSessiondState('connected');
       setSessiondMessage(`Synced sessions from ${getSessiondBaseUrl()}`);
       const explorerSessionId = pickPreferredSessionId(nextSessions, activeSessionId);
@@ -3192,6 +3208,7 @@ export default function App() {
         await deleteSession(session.id);
       }
       const nextSessions = await refreshSessions();
+      if (!nextSessions) return;
       const nextActiveSessionId = pickPreferredSessionId(nextSessions, activeSessionId);
       selectActiveSession(nextActiveSessionId);
       if (nextActiveSessionId) {
@@ -3242,11 +3259,11 @@ export default function App() {
         name: getPathLeaf(suggestedSession.rootPath) || 'workspace',
         rootPath: suggestedSession.rootPath,
       });
-      setSessiondState('connected');
-      setSessiondMessage(`Created workspace ${session.name}`);
-      await refreshSessions();
+      if (!(await refreshSessions())) return;
       await activateSession(session.id);
       resetSessionForm();
+      setSessiondState('connected');
+      setSessiondMessage(`Created workspace ${session.name}`);
     } catch (error) {
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
@@ -4197,6 +4214,7 @@ export default function App() {
                     <li key={session.id}>
                       <button
                         className={`session-item${activeSessionId === session.id ? ' is-active' : ''}`}
+                        disabled={sessionActionBusy}
                         onClick={() => {
                           void activateSession(session.id).catch((error) => {
                             setSessiondState('offline');
@@ -4214,6 +4232,7 @@ export default function App() {
                       <div className="session-item__actions">
                         <button
                           className="session-action"
+                          disabled={sessionActionBusy}
                           onClick={() => loadSessionIntoForm(session)}
                           title="Edit"
                           type="button"
@@ -4222,6 +4241,7 @@ export default function App() {
                         </button>
                         <button
                           className="session-action session-action--danger"
+                          disabled={sessionActionBusy}
                           onClick={() => void handleDeleteSession(session.id)}
                           title="Delete"
                           type="button"
@@ -4252,6 +4272,7 @@ export default function App() {
                       <li key={session.id}>
                         <button
                           className={`session-item session-item--secondary${activeSessionId === session.id ? ' is-active' : ''}`}
+                          disabled={sessionActionBusy}
                           onClick={() => {
                             void activateSession(session.id).catch((error) => {
                               setSessiondState('offline');
@@ -4269,6 +4290,7 @@ export default function App() {
                         <div className="session-item__actions">
                           <button
                             className="session-action session-action--danger"
+                            disabled={sessionActionBusy}
                             onClick={() => void handleDeleteSession(session.id)}
                             title="Delete"
                             type="button"
