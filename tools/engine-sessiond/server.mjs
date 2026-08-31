@@ -2,6 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import { AiRequestQueue } from './lib/ai-request-queue.mjs';
+import { AiUsageStore } from './lib/ai-usage-store.mjs';
 import { BuildStore } from './lib/build-store.mjs';
 import { CodeTrustApprovalStore } from './lib/code-trust-approval-store.mjs';
 import { CoordinationStore } from './lib/coordination-store.mjs';
@@ -713,6 +714,7 @@ function createRouter({
   eventHub,
   diagnosticsRecorder,
   aiRequestQueue,
+  aiUsageStore,
 }) {
   return async function route(request, response) {
     if (!request.url) {
@@ -758,6 +760,7 @@ function createRouter({
           'ai:providers',
           'ai:test',
           'ai:jobs',
+          'ai:usage',
           'package:inspect',
           'package:run',
           'profile:live',
@@ -808,6 +811,15 @@ function createRouter({
           },
         );
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/ai/usage') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const summary = await aiUsageStore.summary(
+          resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+        );
+        writeJson(response, 200, summary);
         return;
       }
 
@@ -1767,6 +1779,7 @@ export async function startEngineSessiond({
   coordinationStore,
   operationStore,
   aiRequestQueue,
+  aiUsageStore,
   spatialAttachmentService,
   sceneAssetService,
   validateDataFoundation,
@@ -1825,7 +1838,9 @@ export async function startEngineSessiond({
     evaluateSampledAttachment,
     captureSampleAttachment,
   });
+  const resolvedAiUsageStore = aiUsageStore || new AiUsageStore();
   const resolvedAiRequestQueue = aiRequestQueue || new AiRequestQueue({
+    recordUsage: (rootPath, result) => resolvedAiUsageStore.record(rootPath, result),
     emitEvent: (type, data) => {
       diagnosticsRecorder.emit(type, data);
     },
@@ -1855,6 +1870,7 @@ export async function startEngineSessiond({
     eventHub,
     diagnosticsRecorder,
     aiRequestQueue: resolvedAiRequestQueue,
+    aiUsageStore: resolvedAiUsageStore,
   }));
 
   await new Promise((resolve, reject) => {
@@ -1879,6 +1895,7 @@ export async function startEngineSessiond({
     coordinationStore: resolvedCoordinationStore,
     operationStore: resolvedOperationStore,
     aiRequestQueue: resolvedAiRequestQueue,
+    aiUsageStore: resolvedAiUsageStore,
     close: async () => {
       await resolvedAiRequestQueue.close();
       await buildStore.close();

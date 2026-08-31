@@ -5,8 +5,9 @@ const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 const jobStatuses = new Set(['queued', 'running', ...terminalStatuses]);
 
 export class AiRequestQueue {
-  constructor({ execute = testAiProvider, emitEvent = () => {}, maxJobs = 128 } = {}) {
+  constructor({ execute = testAiProvider, recordUsage = async () => {}, emitEvent = () => {}, maxJobs = 128 } = {}) {
     this.execute = execute;
+    this.recordUsage = recordUsage;
     this.emitEvent = emitEvent;
     this.maxJobs = maxJobs;
     this.jobs = new Map();
@@ -39,6 +40,8 @@ export class AiRequestQueue {
       finishedAt: null,
       result: null,
       error: null,
+      usageRecorded: null,
+      usageError: null,
       controller: null,
     };
     this.jobs.set(job.id, job);
@@ -137,6 +140,15 @@ export class AiRequestQueue {
           job.status = 'completed';
           job.providerId = result.providerId;
           job.result = result;
+          if (result.usage) {
+            try {
+              await this.recordUsage(job.rootPath, result);
+              job.usageRecorded = true;
+            } catch (error) {
+              job.usageRecorded = false;
+              job.usageError = error instanceof Error ? error.message : String(error);
+            }
+          }
         }
       } catch (error) {
         if (!job.controller.signal.aborted) {
@@ -163,6 +175,8 @@ export class AiRequestQueue {
       startedAt: job.startedAt,
       finishedAt: job.finishedAt,
       error: job.error,
+      usageRecorded: job.usageRecorded,
+      usageError: job.usageError,
     };
     if (includeResult) {
       snapshot.result = job.result;

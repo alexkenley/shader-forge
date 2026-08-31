@@ -265,6 +265,8 @@ Current implemented behavior:
 - other hosted-provider types remain inspection-only, with deployment mode plus required `api_key_env` diagnostics
 - `engine_sessiond` now exposes `GET /api/ai/providers` and `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
 - `engine_sessiond` also exposes bounded process-scoped AI jobs through collection `POST`/`GET` plus per-job `GET`/`DELETE`; one request runs at a time, list responses omit result bodies, queued and active jobs can be cancelled, provider sockets receive abort signals, and `ai.job` lifecycle events use the existing SSE stream without including prompts or response content
+- successful queued calls with provider-reported usage atomically accumulate request, prompt-token, completion-token, and total-token counts per workspace and provider under `.shader-forge/ai-usage.json`; direct smoke tests and requests do not change this ledger
+- `GET /api/ai/usage` and `engine ai usage` expose the read-only workspace summary without prompts, response bodies, or credentials
 - the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
 - the CLI now exposes direct `engine ai providers|test|request` plus queued `submit|jobs|status|cancel` commands
 - deterministic coverage now exists through `npm run test:ai-scaffold`
@@ -272,7 +274,7 @@ Current implemented behavior:
 Still ahead in Phase 5.9:
 
 - retry and fallback control plus durable request history beyond the current process-scoped queue, cancellation, timeout, status, and event lifecycle
-- cumulative usage persistence, budgets, spend limits, and request logging beyond the current per-request output ceiling and returned usage evidence
+- budget enforcement, spend limits, pricing, and request logging beyond the current per-request output ceiling and durable token-usage evidence
 - additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
 - game-facing tool registry, skill registry, and structured action schemas
 - gameplay-facing AI integrations

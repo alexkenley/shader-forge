@@ -186,6 +186,7 @@ try {
   assert.ok(health.capabilities.includes('ai:providers'));
   assert.ok(health.capabilities.includes('ai:test'));
   assert.ok(health.capabilities.includes('ai:jobs'));
+  assert.ok(health.capabilities.includes('ai:usage'));
 
   const createSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
     name: 'ai-project',
@@ -295,6 +296,43 @@ try {
   const completedJob = await waitForAiJob(service.baseUrl, completedJobPayload.job.id, ['completed']);
   assert.equal(completedJob.result?.content, 'ready');
   assert.equal(completedJob.error, null);
+  assert.equal(completedJob.usageRecorded, null);
+
+  const usageJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Record usage.',
+  });
+  const usageJob = await waitForAiJob(service.baseUrl, usageJobPayload.job.id, ['completed']);
+  assert.equal(usageJob.usageRecorded, true);
+  assert.equal(usageJob.usageError, null);
+
+  const cumulativeUsageJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Record cumulative usage.',
+  });
+  const cumulativeUsageJob = await waitForAiJob(
+    service.baseUrl,
+    cumulativeUsageJobPayload.job.id,
+    ['completed'],
+  );
+  assert.equal(cumulativeUsageJob.usageRecorded, true);
+
+  const usageSummary = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/usage?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.equal(usageSummary.requestCount, 2);
+  assert.equal(usageSummary.promptTokens, 20);
+  assert.equal(usageSummary.completionTokens, 4);
+  assert.equal(usageSummary.totalTokens, 24);
+  assert.deepEqual(usageSummary.providers.map((provider) => provider.providerId), ['openrouter_kimi']);
+  const durableUsage = JSON.parse(await fs.readFile(
+    path.join(tempProjectRoot, '.shader-forge', 'ai-usage.json'),
+    'utf8',
+  ));
+  assert.equal(durableUsage.providers[0].requestCount, 2);
+  assert.equal(durableUsage.providers[0].totalTokens, 24);
 
   const unknownJob = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs/missing-job`);
   assert.match(unknownJob.error || '', /Unknown AI job/);
@@ -316,6 +354,9 @@ try {
   ]);
   assert.ok(cliCompletedJobs.some((job) => job.id === cliQueuedJob.id));
   assert.equal(Object.hasOwn(cliCompletedJobs[0], 'result'), false);
+  const cliUsage = await runCli(['ai', 'usage', '--session', sessionId, '--base-url', service.baseUrl]);
+  assert.equal(cliUsage.requestCount, 2);
+  assert.equal(cliUsage.totalTokens, 24);
   const cliCancelCompleted = await runCli(['ai', 'cancel', cliQueuedJob.id, '--base-url', service.baseUrl]);
   assert.equal(cliCancelCompleted.status, 'completed');
 
@@ -362,6 +403,7 @@ try {
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
   console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter Kimi/GLM request paths without exposing credentials');
   console.log('- Verified bounded queued AI jobs, list/status/cancel APIs and CLI adapters, pending/running cancellation, and queue recovery');
+  console.log('- Verified atomic per-workspace provider token usage persistence and API/CLI summaries for successful queued calls');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {

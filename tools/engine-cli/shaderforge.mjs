@@ -59,6 +59,7 @@ Usage:
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
   engine ai submit <prompt> [--session <id>] [--provider <id>] [--system <text>] [--base-url <url>]
   engine ai jobs [--session <id>] [--status queued|running|completed|failed|cancelled|all] [--base-url <url>]
+  engine ai usage [--session <id>] [--base-url <url>]
   engine ai status <job-id> [--base-url <url>]
   engine ai cancel <job-id> [--base-url <url>]
   engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]
@@ -772,6 +773,14 @@ async function listAiJobs(flags) {
   console.log(JSON.stringify(payload.jobs, null, 2));
 }
 
+async function readAiUsage(flags) {
+  const baseUrl = resolvedBaseUrl(flags);
+  const query = new URL('/api/ai/usage', baseUrl);
+  if (flags.session) query.searchParams.set('sessionId', String(flags.session));
+  const payload = await requestJson(baseUrl, query.pathname + query.search);
+  console.log(JSON.stringify(payload, null, 2));
+}
+
 async function readOrCancelAiJob(positionals, flags, cancel = false) {
   const jobId = positionals[0]?.trim();
   if (!jobId || positionals.length !== 1) {
@@ -1129,6 +1138,10 @@ export async function runCli(argv = process.argv.slice(2)) {
     }
     if (subcommand === 'jobs') {
       await listAiJobs(flags);
+      return;
+    }
+    if (subcommand === 'usage') {
+      await readAiUsage(flags);
       return;
     }
     if (subcommand === 'status') {
