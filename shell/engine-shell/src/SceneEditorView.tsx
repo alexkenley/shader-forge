@@ -958,6 +958,13 @@ export function SceneEditorView({
   const canRestartRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
   const canStopRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
   const buildRequiresCmake = /cmake is required/i.test(buildStatus.error || '');
+  const playFailureMessage = buildStatus.state === 'failed'
+    ? buildRequiresCmake
+      ? 'Play needs CMake. Install it or add it to PATH, then try again.'
+      : `Play could not start. ${buildStatus.error || 'Open More for diagnostics.'}`
+    : nativeRuntimeHint && runtimeStatus.state === 'stopped'
+      ? 'The game could not open because native runtime files are missing. Open More for setup details.'
+      : '';
 
   if (!activeSession) {
     return (
@@ -1067,6 +1074,13 @@ export function SceneEditorView({
             </div>
           </div>
         </div>
+
+        {playFailureMessage ? (
+          <div className="setup-hint setup-hint--scene" role="alert">
+            <strong>Play needs attention</strong>
+            <span>{playFailureMessage}</span>
+          </div>
+        ) : null}
 
         <details className="scene-disclosure">
           <summary>More</summary>

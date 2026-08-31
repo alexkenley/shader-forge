@@ -56,6 +56,9 @@ try {
   assert.match(sceneEditorView, /Geometry asset/);
   assert.match(sceneEditorView, /Effect event/);
   assert.match(sceneEditorView, /Object ID/);
+  assert.match(sceneEditorView, /Play needs attention/);
+  assert.match(sceneEditorView, /Play could not start/);
+  assert.match(sceneEditorView, /role="alert"/);
   assert.match(sceneEditorView, /role="separator"/);
   assert.match(sceneEditorView, /role="tablist"/);
   assert.match(sceneAuthoringSource, /formatSceneAssetDocument/);
