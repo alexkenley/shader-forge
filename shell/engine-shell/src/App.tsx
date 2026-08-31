@@ -1581,31 +1581,43 @@ function TerminalDock({
   return (
     <section className="terminal-dock">
       <div className="terminal-tabs">
-        <div className="terminal-tabs__strip">
+        <div
+          aria-label="Terminals"
+          className="terminal-tabs__strip"
+          onKeyDown={(event) => handleTabListKeyDown(event, tabs.map((tab) => tab.id), activeTab.id, onActivateTab)}
+          role="tablist"
+        >
           {tabs.map((tab) => (
-            <button
+            <div
               className={`terminal-tab${tab.id === activeTab.id ? ' is-active' : ''}`}
               key={tab.id}
-              onClick={() => onActivateTab(tab.id)}
-              type="button"
             >
-              <span className={`terminal-tab__dot terminal-tab__dot--${tab.status}`} />
-              <strong>{tab.title}</strong>
-              <span className="terminal-tab__shell">{tab.shell}</span>
+              <button
+                aria-selected={tab.id === activeTab.id}
+                aria-controls="terminal-viewport-panel"
+                className="terminal-tab__select"
+                data-tab-id={tab.id}
+                id={`terminal-tab-${tab.id}`}
+                onClick={() => onActivateTab(tab.id)}
+                role="tab"
+                tabIndex={tab.id === activeTab.id ? 0 : -1}
+                type="button"
+              >
+                <span aria-hidden="true" className={`terminal-tab__dot terminal-tab__dot--${tab.status}`} />
+                <strong>{tab.title}</strong>
+                <span className="terminal-tab__shell">{tab.shell}</span>
+              </button>
               {tabs.length > 1 ? (
                 <button
                   aria-label={`Close ${tab.title}`}
                   className="terminal-tab__close"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onCloseTab(tab.id);
-                  }}
+                  onClick={() => onCloseTab(tab.id)}
                   type="button"
                 >
                   ×
                 </button>
               ) : null}
-            </button>
+            </div>
           ))}
         </div>
         <button className="ghost-button" onClick={onAddTab} type="button">
@@ -1615,6 +1627,7 @@ function TerminalDock({
       <div className="terminal-toolbar">
         <div className="terminal-toolbar__group">
           <select
+            aria-label="Terminal shell"
             className="terminal-shell-select"
             onChange={(event) => onChangeShell(activeTab.id, event.target.value as TerminalShell)}
             value={activeTab.shell}
@@ -1628,14 +1641,20 @@ function TerminalDock({
           <span className="terminal-toolbar__meta">cwd: {activeSession?.rootPath || activeTab.cwd}</span>
         </div>
         <div className="terminal-toolbar__group">
-          <span className={`terminal-status terminal-status--${activeTab.status}`}>{activeTab.status}</span>
+          <span className={`terminal-status terminal-status--${activeTab.status}`} role="status">{activeTab.status}</span>
           <button className="ghost-button" onClick={() => onClearTab(activeTab.id)} type="button">
             Clear
           </button>
         </div>
       </div>
       {activeTab.openError ? <div className="terminal-error">{activeTab.openError}</div> : null}
-      <div className="terminal-viewport" ref={hostRef} />
+      <div
+        aria-labelledby={`terminal-tab-${activeTab.id}`}
+        className="terminal-viewport"
+        id="terminal-viewport-panel"
+        ref={hostRef}
+        role="tabpanel"
+      />
     </section>
   );
 }
@@ -4231,6 +4250,7 @@ export default function App() {
                       </button>
                       <div className="session-item__actions">
                         <button
+                          aria-label={`Edit workspace ${session.name}`}
                           className="session-action"
                           disabled={sessionActionBusy}
                           onClick={() => loadSessionIntoForm(session)}
@@ -4240,6 +4260,7 @@ export default function App() {
                           Edit
                         </button>
                         <button
+                          aria-label={`Delete workspace ${session.name}`}
                           className="session-action session-action--danger"
                           disabled={sessionActionBusy}
                           onClick={() => void handleDeleteSession(session.id)}
@@ -4289,6 +4310,7 @@ export default function App() {
                         </button>
                         <div className="session-item__actions">
                           <button
+                            aria-label={`Delete harness workspace ${session.name}`}
                             className="session-action session-action--danger"
                             disabled={sessionActionBusy}
                             onClick={() => void handleDeleteSession(session.id)}
@@ -4654,14 +4676,16 @@ export default function App() {
             <span className="bottom-pane__meta">
               {bottomPaneCollapsed ? 'collapsed' : `${bottomPaneHeight}px`}
             </span>
-            <button
-              className="ghost-button ghost-button--sm"
-              disabled={!bottomPaneCollapsed && bottomPaneHeight >= bottomPaneMaxHeight}
-              onClick={handleExpandBottomPane}
-              type="button"
-            >
-              Maximize
-            </button>
+            {!bottomPaneCollapsed ? (
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={bottomPaneHeight >= bottomPaneMaxHeight}
+                onClick={handleExpandBottomPane}
+                type="button"
+              >
+                Maximize
+              </button>
+            ) : null}
             <button className="ghost-button ghost-button--sm" onClick={handleToggleBottomPane} type="button">
               {bottomPaneCollapsed ? 'Restore' : 'Collapse'}
             </button>

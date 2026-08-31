@@ -73,6 +73,12 @@ try {
   assert.doesNotMatch(shellApp, /<h3>AI<\/h3>/);
   assert.match(shellApp, /engine_sessiond/);
   assert.match(shellApp, /if \(createdTerminal\) \{\s*instance\?\.terminal\.focus\(\);/s);
+  assert.match(shellApp, /aria-label="Terminals"[\s\S]*role="tablist"/);
+  assert.match(shellApp, /className="terminal-tab__select"/);
+  assert.match(shellApp, /aria-label="Terminal shell"/);
+  assert.match(shellApp, /id="terminal-viewport-panel"/);
+  assert.match(shellApp, /!bottomPaneCollapsed \? \([\s\S]*?Maximize/);
+  assert.doesNotMatch(shellApp, /<button[^>]*className=\{`terminal-tab[\s\S]*?<button[^>]*terminal-tab__close/);
   assert.match(shellApp, /Edit Workspace/);
   assert.match(shellApp, /Workspaces/);
   assert.match(shellApp, /Explorer/);
@@ -102,6 +108,8 @@ try {
   assert.match(sceneEditorView, /id="scene-sidebar-panel-outliner"/);
   assert.match(sceneEditorView, /Run existing build/);
   assert.match(sceneEditorView, /async function handlePlay/);
+  assert.match(sceneEditorView, /aria-pressed=\{mode === 'edit'\}/);
+  assert.match(sceneEditorView, /aria-pressed=\{mode === 'play'\}/);
   assert.match(sceneEditorView, /onClick=\{\(\) => void handlePlay\(\)\}/);
   assert.match(shellApp, /Play needs CMake/);
   assert.match(shellApp, /Run existing build in Diagnostics/);
@@ -152,7 +160,7 @@ try {
   console.log(`- Served shell from ${server.rootDir}`);
   console.log('- Verified index, style sheet, and preserved code workspace module');
   console.log('- Verified inline editor search UI and Monaco match-finding hooks are present');
-  console.log('- Verified the React/Vite shell frame bridges to the preserved editor assets');
+  console.log('- Verified the React/Vite shell frame, terminal tab semantics, and World mode states');
   console.log('- Verified the React shell exposes an in-app guide backed by repo-native markdown and structured reference sources');
   console.log('- Verified the React shell references the session backend bridge contract');
   console.log('- Verified the Explorer tab references backend file list/read flows');

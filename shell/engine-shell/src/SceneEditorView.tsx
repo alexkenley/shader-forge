@@ -1468,6 +1468,7 @@ export function SceneEditorView({
                 Redo
               </button>
               <button
+                aria-pressed={mode === 'edit'}
                 className={`ghost-button ghost-button--sm${mode === 'edit' ? ' ghost-button--primary' : ''}`}
                 onClick={() => handleModeChange('edit')}
                 type="button"
@@ -1475,6 +1476,7 @@ export function SceneEditorView({
                 Edit
               </button>
               <button
+                aria-pressed={mode === 'play'}
                 className={`ghost-button ghost-button--sm${mode === 'play' ? ' ghost-button--primary' : ''}`}
                 onClick={() => handleModeChange('play')}
                 type="button"
