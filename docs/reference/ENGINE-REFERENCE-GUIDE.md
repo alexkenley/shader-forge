@@ -157,6 +157,7 @@ Assistant entry points:
 - Shader Forge MCP is the external-agent adapter; use `sf-mcp` as its short name.
 - The current adapter is a process-scoped stdio server. Each Codex, Grok CLI, Google Antigravity, or other MCP client launches its own process, while stdout remains reserved for MCP protocol messages and diagnostics go to stderr.
 - Start it with a stable project selection using `--root <path>`, or attach to an existing backend session with `--session <id>`. `--base-url <url>` selects `engine_sessiond`, and `--name <client-name>` identifies the client process.
+- `.agents/mcp_config.json` gives Antigravity a portable workspace registration using repository-relative server/root paths and `cwd`; start `engine_sessiond` before reloading it in Antigravity's MCP manager.
 - Each `sf-mcp` process registers one workspace-scoped coordinator agent, keeps the returned credential private in process memory, heartbeats while connected, and disconnects on shutdown so held leases do not strand other agents.
 - The current resources are `shaderforge://project`, `shaderforge://coordination`, and `shaderforge://spatial/review/{reviewId}`.
 - Current read tools are `project_status`, `project_files_list`, `project_file_read`, `coordination_state`, read-only/idempotent `spatial_attachment_read`, and immutable `spatial_review_read`; `shaderforge://spatial/review/{reviewId}` exposes the same packet as a typed resource.
@@ -167,7 +168,7 @@ Assistant entry points:
 - The mutation surface is limited to semantic spatial attachments. Generic file/scene/code writes, build/runtime mutation, arbitrary commands, and HTTP transport remain excluded.
 - `sf-mcp` never calls `/api/files/write`, accepts caller-provided identity or credentials, or automatically acquires authority, approves, retries, applies, or undoes. Successful recapture releases its three purpose-specific leases through sessiond; ordinary leases remain explicit. Structured 409 results preserve safe conflict data plus a refreshed authoritative operation when available.
 - Shader Forge MCP does not contain a built-in assistant, model execution, provider picker, or prompt UI. External clients own the AI experience.
-- Run `npm run test:mcp` for deterministic stdio, boundary, coordination, revision-bound spatial rest/sample reads, full spatial and review operation/resource coverage, structured conflicts, and disconnect cleanup.
+- Run `npm run test:mcp` for the Antigravity workspace-config contract plus deterministic stdio, boundary, coordination, revision-bound spatial rest/sample reads, full spatial and review operation/resource coverage, structured conflicts, and disconnect cleanup.
 - See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and `docs/guides/SHADER-FORGE-MCP-SETUP.md` for Codex/Grok/Antigravity setup.
 
 ### Engine CLI Surfaces

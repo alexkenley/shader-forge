@@ -23,6 +23,8 @@ Supported startup inputs:
 
 Exactly one of `--root` or `--session` selects the workspace. Client configurations should prefer `--root` because it remains stable across restarts, while deterministic harnesses may use `--session`.
 
+The committed `.agents/mcp_config.json` uses Antigravity's workspace `cwd` support with repository-relative server and root paths, so it is portable and contains no machine path or credential. `engine_sessiond` must already be running on the configured loopback URL.
+
 Stdout is reserved for MCP protocol messages. Operational diagnostics use stderr. HTTP MCP transport is not part of this slice.
 
 ## Process-Scoped Coordination
@@ -128,6 +130,7 @@ The deterministic MCP harness must:
 - verify selected-session operation boundaries and rejection of generic apply/undo
 - verify structured revision and transition conflict recovery without credential leakage
 - verify stdout contains protocol messages only
+- verify the committed Antigravity workspace configuration keeps the exact relative stdio command, root, loopback endpoint, and client name
 - shut down all child processes cleanly
 
 Run it with `npm run test:mcp`.

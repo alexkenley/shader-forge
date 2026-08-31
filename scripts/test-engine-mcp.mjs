@@ -19,6 +19,18 @@ const MCP_REQUEST_TIMEOUT_MS = 5_000;
 const MCP_EXIT_TIMEOUT_MS = 5_000;
 const sampledEvaluationCalls = [];
 
+const antigravityConfig = JSON.parse(await fs.readFile(path.join(repoRoot, '.agents', 'mcp_config.json'), 'utf8'));
+assert.deepEqual(antigravityConfig.mcpServers?.['sf-mcp'], {
+  command: 'node',
+  args: [
+    'tools/engine-mcp/server.mjs',
+    '--base-url', 'http://127.0.0.1:41741',
+    '--root', '.',
+    '--name', 'antigravity',
+  ],
+  cwd: '.',
+});
+
 function createMcpClient(child) {
   let buffer = '';
   let nextId = 1;

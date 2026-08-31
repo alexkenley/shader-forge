@@ -772,6 +772,7 @@ Current checkpoint now implemented:
 - `engine ai providers`, `engine ai test`, and `engine ai request` now expose the same first AI slice directly from the terminal
 - the shell `Workspace` panel now surfaces AI manifest source, ready-provider counts, provider diagnostics, and an inline smoke-test action
 - deterministic coverage now exists through `scripts/test-engine-ai-scaffold.mjs`
+- the committed `.agents/mcp_config.json` connects Google Antigravity to the separate `sf-mcp` external-agent lane with portable relative paths and no credential
 
 Still ahead inside this phase:
 - queued request submit/cancel/event-stream behavior beyond direct smoke-test execution

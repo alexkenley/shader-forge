@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sf-mcp": {
+      "command": "node",
+      "args": [
+        "tools/engine-mcp/server.mjs",
+        "--base-url", "http://127.0.0.1:41741",
+        "--root", ".",
+        "--name", "antigravity"
+      ],
+      "cwd": "."
+    }
+  }
+}

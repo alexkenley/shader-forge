@@ -11,7 +11,7 @@ npm install
 npm run sessiond:start
 ```
 
-Keep `engine_sessiond` running on `http://127.0.0.1:41741`. Use an absolute repository path in client configuration.
+Keep `engine_sessiond` running on `http://127.0.0.1:41741`. Codex and Grok registrations use an absolute repository path; the committed Antigravity workspace configuration uses its supported `cwd` field with repository-relative paths.
 
 ## Codex
 
@@ -42,7 +42,7 @@ Grok also supports `--scope project`, but do not commit a machine-specific absol
 
 ## Google Antigravity
 
-Antigravity supports local stdio MCP servers. Add this workspace-scoped entry to `.agents/mcp_config.json`, replacing `<repo-root>` with the absolute repository path on the machine running Antigravity:
+Antigravity supports local stdio MCP servers. This repository includes the following portable workspace-scoped `.agents/mcp_config.json` entry:
 
 ```json
 {
@@ -50,17 +50,18 @@ Antigravity supports local stdio MCP servers. Add this workspace-scoped entry to
     "sf-mcp": {
       "command": "node",
       "args": [
-        "<repo-root>/tools/engine-mcp/server.mjs",
+        "tools/engine-mcp/server.mjs",
         "--base-url", "http://127.0.0.1:41741",
-        "--root", "<repo-root>",
+        "--root", ".",
         "--name", "antigravity"
-      ]
+      ],
+      "cwd": "."
     }
   }
 }
 ```
 
-Open Antigravity's MCP manager to reload the workspace server and inspect connection logs. Do not commit the expanded machine-specific absolute path.
+Open Antigravity's MCP manager to reload the workspace server and inspect connection logs. Keep `engine_sessiond` running before connecting.
 
 ## Safe Spatial Mutation Flow
 
