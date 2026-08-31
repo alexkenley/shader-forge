@@ -180,4 +180,4 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - a process-scoped MCP adapter over the engine-owned coordination and mutation contracts
 - MCP exposure of the existing file-write and semantic scene-asset operation workflows, plus later multi-file change sets
 - MCP resources for project, scene, asset, code, runtime, test, diagnostics, coordination, and activity state
-- later spatial-authoring resources and tools remain adapters over sessiond operations. CLI and MCP review adapters now exist; shell packet presentation remains. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
+- spatial-authoring resources and tools remain adapters over sessiond operations. CLI, MCP, and Assets review adapters use sessiond reservation, validation, recapture, immutable packet, and capture-read authority. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).

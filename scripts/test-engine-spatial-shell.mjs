@@ -52,6 +52,7 @@ const source = [
   'name = "Rifle"',
   'skeleton = "humanoid.standard"',
   'item_prefab = "weapon.rifle.prefab"',
+  'perspective = "both"',
   '',
   '[primary_grip]',
   'socket = "socket.hand_r.primary"',
@@ -381,6 +382,7 @@ const parsed = helper.parseSpatialAttachment(source);
 assert.equal(parsed.id, 'weapon.rifle');
 assert.equal(parsed.skeleton, 'humanoid.standard');
 assert.equal(parsed.socket, 'socket.hand_r.primary');
+assert.equal(parsed.perspective, 'both');
 assert.deepEqual(parsed.translation, [0, -0.015, 0.02]);
 assert.deepEqual(parsed.rotationDegrees, [0, 0, 0]);
 
@@ -478,6 +480,41 @@ assert.equal(
   false,
   'selected attachment paths must reject drive-relative prefixes',
 );
+
+const validReviewPacket = {
+  schema: 'shader_forge.spatial_review_packet',
+  schemaVersion: 1,
+  immutable: true,
+  reviewId: 'rev_12345678-1234-4123-8123-123456789abc',
+  operationId: 'op_review',
+  selection: { attachmentId: 'weapon.rifle' },
+  sourceRevisions: { inputs: [{ path: 'animation/attachments/rifle.attachment.toml', revision: attachmentRevision }] },
+  samples: [{
+    posePhase: 'idle',
+    normalizedTime: 0.5,
+    clip: 'rifle_idle',
+    captures: {
+      clean: {
+        close_front: 'clean/idle/000/close_front.png',
+        close_side: 'clean/idle/000/close_side.png',
+        close_top: 'clean/idle/000/close_top.png',
+        close_three_quarter: 'clean/idle/000/close_three_quarter.png',
+        player_camera: 'clean/idle/000/player_camera.png',
+      },
+    },
+  }],
+};
+assert.equal(helper.parseSpatialReviewPacket(validReviewPacket), validReviewPacket);
+for (const [label, mutate] of [
+  ['mutable packet', (packet) => { packet.immutable = false; }],
+  ['traversal capture', (packet) => { packet.samples[0].captures.clean.close_front = '../outside.png'; }],
+  ['missing close camera', (packet) => { delete packet.samples[0].captures.clean.close_top; }],
+  ['duplicate sample', (packet) => { packet.samples.push(structuredClone(packet.samples[0])); }],
+]) {
+  const malformed = structuredClone(validReviewPacket);
+  mutate(malformed);
+  assert.throws(() => helper.parseSpatialReviewPacket(malformed), /review packet|capture|duplicate/i, `${label} must fail closed`);
+}
 
 const candidate = helper.updateSpatialAttachmentTransform(source, [0.01, -0.02, 0.03], [10, 20, 30]);
 assert.match(candidate, /translation = \[0\.01, -0\.02, 0\.03\] # preserve comment/);
@@ -1191,6 +1228,20 @@ assert.match(clientSource, /SpatialAttachmentEvaluationResult/);
 assert.match(clientSource, /\/api\/spatial\/attachment\/evaluate/);
 assert.match(clientSource, /\/api\/spatial\/attachment\/evaluate-sample/);
 assert.match(clientSource, /SpatialAttachmentPreviewResult/);
+assert.match(clientSource, /\/api\/operations\/\$\{encodeURIComponent\(options\.operationId\)\}\/review-reservations/);
+assert.match(clientSource, /\/api\/operations\/\$\{encodeURIComponent\(options\.operationId\)\}\/recapture/);
+assert.match(clientSource, /\/api\/spatial\/reviews\/\$\{encodeURIComponent\(reviewId\)\}/);
+assert.match(clientSource, /mode: 'read' \| 'write' = 'write'/);
+assert.match(viewSource, /IMMUTABLE REVIEW EVIDENCE/);
+assert.match(viewSource, /parseSpatialReviewPacket/);
+assert.match(viewSource, /spatialReviewCaptureUrl/);
+assert.match(viewSource, /Validate \+ publish review/);
+assert.match(viewSource, /closeReviewCameraIds/);
+assert.match(viewSource, /spatial\/runtime-capture/);
+assert.match(viewSource, /player_camera/);
+assert.doesNotMatch(viewSource, /localStorage/);
+assert.match(stylesSource, /\.spatial-review\s*\{/);
+assert.match(stylesSource, /\.spatial-review img\s*\{/);
 assert.match(clientSource, /replaceAll\(credential, '\[redacted\]'\)/);
 assert.match(stylesSource, /\.workspace-panel\s*\{[^}]*flex:\s*1;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
 assert.match(stylesSource, /\.spatial-actions\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/s);
@@ -1209,5 +1260,6 @@ assert.doesNotMatch(schematicStyles, /font-size:\s*(?:9|10)px/, 'schematic user-
 console.log('Engine spatial shell passed.');
 console.log('- Verified exact primary-grip edits plus independent authored motion-envelope parsing');
 console.log('- Verified the Assets-only operation route, explicit lock workflow, and credential redaction markers');
-console.log('- Verified manifest-bound rest/sample evidence, strict v1/v2 IK truth, guarded requests, and truthful non-review labels');
+console.log('- Verified immutable review-packet validation, recapture wiring, and real packet capture presentation');
+console.log('- Verified manifest-bound rest/sample evidence, strict v1/v2 IK truth, guarded requests, and truthful schematic labels');
 console.log('- Verified fail-closed capsule/item clipping evidence, distinct collision geometry, and CLEAR/OVERLAP-only presentation');

@@ -2480,6 +2480,45 @@ pre {
   border-radius: 4px;
 }
 
+.spatial-review-controls {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-radius: 6px;
+  background: rgba(13, 148, 136, 0.06);
+}
+
+.spatial-review-controls h3,
+.spatial-review-controls p { margin: 0; }
+.spatial-review-controls h3 { font-size: 12px; }
+.spatial-review-controls p { color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+.spatial-review-controls__camera,
+.spatial-review-controls__load {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.spatial-review-controls__load label { grid-column: 1 / -1; }
+.spatial-review-controls label,
+.spatial-review__sample { display: grid; gap: 5px; min-width: 0; }
+.spatial-review-controls label span,
+.spatial-review__sample span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.spatial-review-controls input,
+.spatial-review__sample select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--mono);
+}
+
 .spatial-tuner fieldset {
   min-width: 0;
   margin: 0;
@@ -2507,6 +2546,10 @@ pre {
 .spatial-vector input:focus-visible,
 .spatial-sample-controls select:focus-visible,
 .spatial-sample-controls button:focus-visible,
+.spatial-review-controls input:focus-visible,
+.spatial-review-controls button:focus-visible,
+.spatial-review__sample select:focus-visible,
+.spatial-review__cameras button:focus-visible,
 .spatial-profile-list button:focus-visible,
 .spatial-actions button:focus-visible,
 .spatial-lock-help button:focus-visible,
@@ -2545,6 +2588,58 @@ pre {
 
 .spatial-schematic-pane {
   background: radial-gradient(circle at 50% 25%, rgba(14, 165, 233, 0.06), transparent 45%);
+}
+
+.spatial-review {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(45, 212, 191, 0.45);
+  border-radius: 7px;
+  background: rgba(5, 46, 42, 0.22);
+}
+
+.spatial-review__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.spatial-review__header > div { display: grid; gap: 4px; min-width: 0; }
+.spatial-review__header strong { color: #7fe7d7; font-size: 12px; letter-spacing: 0.07em; }
+.spatial-review__header code,
+.spatial-review figcaption code { overflow-wrap: anywhere; }
+.spatial-review__header span,
+.spatial-review figcaption { color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+.spatial-review__cameras { display: flex; flex-wrap: wrap; gap: 6px; }
+.spatial-review__cameras button {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--muted);
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+.spatial-review__cameras button[aria-pressed="true"] {
+  border-color: rgba(45, 212, 191, 0.58);
+  color: #b8fff4;
+}
+
+.spatial-review img {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  background: #080d12;
 }
 
 .spatial-schematic-source {
@@ -4233,7 +4328,9 @@ pre {
   .spatial-editor__body,
   .spatial-identity,
   .spatial-vector,
-  .spatial-sample-controls__fields {
+  .spatial-sample-controls__fields,
+  .spatial-review-controls__camera,
+  .spatial-review-controls__load {
     grid-template-columns: 1fr;
     overflow: visible;
   }

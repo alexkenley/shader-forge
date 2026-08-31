@@ -4,6 +4,7 @@ export type SpatialAttachmentDraft = {
   id: string;
   skeleton: string;
   itemPrefab: string;
+  perspective: string;
   socket: string;
   translation: SpatialVector3;
   rotationDegrees: SpatialVector3;
@@ -182,6 +183,7 @@ export function parseSpatialAttachment(source: string): SpatialAttachmentDraft {
     id: stringField(lines, '', 'id'),
     skeleton: stringField(lines, '', 'skeleton'),
     itemPrefab: stringField(lines, '', 'item_prefab'),
+    perspective: stringField(lines, '', 'perspective'),
     socket: stringField(lines, 'primary_grip', 'socket'),
     translation: translation.values as SpatialVector3,
     rotationDegrees: quaternionToDegrees(rotation.values),
@@ -279,6 +281,101 @@ export function spatialSourceRevisionsCoverAttachment(
     if (record.path === attachmentPath && record.revision === revision) covers = true;
   }
   return covers;
+}
+
+export type SpatialReviewPacket = {
+  schema: 'shader_forge.spatial_review_packet';
+  schemaVersion: 1;
+  immutable: true;
+  reviewId: string;
+  operationId: string;
+  selection: { attachmentId: string };
+  sourceRevisions: { inputs: unknown[] };
+  samples: Array<{
+    posePhase: string;
+    normalizedTime: number;
+    clip: string;
+    captures: { clean: Record<string, string> };
+  }>;
+};
+
+const reviewIdPattern = /^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const reviewResourceIdPattern = /^[a-z0-9][a-z0-9._-]*$/;
+const closeReviewCameras = ['close_front', 'close_side', 'close_top', 'close_three_quarter'];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function safeReviewCapturePath(value: unknown) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 512
+    && value.endsWith('.png')
+    && !value.startsWith('/')
+    && !value.includes('\\')
+    && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value)
+    && value.split('/').every((part) => part && part !== '.' && part !== '..');
+}
+
+export function parseSpatialReviewPacket(value: unknown): SpatialReviewPacket {
+  if (
+    !isRecord(value)
+    || value.schema !== 'shader_forge.spatial_review_packet'
+    || value.schemaVersion !== 1
+    || value.immutable !== true
+    || typeof value.reviewId !== 'string'
+    || !reviewIdPattern.test(value.reviewId)
+    || typeof value.operationId !== 'string'
+    || !value.operationId
+    || value.operationId.length > 128
+    || !isRecord(value.selection)
+    || typeof value.selection.attachmentId !== 'string'
+    || !value.selection.attachmentId
+    || !isRecord(value.sourceRevisions)
+    || !Array.isArray(value.sourceRevisions.inputs)
+    || value.sourceRevisions.inputs.length === 0
+    || value.sourceRevisions.inputs.length > 4096
+    || !Array.isArray(value.samples)
+    || value.samples.length === 0
+    || value.samples.length > 64
+  ) {
+    throw new Error('Spatial review packet is malformed or exceeds shell limits.');
+  }
+  const sampleKeys = new Set<string>();
+  for (const sample of value.samples) {
+    const captures = isRecord(sample) ? sample.captures : null;
+    const clean = isRecord(captures) ? captures.clean : null;
+    if (
+      !isRecord(sample)
+      || typeof sample.posePhase !== 'string'
+      || !reviewResourceIdPattern.test(sample.posePhase)
+      || typeof sample.clip !== 'string'
+      || !reviewResourceIdPattern.test(sample.clip)
+      || typeof sample.normalizedTime !== 'number'
+      || !Number.isFinite(sample.normalizedTime)
+      || Object.is(sample.normalizedTime, -0)
+      || sample.normalizedTime < 0
+      || sample.normalizedTime > 1
+      || !isRecord(clean)
+    ) {
+      throw new Error('Spatial review packet contains an invalid sample.');
+    }
+    const sampleKey = `${sample.posePhase}\n${sample.normalizedTime}`;
+    if (sampleKeys.has(sampleKey)) throw new Error('Spatial review packet contains duplicate samples.');
+    sampleKeys.add(sampleKey);
+    const cameraIds = Object.keys(clean);
+    if (
+      cameraIds.length < closeReviewCameras.length
+      || cameraIds.length > closeReviewCameras.length + 1
+      || closeReviewCameras.some((cameraId) => !cameraIds.includes(cameraId))
+      || cameraIds.some((cameraId) => ![...closeReviewCameras, 'player_camera'].includes(cameraId))
+      || cameraIds.some((cameraId) => !safeReviewCapturePath(clean[cameraId]))
+    ) {
+      throw new Error('Spatial review packet contains an invalid clean capture set.');
+    }
+  }
+  return value as SpatialReviewPacket;
 }
 
 export function updateSpatialAttachmentTransform(

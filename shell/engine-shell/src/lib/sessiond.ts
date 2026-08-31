@@ -158,6 +158,10 @@ export type EngineOperation = {
     error: string | null;
     updatedAt: string | null;
   };
+  validation: null | {
+    status: 'completed' | 'failed';
+    proposedRevision: string;
+  };
   createdAt: string;
   updatedAt: string;
   events: EngineOperationEvent[];
@@ -823,11 +827,16 @@ export async function disconnectCoordinationAgent(agentId: string, credential: s
   );
 }
 
-export async function requestCoordinationLease(agentId: string, credential: string, resources: string | string[]) {
+export async function requestCoordinationLease(
+  agentId: string,
+  credential: string,
+  resources: string | string[],
+  mode: 'read' | 'write' = 'write',
+) {
   const payload = await requestJson<{ lease: CoordinationLease; status: CoordinationLease['status'] }>('/api/coordination/leases', {
     method: 'POST',
     headers: credentialHeader(credential),
-    body: JSON.stringify({ agentId, mode: 'write', resources: Array.isArray(resources) ? resources : [resources] }),
+    body: JSON.stringify({ agentId, mode, resources: Array.isArray(resources) ? resources : [resources] }),
   });
   return payload.lease;
 }
@@ -1207,6 +1216,100 @@ export async function previewSpatialAttachment(options: {
       leaseId: options.leaseId,
     }),
   });
+}
+
+export type SpatialReviewReservation = {
+  reviewId: string;
+  operationId: string;
+  sessionId: string;
+  agentId: string;
+  resourceKey: string;
+};
+
+export async function validateSpatialAttachmentOperation(
+  operationId: string,
+  samples: Array<{ phase: string; normalizedTime: number }>,
+) {
+  const payload = await requestJson<{ operation: EngineOperation }>(
+    `/api/operations/${encodeURIComponent(operationId)}/validate`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ actor: engineShellActor, samples }),
+    },
+  );
+  return payload.operation;
+}
+
+export async function reserveSpatialReview(options: {
+  operationId: string;
+  sessionId: string;
+  agentId: string;
+  credential: string;
+}) {
+  const payload = await requestJson<{ reservation: SpatialReviewReservation }>(
+    `/api/operations/${encodeURIComponent(options.operationId)}/review-reservations`,
+    {
+      method: 'POST',
+      headers: credentialHeader(options.credential),
+      body: JSON.stringify({ sessionId: options.sessionId, agentId: options.agentId }),
+    },
+  );
+  return payload.reservation;
+}
+
+export async function recaptureSpatialReview(options: {
+  operationId: string;
+  agentId: string;
+  credential: string;
+  reviewId: string;
+  sourceLeaseId: string;
+  captureLeaseId: string;
+  reviewLeaseId: string;
+  phases: string[];
+  cameras: string[];
+  widthPx: number;
+  heightPx: number;
+  playerCameraScene?: string;
+  playerCameraPrefab?: string;
+}) {
+  const payload = await requestJson<{ review: unknown }>(
+    `/api/operations/${encodeURIComponent(options.operationId)}/recapture`,
+    {
+      method: 'POST',
+      headers: credentialHeader(options.credential),
+      body: JSON.stringify({
+        actor: engineShellActor,
+        agentId: options.agentId,
+        reviewId: options.reviewId,
+        sourceLeaseId: options.sourceLeaseId,
+        captureLeaseId: options.captureLeaseId,
+        reviewLeaseId: options.reviewLeaseId,
+        phases: options.phases,
+        cameras: options.cameras,
+        widthPx: options.widthPx,
+        heightPx: options.heightPx,
+        ...(options.playerCameraScene ? { playerCameraScene: options.playerCameraScene } : {}),
+        ...(options.playerCameraPrefab ? { playerCameraPrefab: options.playerCameraPrefab } : {}),
+      }),
+    },
+  );
+  return payload.review;
+}
+
+export async function readSpatialReview(sessionId: string, reviewId: string) {
+  const query = new URL(`/api/spatial/reviews/${encodeURIComponent(reviewId)}`, getSessiondBaseUrl());
+  query.searchParams.set('sessionId', sessionId);
+  const payload = await requestJson<{ review: unknown }>(`${query.pathname}${query.search}`);
+  return payload.review;
+}
+
+export function spatialReviewCaptureUrl(sessionId: string, reviewId: string, name: string) {
+  const target = new URL(
+    `/api/spatial/reviews/${encodeURIComponent(reviewId)}/captures/${encodeURIComponent(name)}`,
+    getSessiondBaseUrl(),
+  );
+  target.searchParams.set('sessionId', sessionId);
+  return target.href;
 }
 
 export type SceneAssetPreviewResult = {

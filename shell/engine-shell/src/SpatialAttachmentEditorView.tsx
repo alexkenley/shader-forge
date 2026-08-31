@@ -9,12 +9,17 @@ import {
   listFiles,
   previewSpatialAttachment,
   readFile,
+  readSpatialReview,
+  recaptureSpatialReview,
   registerCoordinationAgent,
   releaseCoordinationLease,
+  reserveSpatialReview,
   requestCoordinationLease,
   SessiondRequestError,
   engineShellActor,
   transitionOperation,
+  validateSpatialAttachmentOperation,
+  spatialReviewCaptureUrl,
   type CoordinationLease,
   type EngineOperation,
   type EngineSession,
@@ -25,6 +30,7 @@ import {
 import {
   parseSpatialAttachment,
   parseSpatialAttachmentMotionEnvelope,
+  parseSpatialReviewPacket,
   sameSpatialConnection,
   shouldCloseSpatialConnection,
   spatialActionStillCurrent,
@@ -34,11 +40,13 @@ import {
   updateSpatialAttachmentTransform,
   type SpatialAttachmentDraft,
   type SpatialMotionEnvelopePhase,
+  type SpatialReviewPacket,
   type SpatialVector3,
 } from './spatial-attachment-authoring';
 import { isSpatialAttachmentEvaluation, SpatialRestSchematic } from './SpatialRestSchematic';
 
 const attachmentRoot = 'animation/attachments';
+const closeReviewCameraIds = ['close_front', 'close_side', 'close_top', 'close_three_quarter'];
 
 type Connection = {
   agentId: string;
@@ -139,6 +147,12 @@ export function SpatialAttachmentEditorView({
   const [envelopeError, setEnvelopeError] = useState('');
   const [selectedPhase, setSelectedPhase] = useState('');
   const [selectedNormalizedTime, setSelectedNormalizedTime] = useState(Number.NaN);
+  const [reviewPacket, setReviewPacket] = useState<SpatialReviewPacket | null>(null);
+  const [reviewIdInput, setReviewIdInput] = useState('');
+  const [reviewSampleIndex, setReviewSampleIndex] = useState(0);
+  const [reviewCameraId, setReviewCameraId] = useState('close_front');
+  const [playerCameraScene, setPlayerCameraScene] = useState('sandbox');
+  const [playerCameraPrefab, setPlayerCameraPrefab] = useState('debug_camera');
   const [sourceLayoutError, setSourceLayoutError] = useState('');
   const [status, setStatus] = useState('Select an attachment profile to begin.');
   const [error, setError] = useState('');
@@ -426,6 +440,10 @@ export function SpatialAttachmentEditorView({
     setEnvelopeError('');
     setSelectedPhase('');
     setSelectedNormalizedTime(Number.NaN);
+    setReviewPacket(null);
+    setReviewIdInput('');
+    setReviewSampleIndex(0);
+    setReviewCameraId('close_front');
     setAuthoredEvidence(null);
     setEvaluationError('');
     setEvaluationBusy(Boolean(activeSession && selectedPath));
@@ -685,6 +703,24 @@ export function SpatialAttachmentEditorView({
   const sampledPose = sampledEvidence?.evaluation.pose.kind === 'clip_sample'
     ? sampledEvidence.evaluation.pose
     : null;
+  const reviewSample = reviewPacket?.samples[reviewSampleIndex] || null;
+  const reviewCameraIds = reviewSample ? Object.keys(reviewSample.captures.clean) : [];
+  const selectedReviewCamera = reviewCameraIds.includes(reviewCameraId)
+    ? reviewCameraId
+    : reviewCameraIds[0] || '';
+  const reviewCaptureName = selectedReviewCamera
+    ? reviewSample?.captures.clean[selectedReviewCamera] || ''
+    : '';
+  const reviewCaptureUrl = activeSession && reviewPacket && reviewCaptureName
+    ? spatialReviewCaptureUrl(activeSession.id, reviewPacket.reviewId, reviewCaptureName)
+    : '';
+
+  function showReviewPacket(packet: SpatialReviewPacket) {
+    setReviewPacket(packet);
+    setReviewIdInput(packet.reviewId);
+    setReviewSampleIndex(0);
+    setReviewCameraId(Object.keys(packet.samples[0].captures.clean)[0] || 'close_front');
+  }
 
   function setAxis(kind: 'translation' | 'rotation', index: number, value: string) {
     const parsed = value.trim() ? Number(value) : Number.NaN;
@@ -725,6 +761,134 @@ export function SpatialAttachmentEditorView({
       draft ? evaluatedValues(draft) : null,
       selectionKeyRef.current,
     );
+  }
+
+  function handleLoadReview() {
+    const expectedSelection = selectionKeyRef.current;
+    void runAction(async (stillCurrent) => {
+      if (!activeSession || !draft) throw new Error('Select a valid attachment profile.');
+      const packet = parseSpatialReviewPacket(await readSpatialReview(activeSession.id, reviewIdInput.trim()));
+      if (!stillCurrent()) return;
+      if (packet.selection.attachmentId !== draft.id) {
+        throw new Error('The review packet belongs to a different attachment profile.');
+      }
+      showReviewPacket(packet);
+      setStatus(`Loaded immutable review ${packet.reviewId}.`);
+    }, expectedSelection);
+  }
+
+  function handleRecapture() {
+    const expectedSelection = selectionKeyRef.current;
+    void runAction(async (stillCurrent) => {
+      if (!activeSession || !draft || !operation) throw new Error('Preview an attachment candidate first.');
+      if (!['previewed', 'approved'].includes(operation.state)) {
+        throw new Error('Only a previewed or approved candidate can be captured.');
+      }
+      const phase = motionEnvelope.find((entry) => entry.phase === selectedPhase);
+      if (!phase) throw new Error('Choose an authored motion-envelope phase to capture.');
+      if (phase.normalizedTimes.length > 64) throw new Error('The selected phase exceeds the 64-sample review limit.');
+      const validated = await validateSpatialAttachmentOperation(
+        operation.id,
+        phase.normalizedTimes.map((normalizedTime) => ({ phase: phase.phase, normalizedTime })),
+      );
+      if (!stillCurrent()) return;
+      setActiveOperation(validated);
+      if (validated.validation?.status !== 'completed') {
+        throw new Error('The candidate did not pass spatial validation.');
+      }
+
+      const tuningConnection = connectionRef.current;
+      await closeConnection(tuningConnection);
+      if (!stillCurrent()) return;
+      const registration = await registerCoordinationAgent(activeSession.id);
+      const leases: CoordinationLease[] = [];
+      try {
+        const reservation = await reserveSpatialReview({
+          operationId: operation.id,
+          sessionId: activeSession.id,
+          agentId: registration.agent.id,
+          credential: registration.credential,
+        });
+        const needsPlayerCamera = ['first_person', 'both'].includes(draft.perspective);
+        const cameraScene = playerCameraScene.trim().toLowerCase();
+        const cameraPrefab = playerCameraPrefab.trim().toLowerCase();
+        if (needsPlayerCamera && (!cameraScene || !cameraPrefab)) {
+          throw new Error('First-person review requires authored player camera scene and prefab IDs.');
+        }
+        const sourceResources = Array.from(new Set([
+          `spatial/skeleton/${draft.skeleton.toLowerCase()}`,
+          `spatial/skeleton/${draft.skeleton.toLowerCase()}/socket/${draft.socket.toLowerCase()}`,
+          ...(operation.context?.resourceKeys || []),
+          `scene/prefab/${draft.itemPrefab.toLowerCase()}`,
+          `animation/clip/${phase.clip.toLowerCase()}`,
+          ...(needsPlayerCamera ? [
+            `scene/world/${cameraScene}`,
+            `scene/prefab/${cameraPrefab}`,
+          ] : []),
+        ]));
+        leases.push(await requestCoordinationLease(
+          registration.agent.id,
+          registration.credential,
+          sourceResources,
+          'read',
+        ));
+        leases.push(await requestCoordinationLease(
+          registration.agent.id,
+          registration.credential,
+          'spatial/runtime-capture',
+        ));
+        leases.push(await requestCoordinationLease(
+          registration.agent.id,
+          registration.credential,
+          reservation.resourceKey,
+        ));
+        const blocked = leases.find((entry) => entry.status !== 'granted');
+        if (blocked) throw new Error(`Review lock is ${blocked.status}; retry after its blockers release.`);
+        const cameras = [
+          ...closeReviewCameraIds,
+          ...(needsPlayerCamera ? ['player_camera'] : []),
+        ];
+        const packet = parseSpatialReviewPacket(await recaptureSpatialReview({
+          operationId: operation.id,
+          agentId: registration.agent.id,
+          credential: registration.credential,
+          reviewId: reservation.reviewId,
+          sourceLeaseId: leases[0].id,
+          captureLeaseId: leases[1].id,
+          reviewLeaseId: leases[2].id,
+          phases: [phase.phase],
+          cameras,
+          widthPx: 512,
+          heightPx: 512,
+          ...(needsPlayerCamera ? {
+            playerCameraScene: cameraScene,
+            playerCameraPrefab: cameraPrefab,
+          } : {}),
+        }));
+        if (!stillCurrent()) return;
+        if (
+          packet.operationId !== operation.id
+          || packet.selection.attachmentId !== draft.id
+          || packet.reviewId !== reservation.reviewId
+        ) {
+          throw new Error('Sessiond returned review evidence for a different candidate.');
+        }
+        showReviewPacket(packet);
+        setStatus(`Published immutable review ${packet.reviewId}. Begin tuning again to apply or revise.`);
+      } finally {
+        await Promise.all(leases.map((entry) => (
+          releaseCoordinationLease(
+            entry.id,
+            registration.agent.id,
+            registration.credential,
+          ).catch(() => undefined)
+        )));
+        await disconnectCoordinationAgent(
+          registration.agent.id,
+          registration.credential,
+        ).catch(() => undefined);
+      }
+    }, expectedSelection);
   }
 
   async function requireCurrentConnection(expectedSelection: string) {
@@ -1103,6 +1267,44 @@ export function SpatialAttachmentEditorView({
                   </section>
                 ) : null}
 
+                <section className="spatial-review-controls" aria-label="Immutable spatial review">
+                  <div>
+                    <h3>Immutable rendered review</h3>
+                    <p>Publish the selected authored phase from a validated candidate, or load an existing shared review ID. Capture releases the tuning lock.</p>
+                  </div>
+                  {['first_person', 'both'].includes(draft.perspective) ? (
+                    <div className="spatial-review-controls__camera">
+                      <label>
+                        <span>Player camera scene</span>
+                        <input onChange={(event) => setPlayerCameraScene(event.target.value)} value={playerCameraScene} />
+                      </label>
+                      <label>
+                        <span>Player camera prefab</span>
+                        <input onChange={(event) => setPlayerCameraPrefab(event.target.value)} value={playerCameraPrefab} />
+                      </label>
+                    </div>
+                  ) : null}
+                  <div className="spatial-review-controls__load">
+                    <label>
+                      <span>Review ID</span>
+                      <input
+                        onChange={(event) => setReviewIdInput(event.target.value)}
+                        placeholder="rev_..."
+                        value={reviewIdInput}
+                      />
+                    </label>
+                    <button className="ghost-button" disabled={busy || !reviewIdInput.trim()} onClick={handleLoadReview} type="button">Load review</button>
+                    <button
+                      className="ghost-button"
+                      disabled={busy || !operation || !['previewed', 'approved'].includes(operation.state) || !selectedPhase}
+                      onClick={handleRecapture}
+                      type="button"
+                    >
+                      Validate + publish review
+                    </button>
+                  </div>
+                </section>
+
                 <div className="spatial-actions" aria-label="Spatial operation actions">
                   <button className="ghost-button" disabled={!canEdit || !numericValid} onClick={handlePreview} type="button">Preview</button>
                   <button className="ghost-button" disabled={busy || operation?.state !== 'previewed'} onClick={() => handleTransition('approve')} type="button">Approve</button>
@@ -1117,6 +1319,55 @@ export function SpatialAttachmentEditorView({
           </section>
 
           <section className="spatial-schematic-pane" aria-label="Spatial rig schematic workbench">
+            {reviewPacket && reviewSample ? (
+              <figure className="spatial-review" aria-label="Immutable rendered spatial review">
+                <div className="spatial-review__header">
+                  <div>
+                    <strong>IMMUTABLE REVIEW EVIDENCE</strong>
+                    <code>{reviewPacket.reviewId}</code>
+                  </div>
+                  <span>{reviewPacket.sourceRevisions.inputs.length} bound sources</span>
+                </div>
+                <label className="spatial-review__sample">
+                  <span>Captured pose sample</span>
+                  <select
+                    onChange={(event) => {
+                      const index = Number(event.target.value);
+                      setReviewSampleIndex(index);
+                      setReviewCameraId(Object.keys(reviewPacket.samples[index].captures.clean)[0] || 'close_front');
+                    }}
+                    value={String(reviewSampleIndex)}
+                  >
+                    {reviewPacket.samples.map((sample, index) => (
+                      <option key={`${sample.posePhase}:${sample.normalizedTime}`} value={String(index)}>
+                        {sample.posePhase} / {sample.clip} / t={sample.normalizedTime}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="spatial-review__cameras" role="group" aria-label="Rendered review camera">
+                  {reviewCameraIds.map((cameraId) => (
+                    <button
+                      aria-pressed={selectedReviewCamera === cameraId}
+                      key={cameraId}
+                      onClick={() => setReviewCameraId(cameraId)}
+                      type="button"
+                    >
+                      {cameraId.replaceAll('_', ' ')}
+                    </button>
+                  ))}
+                </div>
+                {reviewCaptureUrl ? (
+                  <img
+                    alt={`${selectedReviewCamera} rendered review for ${reviewSample.posePhase} at ${reviewSample.normalizedTime}`}
+                    src={reviewCaptureUrl}
+                  />
+                ) : null}
+                <figcaption>
+                  Operation <code>{reviewPacket.operationId}</code>. Real packet-referenced PNG; the schematic below remains separate non-review evidence.
+                </figcaption>
+              </figure>
+            ) : null}
             <div className="spatial-schematic-source" role="group" aria-label="Schematic evidence source">
               <button
                 aria-pressed={schematicSource === 'authored'}
