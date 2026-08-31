@@ -477,7 +477,18 @@ function requireAiRegistryClient(client, allowedClients, subjectId) {
   return normalized;
 }
 
-async function invokeReadOnlyAiTool({ registry, toolId, client, input, rootPath, aiUsageStore }) {
+async function invokeReadOnlyAiTool({
+  registry,
+  toolId,
+  client,
+  input,
+  rootPath,
+  sessionId,
+  aiUsageStore,
+  runtimeStore,
+  buildStore,
+  diagnosticsRecorder,
+}) {
   const tool = registry.tools.find((candidate) => candidate.id === toolId);
   if (!tool) {
     throw createHttpError(404, `Unknown AI registry tool: ${toolId}`);
@@ -494,6 +505,16 @@ async function invokeReadOnlyAiTool({ registry, toolId, client, input, rootPath,
     result = await inspectAiProviders(rootPath);
   } else if (tool.capability === 'ai:usage') {
     result = await aiUsageStore.summary(rootPath);
+  } else if (tool.capability === 'profile:live') {
+    result = await inspectProfilingState({
+      rootPath,
+      sessionId,
+      presetId: 'default',
+      runtimeStatus: runtimeStore.status(),
+      buildStatus: buildStore.status(),
+      gitStatus: readGitStatus(rootPath),
+      ...diagnosticsRecorder.snapshot(),
+    });
   } else {
     throw createHttpError(501, `AI tool capability is not implemented: ${tool.capability}`);
   }
@@ -939,7 +960,11 @@ function createRouter({
           client: body.client,
           input: body.input ?? {},
           rootPath,
+          sessionId,
           aiUsageStore,
+          runtimeStore,
+          buildStore,
+          diagnosticsRecorder,
         });
         writeJson(response, 200, invocation);
         return;
@@ -970,7 +995,11 @@ function createRouter({
             client,
             input: inputs[toolId] ?? {},
             rootPath,
+            sessionId,
             aiUsageStore,
+            runtimeStore,
+            buildStore,
+            diagnosticsRecorder,
           }));
         }
         writeJson(response, 200, { skillId: skill.id, client, steps });

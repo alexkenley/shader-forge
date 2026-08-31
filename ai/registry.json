@@ -46,6 +46,33 @@
         "required": ["requestCount", "totalTokens"],
         "additionalProperties": true
       }
+    },
+    {
+      "id": "engine.runtime.profile.inspect",
+      "label": "Inspect live runtime profile",
+      "capability": "profile:live",
+      "allowedClients": ["cli", "shell"],
+      "permission": "read_only",
+      "dryRun": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "schema": { "type": "string" },
+          "version": { "type": "integer" },
+          "runtime": { "type": "object" },
+          "build": { "type": "object" },
+          "workspace": { "type": "object" },
+          "recommendations": { "type": "array" }
+        },
+        "required": ["schema", "version", "runtime", "build", "workspace", "recommendations"],
+        "additionalProperties": true
+      }
     }
   ],
   "skills": [
@@ -53,6 +80,16 @@
       "id": "engine.ai.health.inspect",
       "label": "Inspect AI health",
       "toolIds": ["engine.ai.providers.inspect", "engine.ai.usage.inspect"],
+      "allowedClients": ["cli", "shell"],
+      "permission": "read_only"
+    },
+    {
+      "id": "engine.workspace.health.inspect",
+      "label": "Inspect workspace health",
+      "toolIds": [
+        "engine.ai.usage.inspect",
+        "engine.runtime.profile.inspect"
+      ],
       "allowedClients": ["cli", "shell"],
       "permission": "read_only"
     }

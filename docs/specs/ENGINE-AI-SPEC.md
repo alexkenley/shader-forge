@@ -281,6 +281,7 @@ Current implemented behavior:
 - tool records require explicit capability IDs, allowed clients, `read_only` permission, a dry-run declaration, and bounded object input/output schemas; skill records contain ordered tool IDs and may not widen any referenced tool's allowed clients
 - `GET /api/ai/tools`, `GET /api/ai/skills`, and `engine ai tools|skills` expose discovery; `POST /api/ai/tools/:id/invoke`, `POST /api/ai/skills/:id/run`, and `engine ai invoke|run-skill` execute the two exact built-in read-only capabilities through their declared schemas
 - read-only tool execution is an allowlisted server switch, not arbitrary URL dispatch; skills run their declared tools in order and validate per-tool inputs and outputs
+- the first engine-facing registry tool reuses the existing `profile:live` service, and `engine.workspace.health.inspect` composes provider, usage, runtime, build, workspace, packaging, and profiling evidence without copying those subsystem implementations
 - declared clients narrow intended use but are not an authentication identity on the loopback backend; this slice grants no mutation authority, and later mutating tools must use the existing operation, lease, review, and code-trust controls
 - the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
 - the CLI now exposes direct `engine ai providers|test|request`, queued `submit|jobs|status|cancel`, and read-only `history|usage` commands

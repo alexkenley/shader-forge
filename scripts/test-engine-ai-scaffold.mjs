@@ -273,21 +273,21 @@ try {
     `${service.baseUrl}/api/ai/tools?sessionId=${encodeURIComponent(sessionId)}`,
   );
   assert.equal(toolSummary.configSource, 'bundled');
-  assert.equal(toolSummary.toolCount, 2);
+  assert.equal(toolSummary.toolCount, 3);
   assert.equal(toolSummary.tools[0].permission, 'read_only');
   assert.equal(toolSummary.tools[0].inputSchema.additionalProperties, false);
   const skillSummary = await requestJsonNoAuth(
     `${service.baseUrl}/api/ai/skills?sessionId=${encodeURIComponent(sessionId)}`,
   );
-  assert.equal(skillSummary.skillCount, 1);
+  assert.equal(skillSummary.skillCount, 2);
   assert.deepEqual(skillSummary.skills[0].toolIds, [
     'engine.ai.providers.inspect',
     'engine.ai.usage.inspect',
   ]);
   const cliTools = await runCli(['ai', 'tools', '--root', tempProjectRoot]);
-  assert.equal(cliTools.toolCount, 2);
+  assert.equal(cliTools.toolCount, 3);
   const cliSkills = await runCli(['ai', 'skills', '--root', tempProjectRoot]);
-  assert.equal(cliSkills.skillCount, 1);
+  assert.equal(cliSkills.skillCount, 2);
   const providerToolInvocation = await requestJsonNoAuth(
     `${service.baseUrl}/api/ai/tools/engine.ai.providers.inspect/invoke`,
     'POST',
@@ -305,6 +305,21 @@ try {
     'engine.ai.providers.inspect',
     'engine.ai.usage.inspect',
   ]);
+  const workspaceHealthRun = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/skills/engine.workspace.health.inspect/run`,
+    'POST',
+    {
+      sessionId,
+      client: 'cli',
+      inputs: {},
+    },
+  );
+  assert.equal(workspaceHealthRun.steps.length, 2);
+  const runtimeProfileStep = workspaceHealthRun.steps.find(
+    (step) => step.toolId === 'engine.runtime.profile.inspect',
+  );
+  assert.equal(runtimeProfileStep?.result?.schema, 'shader_forge.profile_live');
+  assert.equal(runtimeProfileStep?.result?.sessionId, sessionId);
   const cliToolInvocation = await runCli([
     'ai', 'invoke', 'engine.ai.usage.inspect', '--session', sessionId, '--base-url', service.baseUrl,
   ]);
@@ -654,6 +669,7 @@ try {
   console.log('- Verified durable monthly queued real-model admission budgets, fake-provider exemption, and pre-provider rejection');
   console.log('- Verified bounded read-only tool/skill registry discovery, schemas, client narrowing, and reference validation');
   console.log('- Verified exact read-only tool invocation and ordered skill execution through schema-validated server and CLI adapters');
+  console.log('- Verified the workspace-health skill composes AI state with the existing live runtime/build/profile diagnostics service');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {
