@@ -43,6 +43,7 @@ const rereadSource = /async function reread[\s\S]*?(?=\n  async function closeCo
 const sampledFetchSource = /async function refreshSampledEvaluation[\s\S]*?(?=\n  async function reread)/.exec(viewSource)?.[0] || '';
 const evaluationPointsSource = /function evaluationPoints[\s\S]*?(?=\nfunction CoordinateMarker)/.exec(schematicSource)?.[0] || '';
 const drawingSource = /function Drawing[\s\S]*?(?=\nfunction OptionalMarker)/.exec(schematicSource)?.[0] || '';
+const clippingTableSource = /<summary>Capsule-to-item clipping[\s\S]*?(?=\{sourceRevisions\.length)/.exec(schematicSource)?.[0] || '';
 
 const source = [
   'schema = "shader_forge.attachment_profile"',
@@ -123,7 +124,18 @@ const validRestEvaluation = {
       withinLimits: null,
       bones: [],
     },
-    clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
+    clipping: {
+      status: 'unavailable',
+      reason: 'item_collision_not_authored',
+      policy: 'diagnose',
+      metric: 'capsule_axis_to_oriented_box_clearance',
+      evaluatedCapsuleCount: 0,
+      overlapCount: 0,
+      maxClearanceViolationMeters: 0,
+      hasOverlap: null,
+      itemBox: null,
+      capsules: [],
+    },
   },
   limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],
 };
@@ -282,6 +294,70 @@ function unavailableJointLimits(reason = 'no_joint_limits_authored') {
     withinLimits: null,
     bones: [],
   };
+}
+
+function clippingItemBox() {
+  return {
+    kind: 'authored_collision_box',
+    prefabId: 'item.test',
+    world: structuredClone(evaluationTransform),
+    dimensionsMeters: [1, 1, 1],
+    worldCorners: [
+      [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+      [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+    ],
+  };
+}
+
+function clippingCapsule(boneId = 'root', overrides = {}) {
+  return {
+    boneId,
+    role: boneId,
+    centerWorld: [0, 1.5, 0],
+    axisWorld: [0, 1, 0],
+    radiusMeters: 0.25,
+    halfLengthMeters: 0.5,
+    segmentStartWorld: [0, 1, 0],
+    segmentEndWorld: [0, 2, 0],
+    axisDistanceToBoxMeters: 0.5,
+    surfaceClearanceMeters: 0.25,
+    clearanceViolationMeters: 0,
+    overlapping: false,
+    ...overrides,
+  };
+}
+
+function availableClipping(capsules, overrides = {}) {
+  const overlapCount = capsules.filter((capsule) => capsule.overlapping).length;
+  return {
+    status: 'available',
+    reason: null,
+    policy: 'diagnose',
+    metric: 'capsule_axis_to_oriented_box_clearance',
+    evaluatedCapsuleCount: capsules.length,
+    overlapCount,
+    maxClearanceViolationMeters: capsules.reduce(
+      (maximum, capsule) => Math.max(maximum, capsule.clearanceViolationMeters),
+      0,
+    ),
+    hasOverlap: overlapCount > 0,
+    itemBox: clippingItemBox(),
+    capsules,
+    ...overrides,
+  };
+}
+
+function overlappingCapsule(boneId = 'root') {
+  return clippingCapsule(boneId, {
+    centerWorld: [0, 0.7, 0],
+    halfLengthMeters: 0.1,
+    segmentStartWorld: [0, 0.6, 0],
+    segmentEndWorld: [0, 0.8, 0],
+    axisDistanceToBoxMeters: 0.1,
+    surfaceClearanceMeters: -0.15,
+    clearanceViolationMeters: 0.15,
+    overlapping: true,
+  });
 }
 
 function withJointLimits(evaluation, jointLimits) {
@@ -458,6 +534,24 @@ for (const mutate of [
   mutate(malformed);
   assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, 'malformed visual-box evidence must fail closed');
 }
+const clearClippingEvaluation = structuredClone(populatedRestEvaluation);
+clearClippingEvaluation.diagnostics.clipping = availableClipping([clippingCapsule()]);
+assert.equal(schematic.isSpatialAttachmentEvaluation(clearClippingEvaluation), true, 'CLEAR clipping evidence must validate');
+const overlapClippingEvaluation = structuredClone(populatedRestEvaluation);
+overlapClippingEvaluation.diagnostics.clipping = availableClipping([overlappingCapsule()]);
+assert.equal(schematic.isSpatialAttachmentEvaluation(overlapClippingEvaluation), true, 'OVERLAP clipping evidence must validate');
+const distinctVisualAndCollisionEvaluation = structuredClone(visualBoxEvaluation);
+distinctVisualAndCollisionEvaluation.diagnostics.clipping = availableClipping([clippingCapsule()]);
+assert.notDeepEqual(
+  distinctVisualAndCollisionEvaluation.item.geometry.worldCorners,
+  distinctVisualAndCollisionEvaluation.diagnostics.clipping.itemBox.worldCorners,
+  'visual and collision boxes must remain independent authored evidence',
+);
+assert.equal(
+  schematic.isSpatialAttachmentEvaluation(distinctVisualAndCollisionEvaluation),
+  true,
+  'distinct visual and collision boxes must validate independently',
+);
 const unknownGeometryReason = structuredClone(populatedRestEvaluation);
 unknownGeometryReason.item.geometry.reason = 'future_untrusted_reason';
 assert.equal(schematic.isSpatialAttachmentEvaluation(unknownGeometryReason), false);
@@ -485,6 +579,12 @@ assert.equal(schematic.isSpatialAttachmentEvaluation(sampledOneHand), true);
 assert.equal(schematic.isSpatialAttachmentEvaluation(sampledV1TwoHand), true);
 assert.equal(schematic.isSpatialAttachmentEvaluation(sampledV2Reachable), true);
 assert.equal(schematic.isSpatialAttachmentEvaluation(sampledV2Unreachable), true);
+const sampledClearClipping = sampledEvaluation();
+sampledClearClipping.diagnostics.clipping = availableClipping([clippingCapsule()]);
+assert.equal(schematic.isSpatialAttachmentEvaluation(sampledClearClipping), true, 'sampled CLEAR clipping evidence must validate');
+const sampledOverlapClipping = sampledEvaluation();
+sampledOverlapClipping.diagnostics.clipping = availableClipping([overlappingCapsule()]);
+assert.equal(schematic.isSpatialAttachmentEvaluation(sampledOverlapClipping), true, 'sampled OVERLAP clipping evidence must validate');
 for (const [label, mutate] of [
   ['unexpected pose key', (report) => { report.pose.hidden = true; }],
   ['wrong applied layers', (report) => { report.pose.proceduralLayersApplied = ['primary_attachment']; }],
@@ -540,6 +640,98 @@ for (const [label, mutate] of semanticTransformCases) {
 const malformedDiagnostic = structuredClone(validRestEvaluation);
 malformedDiagnostic.diagnostics.clipping.status = 'passed';
 assert.equal(schematic.isSpatialAttachmentEvaluation(malformedDiagnostic), false);
+for (const reason of [
+  'item_prefab_not_found',
+  'item_prefab_ambiguous',
+  'item_prefab_invalid',
+  'item_collision_not_authored',
+  'diagnostic_capsules_not_authored',
+]) {
+  const unavailable = structuredClone(populatedRestEvaluation);
+  unavailable.diagnostics.clipping.reason = reason;
+  assert.equal(schematic.isSpatialAttachmentEvaluation(unavailable), true, `clipping unavailable reason ${reason} must validate`);
+}
+for (const [label, mutate] of [
+  ['extra top-level key', (clipping) => { clipping.toleranceMeters = 0; }],
+  ['missing top-level key', (clipping) => { delete clipping.metric; }],
+  ['unknown status', (clipping) => { clipping.status = 'clear'; }],
+  ['unknown unavailable reason', (clipping) => { clipping.reason = 'future_reason'; }],
+  ['wrong policy', (clipping) => { clipping.policy = 'resolve'; }],
+  ['wrong metric', (clipping) => { clipping.metric = 'aabb_overlap'; }],
+  ['unavailable count', (clipping) => { clipping.evaluatedCapsuleCount = 1; }],
+  ['unavailable overlap count', (clipping) => { clipping.overlapCount = 1; }],
+  ['unavailable max', (clipping) => { clipping.maxClearanceViolationMeters = 0.1; }],
+  ['unavailable negative-zero max', (clipping) => { clipping.maxClearanceViolationMeters = -0; }],
+  ['unavailable overlap truth', (clipping) => { clipping.hasOverlap = false; }],
+  ['unavailable item box', (clipping) => { clipping.itemBox = clippingItemBox(); }],
+  ['unavailable capsules', (clipping) => { clipping.capsules = [clippingCapsule()]; }],
+]) {
+  const malformed = structuredClone(populatedRestEvaluation);
+  mutate(malformed.diagnostics.clipping);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, `clipping ${label} must fail closed`);
+}
+for (const [label, mutate] of [
+  ['available reason', (clipping) => { clipping.reason = 'item_collision_not_authored'; }],
+  ['empty capsules', (clipping) => {
+    clipping.capsules = [];
+    clipping.evaluatedCapsuleCount = 0;
+  }],
+  ['item box extra key', (clipping) => { clipping.itemBox.source = 'visual'; }],
+  ['item box wrong kind', (clipping) => { clipping.itemBox.kind = 'authored_visual_box'; }],
+  ['item box wrong prefab', (clipping) => { clipping.itemBox.prefabId = 'other.item'; }],
+  ['item box zero dimension', (clipping) => { clipping.itemBox.dimensionsMeters[0] = 0; }],
+  ['item box malformed transform', (clipping) => { clipping.itemBox.world.rotation = [0, 0, 0, 0]; }],
+  ['item box negative-zero transform', (clipping) => { clipping.itemBox.world.translation[0] = -0; }],
+  ['item box missing corner', (clipping) => { clipping.itemBox.worldCorners.pop(); }],
+  ['item box recomposition mismatch', (clipping) => { clipping.itemBox.worldCorners[0][0] = -0.4; }],
+  ['capsule extra key', (clipping) => { clipping.capsules[0].source = 'mesh'; }],
+  ['capsule missing key', (clipping) => { delete clipping.capsules[0].role; }],
+  ['capsule unknown bone', (clipping) => { clipping.capsules[0].boneId = 'missing'; }],
+  ['capsule role mismatch', (clipping) => { clipping.capsules[0].role = 'head'; }],
+  ['capsule non-unit axis', (clipping) => { clipping.capsules[0].axisWorld = [0, 2, 0]; }],
+  ['capsule zero radius', (clipping) => { clipping.capsules[0].radiusMeters = 0; }],
+  ['capsule negative-zero half-length', (clipping) => { clipping.capsules[0].halfLengthMeters = -0; }],
+  ['capsule start mismatch', (clipping) => { clipping.capsules[0].segmentStartWorld = [0, 1.1, 0]; }],
+  ['capsule end nonfinite', (clipping) => { clipping.capsules[0].segmentEndWorld[1] = Number.POSITIVE_INFINITY; }],
+  ['capsule negative axis distance', (clipping) => { clipping.capsules[0].axisDistanceToBoxMeters = -1; }],
+  ['capsule internally consistent but geometrically false distance', (clipping) => {
+    clipping.capsules[0].axisDistanceToBoxMeters = 0.4;
+    clipping.capsules[0].surfaceClearanceMeters = 0.15;
+  }],
+  ['capsule surface mismatch', (clipping) => { clipping.capsules[0].surfaceClearanceMeters = 0.2; }],
+  ['capsule violation mismatch', (clipping) => { clipping.capsules[0].clearanceViolationMeters = 0.1; }],
+  ['capsule sub-tolerance nonzero marked clear', (clipping) => {
+    clipping.capsules[0].clearanceViolationMeters = 0.0000005;
+    clipping.maxClearanceViolationMeters = 0.0000005;
+  }],
+  ['capsule overlap truth mismatch', (clipping) => { clipping.capsules[0].overlapping = true; }],
+  ['evaluated count mismatch', (clipping) => { clipping.evaluatedCapsuleCount = 2; }],
+  ['overlap count mismatch', (clipping) => { clipping.overlapCount = 1; }],
+  ['has-overlap mismatch', (clipping) => { clipping.hasOverlap = true; }],
+  ['aggregate max mismatch', (clipping) => { clipping.maxClearanceViolationMeters = 0.2; }],
+  ['aggregate sub-tolerance nonzero', (clipping) => { clipping.maxClearanceViolationMeters = 0.0000005; }],
+]) {
+  const malformed = structuredClone(clearClippingEvaluation);
+  mutate(malformed.diagnostics.clipping);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, `clipping ${label} must fail closed`);
+}
+const twoCapsuleClipping = twoBoneRestEvaluation();
+twoCapsuleClipping.diagnostics.clipping = availableClipping([
+  clippingCapsule('root'),
+  clippingCapsule('hand_r'),
+]);
+assert.equal(schematic.isSpatialAttachmentEvaluation(twoCapsuleClipping), true, 'stable ordered clipping capsules must validate');
+const reversedCapsuleOrder = structuredClone(twoCapsuleClipping);
+reversedCapsuleOrder.diagnostics.clipping.capsules.reverse();
+assert.equal(schematic.isSpatialAttachmentEvaluation(reversedCapsuleOrder), false, 'clipping capsules must follow evaluator bone order');
+const duplicateCapsule = structuredClone(twoCapsuleClipping);
+duplicateCapsule.diagnostics.clipping.capsules[1].boneId = 'root';
+duplicateCapsule.diagnostics.clipping.capsules[1].role = 'root';
+assert.equal(schematic.isSpatialAttachmentEvaluation(duplicateCapsule), false, 'duplicate clipping capsule bones must fail closed');
+const oversizedCapsules = structuredClone(clearClippingEvaluation);
+oversizedCapsules.diagnostics.clipping.capsules.push(clippingCapsule());
+oversizedCapsules.diagnostics.clipping.evaluatedCapsuleCount = 2;
+assert.equal(schematic.isSpatialAttachmentEvaluation(oversizedCapsules), false, 'clipping capsules cannot exceed evaluator bones');
 const extraNestedField = structuredClone(validRestEvaluation);
 extraNestedField.item.world.hidden = true;
 assert.equal(schematic.isSpatialAttachmentEvaluation(extraNestedField), false);
@@ -910,7 +1102,11 @@ assert.match(schematicSource, /PRE-IK/);
 assert.match(schematicSource, /NOT REVIEW EVIDENCE/);
 assert.match(schematicSource, /Exact source revisions/);
 assert.match(schematicSource, /Source revisions/);
-assert.match(schematicSource, /No item mesh, clipping result, camera, capture, or immutable review packet/);
+assert.match(schematicSource, /independently authored collision proxies/);
+assert.match(schematicSource, /CLEAR is not a gameplay-safety approval/);
+assert.match(schematicSource, /OVERLAP is numeric intersection depth rather than a contact manifold/);
+assert.match(schematicSource, /diagnostic policy does not mutate the pose or item/);
+assert.match(schematicSource, /No item mesh, camera, capture, or immutable review packet/);
 assert.doesNotMatch(schematicSource, /joint-limit result/);
 assert.match(schematicSource, /diagnose-only/);
 assert.match(schematicSource, /pose not mutated/);
@@ -928,9 +1124,31 @@ assert.match(clientSource, /type SpatialAvailableJointLimitsDiagnostic/);
 assert.match(clientSource, /type SpatialJointLimitsDiagnostic/);
 assert.match(clientSource, /jointLimits: SpatialJointLimitsDiagnostic/);
 assert.doesNotMatch(clientSource, /jointLimits: SpatialEvaluationDiagnostic/);
+assert.match(clientSource, /type SpatialClippingDiagnostic/);
+assert.match(clientSource, /type SpatialClippingItemBox/);
+assert.match(clientSource, /type SpatialClippingCapsuleDiagnostic/);
+assert.match(clientSource, /clipping: SpatialClippingDiagnostic/);
+assert.doesNotMatch(clientSource, /clipping: SpatialEvaluationDiagnostic/);
 assert.match(schematicSource, /ITEM_BOX_EDGES/);
-assert.match(schematicSource, /exact authored render-procgeo evidence, not collision truth/);
+assert.match(schematicSource, /gray outlined visual box is exact authored render-procgeo evidence, separate from collision truth/);
 assert.match(schematicSource, /not collision geometry or a rendered mesh/);
+assert.match(schematicSource, /Authored visual box — render-procgeo evidence/);
+assert.match(schematicSource, /Authored item collision box/);
+assert.match(schematicSource, /Diagnostic capsule — CLEAR/);
+assert.match(schematicSource, /Diagnostic capsule — OVERLAP/);
+assert.match(schematicSource, /function validClipping/);
+assert.match(schematicSource, /capsule_axis_to_oriented_box_clearance/);
+assert.match(drawingSource, /collisionCorners/);
+assert.match(drawingSource, /CapsuleGlyph/);
+assert.match(evaluationPointsSource, /segmentStartWorld/);
+assert.match(evaluationPointsSource, /radiusMeters/);
+assert.match(clippingTableSource, /<th>Result<\/th>/);
+assert.match(clippingTableSource, /<th>Overlap depth<\/th>/);
+assert.match(clippingTableSource, /<th scope="row">\{capsule\.boneId\}<\/th>/);
+assert.match(clippingTableSource, /capsule\.overlapping \? 'OVERLAP' : 'CLEAR'/);
+assert.doesNotMatch(clippingTableSource, /PASS|FAIL/);
+assert.match(stylesSource, /spatial-rest-schematic__diagnostic-note/);
+assert.match(stylesSource, /is-dashed/);
 assert.match(schematicSource, /Secondary IK reach/);
 assert.match(schematicSource, /Secondary IK contact/);
 assert.match(schematicSource, /Secondary IK angle/);
@@ -992,3 +1210,4 @@ console.log('Engine spatial shell passed.');
 console.log('- Verified exact primary-grip edits plus independent authored motion-envelope parsing');
 console.log('- Verified the Assets-only operation route, explicit lock workflow, and credential redaction markers');
 console.log('- Verified manifest-bound rest/sample evidence, strict v1/v2 IK truth, guarded requests, and truthful non-review labels');
+console.log('- Verified fail-closed capsule/item clipping evidence, distinct collision geometry, and CLEAR/OVERLAP-only presentation');

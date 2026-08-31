@@ -2537,6 +2537,20 @@ pre {
 
 .spatial-rest-schematic__legend li { display: inline-flex; align-items: center; gap: 5px; }
 .spatial-rest-schematic__legend li span { width: 8px; height: 8px; border-radius: 50%; }
+.spatial-rest-schematic__legend li span.is-line,
+.spatial-rest-schematic__legend li span.is-dashed,
+.spatial-rest-schematic__legend li span.is-capsule {
+  width: 14px;
+  height: 4px;
+  border-radius: 999px;
+}
+.spatial-rest-schematic__legend li span.is-dashed {
+  height: 0;
+  border-top: 2px dashed;
+  border-radius: 0;
+  background: transparent;
+}
+.spatial-rest-schematic__legend li span.is-capsule { opacity: 0.72; }
 .spatial-rest-schematic__data { display: grid; gap: 7px; }
 
 .spatial-rest-schematic__data details {
@@ -2559,6 +2573,7 @@ pre {
 .spatial-rest-schematic__diagnostics div { display: grid; grid-template-columns: minmax(110px, 0.4fr) minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid rgba(255, 255, 255, 0.05); }
 .spatial-rest-schematic__diagnostics dt { color: #c7d5e2; font-size: 11px; }
 .spatial-rest-schematic__diagnostics dd { margin: 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.spatial-rest-schematic__diagnostic-note { margin: 0; padding: 0 8px 8px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 /* Activity */
 .activity-dock {

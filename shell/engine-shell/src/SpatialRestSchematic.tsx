@@ -41,17 +41,20 @@ const PROJECTIONS: Array<{ id: SpatialRestSchematicProjection; label: string; de
 ];
 
 const LEGEND = [
-  ['Bone segment', '#9fb2c3'],
-  ['Authored visual box', '#64748b'],
-  ['Bone origin', '#d4d4d4'],
-  ['Socket', '#fbbf24'],
-  ['Item origin / axes', '#f8fafc'],
-  ['Primary contact', '#f472b6'],
-  ['Hand frame', '#38bdf8'],
-  ['Palm frame', '#2dd4bf'],
-  ['Secondary target', '#c084fc'],
-  ['Secondary pole', '#34d399'],
-  ['Handle direction', '#fb923c'],
+  ['Bone segment', '#9fb2c3', 'line'],
+  ['Authored visual box — render-procgeo evidence', '#64748b', 'line'],
+  ['Authored item collision box', '#f59e0b', 'dashed'],
+  ['Diagnostic capsule — CLEAR', '#60a5fa', 'capsule'],
+  ['Diagnostic capsule — OVERLAP', '#f97316', 'capsule'],
+  ['Bone origin', '#d4d4d4', 'point'],
+  ['Socket', '#fbbf24', 'point'],
+  ['Item origin / axes', '#f8fafc', 'point'],
+  ['Primary contact', '#f472b6', 'point'],
+  ['Hand frame', '#38bdf8', 'point'],
+  ['Palm frame', '#2dd4bf', 'point'],
+  ['Secondary target', '#c084fc', 'point'],
+  ['Secondary pole', '#34d399', 'point'],
+  ['Handle direction', '#fb923c', 'line'],
 ] as const;
 const ITEM_BOX_EDGES = [
   [0, 1], [1, 2], [2, 3], [3, 0],
@@ -138,6 +141,44 @@ const JOINT_LIMIT_BONE_KEYS = [
 const JOINT_LIMIT_POLICY = 'diagnose';
 const JOINT_LIMIT_UNAVAILABLE_REASON = 'no_joint_limits_authored';
 const JOINT_LIMIT_DEGREE_BOUND = 180;
+const CLIPPING_KEYS = [
+  'status',
+  'reason',
+  'policy',
+  'metric',
+  'evaluatedCapsuleCount',
+  'overlapCount',
+  'maxClearanceViolationMeters',
+  'hasOverlap',
+  'itemBox',
+  'capsules',
+] as const;
+const CLIPPING_ITEM_BOX_KEYS = [
+  'kind', 'prefabId', 'world', 'dimensionsMeters', 'worldCorners',
+] as const;
+const CLIPPING_CAPSULE_KEYS = [
+  'boneId',
+  'role',
+  'centerWorld',
+  'axisWorld',
+  'radiusMeters',
+  'halfLengthMeters',
+  'segmentStartWorld',
+  'segmentEndWorld',
+  'axisDistanceToBoxMeters',
+  'surfaceClearanceMeters',
+  'clearanceViolationMeters',
+  'overlapping',
+] as const;
+const CLIPPING_POLICY = 'diagnose';
+const CLIPPING_METRIC = 'capsule_axis_to_oriented_box_clearance';
+const CLIPPING_UNAVAILABLE_REASONS = new Set([
+  'item_prefab_not_found',
+  'item_prefab_ambiguous',
+  'item_prefab_invalid',
+  'item_collision_not_authored',
+  'diagnostic_capsules_not_authored',
+]);
 
 type ValidationBudget = { textLength: number };
 type SpatialEvaluationQuat = [number, number, number, number];
@@ -318,6 +359,26 @@ function finiteBoundedNoNegZero(value: unknown, min: number, max: number): value
     && value <= max;
 }
 
+function finiteNoNegZero(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && !Object.is(value, -0);
+}
+
+function clippingVec3(value: unknown): value is SpatialEvaluationVec3 {
+  return isSpatialEvaluationVec3(value) && value.every((entry) => !Object.is(entry, -0));
+}
+
+function clippingTransform(value: unknown) {
+  return isRecord(value)
+    && validTransform(value)
+    && clippingVec3(value.translation)
+    && Array.isArray(value.rotation)
+    && value.rotation.every((entry) => !Object.is(entry, -0))
+    && isRecord(value.axes)
+    && clippingVec3(value.axes.x)
+    && clippingVec3(value.axes.y)
+    && clippingVec3(value.axes.z);
+}
+
 function safeNonnegativeInteger(value: unknown): value is number {
   return typeof value === 'number'
     && Number.isInteger(value)
@@ -419,6 +480,266 @@ function validJointLimits(value: unknown, evaluationBones: unknown, budget: Vali
     && value.violationCount === 0
     && Object.is(value.maxViolationDegrees, 0)
     && value.bones.length === 0;
+}
+
+function validClippingItemBox(
+  value: unknown,
+  itemPrefabId: string,
+  budget: ValidationBudget,
+) {
+  if (
+    !exactRecord(value, CLIPPING_ITEM_BOX_KEYS)
+    || value.kind !== 'authored_collision_box'
+    || !boundedString(value.prefabId, budget)
+    || value.prefabId !== itemPrefabId
+    || !clippingTransform(value.world)
+    || !clippingVec3(value.dimensionsMeters)
+    || value.dimensionsMeters.some((entry) => entry <= 0)
+    || !Array.isArray(value.worldCorners)
+    || value.worldCorners.length !== 8
+  ) return false;
+  const world = value.world as Record<string, unknown>;
+  const axes = world.axes as Record<string, unknown>;
+  const translation = world.translation as SpatialEvaluationVec3;
+  const dimensions = value.dimensionsMeters as SpatialEvaluationVec3;
+  const half = dimensions.map((entry) => entry * 0.5);
+  const localCorners = [
+    [-half[0], -half[1], -half[2]],
+    [half[0], -half[1], -half[2]],
+    [half[0], half[1], -half[2]],
+    [-half[0], half[1], -half[2]],
+    [-half[0], -half[1], half[2]],
+    [half[0], -half[1], half[2]],
+    [half[0], half[1], half[2]],
+    [-half[0], half[1], half[2]],
+  ];
+  return value.worldCorners.every((corner, index) => {
+    if (!clippingVec3(corner)) return false;
+    const local = localCorners[index];
+    const expected = translation.map((entry, axisIndex) => (
+      entry
+      + local[0] * (axes.x as SpatialEvaluationVec3)[axisIndex]
+      + local[1] * (axes.y as SpatialEvaluationVec3)[axisIndex]
+      + local[2] * (axes.z as SpatialEvaluationVec3)[axisIndex]
+    ));
+    return corner.every((entry, axisIndex) => near(entry, expected[axisIndex]));
+  });
+}
+
+function pointInClippingBoxSpace(
+  point: SpatialEvaluationVec3,
+  world: {
+    translation: SpatialEvaluationVec3;
+    axes: { x: SpatialEvaluationVec3; y: SpatialEvaluationVec3; z: SpatialEvaluationVec3 };
+  },
+) {
+  const delta = point.map((entry, index) => entry - world.translation[index]) as SpatialEvaluationVec3;
+  const local = [dot(delta, world.axes.x), dot(delta, world.axes.y), dot(delta, world.axes.z)];
+  return local.every(Number.isFinite) ? local : null;
+}
+
+function clippingSegmentDistanceToBox(
+  start: SpatialEvaluationVec3,
+  end: SpatialEvaluationVec3,
+  world: {
+    translation: SpatialEvaluationVec3;
+    axes: { x: SpatialEvaluationVec3; y: SpatialEvaluationVec3; z: SpatialEvaluationVec3 };
+  },
+  dimensions: SpatialEvaluationVec3,
+) {
+  const startLocal = pointInClippingBoxSpace(start, world);
+  const endLocal = pointInClippingBoxSpace(end, world);
+  if (!startLocal || !endLocal) return null;
+  const extents = dimensions.map((entry) => entry * 0.5);
+  const scale = Math.max(1, ...startLocal.map(Math.abs), ...endLocal.map(Math.abs), ...extents);
+  if (!Number.isFinite(scale)) return null;
+  const scaledStart = startLocal.map((entry) => entry / scale);
+  const scaledEnd = endLocal.map((entry) => entry / scale);
+  const scaledExtents = extents.map((entry) => entry / scale);
+  const direction = scaledEnd.map((entry, index) => entry - scaledStart[index]);
+  const breakpoints = [0, 1];
+  for (let axis = 0; axis < 3; axis += 1) {
+    if (direction[axis] === 0) continue;
+    for (const boundary of [-scaledExtents[axis], scaledExtents[axis]]) {
+      const value = (boundary - scaledStart[axis]) / direction[axis];
+      if (Number.isFinite(value) && value > 0 && value < 1) breakpoints.push(value);
+    }
+  }
+  breakpoints.sort((left, right) => left - right);
+  const uniqueBreakpoints = breakpoints.filter((value, index) => index === 0 || value !== breakpoints[index - 1]);
+  let minimumSquared = Number.POSITIVE_INFINITY;
+  const evaluate = (time: number) => {
+    let squared = 0;
+    for (let axis = 0; axis < 3; axis += 1) {
+      const value = scaledStart[axis] + direction[axis] * time;
+      const outside = value < -scaledExtents[axis]
+        ? value + scaledExtents[axis]
+        : (value > scaledExtents[axis] ? value - scaledExtents[axis] : 0);
+      squared += outside * outside;
+    }
+    minimumSquared = Math.min(minimumSquared, squared);
+  };
+  for (let interval = 0; interval + 1 < uniqueBreakpoints.length; interval += 1) {
+    const begin = uniqueBreakpoints[interval];
+    const finish = uniqueBreakpoints[interval + 1];
+    evaluate(begin);
+    evaluate(finish);
+    const midpoint = (begin + finish) * 0.5;
+    let quadratic = 0;
+    let linear = 0;
+    for (let axis = 0; axis < 3; axis += 1) {
+      const middleValue = scaledStart[axis] + direction[axis] * midpoint;
+      if (middleValue >= -scaledExtents[axis] && middleValue <= scaledExtents[axis]) continue;
+      const boundary = middleValue < -scaledExtents[axis] ? -scaledExtents[axis] : scaledExtents[axis];
+      quadratic += direction[axis] * direction[axis];
+      linear += direction[axis] * (scaledStart[axis] - boundary);
+    }
+    if (quadratic > 0) {
+      const stationary = -linear / quadratic;
+      if (stationary > begin && stationary < finish) evaluate(stationary);
+    }
+  }
+  const distance = Math.sqrt(minimumSquared) * scale;
+  if (!Number.isFinite(distance) || distance < 0) return null;
+  return distance === 0 ? 0 : distance;
+}
+
+function derivedClippingNumberMatches(actual: number, expected: number) {
+  return near(actual, expected)
+    && (actual === 0) === (expected === 0)
+    && Math.sign(actual) === Math.sign(expected);
+}
+
+function validClipping(
+  value: unknown,
+  evaluationBones: unknown,
+  itemPrefabId: unknown,
+  budget: ValidationBudget,
+) {
+  if (
+    !exactRecord(value, CLIPPING_KEYS)
+    || typeof itemPrefabId !== 'string'
+    || value.policy !== CLIPPING_POLICY
+    || value.metric !== CLIPPING_METRIC
+    || !Array.isArray(value.capsules)
+    || !Array.isArray(evaluationBones)
+    || value.capsules.length > evaluationBones.length
+    || value.capsules.length > SPATIAL_EVALUATION_LIMITS.maxBones
+    || !safeNonnegativeInteger(value.evaluatedCapsuleCount)
+    || !safeNonnegativeInteger(value.overlapCount)
+    || value.evaluatedCapsuleCount !== value.capsules.length
+    || !finiteBoundedNoNegZero(value.maxClearanceViolationMeters, 0, Number.POSITIVE_INFINITY)
+  ) return false;
+
+  if (value.status === 'unavailable') {
+    return typeof value.reason === 'string'
+      && boundedString(value.reason, budget)
+      && CLIPPING_UNAVAILABLE_REASONS.has(value.reason)
+      && value.evaluatedCapsuleCount === 0
+      && value.overlapCount === 0
+      && Object.is(value.maxClearanceViolationMeters, 0)
+      && value.hasOverlap === null
+      && value.itemBox === null
+      && value.capsules.length === 0;
+  }
+  if (
+    value.status !== 'available'
+    || value.reason !== null
+    || typeof value.hasOverlap !== 'boolean'
+    || value.capsules.length === 0
+    || !validClippingItemBox(value.itemBox, itemPrefabId, budget)
+  ) return false;
+  const itemBox = value.itemBox as Record<string, unknown>;
+  const itemBoxWorldRecord = itemBox.world as Record<string, unknown>;
+  const itemBoxAxesRecord = itemBoxWorldRecord.axes as Record<string, unknown>;
+  const itemBoxWorld = {
+    translation: itemBoxWorldRecord.translation as SpatialEvaluationVec3,
+    axes: {
+      x: itemBoxAxesRecord.x as SpatialEvaluationVec3,
+      y: itemBoxAxesRecord.y as SpatialEvaluationVec3,
+      z: itemBoxAxesRecord.z as SpatialEvaluationVec3,
+    },
+  };
+  const itemBoxDimensions = itemBox.dimensionsMeters as SpatialEvaluationVec3;
+
+  const identityById = new Map<string, { index: number; role: string }>();
+  for (let index = 0; index < evaluationBones.length; index += 1) {
+    const entry = evaluationBones[index];
+    if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.role !== 'string') return false;
+    if (identityById.has(entry.id)) return false;
+    identityById.set(entry.id, { index, role: entry.role });
+  }
+
+  let previousIdentityIndex = -1;
+  let computedOverlapCount = 0;
+  let computedMaxViolation = 0;
+  for (const entry of value.capsules) {
+    if (
+      !exactRecord(entry, CLIPPING_CAPSULE_KEYS)
+      || !boundedString(entry.boneId, budget)
+      || !boundedString(entry.role, budget)
+      || !clippingVec3(entry.centerWorld)
+      || !clippingVec3(entry.axisWorld)
+      || !unitVector(entry.axisWorld)
+      || !finiteBoundedNoNegZero(entry.radiusMeters, Number.MIN_VALUE, Number.POSITIVE_INFINITY)
+      || !finiteBoundedNoNegZero(entry.halfLengthMeters, Number.MIN_VALUE, Number.POSITIVE_INFINITY)
+      || !clippingVec3(entry.segmentStartWorld)
+      || !clippingVec3(entry.segmentEndWorld)
+      || !finiteBoundedNoNegZero(entry.axisDistanceToBoxMeters, 0, Number.POSITIVE_INFINITY)
+      || !finiteNoNegZero(entry.surfaceClearanceMeters)
+      || !finiteBoundedNoNegZero(entry.clearanceViolationMeters, 0, Number.POSITIVE_INFINITY)
+      || typeof entry.overlapping !== 'boolean'
+    ) return false;
+    const boneId = entry.boneId as string;
+    const role = entry.role as string;
+    const centerWorld = entry.centerWorld as SpatialEvaluationVec3;
+    const axisWorld = entry.axisWorld as SpatialEvaluationVec3;
+    const halfLengthMeters = entry.halfLengthMeters as number;
+    const segmentStartWorld = entry.segmentStartWorld as SpatialEvaluationVec3;
+    const segmentEndWorld = entry.segmentEndWorld as SpatialEvaluationVec3;
+    const axisDistanceToBoxMeters = entry.axisDistanceToBoxMeters as number;
+    const radiusMeters = entry.radiusMeters as number;
+    const surfaceClearanceMeters = entry.surfaceClearanceMeters as number;
+    const clearanceViolationMeters = entry.clearanceViolationMeters as number;
+    const overlapping = entry.overlapping as boolean;
+    const identity = identityById.get(boneId);
+    if (!identity || identity.index <= previousIdentityIndex || identity.role !== role) return false;
+    previousIdentityIndex = identity.index;
+    if (![segmentStartWorld, segmentEndWorld].every((endpoint) => endpoint.every((coordinate) => (
+      Number.isFinite(coordinate - radiusMeters) && Number.isFinite(coordinate + radiusMeters)
+    )))) return false;
+    const expectedStart = centerWorld.map((coordinate, index) => (
+      coordinate - axisWorld[index] * halfLengthMeters
+    ));
+    const expectedEnd = centerWorld.map((coordinate, index) => (
+      coordinate + axisWorld[index] * halfLengthMeters
+    ));
+    if (
+      !segmentStartWorld.every((coordinate, index) => near(coordinate, expectedStart[index]))
+      || !segmentEndWorld.every((coordinate, index) => near(coordinate, expectedEnd[index]))
+    ) return false;
+    const expectedAxisDistance = clippingSegmentDistanceToBox(
+      segmentStartWorld,
+      segmentEndWorld,
+      itemBoxWorld,
+      itemBoxDimensions,
+    );
+    if (expectedAxisDistance === null) return false;
+    const expectedSurfaceClearance = expectedAxisDistance - radiusMeters;
+    const expectedViolation = Math.max(0, -expectedSurfaceClearance);
+    if (
+      !derivedClippingNumberMatches(axisDistanceToBoxMeters, expectedAxisDistance)
+      || !derivedClippingNumberMatches(surfaceClearanceMeters, expectedSurfaceClearance)
+      || !derivedClippingNumberMatches(clearanceViolationMeters, expectedViolation)
+      || overlapping !== (expectedViolation > 0)
+    ) return false;
+    if (overlapping) computedOverlapCount += 1;
+    computedMaxViolation = Math.max(computedMaxViolation, expectedViolation);
+  }
+  return value.overlapCount === computedOverlapCount
+    && value.hasOverlap === (computedOverlapCount > 0)
+    && near(value.maxClearanceViolationMeters, computedMaxViolation)
+    && (value.maxClearanceViolationMeters === 0) === (computedMaxViolation === 0);
 }
 
 function sampledPoseShape(value: unknown, budget: ValidationBudget): value is SpatialSampledPose {
@@ -723,7 +1044,7 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
   if (
     !exactRecord(value.diagnostics, ['secondaryIk', 'jointLimits', 'clipping'])
     || !validJointLimits(value.diagnostics.jointLimits, value.bones, budget)
-    || !exactStatusReason(value.diagnostics.clipping, 'unavailable', 'item_and_capsule_geometry_not_integrated', budget)
+    || !validClipping(value.diagnostics.clipping, value.bones, value.item.prefabId, budget)
     || !Array.isArray(value.limitations)
     || value.limitations.length > SPATIAL_EVALUATION_LIMITS.maxLimitations
     || !value.limitations.every((entry) => boundedString(entry, budget))
@@ -737,6 +1058,13 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
     + (isRecord(value.item.geometry)
       && value.item.geometry.status === 'available'
       && Array.isArray(value.item.geometry.worldCorners) ? 8 : 0)
+    + (isRecord(value.diagnostics.clipping)
+      && value.diagnostics.clipping.status === 'available'
+      && isRecord(value.diagnostics.clipping.itemBox)
+      && Array.isArray(value.diagnostics.clipping.itemBox.worldCorners)
+      && Array.isArray(value.diagnostics.clipping.capsules)
+      ? 8 + value.diagnostics.clipping.capsules.length * 3
+      : 0)
     + (value.item.primaryContactWorld ? 1 : 0)
     + (value.item.handleAxisWorld ? 2 : 0)
     + (value.hands.dominant ? 1 + (value.hands.dominant.palmWorld ? 1 : 0) : 0)
@@ -835,6 +1163,24 @@ function evaluationPoints(evaluation: SpatialAttachmentEvaluation) {
   if (evaluation.item.geometry.status === 'available') {
     for (const corner of evaluation.item.geometry.worldCorners) add(corner);
   }
+  if (evaluation.diagnostics.clipping.status === 'available') {
+    for (const corner of evaluation.diagnostics.clipping.itemBox.worldCorners) add(corner);
+    for (const capsule of evaluation.diagnostics.clipping.capsules) {
+      add(capsule.centerWorld);
+      add(capsule.segmentStartWorld);
+      add(capsule.segmentEndWorld);
+      for (const endpoint of [capsule.segmentStartWorld, capsule.segmentEndWorld]) {
+        for (let axis = 0; axis < 3; axis += 1) {
+          const lower = [...endpoint] as SpatialEvaluationVec3;
+          const upper = [...endpoint] as SpatialEvaluationVec3;
+          lower[axis] -= capsule.radiusMeters;
+          upper[axis] += capsule.radiusMeters;
+          add(lower);
+          add(upper);
+        }
+      }
+    }
+  }
   add(transformTranslation(evaluation.item.world));
   add(transformTranslation(evaluation.item.primaryContactWorld));
   if (isRecord(evaluation.item.handleAxisWorld)) add(evaluation.item.handleAxisWorld.origin);
@@ -929,6 +1275,59 @@ function DirectionGlyph({
   );
 }
 
+function CapsuleGlyph({
+  start,
+  end,
+  radiusMeters,
+  overlapping,
+  projection,
+  bounds,
+}: {
+  start: SpatialEvaluationVec3;
+  end: SpatialEvaluationVec3;
+  radiusMeters: number;
+  overlapping: boolean;
+  projection: SpatialRestSchematicProjection;
+  bounds: ProjectionBounds;
+}) {
+  const mappedStart = projectSpatialPoint(start, projection, bounds);
+  const mappedEnd = projectSpatialPoint(end, projection, bounds);
+  const diameter = radiusMeters * 2 * INNER / bounds.span;
+  if (!mappedStart || !mappedEnd || !Number.isFinite(diameter) || diameter <= 0) return null;
+  const color = overlapping ? '#f97316' : '#60a5fa';
+  const collapsed = near(mappedStart.x, mappedEnd.x) && near(mappedStart.y, mappedEnd.y);
+  return (
+    <g>
+      {collapsed ? (
+        <circle cx={mappedStart.x} cy={mappedStart.y} fill={color} fillOpacity="0.2" r={diameter / 2} stroke={color} strokeWidth="0.35" />
+      ) : (
+        <line
+          stroke={color}
+          strokeLinecap="round"
+          strokeOpacity="0.22"
+          strokeWidth={diameter}
+          x1={mappedStart.x}
+          x2={mappedEnd.x}
+          y1={mappedStart.y}
+          y2={mappedEnd.y}
+        />
+      )}
+      {!collapsed ? (
+        <line
+          stroke={color}
+          strokeDasharray={overlapping ? '1.2 0.8' : undefined}
+          strokeLinecap="round"
+          strokeWidth="0.55"
+          x1={mappedStart.x}
+          x2={mappedEnd.x}
+          y1={mappedStart.y}
+          y2={mappedEnd.y}
+        />
+      ) : null}
+    </g>
+  );
+}
+
 function Drawing({
   evaluation,
   projection,
@@ -944,6 +1343,10 @@ function Drawing({
   const itemCorners = evaluation.item.geometry.status === 'available'
     ? evaluation.item.geometry.worldCorners
     : [];
+  const clipping = evaluation.diagnostics.clipping.status === 'available'
+    ? evaluation.diagnostics.clipping
+    : null;
+  const collisionCorners = clipping?.itemBox.worldCorners || [];
   const contact = transformTranslation(evaluation.item.primaryContactWorld);
   const dominant = isRecord(evaluation.hands.dominant) ? evaluation.hands.dominant : null;
   const secondary = isRecord(evaluation.hands.secondary) ? evaluation.hands.secondary : null;
@@ -978,6 +1381,38 @@ function Drawing({
           />
         ) : null;
       })}
+      {ITEM_BOX_EDGES.map(([fromIndex, toIndex]) => {
+        const from = collisionCorners[fromIndex]
+          ? projectSpatialPoint(collisionCorners[fromIndex], projection, bounds)
+          : null;
+        const to = collisionCorners[toIndex]
+          ? projectSpatialPoint(collisionCorners[toIndex], projection, bounds)
+          : null;
+        return from && to ? (
+          <line
+            key={`collision-box:${fromIndex}:${toIndex}`}
+            stroke="#f59e0b"
+            strokeDasharray="1.4 0.9"
+            strokeLinecap="round"
+            strokeWidth="0.9"
+            x1={from.x}
+            x2={to.x}
+            y1={from.y}
+            y2={to.y}
+          />
+        ) : null;
+      })}
+      {clipping?.capsules.map((capsule) => (
+        <CapsuleGlyph
+          bounds={bounds}
+          end={capsule.segmentEndWorld}
+          key={`clipping-capsule:${capsule.boneId}`}
+          overlapping={capsule.overlapping}
+          projection={projection}
+          radiusMeters={capsule.radiusMeters}
+          start={capsule.segmentStartWorld}
+        />
+      ))}
       {evaluation.segments.map((entry, index) => {
         if (!isRecord(entry) || !isSpatialEvaluationVec3(entry.from) || !isSpatialEvaluationVec3(entry.to)) return null;
         const from = projectSpatialPoint(entry.from, projection, bounds);
@@ -1104,6 +1539,16 @@ function coordinateRows(evaluation: SpatialAttachmentEvaluation) {
       rows.push({ kind: 'Item visual-box corner', id: String(index), value });
     });
   }
+  if (evaluation.diagnostics.clipping.status === 'available') {
+    evaluation.diagnostics.clipping.itemBox.worldCorners.forEach((value, index) => {
+      rows.push({ kind: 'Item collision-box corner', id: String(index), value });
+    });
+    evaluation.diagnostics.clipping.capsules.forEach((capsule) => {
+      rows.push({ kind: 'Diagnostic capsule center', id: capsule.boneId, value: capsule.centerWorld });
+      rows.push({ kind: 'Diagnostic capsule start', id: capsule.boneId, value: capsule.segmentStartWorld });
+      rows.push({ kind: 'Diagnostic capsule end', id: capsule.boneId, value: capsule.segmentEndWorld });
+    });
+  }
   const itemAxes = transformAxes(evaluation.item.world);
   if (itemAxes) {
     rows.push({ kind: 'Item axis X', id: 'item', value: itemAxes.x, unit: '', detail: 'unit direction, not an extent' });
@@ -1214,7 +1659,16 @@ function diagnosticRows(evaluation: SpatialAttachmentEvaluation) {
   } else {
     add('Joint limits', jointLimits);
   }
-  add('Clipping', evaluation.diagnostics.clipping);
+  const clipping = evaluation.diagnostics.clipping;
+  if (clipping.status === 'available') {
+    rows.push({
+      name: 'Capsule-to-item clipping',
+      status: clipping.hasOverlap ? 'OVERLAP' : 'CLEAR',
+      reason: `diagnose-only collision-proxy evidence; evaluated ${String(clipping.evaluatedCapsuleCount)} capsules; overlaps ${String(clipping.overlapCount)}; max overlap depth ${String(clipping.maxClearanceViolationMeters)} m; no authored acceptance tolerance`,
+    });
+  } else {
+    add('Capsule-to-item clipping', clipping);
+  }
   const pole = isRecord(evaluation.hands.secondary) && isRecord(evaluation.hands.secondary.pole)
     ? evaluation.hands.secondary.pole
     : null;
@@ -1279,12 +1733,17 @@ export function SpatialRestSchematic({
   const sourceRevisionCount = sampleIdentity?.sourceRevisionCount;
   const title = sampled ? 'SAMPLED RIG SCHEMATIC' : 'REST-POSE RIG SCHEMATIC';
   const hasVisualBox = safeEvaluation?.item.geometry.status === 'available';
+  const clipping = safeEvaluation?.diagnostics.clipping;
+  const hasClipping = clipping?.status === 'available';
   const itemGeometryDescription = hasVisualBox
     ? 'The exact authored visual-box outline is shown; it is not collision geometry or a rendered mesh.'
     : 'Authored visual-box evidence is unavailable.';
+  const clippingDescription = hasClipping
+    ? `The independently authored item collision box and ${String(clipping.evaluatedCapsuleCount)} diagnostic capsules are shown as collision-proxy evidence. The native result is ${clipping.hasOverlap ? 'OVERLAP' : 'CLEAR'}; CLEAR is not a gameplay-safety approval and OVERLAP is not a contact manifold.`
+    : `Capsule-to-item clipping evidence is unavailable${clipping?.status === 'unavailable' ? `: ${clipping.reason}` : ''}.`;
   const description = sampled
-    ? `${evidenceLabel}. Sampled clip-pose evaluator geometry at phase ${samplePhase || 'unavailable'}, clip ${sampleClip || 'unavailable'}, normalized time ${Number.isFinite(sampleTime) ? String(sampleTime) : 'unavailable'}. ${projectionDetail}. ${itemGeometryDescription} Not review evidence. Not a camera, capture, or immutable review packet.`
-    : `${evidenceLabel}. Unsampled rest-pose evaluator geometry. ${projectionDetail}. ${itemGeometryDescription} Not review evidence.`;
+    ? `${evidenceLabel}. Sampled clip-pose evaluator geometry at phase ${samplePhase || 'unavailable'}, clip ${sampleClip || 'unavailable'}, normalized time ${Number.isFinite(sampleTime) ? String(sampleTime) : 'unavailable'}. ${projectionDetail}. ${itemGeometryDescription} ${clippingDescription} Not review evidence. Not a camera, capture, or immutable review packet.`
+    : `${evidenceLabel}. Unsampled rest-pose evaluator geometry. ${projectionDetail}. ${itemGeometryDescription} ${clippingDescription} Not review evidence.`;
 
   let drawing: ReactNode;
   if (busy && !safeEvaluation) {
@@ -1358,11 +1817,20 @@ export function SpatialRestSchematic({
       </div>
       <figcaption>
         {sampled
-          ? `Native evaluator world frames only, including solved sampled hand and bone frames when present. ${hasVisualBox ? 'The outlined item box is exact authored render-procgeo evidence, not collision truth.' : 'No authored item box is available.'} A resolved authored pole is shown as a green ring. No item mesh, clipping result, camera, capture, or immutable review packet is shown. An unresolved pole is never projected. V1 two-hand samples remain pre-IK.`
-          : `Native evaluator world frames only. ${hasVisualBox ? 'The outlined item box is exact authored render-procgeo evidence, not collision truth.' : 'No authored item box is available.'} The item origin and axes plus any resolved authored pole remain explicit. No rendered mesh, sampled animation, IK result, clipping result, camera, capture, or immutable review packet is shown.`}
+          ? `Native evaluator world frames only, including solved sampled hand and bone frames when present. ${hasVisualBox ? 'The gray outlined visual box is exact authored render-procgeo evidence, separate from collision truth.' : 'No authored visual box is available.'} ${hasClipping ? `The dashed amber box and diagnostic capsules are independently authored collision proxies; their native result is ${clipping.hasOverlap ? 'OVERLAP' : 'CLEAR'}. CLEAR is not a gameplay-safety approval, and OVERLAP is numeric intersection depth rather than a contact manifold.` : 'No capsule-to-item clipping result is available.'} The diagnostic policy does not mutate the pose or item. A resolved authored pole is shown as a green ring. No item mesh, camera, capture, or immutable review packet is shown. An unresolved pole is never projected. V1 two-hand samples remain pre-IK.`
+          : `Native evaluator world frames only. ${hasVisualBox ? 'The gray outlined visual box is exact authored render-procgeo evidence, separate from collision truth.' : 'No authored visual box is available.'} ${hasClipping ? `The dashed amber box and diagnostic capsules are independently authored collision proxies; their native result is ${clipping.hasOverlap ? 'OVERLAP' : 'CLEAR'}. CLEAR is not a gameplay-safety approval, and OVERLAP is numeric intersection depth rather than a contact manifold.` : 'No capsule-to-item clipping result is available.'} The diagnostic policy does not mutate the pose or item. The item origin and axes plus any resolved authored pole remain explicit. No rendered mesh, sampled animation, IK result, camera, capture, or immutable review packet is shown.`}
       </figcaption>
       <ul className="spatial-rest-schematic__legend" aria-label="Schematic legend">
-        {LEGEND.map(([label, color]) => <li key={label}><span aria-hidden="true" style={{ background: color }} />{label}</li>)}
+        {LEGEND.map(([label, color, variant]) => (
+          <li key={label}>
+            <span
+              aria-hidden="true"
+              className={variant ? `is-${variant}` : undefined}
+              style={variant === 'dashed' ? { borderTopColor: color } : { background: color }}
+            />
+            {label}
+          </li>
+        ))}
       </ul>
       {safeEvaluation ? (
         <div className="spatial-rest-schematic__data">
@@ -1419,6 +1887,46 @@ export function SpatialRestSchematic({
                         <td><code>[{String(bone.twistMinDegrees)}, {String(bone.twistMaxDegrees)}] deg</code></td>
                         <td><code>{String(bone.twistViolationDegrees)} deg</code></td>
                         <td>{bone.withinLimits ? 'PASS' : 'FAIL'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ) : null}
+          {safeEvaluation.diagnostics.clipping.status === 'available' ? (
+            <details>
+              <summary>Capsule-to-item clipping ({safeEvaluation.diagnostics.clipping.capsules.length})</summary>
+              <p className="spatial-rest-schematic__diagnostic-note">
+                CLEAR and OVERLAP are native geometric results under <code>{safeEvaluation.diagnostics.clipping.metric}</code>.
+                They are geometric states, not acceptance judgments, do not use an authored acceptance tolerance, and do not mutate the pose or item.
+              </p>
+              <div className="spatial-rest-schematic__table-wrap">
+                <table>
+                  <caption className="spatial-rest-schematic__sr">Per-bone authored diagnostic capsule against the authored item collision box</caption>
+                  <thead>
+                    <tr>
+                      <th>Bone</th>
+                      <th>Role</th>
+                      <th>Result</th>
+                      <th>Radius</th>
+                      <th>Half-length</th>
+                      <th>Axis distance</th>
+                      <th>Surface clearance</th>
+                      <th>Overlap depth</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {safeEvaluation.diagnostics.clipping.capsules.map((capsule, index) => (
+                      <tr key={`${capsule.boneId}:${index}`}>
+                        <th scope="row">{capsule.boneId}</th>
+                        <td>{capsule.role}</td>
+                        <td>{capsule.overlapping ? 'OVERLAP' : 'CLEAR'}</td>
+                        <td><code>{String(capsule.radiusMeters)} m</code></td>
+                        <td><code>{String(capsule.halfLengthMeters)} m</code></td>
+                        <td><code>{String(capsule.axisDistanceToBoxMeters)} m</code></td>
+                        <td><code>{String(capsule.surfaceClearanceMeters)} m</code></td>
+                        <td><code>{String(capsule.clearanceViolationMeters)} m</code></td>
                       </tr>
                     ))}
                   </tbody>

@@ -908,6 +908,75 @@ export type SpatialJointLimitsDiagnostic =
   | SpatialUnavailableJointLimitsDiagnostic
   | SpatialAvailableJointLimitsDiagnostic;
 
+export type SpatialClippingUnavailableReason =
+  | 'item_prefab_not_found'
+  | 'item_prefab_ambiguous'
+  | 'item_prefab_invalid'
+  | 'item_collision_not_authored'
+  | 'diagnostic_capsules_not_authored';
+
+export type SpatialClippingItemBox = {
+  kind: 'authored_collision_box';
+  prefabId: string;
+  world: SpatialEvaluationTransform;
+  dimensionsMeters: SpatialEvaluationVec3;
+  worldCorners: [
+    SpatialEvaluationVec3,
+    SpatialEvaluationVec3,
+    SpatialEvaluationVec3,
+    SpatialEvaluationVec3,
+    SpatialEvaluationVec3,
+    SpatialEvaluationVec3,
+    SpatialEvaluationVec3,
+    SpatialEvaluationVec3,
+  ];
+};
+
+export type SpatialClippingCapsuleDiagnostic = {
+  boneId: string;
+  role: string;
+  centerWorld: SpatialEvaluationVec3;
+  axisWorld: SpatialEvaluationVec3;
+  radiusMeters: number;
+  halfLengthMeters: number;
+  segmentStartWorld: SpatialEvaluationVec3;
+  segmentEndWorld: SpatialEvaluationVec3;
+  axisDistanceToBoxMeters: number;
+  surfaceClearanceMeters: number;
+  clearanceViolationMeters: number;
+  overlapping: boolean;
+};
+
+export type SpatialUnavailableClippingDiagnostic = {
+  status: 'unavailable';
+  reason: SpatialClippingUnavailableReason;
+  policy: 'diagnose';
+  metric: 'capsule_axis_to_oriented_box_clearance';
+  evaluatedCapsuleCount: 0;
+  overlapCount: 0;
+  maxClearanceViolationMeters: 0;
+  hasOverlap: null;
+  itemBox: null;
+  capsules: [];
+};
+
+export type SpatialAvailableClippingDiagnostic = {
+  status: 'available';
+  reason: null;
+  policy: 'diagnose';
+  metric: 'capsule_axis_to_oriented_box_clearance';
+  evaluatedCapsuleCount: number;
+  overlapCount: number;
+  maxClearanceViolationMeters: number;
+  hasOverlap: boolean;
+  itemBox: SpatialClippingItemBox;
+  capsules: SpatialClippingCapsuleDiagnostic[];
+};
+
+export type SpatialClippingDiagnostic =
+  | SpatialUnavailableClippingDiagnostic
+  | SpatialAvailableClippingDiagnostic;
+
 export type SpatialSourceRevision = {
   path: string;
   revision: string;
@@ -1008,7 +1077,7 @@ export type SpatialAttachmentEvaluation = {
   diagnostics: {
     secondaryIk: SpatialEvaluationDiagnostic | SpatialAppliedSecondaryIkDiagnostic;
     jointLimits: SpatialJointLimitsDiagnostic;
-    clipping: SpatialEvaluationDiagnostic;
+    clipping: SpatialClippingDiagnostic;
   };
   limitations: string[];
 };
