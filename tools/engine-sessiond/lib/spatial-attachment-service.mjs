@@ -77,6 +77,48 @@ const jointLimitBoneKeys = Object.freeze([
 ]);
 const jointLimitPolicy = 'diagnose';
 const jointLimitDegreeBound = 180;
+const clippingKeys = Object.freeze([
+  'status',
+  'reason',
+  'policy',
+  'metric',
+  'evaluatedCapsuleCount',
+  'overlapCount',
+  'maxClearanceViolationMeters',
+  'hasOverlap',
+  'itemBox',
+  'capsules',
+]);
+const clippingItemBoxKeys = Object.freeze([
+  'kind',
+  'prefabId',
+  'world',
+  'dimensionsMeters',
+  'worldCorners',
+]);
+const clippingCapsuleKeys = Object.freeze([
+  'boneId',
+  'role',
+  'centerWorld',
+  'axisWorld',
+  'radiusMeters',
+  'halfLengthMeters',
+  'segmentStartWorld',
+  'segmentEndWorld',
+  'axisDistanceToBoxMeters',
+  'surfaceClearanceMeters',
+  'clearanceViolationMeters',
+  'overlapping',
+]);
+const clippingUnavailableReasons = new Set([
+  'item_prefab_not_found',
+  'item_prefab_ambiguous',
+  'item_prefab_invalid',
+  'item_collision_not_authored',
+  'diagnostic_capsules_not_authored',
+]);
+const clippingPolicy = 'diagnose';
+const clippingMetric = 'capsule_axis_to_oriented_box_clearance';
 const unitTolerance = 1e-6;
 
 function serviceError(statusCode, code, message, extras = {}) {
@@ -418,7 +460,17 @@ function requireBoolean(value) {
   return value;
 }
 
-function requireJointLimits(value, skeletonBones) {
+function requireEvaluationBoneIndex(skeletonBones) {
+  const skeletonBoneById = new Map();
+  for (let index = 0; index < skeletonBones.length; index += 1) {
+    const bone = skeletonBones[index];
+    if (skeletonBoneById.has(bone.id)) evaluationProtocolError();
+    skeletonBoneById.set(bone.id, { index, role: bone.role });
+  }
+  return skeletonBoneById;
+}
+
+function requireJointLimits(value, skeletonBones, skeletonBoneById) {
   const diagnostic = requireExactObject(value, jointLimitKeys);
   if (diagnostic.policy !== jointLimitPolicy) evaluationProtocolError();
   if (!Array.isArray(diagnostic.bones) || diagnostic.bones.length > skeletonBones.length) {
@@ -434,12 +486,6 @@ function requireJointLimits(value, skeletonBones) {
 
   let computedViolations = 0;
   let computedMax = 0;
-  const skeletonBoneById = new Map();
-  for (let index = 0; index < skeletonBones.length; index += 1) {
-    const bone = skeletonBones[index];
-    if (skeletonBoneById.has(bone.id)) evaluationProtocolError();
-    skeletonBoneById.set(bone.id, { index, role: bone.role });
-  }
   let previousSkeletonIndex = -1;
   for (const entry of diagnostic.bones) {
     const bone = requireExactObject(entry, jointLimitBoneKeys);
@@ -519,6 +565,227 @@ function requireJointLimits(value, skeletonBones) {
   ) {
     evaluationProtocolError();
   }
+}
+
+function requireWorldBoxCorners(dimensions, worldCorners, world) {
+  if (!Array.isArray(worldCorners) || worldCorners.length !== 8) evaluationProtocolError();
+  const half = dimensions.map((entry) => entry * 0.5);
+  const localCorners = [
+    [-half[0], -half[1], -half[2]],
+    [half[0], -half[1], -half[2]],
+    [half[0], half[1], -half[2]],
+    [-half[0], half[1], -half[2]],
+    [-half[0], -half[1], half[2]],
+    [half[0], -half[1], half[2]],
+    [half[0], half[1], half[2]],
+    [-half[0], half[1], half[2]],
+  ];
+  const axes = world.axes;
+  for (let index = 0; index < localCorners.length; index += 1) {
+    const actual = requireFiniteTuple(worldCorners[index], 3);
+    const local = localCorners[index];
+    const expected = world.translation.map((entry, axisIndex) => (
+      entry
+      + local[0] * axes.x[axisIndex]
+      + local[1] * axes.y[axisIndex]
+      + local[2] * axes.z[axisIndex]
+    ));
+    if (expected.some((entry) => !Number.isFinite(entry)) || !vectorClose(actual, expected)) {
+      evaluationProtocolError();
+    }
+  }
+}
+
+function pointInBoxSpace(point, world) {
+  const delta = point.map((entry, index) => entry - world.translation[index]);
+  const local = [dot(delta, world.axes.x), dot(delta, world.axes.y), dot(delta, world.axes.z)];
+  if (local.some((entry) => !Number.isFinite(entry))) evaluationProtocolError();
+  return local;
+}
+
+function segmentDistanceToBox(start, end, boxWorld, dimensions) {
+  const startLocal = pointInBoxSpace(start, boxWorld);
+  const endLocal = pointInBoxSpace(end, boxWorld);
+  const extents = dimensions.map((entry) => entry * 0.5);
+  const scale = Math.max(1, ...startLocal.map(Math.abs), ...endLocal.map(Math.abs), ...extents);
+  if (!Number.isFinite(scale)) evaluationProtocolError();
+  const scaledStart = startLocal.map((entry) => entry / scale);
+  const scaledEnd = endLocal.map((entry) => entry / scale);
+  const scaledExtents = extents.map((entry) => entry / scale);
+  const direction = scaledEnd.map((entry, index) => entry - scaledStart[index]);
+
+  const breakpoints = [0, 1];
+  for (let axis = 0; axis < 3; axis += 1) {
+    if (direction[axis] === 0) continue;
+    for (const boundary of [-scaledExtents[axis], scaledExtents[axis]]) {
+      const value = (boundary - scaledStart[axis]) / direction[axis];
+      if (Number.isFinite(value) && value > 0 && value < 1) breakpoints.push(value);
+    }
+  }
+  breakpoints.sort((left, right) => left - right);
+  const uniqueBreakpoints = breakpoints.filter((value, index) => (
+    index === 0 || value !== breakpoints[index - 1]
+  ));
+
+  let minimumSquared = Number.POSITIVE_INFINITY;
+  const evaluate = (time) => {
+    let squared = 0;
+    for (let axis = 0; axis < 3; axis += 1) {
+      const value = scaledStart[axis] + direction[axis] * time;
+      const outside = value < -scaledExtents[axis]
+        ? value + scaledExtents[axis]
+        : (value > scaledExtents[axis] ? value - scaledExtents[axis] : 0);
+      squared += outside * outside;
+    }
+    minimumSquared = Math.min(minimumSquared, squared);
+  };
+
+  for (let interval = 0; interval + 1 < uniqueBreakpoints.length; interval += 1) {
+    const begin = uniqueBreakpoints[interval];
+    const finish = uniqueBreakpoints[interval + 1];
+    evaluate(begin);
+    evaluate(finish);
+    const midpoint = (begin + finish) * 0.5;
+    let quadratic = 0;
+    let linear = 0;
+    for (let axis = 0; axis < 3; axis += 1) {
+      const middleValue = scaledStart[axis] + direction[axis] * midpoint;
+      if (middleValue >= -scaledExtents[axis] && middleValue <= scaledExtents[axis]) continue;
+      const boundary = middleValue < -scaledExtents[axis]
+        ? -scaledExtents[axis]
+        : scaledExtents[axis];
+      quadratic += direction[axis] * direction[axis];
+      linear += direction[axis] * (scaledStart[axis] - boundary);
+    }
+    if (quadratic > 0) {
+      const stationary = -linear / quadratic;
+      if (stationary > begin && stationary < finish) evaluate(stationary);
+    }
+  }
+  const distance = Math.sqrt(minimumSquared) * scale;
+  if (!Number.isFinite(distance) || distance < 0) evaluationProtocolError();
+  return distance === 0 ? 0 : distance;
+}
+
+function requireDerivedNumber(actual, expected) {
+  if (
+    Math.abs(actual - expected) > unitTolerance
+    || (actual === 0) !== (expected === 0)
+    || Math.sign(actual) !== Math.sign(expected)
+  ) {
+    evaluationProtocolError();
+  }
+}
+
+function requireClipping(value, skeletonBones, skeletonBoneById, attachment) {
+  const diagnostic = requireExactObject(value, clippingKeys);
+  if (diagnostic.policy !== clippingPolicy || diagnostic.metric !== clippingMetric) {
+    evaluationProtocolError();
+  }
+  const evaluatedCapsuleCount = requireNonnegativeInteger(diagnostic.evaluatedCapsuleCount);
+  const overlapCount = requireNonnegativeInteger(diagnostic.overlapCount);
+  const maxClearanceViolationMeters = requireFiniteNumber(
+    diagnostic.maxClearanceViolationMeters,
+    { min: 0 },
+  );
+  if (!Array.isArray(diagnostic.capsules) || diagnostic.capsules.length > skeletonBones.length) {
+    evaluationProtocolError();
+  }
+
+  if (diagnostic.status === 'unavailable') {
+    if (
+      !clippingUnavailableReasons.has(diagnostic.reason)
+      || evaluatedCapsuleCount !== 0
+      || overlapCount !== 0
+      || maxClearanceViolationMeters !== 0
+      || diagnostic.hasOverlap !== null
+      || diagnostic.itemBox !== null
+      || diagnostic.capsules.length !== 0
+    ) {
+      evaluationProtocolError();
+    }
+    return;
+  }
+  if (diagnostic.status !== 'available' || diagnostic.reason !== null) evaluationProtocolError();
+  if (diagnostic.capsules.length === 0) evaluationProtocolError();
+
+  const itemBox = requireExactObject(diagnostic.itemBox, clippingItemBoxKeys);
+  if (
+    itemBox.kind !== 'authored_collision_box'
+    || requireString(itemBox.prefabId) !== attachment.itemPrefabId
+  ) {
+    evaluationProtocolError();
+  }
+  requireTransform(itemBox.world);
+  const dimensions = requireFiniteTuple(itemBox.dimensionsMeters, 3);
+  if (dimensions.some((entry) => entry <= 0 || Object.is(entry, -0))) evaluationProtocolError();
+  requireWorldBoxCorners(dimensions, itemBox.worldCorners, itemBox.world);
+
+  let previousSkeletonIndex = -1;
+  let computedOverlapCount = 0;
+  let computedMaxViolation = 0;
+  for (const valueEntry of diagnostic.capsules) {
+    const capsule = requireExactObject(valueEntry, clippingCapsuleKeys);
+    const boneId = requireString(capsule.boneId);
+    const skeletonBone = skeletonBoneById.get(boneId);
+    if (
+      !skeletonBone
+      || skeletonBone.index <= previousSkeletonIndex
+      || capsule.role !== skeletonBone.role
+    ) {
+      evaluationProtocolError();
+    }
+    previousSkeletonIndex = skeletonBone.index;
+
+    const center = requireFiniteTuple(capsule.centerWorld, 3);
+    const axis = requireUnitVector(capsule.axisWorld);
+    const radius = requireFiniteNumber(capsule.radiusMeters, { min: 0 });
+    const halfLength = requireFiniteNumber(capsule.halfLengthMeters, { min: 0 });
+    if (radius === 0 || halfLength === 0) evaluationProtocolError();
+    const segmentStart = requireFiniteTuple(capsule.segmentStartWorld, 3);
+    const segmentEnd = requireFiniteTuple(capsule.segmentEndWorld, 3);
+    const expectedStart = center.map((entry, index) => entry - axis[index] * halfLength);
+    const expectedEnd = center.map((entry, index) => entry + axis[index] * halfLength);
+    if (
+      expectedStart.some((entry) => !Number.isFinite(entry))
+      || expectedEnd.some((entry) => !Number.isFinite(entry))
+      || !vectorClose(segmentStart, expectedStart)
+      || !vectorClose(segmentEnd, expectedEnd)
+    ) {
+      evaluationProtocolError();
+    }
+
+    const axisDistance = requireFiniteNumber(capsule.axisDistanceToBoxMeters, { min: 0 });
+    const surfaceClearance = requireFiniteNumber(capsule.surfaceClearanceMeters);
+    const clearanceViolation = requireFiniteNumber(capsule.clearanceViolationMeters, { min: 0 });
+    const expectedAxisDistance = segmentDistanceToBox(
+      expectedStart,
+      expectedEnd,
+      itemBox.world,
+      dimensions,
+    );
+    const rawSurfaceClearance = expectedAxisDistance - radius;
+    const expectedSurfaceClearance = rawSurfaceClearance === 0 ? 0 : rawSurfaceClearance;
+    const expectedClearanceViolation = expectedSurfaceClearance < 0
+      ? -expectedSurfaceClearance
+      : 0;
+    requireDerivedNumber(axisDistance, expectedAxisDistance);
+    requireDerivedNumber(surfaceClearance, expectedSurfaceClearance);
+    requireDerivedNumber(clearanceViolation, expectedClearanceViolation);
+    const overlapping = requireBoolean(capsule.overlapping);
+    if (overlapping !== (expectedClearanceViolation > 0)) evaluationProtocolError();
+    if (overlapping) computedOverlapCount += 1;
+    computedMaxViolation = Math.max(computedMaxViolation, expectedClearanceViolation);
+  }
+
+  if (
+    evaluatedCapsuleCount !== diagnostic.capsules.length
+    || overlapCount !== computedOverlapCount
+    || diagnostic.hasOverlap !== (computedOverlapCount > 0)
+  ) {
+    evaluationProtocolError();
+  }
+  requireDerivedNumber(maxClearanceViolationMeters, computedMaxViolation);
 }
 
 function requireExactStringArray(value, expected) {
@@ -622,6 +889,7 @@ function requireEvaluationGeometry(evaluation, expectedProfile) {
     requireTransform(bone.local);
     requireTransform(bone.world);
   }
+  const skeletonBoneById = requireEvaluationBoneIndex(evaluation.bones);
 
   if (!Array.isArray(evaluation.segments)) evaluationProtocolError();
   for (const value of evaluation.segments) {
@@ -719,12 +987,8 @@ function requireEvaluationGeometry(evaluation, expectedProfile) {
     evaluation.diagnostics,
     ['secondaryIk', 'jointLimits', 'clipping'],
   );
-  requireJointLimits(diagnostics.jointLimits, evaluation.bones);
-  requireStatusReason(
-    diagnostics.clipping,
-    'unavailable',
-    'item_and_capsule_geometry_not_integrated',
-  );
+  requireJointLimits(diagnostics.jointLimits, evaluation.bones, skeletonBoneById);
+  requireClipping(diagnostics.clipping, evaluation.bones, skeletonBoneById, attachment);
   return { attachment, diagnostics, hands };
 }
 

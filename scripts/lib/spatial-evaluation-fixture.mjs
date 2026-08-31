@@ -53,6 +53,81 @@ export function availableJointLimits(bones) {
   };
 }
 
+export function unavailableClipping(reason = 'item_prefab_not_found') {
+  return {
+    status: 'unavailable',
+    reason,
+    policy: 'diagnose',
+    metric: 'capsule_axis_to_oriented_box_clearance',
+    evaluatedCapsuleCount: 0,
+    overlapCount: 0,
+    maxClearanceViolationMeters: 0,
+    hasOverlap: null,
+    itemBox: null,
+    capsules: [],
+  };
+}
+
+export function authoredCollisionBox(overrides = {}) {
+  return {
+    kind: 'authored_collision_box',
+    prefabId: 'test.item',
+    world: identityTransform(),
+    dimensionsMeters: [2, 2, 2],
+    worldCorners: [
+      [-1, -1, -1],
+      [1, -1, -1],
+      [1, 1, -1],
+      [-1, 1, -1],
+      [-1, -1, 1],
+      [1, -1, 1],
+      [1, 1, 1],
+      [-1, 1, 1],
+    ],
+    ...overrides,
+  };
+}
+
+export function clippingCapsule(overrides = {}) {
+  return {
+    boneId: 'hand_r',
+    role: 'hand_r',
+    centerWorld: [2, 0, 0],
+    axisWorld: [0, 1, 0],
+    radiusMeters: 0.5,
+    halfLengthMeters: 0.25,
+    segmentStartWorld: [2, -0.25, 0],
+    segmentEndWorld: [2, 0.25, 0],
+    axisDistanceToBoxMeters: 1,
+    surfaceClearanceMeters: 0.5,
+    clearanceViolationMeters: 0,
+    overlapping: false,
+    ...overrides,
+  };
+}
+
+export function availableClipping(
+  capsules = [clippingCapsule()],
+  itemBox = authoredCollisionBox(),
+) {
+  const overlapCount = capsules.filter((capsule) => capsule.overlapping).length;
+  return {
+    status: 'available',
+    reason: null,
+    policy: 'diagnose',
+    metric: 'capsule_axis_to_oriented_box_clearance',
+    evaluatedCapsuleCount: capsules.length,
+    overlapCount,
+    maxClearanceViolationMeters: capsules.reduce(
+      (current, capsule) => Math.max(current, capsule.clearanceViolationMeters),
+      0,
+    ),
+    hasOverlap: overlapCount > 0,
+    itemBox,
+    capsules,
+  };
+}
+
 export function restEvaluation(attachmentId) {
   return {
     schema: 'shader_forge.spatial_attachment_evaluation',
@@ -98,7 +173,7 @@ export function restEvaluation(attachmentId) {
     diagnostics: {
       secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
       jointLimits: unavailableJointLimits(),
-      clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
+      clipping: unavailableClipping(),
     },
     limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],
   };

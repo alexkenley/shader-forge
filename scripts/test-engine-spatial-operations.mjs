@@ -129,8 +129,88 @@ function availableJointLimits(bones) {
   };
 }
 
+function unavailableClipping(reason = 'item_prefab_not_found') {
+  return {
+    status: 'unavailable',
+    reason,
+    policy: 'diagnose',
+    metric: 'capsule_axis_to_oriented_box_clearance',
+    evaluatedCapsuleCount: 0,
+    overlapCount: 0,
+    maxClearanceViolationMeters: 0,
+    hasOverlap: null,
+    itemBox: null,
+    capsules: [],
+  };
+}
+
+function authoredCollisionBox(overrides = {}) {
+  return {
+    kind: 'authored_collision_box',
+    prefabId: 'test.item',
+    world: identityTransform(),
+    dimensionsMeters: [2, 2, 2],
+    worldCorners: [
+      [-1, -1, -1],
+      [1, -1, -1],
+      [1, 1, -1],
+      [-1, 1, -1],
+      [-1, -1, 1],
+      [1, -1, 1],
+      [1, 1, 1],
+      [-1, 1, 1],
+    ],
+    ...overrides,
+  };
+}
+
+function clippingCapsule(overrides = {}) {
+  return {
+    boneId: 'hand_r',
+    role: 'hand_r',
+    centerWorld: [2, 0, 0],
+    axisWorld: [0, 1, 0],
+    radiusMeters: 0.5,
+    halfLengthMeters: 0.25,
+    segmentStartWorld: [2, -0.25, 0],
+    segmentEndWorld: [2, 0.25, 0],
+    axisDistanceToBoxMeters: 1,
+    surfaceClearanceMeters: 0.5,
+    clearanceViolationMeters: 0,
+    overlapping: false,
+    ...overrides,
+  };
+}
+
+function availableClipping(
+  capsules = [clippingCapsule()],
+  itemBox = authoredCollisionBox(),
+) {
+  const overlapCount = capsules.filter((capsule) => capsule.overlapping).length;
+  return {
+    status: 'available',
+    reason: null,
+    policy: 'diagnose',
+    metric: 'capsule_axis_to_oriented_box_clearance',
+    evaluatedCapsuleCount: capsules.length,
+    overlapCount,
+    maxClearanceViolationMeters: capsules.reduce(
+      (current, capsule) => Math.max(current, capsule.clearanceViolationMeters),
+      0,
+    ),
+    hasOverlap: overlapCount > 0,
+    itemBox,
+    capsules,
+  };
+}
+
 function withJointLimits(evaluation, jointLimits) {
   evaluation.diagnostics.jointLimits = jointLimits;
+  return evaluation;
+}
+
+function withClipping(evaluation, clipping) {
+  evaluation.diagnostics.clipping = clipping;
   return evaluation;
 }
 
@@ -200,7 +280,7 @@ function restEvaluation(attachmentId) {
     diagnostics: {
       secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
       jointLimits: unavailableJointLimits(),
-      clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
+      clipping: unavailableClipping(),
     },
     limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],
   };
@@ -735,6 +815,10 @@ try {
     withinLimits: null,
     bones: [],
   });
+  assert.deepEqual(
+    baselineEvaluate.payload.evaluation.diagnostics.clipping,
+    unavailableClipping(),
+  );
   assert.deepEqual(baselineEvaluate.payload.evaluation.limitations, [
     'rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable',
   ]);
@@ -753,6 +837,99 @@ try {
   assert.equal(visualBoxEvaluate.status, 200);
   assert.equal(visualBoxEvaluate.payload.evaluation.item.geometry.kind, 'authored_visual_box');
   assert.equal(visualBoxEvaluate.payload.evaluation.item.geometry.worldCorners.length, 8);
+
+  evaluateImpl = async (_animationRoot, attachmentId) => withClipping(
+    withAuthoredVisualBox(restEvaluation(attachmentId)),
+    availableClipping(),
+  );
+  const clearClippingEvaluate = await request(
+    service.baseUrl,
+    attachmentEvaluatePath(evaluateQuery),
+  );
+  assert.equal(clearClippingEvaluate.status, 200);
+  assert.deepEqual(
+    clearClippingEvaluate.payload.evaluation.diagnostics.clipping,
+    availableClipping(),
+  );
+
+  const overlappingCapsule = clippingCapsule({
+    centerWorld: [1.25, 0, 0],
+    segmentStartWorld: [1.25, -0.25, 0],
+    segmentEndWorld: [1.25, 0.25, 0],
+    axisDistanceToBoxMeters: 0.25,
+    surfaceClearanceMeters: -0.25,
+    clearanceViolationMeters: 0.25,
+    overlapping: true,
+  });
+  evaluateImpl = async (_animationRoot, attachmentId) => withClipping(
+    withAuthoredVisualBox(restEvaluation(attachmentId)),
+    availableClipping([overlappingCapsule]),
+  );
+  const overlappingClippingEvaluate = await request(
+    service.baseUrl,
+    attachmentEvaluatePath(evaluateQuery),
+  );
+  assert.equal(overlappingClippingEvaluate.status, 200);
+  assert.equal(
+    overlappingClippingEvaluate.payload.evaluation.diagnostics.clipping.hasOverlap,
+    true,
+  );
+  assert.equal(
+    overlappingClippingEvaluate.payload.evaluation.diagnostics.clipping
+      .maxClearanceViolationMeters,
+    0.25,
+  );
+
+  const crossingCapsule = clippingCapsule({
+    centerWorld: [0, 0, 0],
+    axisWorld: [1, 0, 0],
+    radiusMeters: 0.1,
+    halfLengthMeters: 2,
+    segmentStartWorld: [-2, 0, 0],
+    segmentEndWorld: [2, 0, 0],
+    axisDistanceToBoxMeters: 0,
+    surfaceClearanceMeters: -0.1,
+    clearanceViolationMeters: 0.1,
+    overlapping: true,
+  });
+  evaluateImpl = async (_animationRoot, attachmentId) => withClipping(
+    withAuthoredVisualBox(restEvaluation(attachmentId)),
+    availableClipping([crossingCapsule]),
+  );
+  const crossingClippingEvaluate = await request(
+    service.baseUrl,
+    attachmentEvaluatePath(evaluateQuery),
+  );
+  assert.equal(crossingClippingEvaluate.status, 200);
+  assert.equal(
+    crossingClippingEvaluate.payload.evaluation.diagnostics.clipping
+      .capsules[0].axisDistanceToBoxMeters,
+    0,
+  );
+
+  const tangentCapsule = clippingCapsule({
+    centerWorld: [1.5, 0, 0],
+    radiusMeters: 0.5,
+    segmentStartWorld: [1.5, -0.25, 0],
+    segmentEndWorld: [1.5, 0.25, 0],
+    axisDistanceToBoxMeters: 0.5,
+    surfaceClearanceMeters: 0,
+  });
+  evaluateImpl = async (_animationRoot, attachmentId) => withClipping(
+    withAuthoredVisualBox(restEvaluation(attachmentId)),
+    availableClipping([tangentCapsule]),
+  );
+  const tangentClippingEvaluate = await request(
+    service.baseUrl,
+    attachmentEvaluatePath(evaluateQuery),
+  );
+  assert.equal(tangentClippingEvaluate.status, 200);
+  assert.equal(
+    tangentClippingEvaluate.payload.evaluation.diagnostics.clipping.hasOverlap,
+    false,
+  );
+
+  evaluateImpl = normalEvaluate;
 
   evaluateImpl = async (_animationRoot, attachmentId) => restEvaluationV2(attachmentId);
   const v1SourceV2Report = await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery));
@@ -893,6 +1070,148 @@ try {
       const evaluation = withAuthoredVisualBox(restEvaluation(id));
       evaluation.item.geometry.collisionShape = 'box';
       return evaluation;
+    }],
+    ['legacy clipping contract', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.clipping = {
+        status: 'unavailable',
+        reason: 'item_and_capsule_geometry_not_integrated',
+      };
+    })],
+    ['clipping extra key', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.clipping.resolutionApplied = false;
+    })],
+    ['clipping missing key', (id) => mutateRestEvaluation(id, (evaluation) => {
+      delete evaluation.diagnostics.clipping.metric;
+    })],
+    ['clipping unknown unavailable reason', (id) => withClipping(
+      restEvaluation(id),
+      unavailableClipping('future_untrusted_reason'),
+    )],
+    ['clipping non-diagnose policy', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.clipping.policy = 'resolve';
+    })],
+    ['clipping unknown metric', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.clipping.metric = 'mesh_penetration_depth';
+    })],
+    ['clipping unavailable with evidence', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.clipping.itemBox = authoredCollisionBox();
+    })],
+    ['clipping unavailable with nonzero aggregate', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.clipping.overlapCount = 1;
+    })],
+    ['clipping available without capsules', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      {
+        ...unavailableClipping(),
+        status: 'available',
+        reason: null,
+        hasOverlap: false,
+        itemBox: authoredCollisionBox(),
+      },
+    )],
+    ['clipping collision box extra key', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping(undefined, { ...authoredCollisionBox(), source: 'visual' }),
+    )],
+    ['clipping collision box wrong prefab', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping(undefined, authoredCollisionBox({ prefabId: 'wrong.item' })),
+    )],
+    ['clipping collision box nonpositive dimension', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping(undefined, authoredCollisionBox({ dimensionsMeters: [0, 2, 2] })),
+    )],
+    ['clipping collision box corner mismatch', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping(undefined, authoredCollisionBox({
+        worldCorners: [
+          [1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+          [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+        ],
+      })),
+    )],
+    ['clipping capsule extra key', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([{ ...clippingCapsule(), penetrationDepthMeters: 0 }]),
+    )],
+    ['clipping capsule unknown bone', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ boneId: 'missing' })]),
+    )],
+    ['clipping capsule role mismatch', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ role: 'hand_l' })]),
+    )],
+    ['clipping capsule nonunit axis', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ axisWorld: [0, 2, 0] })]),
+    )],
+    ['clipping capsule nonpositive radius', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ radiusMeters: 0 })]),
+    )],
+    ['clipping capsule nonfinite half length', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ halfLengthMeters: Number.POSITIVE_INFINITY })]),
+    )],
+    ['clipping capsule endpoint mismatch', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ segmentEndWorld: [2, 0.5, 0] })]),
+    )],
+    ['clipping capsule false axis distance', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ axisDistanceToBoxMeters: 0.75 })]),
+    )],
+    ['clipping capsule false surface clearance', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ surfaceClearanceMeters: 0.25 })]),
+    )],
+    ['clipping capsule false violation', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ clearanceViolationMeters: 0.25 })]),
+    )],
+    ['clipping capsule false overlap label', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({ overlapping: true })]),
+    )],
+    ['clipping capsule sub-tolerance clearance label flip', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      availableClipping([clippingCapsule({
+        radiusMeters: 1,
+        surfaceClearanceMeters: 0.0000005,
+      })]),
+    )],
+    ['clipping aggregate evaluated count mismatch', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      { ...availableClipping(), evaluatedCapsuleCount: 2 },
+    )],
+    ['clipping aggregate overlap count mismatch', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      { ...availableClipping(), overlapCount: 1 },
+    )],
+    ['clipping aggregate max mismatch', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      { ...availableClipping(), maxClearanceViolationMeters: 0.25 },
+    )],
+    ['clipping aggregate label mismatch', (id) => withClipping(
+      withAuthoredVisualBox(restEvaluation(id)),
+      { ...availableClipping(), hasOverlap: true },
+    )],
+    ['clipping duplicate capsule bone', (id) => {
+      const evaluation = withAuthoredVisualBox(restEvaluation(id));
+      evaluation.bones.push({ ...structuredClone(evaluation.bones[0]), id: 'hand_l', role: 'hand_l' });
+      return withClipping(evaluation, availableClipping([
+        clippingCapsule(),
+        clippingCapsule(),
+      ]));
+    }],
+    ['clipping reversed capsule bone order', (id) => {
+      const evaluation = withAuthoredVisualBox(restEvaluation(id));
+      evaluation.bones.push({ ...structuredClone(evaluation.bones[0]), id: 'hand_l', role: 'hand_l' });
+      return withClipping(evaluation, availableClipping([
+        clippingCapsule({ boneId: 'hand_l', role: 'hand_l' }),
+        clippingCapsule(),
+      ]));
     }],
     ['wrong diagnostic contract', (id) => mutateRestEvaluation(id, (evaluation) => {
       evaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'unknown' };
@@ -1344,6 +1663,45 @@ try {
   await assert.rejects(fs.stat(operationsPath), { code: 'ENOENT' });
 
   sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    return withClipping(withAuthoredVisualBox(evaluation), availableClipping());
+  };
+  const sampledClipping = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(sampledClipping.status, 200);
+  assert.deepEqual(
+    sampledClipping.payload.evaluation.diagnostics.clipping,
+    availableClipping(),
+  );
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    return withClipping(
+      withAuthoredVisualBox(evaluation),
+      availableClipping([clippingCapsule({ axisDistanceToBoxMeters: 0.75 })]),
+    );
+  };
+  const malformedSampledClipping = await request(
+    service.baseUrl,
+    attachmentSampleEvaluatePath(sampleQuery),
+  );
+  assert.equal(malformedSampledClipping.status, 500);
+  assert.equal(malformedSampledClipping.payload.code, 'spatial_evaluator_protocol_error');
+  assert.deepEqual(service.operationStore.listOperations(), []);
+  sampleEvaluateImpl = normalSampleEvaluate;
+
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
     await normalSampleEvaluate(animationRoot, attachmentId, phase, normalizedTime);
     return sampledEvaluation(attachmentId, {
       schemaVersion: 1,
@@ -1784,6 +2142,28 @@ try {
   );
   assert.equal(malformedCandidatePreview.status, 500);
   assert.equal(malformedCandidatePreview.payload.code, 'spatial_evaluator_protocol_error');
+  assert.deepEqual(service.operationStore.listOperations(), []);
+
+  evaluateImpl = async (animationRoot, attachmentId) => {
+    const evaluation = await normalEvaluate(animationRoot, attachmentId);
+    if (attachmentId === 'weapon.rifle.new') {
+      return withClipping(
+        withAuthoredVisualBox(evaluation),
+        availableClipping([clippingCapsule({ surfaceClearanceMeters: 0.25 })]),
+      );
+    }
+    return evaluation;
+  };
+  const malformedCandidateClippingPreview = await request(
+    service.baseUrl,
+    '/api/operations/spatial-attachment/preview',
+    { method: 'POST', credential, body: { ...previewBody, leaseId: bothKeys.payload.lease.id } },
+  );
+  assert.equal(malformedCandidateClippingPreview.status, 500);
+  assert.equal(
+    malformedCandidateClippingPreview.payload.code,
+    'spatial_evaluator_protocol_error',
+  );
   assert.deepEqual(service.operationStore.listOperations(), []);
 
   evaluateImpl = async (animationRoot, attachmentId) => {
