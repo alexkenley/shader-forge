@@ -25,7 +25,7 @@ direction = [0.0, 0.0, 1.0]
 
 [secondary_hand]
 enabled = true
-joint_limit_policy = "clamp_and_diagnose"
+joint_limit_policy = "diagnose"
 
 [secondary_hand.target]
 translation = [0.0, 0.0, 0.42]

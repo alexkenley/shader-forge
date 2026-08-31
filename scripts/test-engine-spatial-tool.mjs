@@ -321,7 +321,7 @@ try {
     assert.equal(rifle.secondaryHand.enabled, true);
     assert.deepEqual(rifle.secondaryHand.targetTranslation, [0, 0, 0.42]);
     assert.equal(rifle.secondaryHand.poleSpace, 'item');
-    assert.equal(rifle.secondaryHand.jointLimitPolicy, 'clamp_and_diagnose');
+    assert.equal(rifle.secondaryHand.jointLimitPolicy, 'diagnose');
     assert.deepEqual(rifle.motionEnvelopes.map((entry) => entry.phase), ['aim', 'idle']);
     assert.deepEqual(rifle.motionEnvelopes[0].normalizedTimes, [0, 0.5, 1]);
     assert.deepEqual(rifle.motionEnvelopes[0].proceduralLayers, ['primary_attachment', 'secondary_hand_ik']);

@@ -17,6 +17,7 @@ assert.match(header, /AttachmentProfileSnapshot/);
 assert.match(header, /SkeletonSocketSnapshot/);
 assert.match(header, /SkeletonBoneJointLimitSnapshot/);
 assert.match(header, /SkeletonBoneDiagnosticCapsuleSnapshot/);
+assert.match(header, /SpatialJointLimitDiagnosticSnapshot/);
 assert.match(header, /findAttachmentProfile/);
 assert.match(header, /ClipKeyframeSnapshot/);
 assert.match(header, /sampleClipPose/);
@@ -63,6 +64,7 @@ using shader_forge::runtime::ClipDefinitionSnapshot;
 using shader_forge::runtime::EvaluatedBonePoseSnapshot;
 using shader_forge::runtime::SampledClipPoseSnapshot;
 using shader_forge::runtime::SpatialAttachmentEvaluationSnapshot;
+using shader_forge::runtime::SpatialBoneJointLimitDiagnosticSnapshot;
 using shader_forge::runtime::SpatialSampledAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SpatialQuaternionSnapshot;
 using shader_forge::runtime::SpatialTransformSnapshot;
@@ -144,6 +146,19 @@ bool sampledMatchesRest(const SampledClipPoseSnapshot& pose, const SpatialAttach
 
 const EvaluatedBonePoseSnapshot* findEvaluationBone(const SpatialAttachmentEvaluationSnapshot& evaluation, const std::string& id) {
   return findPoseBone(evaluation.bones, id);
+}
+
+const SpatialBoneJointLimitDiagnosticSnapshot* findJointDiagnostic(
+  const SpatialAttachmentEvaluationSnapshot& evaluation,
+  const std::string& id) {
+  const auto found = std::find_if(
+    evaluation.jointLimits.bones.begin(), evaluation.jointLimits.bones.end(),
+    [&](const auto& bone) { return bone.boneId == id; });
+  return found == evaluation.jointLimits.bones.end() ? nullptr : &*found;
+}
+
+bool closeAngle(double actual, double expected) {
+  return std::abs(actual - expected) <= 1e-9;
 }
 
 bool sameAttachmentGeometry(const SpatialAttachmentEvaluationSnapshot& left, const SpatialAttachmentEvaluationSnapshot& right) {
@@ -330,6 +345,22 @@ int main(int argc, char** argv) {
 
   const auto rest = system.evaluateRestAttachment(*profileHandle, &error);
   if (!rest) return fail("rest evaluation failed before clip sampling: " + error);
+  if (rest->jointLimits.status != "available" || rest->jointLimits.reason
+      || rest->jointLimits.policy != "diagnose" || rest->jointLimits.evaluatedBoneCount != 6
+      || rest->jointLimits.violationCount != 0 || rest->jointLimits.maxViolationDegrees != 0.0
+      || rest->jointLimits.withinLimits != true || rest->jointLimits.bones.size() != 6) {
+    return fail("rest joint-limit diagnostics were not exact");
+  }
+  const auto restUpperLimit = std::find_if(
+    rest->jointLimits.bones.begin(), rest->jointLimits.bones.end(),
+    [](const auto& bone) { return bone.boneId == "upper_arm_l"; });
+  if (restUpperLimit == rest->jointLimits.bones.end() || restUpperLimit->role != "upper_arm_l"
+      || restUpperLimit->swingDegrees != 0.0 || restUpperLimit->swingLimitDegrees != 120.0
+      || restUpperLimit->twistDegrees != 0.0 || restUpperLimit->twistMinDegrees != -90.0
+      || restUpperLimit->twistMaxDegrees != 90.0 || restUpperLimit->swingViolationDegrees != 0.0
+      || restUpperLimit->twistViolationDegrees != 0.0 || !restUpperLimit->withinLimits) {
+    return fail("rest per-bone joint-limit diagnostics were not exact");
+  }
   error.clear();
   const auto readyStart = system.sampleClipPose("rifle_ready", 0.0, &error);
   const auto readyMid = system.sampleClipPose("rifle_ready", 0.5, &error);
@@ -378,6 +409,13 @@ int main(int argc, char** argv) {
   const auto sampledIdleMid = system.evaluateSampledAttachment(*profileHandle, "idle", 0.5, &error);
   const auto sampledIdleEnd = system.evaluateSampledAttachment(*profileHandle, "idle", 1.0, &error);
   if (!sampledIdleStart || !sampledIdleMid || !sampledIdleEnd) return fail("valid sampled attachment evaluation was rejected: " + error);
+  if (sampledIdleMid->evaluation.jointLimits.status != "available"
+      || sampledIdleMid->evaluation.jointLimits.policy != "diagnose"
+      || sampledIdleMid->evaluation.jointLimits.evaluatedBoneCount != 6
+      || sampledIdleMid->evaluation.jointLimits.bones.size() != 6
+      || !sampledIdleMid->evaluation.jointLimits.withinLimits.has_value()) {
+    return fail("sampled joint-limit diagnostics were unavailable or incomplete");
+  }
   if (sampledIdleStart->phase != "idle" || sampledIdleStart->clipName != "rifle_ready" || sampledIdleStart->normalizedTime != 0.0
       || sampledIdleMid->phase != "idle" || sampledIdleMid->clipName != "rifle_ready" || sampledIdleMid->normalizedTime != 0.5
       || sampledIdleEnd->phase != "idle" || sampledIdleEnd->clipName != "rifle_ready" || sampledIdleEnd->normalizedTime != 1.0) {
@@ -431,8 +469,191 @@ int main(int argc, char** argv) {
   }
   const auto sampledIdleMidAgain = system.evaluateSampledAttachment(*profileHandle, "idle", 0.5, &error);
   if (!sampledIdleMidAgain || !sameAttachmentGeometry(sampledIdleMidAgain->evaluation, sampledIdleMid->evaluation)
-      || sampledIdleMidAgain->evaluation.secondaryIk.postSolveDistanceMeters != sampledIdleMid->evaluation.secondaryIk.postSolveDistanceMeters) {
+      || sampledIdleMidAgain->evaluation.secondaryIk.postSolveDistanceMeters != sampledIdleMid->evaluation.secondaryIk.postSolveDistanceMeters
+      || sampledIdleMidAgain->evaluation.jointLimits.maxViolationDegrees != sampledIdleMid->evaluation.jointLimits.maxViolationDegrees
+      || sampledIdleMidAgain->evaluation.jointLimits.violationCount != sampledIdleMid->evaluation.jointLimits.violationCount) {
     return fail("secondary-hand IK solver is not deterministic");
+  }
+
+  const auto violationRoot = std::filesystem::temp_directory_path() / "shader_forge_spatial_joint_violation";
+  std::filesystem::remove_all(violationRoot);
+  std::filesystem::copy(sourceRoot, violationRoot, std::filesystem::copy_options::recursive);
+  const auto violationSkeletonPath = violationRoot / "skeletons/spatial_humanoid.skeleton.toml";
+  std::string violationSkeleton = readFile(violationSkeletonPath);
+  const std::string upperLeftLimit =
+    "[bone.upper_arm_l.joint_limit]\n"
+    "kind = \"cone_twist\"\n"
+    "twist_axis = [1.0, 0.0, 0.0]\n"
+    "swing_degrees = 120.0\n"
+    "twist_min_degrees = -90.0\n"
+    "twist_max_degrees = 90.0";
+  const std::string strictUpperLeftLimit =
+    "[bone.upper_arm_l.joint_limit]\n"
+    "kind = \"cone_twist\"\n"
+    "twist_axis = [1.0, 0.0, 0.0]\n"
+    "swing_degrees = 0.0\n"
+    "twist_min_degrees = 0.0\n"
+    "twist_max_degrees = 0.0";
+  if (!replaceAll(&violationSkeleton, upperLeftLimit, strictUpperLeftLimit)) {
+    return fail("joint-limit violation fixture replacement failed");
+  }
+  writeFile(violationSkeletonPath, violationSkeleton);
+  AnimationSystem violationSystem;
+  error.clear();
+  if (!violationSystem.loadFromDisk(AnimationConfig{violationRoot}, &error)) {
+    return fail("joint-limit violation fixture load failed: " + error);
+  }
+  const auto violationHandle = violationSystem.findAttachmentProfileId("weapon.rifle.mk1.humanoid");
+  const auto violationSample = violationHandle
+    ? violationSystem.evaluateSampledAttachment(*violationHandle, "idle", 0.5, &error)
+    : std::nullopt;
+  if (!violationSample || violationSample->evaluation.jointLimits.status != "available"
+      || violationSample->evaluation.jointLimits.violationCount == 0
+      || violationSample->evaluation.jointLimits.maxViolationDegrees <= 0.0
+      || violationSample->evaluation.jointLimits.withinLimits != false) {
+    return fail("deliberate joint-limit violation was not diagnosed: " + error);
+  }
+  const auto violatedUpper = std::find_if(
+    violationSample->evaluation.jointLimits.bones.begin(), violationSample->evaluation.jointLimits.bones.end(),
+    [](const auto& bone) { return bone.boneId == "upper_arm_l"; });
+  if (violatedUpper == violationSample->evaluation.jointLimits.bones.end() || violatedUpper->withinLimits
+      || std::max(violatedUpper->swingViolationDegrees, violatedUpper->twistViolationDegrees) <= 0.0) {
+    return fail("deliberate per-bone joint-limit violation was not numeric");
+  }
+  std::filesystem::remove_all(violationRoot);
+
+  const auto knownAnglesRoot = std::filesystem::temp_directory_path() / "shader_forge_spatial_known_joint_angles";
+  std::filesystem::remove_all(knownAnglesRoot);
+  std::filesystem::copy(sourceRoot, knownAnglesRoot, std::filesystem::copy_options::recursive);
+  const auto knownSkeletonPath = knownAnglesRoot / "skeletons/spatial_humanoid.skeleton.toml";
+  std::string knownSkeleton = readFile(knownSkeletonPath);
+  const std::string upperRightBone =
+    "[bone.upper_arm_r]\n"
+    "id = \"upper_arm_r\"\n"
+    "parent = \"clavicle_r\"\n"
+    "role = \"upper_arm_r\"\n"
+    "translation = [-0.14, 0.0, 0.0]\n"
+    "rotation = [0.0, 0.0, 0.0, 1.0]";
+  const std::string rotatedUpperRightBone =
+    "[bone.upper_arm_r]\n"
+    "id = \"upper_arm_r\"\n"
+    "parent = \"clavicle_r\"\n"
+    "role = \"upper_arm_r\"\n"
+    "translation = [-0.14, 0.0, 0.0]\n"
+    "rotation = [0.0, 0.0, 0.49999999999999994, 0.86602540378443871]";
+  const std::string upperRightLimit =
+    "[bone.upper_arm_r.joint_limit]\n"
+    "kind = \"cone_twist\"\n"
+    "twist_axis = [-1.0, 0.0, 0.0]\n"
+    "swing_degrees = 120.0\n"
+    "twist_min_degrees = -90.0\n"
+    "twist_max_degrees = 90.0";
+  const std::string upperRightKnownLimit =
+    "[bone.upper_arm_r.joint_limit]\n"
+    "kind = \"cone_twist\"\n"
+    "twist_axis = [1.0, 0.0, 0.0]\n"
+    "swing_degrees = 25.0\n"
+    "twist_min_degrees = -20.0\n"
+    "twist_max_degrees = 40.0";
+  if (!replaceOnce(&knownSkeleton, upperRightBone, rotatedUpperRightBone)
+      || !replaceOnce(&knownSkeleton, upperRightLimit, upperRightKnownLimit)) {
+    return fail("known-angle skeleton fixture replacement failed");
+  }
+  writeFile(knownSkeletonPath, knownSkeleton);
+  const auto knownClipPath = knownAnglesRoot / "clips/rifle_ready.anim.toml";
+  std::string knownClip = readFile(knownClipPath);
+  const std::string knownRotations[3] = {
+    "[-0.086824088833465152, 0.15038373318043530, 0.49240387650610395, 0.85286853195244328]",
+    "[0.22414386804201339, 0.12940952255126034, 0.48296291314453410, 0.83651630373780794]",
+    "[-0.22414386804201339, -0.12940952255126034, 0.48296291314453410, 0.83651630373780794]",
+  };
+  for (int key = 0; key < 3; ++key) {
+    const std::string section = "[track.upper_arm_r.key." + std::to_string(key) + "]";
+    const std::size_t sectionOffset = knownClip.find(section);
+    const std::size_t rotationOffset = sectionOffset == std::string::npos
+      ? std::string::npos
+      : knownClip.find("rotation = [0.0, 0.0, 0.0, 1.0]", sectionOffset);
+    if (rotationOffset == std::string::npos) return fail("known-angle clip fixture replacement failed");
+    knownClip.replace(
+      rotationOffset,
+      std::string("rotation = [0.0, 0.0, 0.0, 1.0]").size(),
+      "rotation = " + knownRotations[key]);
+  }
+  writeFile(knownClipPath, knownClip);
+  AnimationSystem knownAngles;
+  error.clear();
+  if (!knownAngles.loadFromDisk(AnimationConfig{knownAnglesRoot}, &error)) {
+    return fail("known-angle fixture load failed: " + error);
+  }
+  const auto knownHandle = knownAngles.findAttachmentProfileId("weapon.rifle.mk1.humanoid");
+  const auto knownSwing = knownHandle ? knownAngles.evaluateSampledAttachment(*knownHandle, "idle", 0.0, &error) : std::nullopt;
+  const auto knownPositiveTwist = knownHandle ? knownAngles.evaluateSampledAttachment(*knownHandle, "idle", 0.5, &error) : std::nullopt;
+  const auto knownNegativeTwist = knownHandle ? knownAngles.evaluateSampledAttachment(*knownHandle, "idle", 1.0, &error) : std::nullopt;
+  const auto* swingDiagnostic = knownSwing ? findJointDiagnostic(knownSwing->evaluation, "upper_arm_r") : nullptr;
+  const auto* positiveTwistDiagnostic = knownPositiveTwist ? findJointDiagnostic(knownPositiveTwist->evaluation, "upper_arm_r") : nullptr;
+  const auto* negativeTwistDiagnostic = knownNegativeTwist ? findJointDiagnostic(knownNegativeTwist->evaluation, "upper_arm_r") : nullptr;
+  if (!swingDiagnostic || !closeAngle(swingDiagnostic->swingDegrees, 20.0)
+      || !closeAngle(swingDiagnostic->twistDegrees, 0.0) || !swingDiagnostic->withinLimits
+      || !positiveTwistDiagnostic || !closeAngle(positiveTwistDiagnostic->swingDegrees, 0.0)
+      || !closeAngle(positiveTwistDiagnostic->twistDegrees, 30.0) || !positiveTwistDiagnostic->withinLimits
+      || !negativeTwistDiagnostic || !closeAngle(negativeTwistDiagnostic->swingDegrees, 0.0)
+      || !closeAngle(negativeTwistDiagnostic->twistDegrees, -30.0)
+      || !closeAngle(negativeTwistDiagnostic->twistViolationDegrees, 10.0)
+      || negativeTwistDiagnostic->withinLimits) {
+    return fail("known non-identity rest swing/twist diagnostics were not exact");
+  }
+  std::filesystem::remove_all(knownAnglesRoot);
+
+  const auto evaluateHalfTurn = [&](const std::string& rootName, const std::string& rotation)
+      -> std::optional<SpatialBoneJointLimitDiagnosticSnapshot> {
+    const auto halfTurnRoot = std::filesystem::temp_directory_path() / rootName;
+    std::filesystem::remove_all(halfTurnRoot);
+    std::filesystem::copy(sourceRoot, halfTurnRoot, std::filesystem::copy_options::recursive);
+    const auto halfTurnSkeletonPath = halfTurnRoot / "skeletons/spatial_humanoid.skeleton.toml";
+    std::string halfTurnSkeleton = readFile(halfTurnSkeletonPath);
+    const std::string halfTurnLimit =
+      "[bone.upper_arm_r.joint_limit]\n"
+      "kind = \"cone_twist\"\n"
+      "twist_axis = [1.0, 0.0, 0.0]\n"
+      "swing_degrees = 180.0\n"
+      "twist_min_degrees = 0.0\n"
+      "twist_max_degrees = 180.0";
+    if (!replaceOnce(&halfTurnSkeleton, upperRightLimit, halfTurnLimit)) return std::nullopt;
+    writeFile(halfTurnSkeletonPath, halfTurnSkeleton);
+    const auto halfTurnClipPath = halfTurnRoot / "clips/rifle_ready.anim.toml";
+    std::string halfTurnClip = readFile(halfTurnClipPath);
+    const std::string halfTurnKey =
+      "[track.upper_arm_r.key.1]\n"
+      "normalized_time = 0.5\n"
+      "translation = [-0.14, 0.05, 0.10]\n"
+      "rotation = [0.0, 0.0, 0.0, 1.0]";
+    const std::string changedHalfTurnKey =
+      "[track.upper_arm_r.key.1]\n"
+      "normalized_time = 0.5\n"
+      "translation = [-0.14, 0.05, 0.10]\n"
+      "rotation = " + rotation;
+    if (!replaceOnce(&halfTurnClip, halfTurnKey, changedHalfTurnKey)) return std::nullopt;
+    writeFile(halfTurnClipPath, halfTurnClip);
+    AnimationSystem halfTurnSystem;
+    error.clear();
+    if (!halfTurnSystem.loadFromDisk(AnimationConfig{halfTurnRoot}, &error)) return std::nullopt;
+    const auto handle = halfTurnSystem.findAttachmentProfileId("weapon.rifle.mk1.humanoid");
+    const auto sample = handle ? halfTurnSystem.evaluateSampledAttachment(*handle, "idle", 0.5, &error) : std::nullopt;
+    const auto* diagnostic = sample ? findJointDiagnostic(sample->evaluation, "upper_arm_r") : nullptr;
+    const auto result = diagnostic
+      ? std::optional<SpatialBoneJointLimitDiagnosticSnapshot>{*diagnostic}
+      : std::nullopt;
+    std::filesystem::remove_all(halfTurnRoot);
+    return result;
+  };
+  const auto positiveHalfTurn = evaluateHalfTurn("shader_forge_spatial_positive_half_turn", "[1.0, 0.0, 0.0, 0.0]");
+  const auto negativeHalfTurn = evaluateHalfTurn("shader_forge_spatial_negative_half_turn", "[-1.0, 0.0, 0.0, 0.0]");
+  if (!positiveHalfTurn || !negativeHalfTurn
+      || !closeAngle(positiveHalfTurn->twistDegrees, 180.0)
+      || !closeAngle(negativeHalfTurn->twistDegrees, 180.0)
+      || !positiveHalfTurn->withinLimits || !negativeHalfTurn->withinLimits
+      || positiveHalfTurn->twistViolationDegrees != negativeHalfTurn->twistViolationDegrees) {
+    return fail("equivalent exact-half-turn quaternions were not sign invariant");
   }
   const auto* restUpperL = findEvaluationBone(*rest, "upper_arm_l");
   const auto* restLowerL = findEvaluationBone(*rest, "lower_arm_l");
@@ -710,6 +931,7 @@ int main(int argc, char** argv) {
   if (!rejectMutation(v1SkeletonFile, "name = \"debug_humanoid\"", "name = \"debug_humanoid\"\n\n[bone.hips.joint_limit]\nkind = \"cone_twist\"")) return fail("schema-v1 skeleton accepted v2 joint metadata");
   if (!rejectMutation(skeletonFile, "role = \"primary_grip\"", "role = \"utility\"")) return fail("wrong primary socket role accepted");
   if (!rejectMutation(attachmentFile, "mode = \"two_hand\"", "mode = \"three_hand\"")) return fail("invalid attachment mode accepted");
+  if (!rejectMutation(attachmentFile, "joint_limit_policy = \"diagnose\"", "joint_limit_policy = \"clamp_and_diagnose\"")) return fail("unimplemented joint-limit clamp policy accepted");
   if (!rejectMutation(attachmentFile, "schema_version = 2", "schema_version = 99")) return fail("unknown attachment version accepted");
   if (!rejectMutation(attachmentFile, "schema_version = 2", "schema_version = nope")) return fail("malformed attachment version accepted without diagnostics");
   if (!rejectMutation(attachmentFile, "space = \"item\"", "space = \"world\"")) return fail("invalid pole space accepted");

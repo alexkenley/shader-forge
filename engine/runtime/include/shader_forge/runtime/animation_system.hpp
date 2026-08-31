@@ -242,6 +242,30 @@ struct SpatialSecondaryIkDiagnosticSnapshot {
   std::optional<bool> withinTolerance;
 };
 
+struct SpatialBoneJointLimitDiagnosticSnapshot {
+  std::string boneId;
+  std::string role;
+  double swingDegrees = 0.0;
+  double swingLimitDegrees = 0.0;
+  double twistDegrees = 0.0;
+  double twistMinDegrees = 0.0;
+  double twistMaxDegrees = 0.0;
+  double swingViolationDegrees = 0.0;
+  double twistViolationDegrees = 0.0;
+  bool withinLimits = false;
+};
+
+struct SpatialJointLimitDiagnosticSnapshot {
+  std::string status;
+  std::optional<std::string> reason;
+  std::string policy;
+  std::size_t evaluatedBoneCount = 0;
+  std::size_t violationCount = 0;
+  double maxViolationDegrees = 0.0;
+  std::optional<bool> withinLimits;
+  std::vector<SpatialBoneJointLimitDiagnosticSnapshot> bones;
+};
+
 struct SpatialAttachmentEvaluationSnapshot {
   int attachmentSchemaVersion = 0;
   std::string skeletonId;
@@ -263,6 +287,7 @@ struct SpatialAttachmentEvaluationSnapshot {
   std::optional<EvaluatedHandFrameSnapshot> dominantHandFrame;
   std::optional<EvaluatedSecondaryHandFrameSnapshot> secondaryHandFrame;
   SpatialSecondaryIkDiagnosticSnapshot secondaryIk;
+  SpatialJointLimitDiagnosticSnapshot jointLimits;
 };
 
 struct SpatialSampledAttachmentEvaluationSnapshot {

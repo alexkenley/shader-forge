@@ -420,6 +420,11 @@ bool isV2OnlyBoneNestedSection(std::string_view section) {
     || parseBoneNestedKey(section, ".diagnostic_capsule", &boneKey);
 }
 
+bool quaternionNeedsSignFlip(double x, double y, double z, double w) {
+  return w < 0.0
+    || (w == 0.0 && (x < 0.0 || (x == 0.0 && (y < 0.0 || (y == 0.0 && z < 0.0)))));
+}
+
 bool parseQuaternion(const std::string& raw, SpatialQuaternionSnapshot* rotation) {
   std::vector<double> values;
   if (!parseNumberArray(raw, &values) || values.size() != 4) {
@@ -430,7 +435,7 @@ bool parseQuaternion(const std::string& raw, SpatialQuaternionSnapshot* rotation
   if (std::abs(length - 1.0) > 1e-6) {
     return false;
   }
-  if (values[3] < 0.0) {
+  if (quaternionNeedsSignFlip(values[0], values[1], values[2], values[3])) {
     for (double& value : values) {
       value = -value;
     }
@@ -1735,7 +1740,7 @@ bool loadAttachmentProfileFile(
       }
       if (const auto policy = table.find("joint_limit_policy"); policy != table.end()) {
         if (!parseStrictString(policy->second, &secondary.jointLimitPolicy)
-            || (secondary.jointLimitPolicy != "diagnose" && secondary.jointLimitPolicy != "clamp_and_diagnose")) {
+            || secondary.jointLimitPolicy != "diagnose") {
           return fail(errorMessage, "Invalid joint_limit_policy in " + context);
         }
       }
@@ -1992,7 +1997,7 @@ bool canonicalizeQuaternion(SpatialQuaternionSnapshot* rotation, std::string* er
   rotation->y /= length;
   rotation->z /= length;
   rotation->w /= length;
-  if (rotation->w < 0.0) {
+  if (quaternionNeedsSignFlip(rotation->x, rotation->y, rotation->z, rotation->w)) {
     rotation->x = -rotation->x;
     rotation->y = -rotation->y;
     rotation->z = -rotation->z;
@@ -2076,6 +2081,115 @@ bool tryNormalizeVector(
 
 SpatialQuaternionSnapshot conjugateQuaternion(const SpatialQuaternionSnapshot& value) {
   return {-value.x, -value.y, -value.z, value.w};
+}
+
+bool evaluateJointLimits(
+  const AttachmentProfileSnapshot& profile,
+  const SkeletonDefinitionSnapshot& skeleton,
+  const std::vector<EvaluatedBonePoseSnapshot>& posedBones,
+  SpatialJointLimitDiagnosticSnapshot* diagnostic,
+  std::string* errorMessage) {
+  *diagnostic = {};
+  diagnostic->policy = profile.secondaryHand && !profile.secondaryHand->jointLimitPolicy.empty()
+    ? profile.secondaryHand->jointLimitPolicy
+    : "diagnose";
+
+  const double radiansToDegrees = 180.0 / std::acos(-1.0);
+  constexpr double degenerateEpsilon = 1e-12;
+  for (std::size_t index = 0; index < skeleton.boneDefinitions.size(); ++index) {
+    const auto& authored = skeleton.boneDefinitions[index];
+    if (!authored.jointLimit) {
+      continue;
+    }
+    if (index >= posedBones.size() || posedBones[index].id != authored.id) {
+      return fail(errorMessage, "Spatial joint-limit evaluation pose is not in stable skeleton order.");
+    }
+
+    SpatialQuaternionSnapshot delta = multiplyQuaternions(
+      conjugateQuaternion(authored.rotation),
+      posedBones[index].local.rotation);
+    if (!canonicalizeQuaternion(&delta, errorMessage)) {
+      return fail(errorMessage, "Spatial joint-limit evaluation produced a non-finite rotation.");
+    }
+
+    const auto& limit = *authored.jointLimit;
+    const double projected = delta.x * limit.twistAxis.x
+      + delta.y * limit.twistAxis.y
+      + delta.z * limit.twistAxis.z;
+    SpatialQuaternionSnapshot twist{
+      limit.twistAxis.x * projected,
+      limit.twistAxis.y * projected,
+      limit.twistAxis.z * projected,
+      delta.w,
+    };
+    const double twistLength = std::sqrt(
+      twist.x * twist.x + twist.y * twist.y + twist.z * twist.z + twist.w * twist.w);
+    if (!std::isfinite(twistLength)) {
+      return fail(errorMessage, "Spatial joint-limit evaluation produced non-finite twist math.");
+    }
+    if (twistLength <= degenerateEpsilon) {
+      twist = {0.0, 0.0, 0.0, 1.0};
+    } else {
+      twist.x /= twistLength;
+      twist.y /= twistLength;
+      twist.z /= twistLength;
+      twist.w /= twistLength;
+      if (quaternionNeedsSignFlip(twist.x, twist.y, twist.z, twist.w)) {
+        twist.x = -twist.x;
+        twist.y = -twist.y;
+        twist.z = -twist.z;
+        twist.w = -twist.w;
+      }
+    }
+
+    SpatialQuaternionSnapshot swing = multiplyQuaternions(delta, conjugateQuaternion(twist));
+    if (!canonicalizeQuaternion(&swing, errorMessage)) {
+      return fail(errorMessage, "Spatial joint-limit evaluation produced a non-finite swing rotation.");
+    }
+    const double signedTwistSine = twist.x * limit.twistAxis.x
+      + twist.y * limit.twistAxis.y
+      + twist.z * limit.twistAxis.z;
+    const double twistDegrees = 2.0 * std::atan2(signedTwistSine, twist.w) * radiansToDegrees;
+    const double swingDegrees = 2.0 * std::acos(std::clamp(swing.w, 0.0, 1.0)) * radiansToDegrees;
+    if (!std::isfinite(twistDegrees) || !std::isfinite(swingDegrees)) {
+      return fail(errorMessage, "Spatial joint-limit evaluation produced non-finite angular diagnostics.");
+    }
+
+    const double swingViolation = std::max(0.0, swingDegrees - limit.swingDegrees);
+    const double twistViolation = twistDegrees < limit.twistMinDegrees
+      ? limit.twistMinDegrees - twistDegrees
+      : (twistDegrees > limit.twistMaxDegrees ? twistDegrees - limit.twistMaxDegrees : 0.0);
+    const bool withinLimits = swingViolation == 0.0 && twistViolation == 0.0;
+    diagnostic->bones.push_back({
+      authored.id,
+      authored.role,
+      withoutSignedZero(swingDegrees),
+      withoutSignedZero(limit.swingDegrees),
+      withoutSignedZero(twistDegrees),
+      withoutSignedZero(limit.twistMinDegrees),
+      withoutSignedZero(limit.twistMaxDegrees),
+      withoutSignedZero(swingViolation),
+      withoutSignedZero(twistViolation),
+      withinLimits,
+    });
+    if (!withinLimits) {
+      diagnostic->violationCount += 1;
+    }
+    diagnostic->maxViolationDegrees = std::max(
+      diagnostic->maxViolationDegrees,
+      std::max(swingViolation, twistViolation));
+  }
+
+  diagnostic->evaluatedBoneCount = diagnostic->bones.size();
+  if (diagnostic->bones.empty()) {
+    diagnostic->status = "unavailable";
+    diagnostic->reason = "no_joint_limits_authored";
+    return true;
+  }
+  diagnostic->status = "available";
+  diagnostic->withinLimits = diagnostic->violationCount == 0;
+  diagnostic->maxViolationDegrees = withoutSignedZero(diagnostic->maxViolationDegrees);
+  return true;
 }
 
 bool invertTransform(
@@ -2608,6 +2722,9 @@ bool composeAttachmentEvaluation(
   evaluation->perspective = profile.perspective;
   evaluation->primaryGripSocket = profile.primaryGrip.socket;
   evaluation->bones = posedBones;
+  if (!evaluateJointLimits(profile, skeleton, posedBones, &evaluation->jointLimits, errorMessage)) {
+    return false;
+  }
 
   for (const auto& bone : posedBones) {
     if (bone.parent.empty()) {
