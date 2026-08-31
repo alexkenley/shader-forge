@@ -398,7 +398,7 @@ async function ensureCookedAssets(rootPath, summary, options = {}) {
   }
 
   const report = await bakeAssetPipeline({
-    repoRoot,
+    repoRoot: rootPath,
     contentRoot: path.join(rootPath, summary.contentRootPath),
     audioRoot: path.join(rootPath, summary.audioRootPath),
     animationRoot: path.join(rootPath, summary.animationRootPath),
