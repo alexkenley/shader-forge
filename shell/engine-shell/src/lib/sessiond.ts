@@ -869,6 +869,45 @@ export type SpatialAppliedSecondaryIkDiagnostic = {
   withinTolerance: boolean;
 };
 
+export type SpatialBoneJointLimitDiagnostic = {
+  boneId: string;
+  role: string;
+  swingDegrees: number;
+  swingLimitDegrees: number;
+  twistDegrees: number;
+  twistMinDegrees: number;
+  twistMaxDegrees: number;
+  swingViolationDegrees: number;
+  twistViolationDegrees: number;
+  withinLimits: boolean;
+};
+
+export type SpatialUnavailableJointLimitsDiagnostic = {
+  status: 'unavailable';
+  reason: 'no_joint_limits_authored';
+  policy: 'diagnose';
+  evaluatedBoneCount: 0;
+  violationCount: 0;
+  maxViolationDegrees: 0;
+  withinLimits: null;
+  bones: [];
+};
+
+export type SpatialAvailableJointLimitsDiagnostic = {
+  status: 'available';
+  reason: null;
+  policy: 'diagnose';
+  evaluatedBoneCount: number;
+  violationCount: number;
+  maxViolationDegrees: number;
+  withinLimits: boolean;
+  bones: SpatialBoneJointLimitDiagnostic[];
+};
+
+export type SpatialJointLimitsDiagnostic =
+  | SpatialUnavailableJointLimitsDiagnostic
+  | SpatialAvailableJointLimitsDiagnostic;
+
 export type SpatialSourceRevision = {
   path: string;
   revision: string;
@@ -968,7 +1007,7 @@ export type SpatialAttachmentEvaluation = {
   };
   diagnostics: {
     secondaryIk: SpatialEvaluationDiagnostic | SpatialAppliedSecondaryIkDiagnostic;
-    jointLimits: SpatialEvaluationDiagnostic;
+    jointLimits: SpatialJointLimitsDiagnostic;
     clipping: SpatialEvaluationDiagnostic;
   };
   limitations: string[];

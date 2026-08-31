@@ -113,6 +113,31 @@ const APPLIED_SECONDARY_IK_KEYS = [
   'angleWithinTolerance',
   'withinTolerance',
 ] as const;
+const JOINT_LIMIT_KEYS = [
+  'status',
+  'reason',
+  'policy',
+  'evaluatedBoneCount',
+  'violationCount',
+  'maxViolationDegrees',
+  'withinLimits',
+  'bones',
+] as const;
+const JOINT_LIMIT_BONE_KEYS = [
+  'boneId',
+  'role',
+  'swingDegrees',
+  'swingLimitDegrees',
+  'twistDegrees',
+  'twistMinDegrees',
+  'twistMaxDegrees',
+  'swingViolationDegrees',
+  'twistViolationDegrees',
+  'withinLimits',
+] as const;
+const JOINT_LIMIT_POLICY = 'diagnose';
+const JOINT_LIMIT_UNAVAILABLE_REASON = 'no_joint_limits_authored';
+const JOINT_LIMIT_DEGREE_BOUND = 180;
 
 type ValidationBudget = { textLength: number };
 type SpatialEvaluationQuat = [number, number, number, number];
@@ -283,6 +308,105 @@ function uniqueAllowedLayers(value: unknown, budget: ValidationBudget): value is
 
 function finiteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function finiteBoundedNoNegZero(value: unknown, min: number, max: number): value is number {
+  return typeof value === 'number'
+    && Number.isFinite(value)
+    && !Object.is(value, -0)
+    && value >= min
+    && value <= max;
+}
+
+function safeNonnegativeInteger(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && Number.isSafeInteger(value)
+    && !Object.is(value, -0)
+    && value >= 0;
+}
+
+function expectedSwingViolation(swingDegrees: number, swingLimitDegrees: number) {
+  return Math.max(0, swingDegrees - swingLimitDegrees);
+}
+
+function expectedTwistViolation(twistDegrees: number, twistMinDegrees: number, twistMaxDegrees: number) {
+  if (twistDegrees < twistMinDegrees) return twistMinDegrees - twistDegrees;
+  if (twistDegrees > twistMaxDegrees) return twistDegrees - twistMaxDegrees;
+  return 0;
+}
+
+function validJointLimits(value: unknown, evaluationBones: unknown, budget: ValidationBudget) {
+  if (!exactRecord(value, JOINT_LIMIT_KEYS) || value.policy !== JOINT_LIMIT_POLICY) return false;
+  if (!Array.isArray(evaluationBones) || !Array.isArray(value.bones)) return false;
+  if (
+    value.bones.length > evaluationBones.length
+    || value.bones.length > SPATIAL_EVALUATION_LIMITS.maxBones
+  ) return false;
+  if (
+    !safeNonnegativeInteger(value.evaluatedBoneCount)
+    || !safeNonnegativeInteger(value.violationCount)
+    || value.evaluatedBoneCount !== value.bones.length
+    || !finiteBoundedNoNegZero(value.maxViolationDegrees, 0, JOINT_LIMIT_DEGREE_BOUND * 2)
+  ) return false;
+
+  const identities: Array<{ id: string; role: string }> = [];
+  for (const entry of evaluationBones) {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.role !== 'string') return false;
+    identities.push({ id: entry.id, role: entry.role });
+  }
+
+  let cursor = 0;
+  let computedViolations = 0;
+  let computedMax = 0;
+  for (const entry of value.bones) {
+    if (
+      !exactRecord(entry, JOINT_LIMIT_BONE_KEYS)
+      || !boundedString(entry.boneId, budget)
+      || !boundedString(entry.role, budget)
+      || !finiteBoundedNoNegZero(entry.swingDegrees, 0, JOINT_LIMIT_DEGREE_BOUND)
+      || !finiteBoundedNoNegZero(entry.swingLimitDegrees, 0, JOINT_LIMIT_DEGREE_BOUND)
+      || !finiteBoundedNoNegZero(entry.twistDegrees, -JOINT_LIMIT_DEGREE_BOUND, JOINT_LIMIT_DEGREE_BOUND)
+      || !finiteBoundedNoNegZero(entry.twistMinDegrees, -JOINT_LIMIT_DEGREE_BOUND, JOINT_LIMIT_DEGREE_BOUND)
+      || !finiteBoundedNoNegZero(entry.twistMaxDegrees, -JOINT_LIMIT_DEGREE_BOUND, JOINT_LIMIT_DEGREE_BOUND)
+      || !finiteBoundedNoNegZero(entry.swingViolationDegrees, 0, JOINT_LIMIT_DEGREE_BOUND)
+      || !finiteBoundedNoNegZero(entry.twistViolationDegrees, 0, JOINT_LIMIT_DEGREE_BOUND * 2)
+      || typeof entry.withinLimits !== 'boolean'
+    ) return false;
+    while (cursor < identities.length && identities[cursor].id !== entry.boneId) cursor += 1;
+    if (cursor >= identities.length || identities[cursor].role !== entry.role) return false;
+    cursor += 1;
+    const expectedSwing = expectedSwingViolation(entry.swingDegrees, entry.swingLimitDegrees);
+    const expectedTwist = expectedTwistViolation(
+      entry.twistDegrees,
+      entry.twistMinDegrees,
+      entry.twistMaxDegrees,
+    );
+    if (!near(entry.swingViolationDegrees, expectedSwing) || !near(entry.twistViolationDegrees, expectedTwist)) {
+      return false;
+    }
+    const within = near(expectedSwing, 0) && near(expectedTwist, 0);
+    if (entry.withinLimits !== within) return false;
+    if (!within) computedViolations += 1;
+    computedMax = Math.max(computedMax, expectedSwing, expectedTwist);
+  }
+  if (value.violationCount !== computedViolations || !near(value.maxViolationDegrees, computedMax)) {
+    return false;
+  }
+  if (value.status === 'available') {
+    return value.reason === null
+      && typeof value.withinLimits === 'boolean'
+      && value.bones.length > 0
+      && value.withinLimits === (computedViolations === 0);
+  }
+  return value.status === 'unavailable'
+    && value.reason === JOINT_LIMIT_UNAVAILABLE_REASON
+    && boundedString(value.reason, budget)
+    && value.withinLimits === null
+    && value.evaluatedBoneCount === 0
+    && value.violationCount === 0
+    && Object.is(value.maxViolationDegrees, 0)
+    && value.bones.length === 0;
 }
 
 function sampledPoseShape(value: unknown, budget: ValidationBudget): value is SpatialSampledPose {
@@ -586,7 +710,7 @@ export function isSpatialAttachmentEvaluation(value: unknown): value is SpatialA
   )) return false;
   if (
     !exactRecord(value.diagnostics, ['secondaryIk', 'jointLimits', 'clipping'])
-    || !exactStatusReason(value.diagnostics.jointLimits, 'unavailable', 'joint_limit_evaluation_not_integrated', budget)
+    || !validJointLimits(value.diagnostics.jointLimits, value.bones, budget)
     || !exactStatusReason(value.diagnostics.clipping, 'unavailable', 'item_and_capsule_geometry_not_integrated', budget)
     || !Array.isArray(value.limitations)
     || value.limitations.length > SPATIAL_EVALUATION_LIMITS.maxLimitations
@@ -1068,7 +1192,16 @@ function diagnosticRows(evaluation: SpatialAttachmentEvaluation) {
   } else {
     add('Secondary IK', secondaryIk);
   }
-  add('Joint limits', evaluation.diagnostics.jointLimits);
+  const jointLimits = evaluation.diagnostics.jointLimits;
+  if (isRecord(jointLimits) && jointLimits.status === 'available') {
+    rows.push({
+      name: 'Joint limits',
+      status: jointLimits.withinLimits === true ? 'PASS' : 'FAIL',
+      reason: `diagnose-only; pose not mutated; evaluated ${String(jointLimits.evaluatedBoneCount)}; violations ${String(jointLimits.violationCount)}; max ${String(jointLimits.maxViolationDegrees)} deg`,
+    });
+  } else {
+    add('Joint limits', jointLimits);
+  }
   add('Clipping', evaluation.diagnostics.clipping);
   const pole = isRecord(evaluation.hands.secondary) && isRecord(evaluation.hands.secondary.pole)
     ? evaluation.hands.secondary.pole
@@ -1213,7 +1346,7 @@ export function SpatialRestSchematic({
       </div>
       <figcaption>
         {sampled
-          ? `Native evaluator world frames only, including solved sampled hand and bone frames when present. ${hasVisualBox ? 'The outlined item box is exact authored render-procgeo evidence, not collision truth.' : 'No authored item box is available.'} A resolved authored pole is shown as a green ring. No item mesh, joint-limit result, clipping result, camera, capture, or immutable review packet is shown. An unresolved pole is never projected. V1 two-hand samples remain pre-IK.`
+          ? `Native evaluator world frames only, including solved sampled hand and bone frames when present. ${hasVisualBox ? 'The outlined item box is exact authored render-procgeo evidence, not collision truth.' : 'No authored item box is available.'} A resolved authored pole is shown as a green ring. No item mesh, clipping result, camera, capture, or immutable review packet is shown. An unresolved pole is never projected. V1 two-hand samples remain pre-IK.`
           : `Native evaluator world frames only. ${hasVisualBox ? 'The outlined item box is exact authored render-procgeo evidence, not collision truth.' : 'No authored item box is available.'} The item origin and axes plus any resolved authored pole remain explicit. No rendered mesh, sampled animation, IK result, clipping result, camera, capture, or immutable review packet is shown.`}
       </figcaption>
       <ul className="spatial-rest-schematic__legend" aria-label="Schematic legend">
@@ -1244,6 +1377,41 @@ export function SpatialRestSchematic({
               ))}
             </dl>
           </details>
+          {safeEvaluation.diagnostics.jointLimits.status === 'available' ? (
+            <details>
+              <summary>Joint-limit bone diagnostics ({safeEvaluation.diagnostics.jointLimits.bones.length})</summary>
+              <div className="spatial-rest-schematic__table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Bone</th>
+                      <th>Role</th>
+                      <th>Swing</th>
+                      <th>Limit</th>
+                      <th>Swing violation</th>
+                      <th>Twist</th>
+                      <th>Range</th>
+                      <th>Twist violation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {safeEvaluation.diagnostics.jointLimits.bones.map((bone, index) => (
+                      <tr key={`${bone.boneId}:${index}`}>
+                        <th scope="row">{bone.boneId}</th>
+                        <td>{bone.role}</td>
+                        <td><code>{String(bone.swingDegrees)} deg</code></td>
+                        <td><code>{String(bone.swingLimitDegrees)} deg</code></td>
+                        <td><code>{String(bone.swingViolationDegrees)} deg</code></td>
+                        <td><code>{String(bone.twistDegrees)} deg</code></td>
+                        <td><code>[{String(bone.twistMinDegrees)}, {String(bone.twistMaxDegrees)}] deg</code></td>
+                        <td><code>{String(bone.twistViolationDegrees)} deg</code></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ) : null}
           {sourceRevisions.length ? (
             <details>
               <summary>Exact source revisions ({sourceRevisions.length})</summary>

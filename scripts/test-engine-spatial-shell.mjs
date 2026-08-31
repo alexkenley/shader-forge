@@ -113,7 +113,16 @@ const validRestEvaluation = {
   },
   diagnostics: {
     secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
-    jointLimits: { status: 'unavailable', reason: 'joint_limit_evaluation_not_integrated' },
+    jointLimits: {
+      status: 'unavailable',
+      reason: 'no_joint_limits_authored',
+      policy: 'diagnose',
+      evaluatedBoneCount: 0,
+      violationCount: 0,
+      maxViolationDegrees: 0,
+      withinLimits: null,
+      bones: [],
+    },
     clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
   },
   limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],
@@ -225,6 +234,70 @@ function sampledEvaluation({ schemaVersion = 1, mode = 'one_hand', reachable = t
     angleWithinTolerance: true,
     withinTolerance: reachable,
   };
+  return evaluation;
+}
+
+function jointLimitBone(boneId, overrides = {}) {
+  return {
+    boneId,
+    role: boneId,
+    swingDegrees: 0,
+    swingLimitDegrees: 70,
+    twistDegrees: 0,
+    twistMinDegrees: -80,
+    twistMaxDegrees: 80,
+    swingViolationDegrees: 0,
+    twistViolationDegrees: 0,
+    withinLimits: true,
+    ...overrides,
+  };
+}
+
+function availableJointLimits(bones) {
+  const violationCount = bones.filter((bone) => bone.withinLimits === false).length;
+  const maxViolationDegrees = bones.reduce(
+    (current, bone) => Math.max(current, bone.swingViolationDegrees, bone.twistViolationDegrees),
+    0,
+  );
+  return {
+    status: 'available',
+    reason: null,
+    policy: 'diagnose',
+    evaluatedBoneCount: bones.length,
+    violationCount,
+    maxViolationDegrees,
+    withinLimits: violationCount === 0,
+    bones,
+  };
+}
+
+function unavailableJointLimits(reason = 'no_joint_limits_authored') {
+  return {
+    status: 'unavailable',
+    reason,
+    policy: 'diagnose',
+    evaluatedBoneCount: 0,
+    violationCount: 0,
+    maxViolationDegrees: 0,
+    withinLimits: null,
+    bones: [],
+  };
+}
+
+function withJointLimits(evaluation, jointLimits) {
+  evaluation.diagnostics.jointLimits = jointLimits;
+  return evaluation;
+}
+
+function twoBoneRestEvaluation() {
+  const evaluation = structuredClone(populatedRestEvaluation);
+  evaluation.bones.push({
+    id: 'hand_r',
+    parent: 'root',
+    role: 'hand_r',
+    local: structuredClone(evaluationTransform),
+    world: structuredClone(evaluationTransform),
+  });
   return evaluation;
 }
 
@@ -361,6 +434,7 @@ assert.equal(
 assert.equal(schematic.spatialProjectionBounds([], 'xy'), null);
 assert.equal(schematic.isSpatialAttachmentEvaluation(validRestEvaluation), true);
 assert.equal(schematic.isSpatialAttachmentEvaluation(populatedRestEvaluation), true);
+assert.deepEqual(validRestEvaluation.diagnostics.jointLimits, unavailableJointLimits());
 const visualBoxEvaluation = structuredClone(populatedRestEvaluation);
 visualBoxEvaluation.item.geometry = {
   status: 'available',
@@ -522,6 +596,194 @@ excessiveCoordinateRows.segments = Array.from(
 );
 assert.equal(schematic.isSpatialAttachmentEvaluation(excessiveCoordinateRows), false);
 
+const availablePass = withJointLimits(
+  structuredClone(populatedRestEvaluation),
+  availableJointLimits([jointLimitBone('root')]),
+);
+assert.equal(schematic.isSpatialAttachmentEvaluation(availablePass), true, 'available in-limit joint diagnostics must pass');
+const availableViolation = withJointLimits(
+  structuredClone(populatedRestEvaluation),
+  availableJointLimits([jointLimitBone('root', {
+    swingDegrees: 90,
+    swingViolationDegrees: 20,
+    withinLimits: false,
+  })]),
+);
+assert.equal(schematic.isSpatialAttachmentEvaluation(availableViolation), true, 'available joint-limit violations must pass');
+const availableTwistViolation = withJointLimits(
+  structuredClone(populatedRestEvaluation),
+  availableJointLimits([jointLimitBone('root', {
+    twistDegrees: 100,
+    twistViolationDegrees: 20,
+    withinLimits: false,
+  })]),
+);
+assert.equal(schematic.isSpatialAttachmentEvaluation(availableTwistViolation), true, 'available twist violations must pass');
+const twoBoneAvailable = withJointLimits(
+  twoBoneRestEvaluation(),
+  availableJointLimits([jointLimitBone('root'), jointLimitBone('hand_r')]),
+);
+assert.equal(schematic.isSpatialAttachmentEvaluation(twoBoneAvailable), true, 'stable-order subsequence joint diagnostics must pass');
+const sampledAvailable = withJointLimits(
+  sampledEvaluation(),
+  availableJointLimits([jointLimitBone('root')]),
+);
+assert.equal(schematic.isSpatialAttachmentEvaluation(sampledAvailable), true, 'sampled available joint diagnostics must pass');
+
+for (const [label, mutate] of [
+  ['legacy two-key jointLimits', (report) => {
+    report.diagnostics.jointLimits = {
+      status: 'unavailable',
+      reason: 'joint_limit_evaluation_not_integrated',
+    };
+  }],
+  ['jointLimits extra key', (report) => {
+    report.diagnostics.jointLimits.clampApplied = false;
+  }],
+  ['jointLimits missing key', (report) => {
+    delete report.diagnostics.jointLimits.policy;
+  }],
+  ['jointLimits non-diagnose policy', (report) => {
+    report.diagnostics.jointLimits.policy = 'clamp_and_diagnose';
+  }],
+  ['jointLimits unknown status', (report) => {
+    report.diagnostics.jointLimits.status = 'pending';
+  }],
+  ['jointLimits empty unavailable reason', (report) => {
+    report.diagnostics.jointLimits.reason = '';
+  }],
+  ['jointLimits wrong unavailable reason', (report) => {
+    report.diagnostics.jointLimits.reason = 'joint_limit_evaluation_not_integrated';
+  }],
+  ['jointLimits unavailable with withinLimits', (report) => {
+    report.diagnostics.jointLimits.withinLimits = true;
+  }],
+  ['jointLimits unavailable with bones', (report) => {
+    report.diagnostics.jointLimits.evaluatedBoneCount = 1;
+    report.diagnostics.jointLimits.bones = [jointLimitBone('root')];
+  }],
+  ['jointLimits non-integer count', (report) => {
+    report.diagnostics.jointLimits.evaluatedBoneCount = 0.5;
+  }],
+  ['jointLimits negative count', (report) => {
+    report.diagnostics.jointLimits.violationCount = -1;
+  }],
+  ['jointLimits nonfinite maxViolationDegrees', (report) => {
+    report.diagnostics.jointLimits.maxViolationDegrees = Number.POSITIVE_INFINITY;
+  }],
+  ['jointLimits negative-zero maxViolationDegrees', (report) => {
+    report.diagnostics.jointLimits.maxViolationDegrees = -0;
+  }],
+]) {
+  const malformed = structuredClone(populatedRestEvaluation);
+  mutate(malformed);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, `${label} must fail closed`);
+}
+
+for (const [label, mutate] of [
+  ['jointLimits available with reason', (report) => {
+    report.diagnostics.jointLimits.reason = 'no_joint_limits_authored';
+  }],
+  ['jointLimits available with null withinLimits', (report) => {
+    report.diagnostics.jointLimits.withinLimits = null;
+  }],
+  ['jointLimits available empty bones', (report) => {
+    report.diagnostics.jointLimits = availableJointLimits([]);
+  }],
+  ['jointLimits extra bone key', (report) => {
+    report.diagnostics.jointLimits.bones[0].hingeDegrees = 0;
+  }],
+  ['jointLimits missing bone key', (report) => {
+    delete report.diagnostics.jointLimits.bones[0].role;
+  }],
+  ['jointLimits unknown bone id', (report) => {
+    report.diagnostics.jointLimits.bones[0].boneId = 'missing';
+  }],
+  ['jointLimits role mismatch', (report) => {
+    report.diagnostics.jointLimits.bones[0].role = 'not_root';
+  }],
+  ['jointLimits evaluatedBoneCount mismatch', (report) => {
+    report.diagnostics.jointLimits.evaluatedBoneCount = 2;
+  }],
+  ['jointLimits contradictory violationCount', (report) => {
+    report.diagnostics.jointLimits.violationCount = 1;
+    report.diagnostics.jointLimits.withinLimits = false;
+  }],
+  ['jointLimits contradictory aggregate withinLimits', (report) => {
+    report.diagnostics.jointLimits.withinLimits = false;
+  }],
+  ['jointLimits contradictory maxViolationDegrees', (report) => {
+    report.diagnostics.jointLimits.maxViolationDegrees = 12;
+  }],
+  ['jointLimits bone contradictory withinLimits', (report) => {
+    report.diagnostics.jointLimits.bones[0].swingViolationDegrees = 8;
+    report.diagnostics.jointLimits.bones[0].withinLimits = true;
+    report.diagnostics.jointLimits.violationCount = 0;
+    report.diagnostics.jointLimits.withinLimits = true;
+    report.diagnostics.jointLimits.maxViolationDegrees = 8;
+  }],
+  ['jointLimits swing violation mismatch', (report) => {
+    report.diagnostics.jointLimits.bones[0].swingDegrees = 90;
+    report.diagnostics.jointLimits.bones[0].swingViolationDegrees = 0;
+    report.diagnostics.jointLimits.bones[0].withinLimits = true;
+  }],
+  ['jointLimits twist violation mismatch', (report) => {
+    report.diagnostics.jointLimits.bones[0].twistDegrees = 100;
+    report.diagnostics.jointLimits.bones[0].twistViolationDegrees = 0;
+    report.diagnostics.jointLimits.bones[0].withinLimits = true;
+  }],
+  ['jointLimits nonfinite swingDegrees', (report) => {
+    report.diagnostics.jointLimits.bones[0].swingDegrees = Number.NaN;
+  }],
+  ['jointLimits negative-zero swingDegrees', (report) => {
+    report.diagnostics.jointLimits.bones[0].swingDegrees = -0;
+  }],
+  ['jointLimits negative-zero twistDegrees', (report) => {
+    report.diagnostics.jointLimits.bones[0].twistDegrees = -0;
+  }],
+  ['jointLimits swingDegrees out of bounds', (report) => {
+    report.diagnostics.jointLimits.bones[0].swingDegrees = 181;
+  }],
+  ['jointLimits twistDegrees out of bounds', (report) => {
+    report.diagnostics.jointLimits.bones[0].twistDegrees = 181;
+  }],
+  ['jointLimits twistMin out of bounds', (report) => {
+    report.diagnostics.jointLimits.bones[0].twistMinDegrees = -181;
+  }],
+  ['jointLimits oversized bones', (report) => {
+    report.diagnostics.jointLimits = availableJointLimits([
+      jointLimitBone('root'),
+      jointLimitBone('hand_r'),
+    ]);
+  }],
+]) {
+  const malformed = withJointLimits(
+    structuredClone(populatedRestEvaluation),
+    availableJointLimits([jointLimitBone('root')]),
+  );
+  mutate(malformed);
+  assert.equal(schematic.isSpatialAttachmentEvaluation(malformed), false, `${label} must fail closed`);
+}
+
+const outOfOrderJointLimits = withJointLimits(
+  twoBoneRestEvaluation(),
+  availableJointLimits([jointLimitBone('hand_r'), jointLimitBone('root')]),
+);
+assert.equal(
+  schematic.isSpatialAttachmentEvaluation(outOfOrderJointLimits),
+  false,
+  'joint-limit bone order must follow evaluation.bones',
+);
+const skippedOrderJointLimits = withJointLimits(
+  twoBoneRestEvaluation(),
+  availableJointLimits([jointLimitBone('hand_r'), jointLimitBone('hand_r')]),
+);
+assert.equal(
+  schematic.isSpatialAttachmentEvaluation(skippedOrderJointLimits),
+  false,
+  'joint-limit ids must consume evaluation.bones in stable order',
+);
+
 assert.match(appSource, /activeTab === 'Assets'[\s\S]*SpatialAttachmentEditorView/);
 assert.match(appSource, /activeTab === 'World'[\s\S]*SceneEditorView/);
 assert.equal((appSource.match(/subscribeSessiondEvents\(/g) || []).length, 1, 'App must retain one shared SSE subscription');
@@ -616,7 +878,22 @@ assert.match(schematicSource, /PRE-IK/);
 assert.match(schematicSource, /NOT REVIEW EVIDENCE/);
 assert.match(schematicSource, /Exact source revisions/);
 assert.match(schematicSource, /Source revisions/);
-assert.match(schematicSource, /No item mesh, joint-limit result, clipping result, camera, capture, or immutable review packet/);
+assert.match(schematicSource, /No item mesh, clipping result, camera, capture, or immutable review packet/);
+assert.doesNotMatch(schematicSource, /joint-limit result/);
+assert.match(schematicSource, /diagnose-only/);
+assert.match(schematicSource, /pose not mutated/);
+assert.match(schematicSource, /function validJointLimits/);
+assert.match(schematicSource, /no_joint_limits_authored/);
+assert.match(schematicSource, /Joint-limit bone diagnostics/);
+assert.match(schematicSource, /Swing violation/);
+assert.match(schematicSource, /Twist violation/);
+assert.doesNotMatch(schematicSource, /joint_limit_evaluation_not_integrated/);
+assert.match(clientSource, /type SpatialBoneJointLimitDiagnostic/);
+assert.match(clientSource, /type SpatialUnavailableJointLimitsDiagnostic/);
+assert.match(clientSource, /type SpatialAvailableJointLimitsDiagnostic/);
+assert.match(clientSource, /type SpatialJointLimitsDiagnostic/);
+assert.match(clientSource, /jointLimits: SpatialJointLimitsDiagnostic/);
+assert.doesNotMatch(clientSource, /jointLimits: SpatialEvaluationDiagnostic/);
 assert.match(schematicSource, /ITEM_BOX_EDGES/);
 assert.match(schematicSource, /exact authored render-procgeo evidence, not collision truth/);
 assert.match(schematicSource, /not collision geometry or a rendered mesh/);
