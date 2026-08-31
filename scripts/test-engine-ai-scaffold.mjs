@@ -39,6 +39,9 @@ const openRouterServer = http.createServer((request, response) => {
     response.end(JSON.stringify({
       id: 'openrouter-test-request',
       choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }],
+      usage: request.url === '/v1/chat/completions'
+        ? { prompt_tokens: 10, completion_tokens: 2 }
+        : { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
     }));
   });
 });
@@ -177,6 +180,7 @@ try {
   });
   assert.equal(aiSmoke.providerId, 'local_fake');
   assert.equal(aiSmoke.content, 'ready');
+  assert.equal(aiSmoke.usage, null);
 
   const ollamaSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
@@ -185,6 +189,7 @@ try {
   assert.equal(ollamaSmoke.providerId, 'local_ollama');
   assert.equal(ollamaSmoke.model, 'test-local');
   assert.equal(ollamaSmoke.content, 'ready');
+  assert.deepEqual(ollamaSmoke.usage, { promptTokens: 10, completionTokens: 2, totalTokens: 12 });
   const ollamaRequest = providerRequests.find((request) => request.path === '/v1/chat/completions');
   assert.equal(ollamaRequest?.authorization, '');
   assert.equal(ollamaRequest?.body?.max_tokens, 256);
@@ -197,6 +202,7 @@ try {
   assert.equal(openRouterSmoke.providerType, 'openrouter');
   assert.equal(openRouterSmoke.model, 'moonshotai/kimi-k3');
   assert.equal(openRouterSmoke.content, 'ready');
+  assert.deepEqual(openRouterSmoke.usage, { promptTokens: 10, completionTokens: 2, totalTokens: 12 });
   const openRouterRequest = providerRequests.find((request) => request.path === '/api/v1/chat/completions');
   assert.equal(openRouterRequest?.authorization, 'Bearer test-openrouter-key');
   assert.equal(openRouterRequest?.body?.model, 'moonshotai/kimi-k3');

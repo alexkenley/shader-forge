@@ -460,6 +460,23 @@ function deterministicFakeResponse(providerId, prompt) {
   return `fake:${providerId}:${normalizedPrompt.slice(0, 160)}`;
 }
 
+function normalizeTokenUsage(usage) {
+  const promptTokens = Number(usage?.prompt_tokens);
+  const completionTokens = Number(usage?.completion_tokens);
+  const totalTokens = Number(usage?.total_tokens);
+  if (!Number.isSafeInteger(promptTokens) || promptTokens < 0
+    || !Number.isSafeInteger(completionTokens) || completionTokens < 0) {
+    return null;
+  }
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: Number.isSafeInteger(totalTokens) && totalTokens >= 0
+      ? totalTokens
+      : promptTokens + completionTokens,
+  };
+}
+
 export async function inspectAiProviders(rootPath, { timeoutMs = 2_500 } = {}) {
   const loaded = await loadAiProviders(rootPath);
   const providers = await Promise.all(
@@ -527,6 +544,7 @@ export async function testAiProvider(
       model: provider.selectedModel || provider.model || 'deterministic-fake',
       content: deterministicFakeResponse(provider.id, prompt),
       finishReason: 'stop',
+      usage: null,
       durationMs: Date.now() - startedAt,
       requestId: `ai_request_${Date.now()}`,
       diagnostics: ['Served by the deterministic fake provider.'],
@@ -567,6 +585,7 @@ export async function testAiProvider(
     model: provider.selectedModel || provider.model || null,
     content,
     finishReason: trim(response?.choices?.[0]?.finish_reason) || 'stop',
+    usage: normalizeTokenUsage(response?.usage),
     durationMs: Date.now() - startedAt,
     requestId: trim(response?.id) || `ai_request_${Date.now()}`,
     diagnostics: [isOpenRouter ? 'Served by the configured OpenRouter provider.' : 'Served by the configured Ollama provider.'],
