@@ -229,6 +229,45 @@ assert.doesNotMatch(
   /\[component\.collision\]/,
 );
 
+for (const collisionSemantics of [
+  {
+    runId: 'unity-nondefault-collider-layer',
+    source: 'm_Name: Player\n  m_IsActive: 1\n  m_Layer: 0',
+    replacement: 'm_Name: Player\n  m_IsActive: 1\n  m_Layer: 8',
+  },
+  {
+    runId: 'unity-physic-material',
+    source: 'm_IsTrigger: 0\n  m_Material: {fileID: 0}',
+    replacement: 'm_IsTrigger: 0\n  m_Material: {fileID: 1200000}',
+  },
+]) {
+  const fixtureRoot = path.join(tempRoot, 'source-fixtures', collisionSemantics.runId);
+  fs.cpSync(unityFixtureRoot, fixtureRoot, { recursive: true });
+  const scenePath = path.join(fixtureRoot, 'Assets', 'Scenes', 'Sandbox.unity');
+  fs.writeFileSync(
+    scenePath,
+    fs.readFileSync(scenePath, 'utf8').replace(collisionSemantics.source, collisionSemantics.replacement),
+    'utf8',
+  );
+  const run = runCli([
+    'migrate',
+    'unity',
+    fixtureRoot,
+    '--output-root',
+    tempRoot,
+    '--run-id',
+    collisionSemantics.runId,
+  ]);
+  assert.match(run.stdout, /Mapped prefab components: 1/);
+  assert.doesNotMatch(
+    fs.readFileSync(
+      path.join(tempRoot, collisionSemantics.runId, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'unity', 'sandbox_sandbox_root_player.prefab.toml'),
+      'utf8',
+    ),
+    /\[component\.collision\]/,
+  );
+}
+
 const inactiveUnityFixtureRoot = path.join(tempRoot, 'source-fixtures', 'unity-inactive-hierarchy');
 fs.cpSync(unityFixtureRoot, inactiveUnityFixtureRoot, { recursive: true });
 const inactiveUnityScenePath = path.join(inactiveUnityFixtureRoot, 'Assets', 'Scenes', 'Sandbox.unity');

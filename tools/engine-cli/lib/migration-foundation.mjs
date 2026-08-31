@@ -531,7 +531,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
       engine === 'godot'
         ? `Review mapped Godot text-scene hierarchy, explicit transforms, perspective Camera3D optics, and enabled non-Area3D CollisionShape3D BoxShape3D geometry under ${targetRoots.content_scenes}; disabled/Area3D trigger collider preservation, transform matrices, instanced resources, other components, and physics semantics remain manual.`
         : engine === 'unity'
-          ? `Review mapped Unity text-YAML hierarchy, local transforms, enabled perspective Camera optics, and enabled non-trigger BoxCollider geometry under ${targetRoots.content_scenes}; disabled/trigger collider preservation, prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
+          ? `Review mapped Unity text-YAML hierarchy, local transforms, enabled perspective Camera optics, and enabled default-layer non-trigger BoxCollider geometry without PhysicMaterial references under ${targetRoots.content_scenes}; disabled/trigger/non-default-layer/material collider preservation, prefab instances, other component payloads, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
       `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
       `Populate real imported art and cooked assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; this slice only emits structure placeholders.`,
@@ -570,7 +570,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
     if (detection.engine === 'unity') {
-      warnings.push('Unity conversion maps text-YAML hierarchy, enabled perspective Camera optics, enabled non-trigger BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, disabled camera/collider preservation, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
+      warnings.push('Unity conversion maps text-YAML hierarchy, enabled perspective Camera optics, enabled default-layer non-trigger BoxCollider center/size geometry without PhysicMaterial references, and MonoBehaviour GUID bindings; prefab instances, other component payloads, disabled camera/collider preservation, trigger/non-default-layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
       warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, enabled valid non-Area3D CollisionShape3D BoxShape3D geometry, and node script ExtResource bindings; transform matrices, resource instances, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled-or-trigger-collider/layer/material semantics are still ahead.');
     }
@@ -838,6 +838,9 @@ function unityQuaternionToEuler(rotation) {
 
 function parseUnitySceneNodes(source) {
   const documents = parseUnityYamlDocuments(source);
+  const layerByGameObject = new Map(documents
+    .filter((document) => document.classId === 1)
+    .map((document) => [document.fileId, parseUnityNumber(document.lines, 'm_Layer', -1)]));
   const transforms = documents
     .filter((document) => document.classId === 4 || document.classId === 224)
     .map((document) => ({
@@ -883,8 +886,11 @@ function parseUnitySceneNodes(source) {
       const dimensions = parseUnityInlineNumbers(document.lines, 'm_Size', ['x', 'y', 'z'], null);
       const enabled = parseUnityNumber(document.lines, 'm_Enabled', 0) === 1;
       const isTrigger = parseUnityNumber(document.lines, 'm_IsTrigger', 1) === 1;
+      const materialId = parseUnityFileId(document.lines, 'm_Material');
       const valid = enabled
         && !isTrigger
+        && layerByGameObject.get(gameObjectId) === 0
+        && materialId === '0'
         && center?.every((value) => Number.isFinite(Math.fround(value)))
         && dimensions?.every((value) => Number.isFinite(Math.fround(value)) && value > 0);
       return [gameObjectId, valid ? {
