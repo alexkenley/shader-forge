@@ -178,7 +178,11 @@ for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
 }
 fs.cpSync(path.join(spatialFixtureRoot, 'content', 'prefabs'), path.join(collisionContentRoot, 'prefabs'), { recursive: true });
 fs.cpSync(path.join(spatialFixtureRoot, 'content', 'procgeo'), path.join(collisionContentRoot, 'procgeo'), { recursive: true });
-fs.copyFileSync(prefabPath, path.join(collisionContentRoot, 'prefabs', 'debug_camera.prefab.toml'));
+fs.writeFileSync(
+  path.join(collisionContentRoot, 'prefabs', 'debug_camera.prefab.toml'),
+  fs.readFileSync(prefabPath, 'utf8').replaceAll('\r\n', '\n'),
+  'utf8',
+);
 fs.writeFileSync(path.join(collisionContentRoot, 'scenes', 'camera.scene.toml'), `schema = "shader_forge.scene"\nschema_version = 1\nruntime_format = "flatbuffer"\nowner_system = "scene_system"\nname = "camera_scene"\ntitle = "Camera"\n\n[entity.camera]\ndisplay_name = "Camera"\nsource_prefab = "debug_camera"\nposition = "1, 2, 3"\nrotation = "4, 5, 6"\nscale = "1, 1, 1"\n`);
 fs.writeFileSync(collisionDriverPath, String.raw`
 #include "shader_forge/runtime/data_foundation.hpp"
