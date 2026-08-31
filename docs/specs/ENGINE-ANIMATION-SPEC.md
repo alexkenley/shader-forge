@@ -116,7 +116,7 @@ Later animation work should add:
 - keyframe/timeline editing UI
 - animation debugging overlays, scrubbers, and per-bone inspection
 - tighter shell/native-tool preview and edit workflows
-- sampled MCP evidence, capsule/item clipping diagnostics, collision evaluation, and spatial review packets on top of the implemented native, transient sessiond, and Assets v2 sampled two-bone IK plus diagnose-only joint-limit evidence, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
+- runtime collision/contact evaluation and spatial review packets on top of the implemented native, transient sessiond, Assets, and read-only MCP v2 sampled two-bone IK, diagnose-only joint-limit evidence, and capsule-to-authored-box surface-clearance diagnostics, as specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md)
 
 ## Runtime Model
 

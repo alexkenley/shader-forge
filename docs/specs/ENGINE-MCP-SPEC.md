@@ -1,6 +1,6 @@
 # Shader Forge MCP Spec
 
-Status: read, coordinate, and lease-gated spatial mutation slice
+Status: project/coordination reads, typed spatial rest/sample read, and lease-gated spatial mutation slice
 
 Date: 2026-08-30
 
@@ -55,6 +55,7 @@ Read tools:
 - `project_status` reads the selected project/session and backend status
 - `project_files_list` lists files or directories inside the session root
 - `project_file_read` reads a UTF-8 file inside the session root
+- `spatial_attachment_read` reads exact revision-bound native rest or sampled attachment evidence through the selected session's transient sessiond evaluator
 - `coordination_state` reads the current workspace coordination view
 
 Coordination tools:
@@ -77,6 +78,12 @@ The MCP actor is fixed from the process coordinator registration as `kind: mcp`.
 Operation failures are structured MCP error results. HTTP status, safe code/diagnostic/conflict/lease/operation/approval/code-trust fields, and a refreshed authoritative operation on transition conflicts are retained without exposing request bodies, headers, staged content, or credentials. Conflict recovery is explicit: reread the source and operation, then create a new preview. The adapter never retries or applies automatically.
 
 Tool results are structured, bounded to the selected workspace, and do not expose the coordinator credential.
+
+### Typed spatial read contract
+
+`spatial_attachment_read` is one lease-free, read-only, idempotent tool. It does not add a spatial MCP resource. Its strict input is either `{view:"rest", path, baseRevision}` or `{view:"sample", path, baseRevision, phase, normalizedTime}`. `path` is limited to `animation/attachments/*.attachment.toml`; `baseRevision` must be a present SHA-256 revision; sample phase must be non-empty; and normalized time must be finite, non-negative-zero, and in `[0,1]`.
+
+The adapter injects the `sf-mcp` process's selected session ID and calls `GET /api/spatial/attachment/evaluate` or `GET /api/spatial/attachment/evaluate-sample`. Callers cannot inject a session, root, agent, lease, actor, or credential. The result is the exact typed `{evaluation, path, revision, sourceRevisions}` response, including native pose/IK, joint-limit, independent visual-box, and diagnose-only capsule-to-authored-collision-box evidence. Sessiond remains authoritative for source revision binding and strict diagnostic recomputation. The read acquires no lease, creates no operation/event/journal entry, writes nothing, and is not capture or review evidence.
 
 ## Multi-Agent Use
 
@@ -114,6 +121,7 @@ The deterministic MCP harness must:
 - complete MCP initialization over stdio
 - enumerate and call the documented resources and tools
 - verify file reads stay inside the session root
+- verify strict typed rest/sample `spatial_attachment_read`, source-revision passthrough, selected-session pinning, clipping schema, and stale/path/sample/authority-injection rejection without coordination or operation side effects
 - verify coordinator registration, lease use, and disconnect cleanup
 - verify queued, foreign, released, and resource-mismatched lease refusal
 - verify no-write spatial preview, MCP actor provenance, explicit approve/apply/undo/reject, and exact restored bytes
@@ -130,7 +138,7 @@ The next MCP widening requires an engine-owned coordinated context for each addi
 
 ## Planned Spatial Authoring Adapter
 
-Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). The first attachment preview/review/apply/undo operation is implemented and now exposed through `sf-mcp`; rendered validation, capture, and immutable review packets remain deferred. `sf-mcp` remains adapter-only.
+Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). Exact typed rest/sample attachment reads and the first preview/review/apply/undo operation are implemented through `sf-mcp`; rendered validation, capture, immutable review packets, and their typed resources remain deferred. `sf-mcp` remains adapter-only.
 
 Planned resources after that gate:
 
@@ -140,6 +148,7 @@ Planned resources after that gate:
 
 Implemented tools:
 
+- `spatial_attachment_read`
 - `spatial_attachment_preview`
 - `operation_approve`
 - `operation_reject`
@@ -148,7 +157,6 @@ Implemented tools:
 
 Planned after matching sessiond operations exist:
 
-- `spatial_attachment_read` as a typed view beyond the existing project-file read
 - `spatial_attachment_validate`
 - `spatial_review_read`
 - `spatial_review_recapture`
