@@ -2077,6 +2077,12 @@ export default function App() {
   const activeSessionIdRef = useRef('');
   const runtimeLifecycleRequestRef = useRef(0);
   const buildLifecycleRequestRef = useRef(0);
+  const explorerRequestRef = useRef(0);
+  const gitRequestRef = useRef(0);
+  const codeTrustRequestRef = useRef(0);
+  const codeTrustApprovalsRequestRef = useRef(0);
+  const packageSummaryRequestRef = useRef(0);
+  const profilingRequestRef = useRef(0);
   const pendingRunRequestRef = useRef<{ id: number; sessionId: string; scene: string } | null>(null);
   const runRequestCounterRef = useRef(0);
   const selectedOperationIdRef = useRef('');
@@ -2451,101 +2457,156 @@ export default function App() {
   async function refreshSessions() {
     const nextSessions = await listSessions();
     setSessions(nextSessions);
-    setActiveSessionId(pickPreferredSessionId(nextSessions, activeSessionId));
+    selectActiveSession(pickPreferredSessionId(nextSessions, activeSessionIdRef.current));
     return nextSessions;
   }
 
+  function selectActiveSession(sessionId: string) {
+    if (activeSessionIdRef.current !== sessionId) {
+      explorerRequestRef.current += 1;
+      gitRequestRef.current += 1;
+      codeTrustRequestRef.current += 1;
+      codeTrustApprovalsRequestRef.current += 1;
+      packageSummaryRequestRef.current += 1;
+      profilingRequestRef.current += 1;
+      setExplorerBusy(false);
+      setGitBusy(false);
+      setApprovalsBusy(false);
+    }
+    activeSessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
+  }
+
   async function refreshExplorer(sessionId: string, relativePath = '.') {
+    const requestId = ++explorerRequestRef.current;
     if (!sessionId) {
       setExplorerEntries([]);
       setExplorerPath('.');
       setSelectedExplorerPath('');
       setSelectedFilePreview('');
+      setExplorerBusy(false);
       return;
     }
 
     setExplorerBusy(true);
     try {
       const listing = await listFiles(sessionId, relativePath);
+      if (requestId !== explorerRequestRef.current || activeSessionIdRef.current !== sessionId) return;
       setExplorerPath(listing.path);
       setExplorerEntries(listing.entries);
       const firstFile = listing.entries.find((entry) => entry.kind === 'file');
       if (firstFile) {
         setSelectedExplorerPath(firstFile.path);
         const preview = await readFile(sessionId, firstFile.path);
+        if (requestId !== explorerRequestRef.current || activeSessionIdRef.current !== sessionId) return;
         setSelectedFilePreview(preview.content.slice(0, 1200));
       } else {
         setSelectedExplorerPath('');
         setSelectedFilePreview('');
       }
+    } catch (error) {
+      if (requestId === explorerRequestRef.current && activeSessionIdRef.current === sessionId) throw error;
     } finally {
-      setExplorerBusy(false);
+      if (requestId === explorerRequestRef.current) setExplorerBusy(false);
     }
   }
 
   async function refreshGit(sessionId: string) {
+    const requestId = ++gitRequestRef.current;
     if (!sessionId) {
       setGitStatus(emptyGitStatus);
+      setGitBusy(false);
       return;
     }
 
     setGitBusy(true);
     try {
       const nextStatus = await fetchGitStatus(sessionId);
-      setGitStatus(nextStatus);
+      if (requestId === gitRequestRef.current && activeSessionIdRef.current === sessionId) {
+        setGitStatus(nextStatus);
+      }
+    } catch (error) {
+      if (requestId === gitRequestRef.current && activeSessionIdRef.current === sessionId) throw error;
     } finally {
-      setGitBusy(false);
+      if (requestId === gitRequestRef.current) setGitBusy(false);
     }
   }
 
   async function refreshCodeTrust(sessionId: string) {
+    const requestId = ++codeTrustRequestRef.current;
     if (!sessionId) {
       setCodeTrustSummary(null);
       return;
     }
 
-    const nextSummary = await fetchCodeTrustSummary(sessionId);
-    setCodeTrustSummary(nextSummary);
+    try {
+      const nextSummary = await fetchCodeTrustSummary(sessionId);
+      if (requestId === codeTrustRequestRef.current && activeSessionIdRef.current === sessionId) {
+        setCodeTrustSummary(nextSummary);
+      }
+    } catch (error) {
+      if (requestId === codeTrustRequestRef.current && activeSessionIdRef.current === sessionId) throw error;
+    }
   }
 
   async function refreshCodeTrustApprovals(sessionId: string) {
+    const requestId = ++codeTrustApprovalsRequestRef.current;
     if (!sessionId) {
       setCodeTrustApprovals([]);
+      setApprovalsBusy(false);
       return;
     }
 
     setApprovalsBusy(true);
     try {
       const nextApprovals = await fetchCodeTrustApprovals(sessionId);
-      setCodeTrustApprovals(nextApprovals);
+      if (requestId === codeTrustApprovalsRequestRef.current && activeSessionIdRef.current === sessionId) {
+        setCodeTrustApprovals(nextApprovals);
+      }
+    } catch (error) {
+      if (requestId === codeTrustApprovalsRequestRef.current && activeSessionIdRef.current === sessionId) throw error;
     } finally {
-      setApprovalsBusy(false);
+      if (requestId === codeTrustApprovalsRequestRef.current) setApprovalsBusy(false);
     }
   }
 
   async function refreshPackageSummary(sessionId: string) {
+    const requestId = ++packageSummaryRequestRef.current;
     if (!sessionId) {
       setPackageSummary(null);
       return;
     }
 
-    const nextSummary = await fetchPackageInspect(sessionId);
-    setPackageSummary(nextSummary);
+    try {
+      const nextSummary = await fetchPackageInspect(sessionId);
+      if (requestId === packageSummaryRequestRef.current && activeSessionIdRef.current === sessionId) {
+        setPackageSummary(nextSummary);
+      }
+    } catch (error) {
+      if (requestId === packageSummaryRequestRef.current && activeSessionIdRef.current === sessionId) throw error;
+    }
   }
 
   async function refreshProfiling(sessionId: string) {
+    const requestId = ++profilingRequestRef.current;
     if (!sessionId) {
       setProfileSummary(null);
       setProfileCaptureList(null);
       return;
     }
 
-    const [nextSummary, nextCaptures] = await Promise.all([
-      fetchProfileLive(sessionId),
-      fetchProfileCaptures(sessionId, 6),
-    ]);
-    setProfileSummary(nextSummary);
-    setProfileCaptureList(nextCaptures);
+    try {
+      const [nextSummary, nextCaptures] = await Promise.all([
+        fetchProfileLive(sessionId),
+        fetchProfileCaptures(sessionId, 6),
+      ]);
+      if (requestId === profilingRequestRef.current && activeSessionIdRef.current === sessionId) {
+        setProfileSummary(nextSummary);
+        setProfileCaptureList(nextCaptures);
+      }
+    } catch (error) {
+      if (requestId === profilingRequestRef.current && activeSessionIdRef.current === sessionId) throw error;
+    }
   }
 
   async function navigateDirPicker(nextPath: string) {
@@ -2583,7 +2644,7 @@ export default function App() {
   }
 
   async function activateSession(sessionId: string) {
-    setActiveSessionId(sessionId);
+    selectActiveSession(sessionId);
     await Promise.all([
       refreshExplorer(sessionId, '.'),
       refreshGit(sessionId),
@@ -2644,7 +2705,7 @@ export default function App() {
         setSessions(nextSessions);
         if (nextSessions.length) {
           const nextActiveSessionId = pickPreferredSessionId(nextSessions);
-          setActiveSessionId(nextActiveSessionId);
+          selectActiveSession(nextActiveSessionId);
           await refreshExplorer(nextActiveSessionId, '.');
         }
       } catch (error) {
@@ -3042,7 +3103,7 @@ export default function App() {
         nextSessions,
         activeSessionId === sessionId ? '' : activeSessionId,
       );
-      setActiveSessionId(nextActiveSessionId);
+      selectActiveSession(nextActiveSessionId);
       if (nextActiveSessionId) {
         await activateSession(nextActiveSessionId);
       } else {
@@ -3111,7 +3172,7 @@ export default function App() {
       }
       const nextSessions = await refreshSessions();
       const nextActiveSessionId = pickPreferredSessionId(nextSessions, activeSessionId);
-      setActiveSessionId(nextActiveSessionId);
+      selectActiveSession(nextActiveSessionId);
       if (nextActiveSessionId) {
         await activateSession(nextActiveSessionId);
       } else {
@@ -3178,20 +3239,30 @@ export default function App() {
       return;
     }
 
+    if (entry.kind === 'directory') {
+      try {
+        await refreshExplorer(activeSessionId, entry.path);
+      } catch (error) {
+        setSessiondState('offline');
+        setSessiondMessage(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    const targetSessionId = activeSessionId;
+    const requestId = ++explorerRequestRef.current;
     try {
       setExplorerBusy(true);
-      if (entry.kind === 'directory') {
-        await refreshExplorer(activeSessionId, entry.path);
-        return;
-      }
-      const preview = await readFile(activeSessionId, entry.path);
+      const preview = await readFile(targetSessionId, entry.path);
+      if (requestId !== explorerRequestRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setSelectedExplorerPath(entry.path);
       setSelectedFilePreview(preview.content.slice(0, 1200));
     } catch (error) {
+      if (requestId !== explorerRequestRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setExplorerBusy(false);
+      if (requestId === explorerRequestRef.current) setExplorerBusy(false);
     }
   }
 
@@ -3212,17 +3283,22 @@ export default function App() {
       return;
     }
 
+    const targetSessionId = activeSessionId;
+    const targetSessionName = activeSession?.name || 'session';
+    const requestId = ++gitRequestRef.current;
     try {
       setGitBusy(true);
-      const nextStatus = await initGitRepository(activeSessionId);
+      const nextStatus = await initGitRepository(targetSessionId);
+      if (requestId !== gitRequestRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setGitStatus(nextStatus);
       setSessiondState('connected');
-      setSessiondMessage(`Initialized git repository for ${activeSession?.name || 'session'}`);
+      setSessiondMessage(`Initialized git repository for ${targetSessionName}`);
     } catch (error) {
+      if (requestId !== gitRequestRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setSessiondState('offline');
       setSessiondMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setGitBusy(false);
+      if (requestId === gitRequestRef.current) setGitBusy(false);
     }
   }
 

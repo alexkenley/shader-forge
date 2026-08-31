@@ -135,6 +135,24 @@ try {
   assert.match(shellApp, /activeSessionId !== runRequest\.sessionId \|\| launchScene !== runRequest\.scene/);
   assert.match(shellApp, /runtimeLifecycleRequestRef/);
   assert.match(shellApp, /buildLifecycleRequestRef/);
+  for (const requestRef of [
+    'explorerRequestRef',
+    'gitRequestRef',
+    'codeTrustRequestRef',
+    'codeTrustApprovalsRequestRef',
+    'packageSummaryRequestRef',
+    'profilingRequestRef',
+  ]) {
+    assert.match(shellApp, new RegExp(`const ${requestRef} = useRef\\(0\\)`));
+    assert.match(shellApp, new RegExp(`${requestRef}\\.current \\+= 1`));
+  }
+  assert.match(shellApp, /function selectActiveSession\(sessionId: string\)/);
+  assert.match(shellApp, /requestId !== explorerRequestRef\.current \|\| activeSessionIdRef\.current !== sessionId/);
+  assert.match(shellApp, /requestId === gitRequestRef\.current && activeSessionIdRef\.current === sessionId/);
+  assert.match(shellApp, /requestId === codeTrustRequestRef\.current && activeSessionIdRef\.current === sessionId/);
+  assert.match(shellApp, /requestId === codeTrustApprovalsRequestRef\.current && activeSessionIdRef\.current === sessionId/);
+  assert.match(shellApp, /requestId === packageSummaryRequestRef\.current && activeSessionIdRef\.current === sessionId/);
+  assert.match(shellApp, /requestId === profilingRequestRef\.current && activeSessionIdRef\.current === sessionId/);
   const runtimeEventHandler = /if \(event\.type === 'runtime\.status'[\s\S]*?\n      }/.exec(shellApp)?.[0] || '';
   assert.match(runtimeEventHandler, /runtimeLifecycleRequestRef\.current \+= 1/);
   assert.doesNotMatch(runtimeEventHandler, /setLaunchScene/, 'runtime telemetry must not replace the authored World selection');
@@ -219,7 +237,7 @@ try {
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log('- Verified shell Playtest surfaces and sessiond bridge contracts are present');
   console.log(`- Verified runtime start/${isWindows ? 'stop' : 'pause/resume/stop'} bridge flow across API, status, and event surfaces`);
-  console.log('- Verified build completion events plus stale runtime/build response and World-selection guards');
+  console.log('- Verified build completion events plus stale runtime/build, World-selection, and session-panel response guards');
 } finally {
   await service.close();
   await fsp.rm(sessionStateDir, { recursive: true, force: true });
