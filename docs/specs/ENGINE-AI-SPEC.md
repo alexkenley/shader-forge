@@ -257,7 +257,7 @@ Current implemented behavior:
 - `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider normalization, provider inspection, and smoke-test execution for game-facing AI configuration
 - the deterministic `fake` provider is the current offline and harness-safe default so Phase 5.9 work does not depend on a live model endpoint
 - the optional Ollama lane now probes `/api/tags`, selects an installed model when possible, and can issue a basic `/v1/chat/completions` smoke test against a reachable local endpoint
-- the disabled-by-default `openrouter_kimi` entry targets the current `moonshotai/kimi-k3` route and uses only `OPENROUTER_API_KEY`
+- disabled-by-default `openrouter_kimi` and `openrouter_glm` entries target `moonshotai/kimi-k3` and `z-ai/glm-5.2` through the same adapter and use only `OPENROUTER_API_KEY`
 - OpenRouter requests use its fixed official HTTPS API root, bearer authentication, the existing chat-completions payload, and a 1 MiB response limit; only the deterministic harness can opt into a loopback endpoint
 - real chat requests carry a manifest-backed `max_output_tokens` ceiling (default 256); OpenRouter requires an integer from 1 through 4096 before becoming ready
 - real provider results normalize prompt, completion, and total token usage when the provider returns valid non-negative integer counts; deterministic fake results report no fabricated usage
@@ -303,7 +303,7 @@ Deterministic lane:
 Optional real lanes:
 
 - local Ollama smoke harness
-- OpenRouter smoke harness gated by `OPENROUTER_API_KEY`
+- OpenRouter Kimi/GLM smoke harness gated by `OPENROUTER_API_KEY`
 - provider-specific smoke harnesses gated by environment configuration
 
 ## Non-Goals

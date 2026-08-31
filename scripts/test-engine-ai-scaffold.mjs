@@ -88,6 +88,16 @@ await fs.writeFile(
     'api_key_env = "OPENROUTER_API_KEY"',
     'max_output_tokens = 128',
     '',
+    '[provider.openrouter_glm]',
+    'type = "openrouter"',
+    'label = "OpenRouter / GLM 5.2"',
+    'enabled = true',
+    'mode = "BringYourOwnKey"',
+    `base_url = "${openRouterBaseUrl}"`,
+    'model = "z-ai/glm-5.2"',
+    'api_key_env = "OPENROUTER_API_KEY"',
+    'max_output_tokens = 96',
+    '',
     '[provider.openrouter_redirect]',
     'type = "openrouter"',
     'label = "Invalid OpenRouter Redirect"',
@@ -146,6 +156,11 @@ const service = await startEngineSessiond({
 });
 
 try {
+  const bundledProviders = await runCli(['ai', 'providers', '--root', repoRoot]);
+  const bundledGlmProvider = bundledProviders.providers.find((provider) => provider.id === 'openrouter_glm');
+  assert.equal(bundledGlmProvider?.enabled, false);
+  assert.equal(bundledGlmProvider?.selectedModel, 'z-ai/glm-5.2');
+
   const health = await requestJsonNoAuth(`${service.baseUrl}/health`);
   assert.equal(health.ok, true);
   assert.ok(health.capabilities.includes('ai:providers'));
@@ -161,8 +176,8 @@ try {
     `${service.baseUrl}/api/ai/providers?sessionId=${encodeURIComponent(sessionId)}`,
   );
   assert.equal(providerSummary.defaultProviderId, 'local_fake');
-  assert.equal(providerSummary.providerCount, 6);
-  assert.equal(providerSummary.readyProviderCount, 3);
+  assert.equal(providerSummary.providerCount, 7);
+  assert.equal(providerSummary.readyProviderCount, 4);
   assert.equal(providerSummary.providers[0].id, 'local_fake');
   assert.equal(providerSummary.providers[0].status, 'ready');
   const openRouterProvider = providerSummary.providers.find((provider) => provider.id === 'openrouter_kimi');
@@ -170,6 +185,11 @@ try {
   assert.equal(openRouterProvider?.status, 'ready');
   assert.equal(openRouterProvider?.selectedModel, 'moonshotai/kimi-k3');
   assert.equal(openRouterProvider?.maxOutputTokens, 128);
+  const openRouterGlmProvider = providerSummary.providers.find((provider) => provider.id === 'openrouter_glm');
+  assert.equal(openRouterGlmProvider?.supportedInSlice, true);
+  assert.equal(openRouterGlmProvider?.status, 'ready');
+  assert.equal(openRouterGlmProvider?.selectedModel, 'z-ai/glm-5.2');
+  assert.equal(openRouterGlmProvider?.maxOutputTokens, 96);
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'openrouter_redirect')?.status, 'invalid');
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'openrouter_bad_limit')?.status, 'invalid');
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'provider_type_typo')?.status, 'invalid');
@@ -209,6 +229,17 @@ try {
   assert.equal(openRouterRequest?.body?.max_tokens, 128);
   assert.doesNotMatch(JSON.stringify(openRouterSmoke), /test-openrouter-key/);
 
+  const openRouterGlmSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_glm',
+  });
+  assert.equal(openRouterGlmSmoke.providerId, 'openrouter_glm');
+  assert.equal(openRouterGlmSmoke.model, 'z-ai/glm-5.2');
+  assert.equal(openRouterGlmSmoke.content, 'ready');
+  const openRouterGlmRequest = providerRequests.find((request) => request.body?.model === 'z-ai/glm-5.2');
+  assert.equal(openRouterGlmRequest?.authorization, 'Bearer test-openrouter-key');
+  assert.equal(openRouterGlmRequest?.body?.max_tokens, 96);
+
   const oversizedResponse = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
     providerId: 'openrouter_kimi',
@@ -224,8 +255,8 @@ try {
 
   const cliProviders = await runCli(['ai', 'providers', '--root', tempProjectRoot]);
   assert.equal(cliProviders.defaultProviderId, 'local_fake');
-  assert.equal(cliProviders.providerCount, 6);
-  assert.equal(cliProviders.readyProviderCount, 3);
+  assert.equal(cliProviders.providerCount, 7);
+  assert.equal(cliProviders.readyProviderCount, 4);
 
   const cliSmoke = await runCli([
     'ai',
@@ -250,7 +281,7 @@ try {
 
   console.log('Engine AI scaffold passed.');
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
-  console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter/Kimi request paths without exposing credentials');
+  console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter Kimi/GLM request paths without exposing credentials');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {

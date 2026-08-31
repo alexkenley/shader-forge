@@ -25,6 +25,16 @@ model = "moonshotai/kimi-k3"
 api_key_env = "OPENROUTER_API_KEY"
 max_output_tokens = 256
 
+[provider.openrouter_glm]
+type = "openrouter"
+label = "OpenRouter / GLM 5.2"
+enabled = false
+mode = "BringYourOwnKey"
+base_url = "https://openrouter.ai/api/v1"
+model = "z-ai/glm-5.2"
+api_key_env = "OPENROUTER_API_KEY"
+max_output_tokens = 256
+
 [provider.openai_dev]
 type = "openai"
 label = "OpenAI"
