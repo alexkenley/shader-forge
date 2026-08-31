@@ -260,6 +260,9 @@ Current implemented behavior:
 - disabled-by-default `openrouter_kimi` and `openrouter_glm` entries target `moonshotai/kimi-k3` and `z-ai/glm-5.2` through the same adapter and use only `OPENROUTER_API_KEY`
 - OpenRouter requests use its fixed official HTTPS API root, bearer authentication, the existing chat-completions payload, and a 1 MiB response limit; only the deterministic harness can opt into a loopback endpoint
 - real chat requests carry a manifest-backed `max_output_tokens` ceiling (default 256); OpenRouter requires an integer from 1 through 4096 before becoming ready
+- `[request]` policy can opt into zero through two retries and up to two explicit fallback provider IDs; the bundled defaults perform no retry or fallback
+- only transient network failures and HTTP 408/425/429/500/502/503/504 responses retry or fall back, using a bounded 100 ms retry delay; cancellation and configuration, authentication, other 4xx, malformed, empty, or oversized responses fail immediately
+- successful results report attempt count, whether fallback was used, and the attempted provider IDs without exposing provider error bodies; explicitly requested unknown providers still fail before fallback
 - real provider results normalize prompt, completion, and total token usage when the provider returns valid non-negative integer counts; deterministic fake results report no fabricated usage
 - unknown manifest provider types report `invalid`, and an explicit unknown `--provider` selection fails instead of falling back
 - other hosted-provider types remain inspection-only, with deployment mode plus required `api_key_env` diagnostics
@@ -275,7 +278,7 @@ Current implemented behavior:
 
 Still ahead in Phase 5.9:
 
-- retry and fallback control plus resumable queued jobs beyond the current process-scoped queue, cancellation, timeout, status, event lifecycle, and terminal metadata history
+- resumable queued jobs beyond the current process-scoped queue, bounded retry/fallback, cancellation, timeout, status, event lifecycle, and terminal metadata history
 - budget enforcement, spend limits, pricing, and request logging beyond the current per-request output ceiling and durable token-usage evidence
 - additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
 - game-facing tool registry, skill registry, and structured action schemas

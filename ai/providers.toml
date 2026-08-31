@@ -1,5 +1,9 @@
 default_provider = "local_fake"
 
+[request]
+retry_count = 0
+fallback_providers = []
+
 [provider.local_fake]
 type = "fake"
 label = "Deterministic Fake"

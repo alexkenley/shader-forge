@@ -11,6 +11,8 @@ const openRouterApiBaseUrl = 'https://openrouter.ai/api/v1/';
 const openRouterApiKeyEnv = 'OPENROUTER_API_KEY';
 const maxAiResponseBytes = 1024 * 1024;
 const defaultMaxOutputTokens = 256;
+const retryableHttpStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+const retryableNetworkCodes = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN']);
 
 export const aiProviderTypes = [
   'fake',
@@ -155,10 +157,33 @@ function normalizeAiManifest(parsed) {
     || providers.find((provider) => provider.enabled)?.id
     || providers[0]?.id
     || null;
+  const requestSource = source.request && typeof source.request === 'object' ? source.request : {};
+  const configuredRetryCount = requestSource.retry_count ?? 0;
+  const retryCount = Number(configuredRetryCount);
+  const configuredFallbacks = requestSource.fallback_providers ?? [];
+  const fallbackProviderIds = Array.isArray(configuredFallbacks)
+    ? configuredFallbacks.map(trim).filter(Boolean)
+    : [];
+  const policyDiagnostics = [];
+  if (!Number.isInteger(retryCount) || retryCount < 0 || retryCount > 2) {
+    policyDiagnostics.push('request.retry_count must be an integer from 0 through 2.');
+  }
+  if (!Array.isArray(configuredFallbacks)
+      || configuredFallbacks.some((value) => typeof value !== 'string')
+      || fallbackProviderIds.length !== configuredFallbacks.length
+      || fallbackProviderIds.length > 2
+      || new Set(fallbackProviderIds).size !== fallbackProviderIds.length) {
+    policyDiagnostics.push('request.fallback_providers must contain at most two unique non-empty provider IDs.');
+  }
 
   return {
     defaultProviderId,
     providers,
+    requestPolicy: {
+      retryCount: Number.isInteger(retryCount) ? retryCount : 0,
+      fallbackProviderIds,
+      diagnostics: policyDiagnostics,
+    },
   };
 }
 
@@ -225,6 +250,13 @@ function abortError() {
   return error;
 }
 
+function providerRequestError(message, { statusCode = null, retryable = false } = {}) {
+  const error = new Error(message);
+  error.providerStatusCode = statusCode;
+  error.retryable = retryable;
+  return error;
+}
+
 function requestJson(baseUrl, pathname, {
   method = 'GET', body, headers = {}, timeoutMs = 2_500, signal,
 } = {}) {
@@ -281,7 +313,11 @@ function requestJson(baseUrl, pathname, {
           return;
         }
         if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
-          reject(new Error(payload.error || `Request failed with status ${response.statusCode || 0}`));
+          const statusCode = response.statusCode || 0;
+          reject(providerRequestError(
+            payload.error || `Request failed with status ${statusCode}`,
+            { statusCode, retryable: retryableHttpStatuses.has(statusCode) },
+          ));
           return;
         }
         resolve(payload);
@@ -289,9 +325,14 @@ function requestJson(baseUrl, pathname, {
     });
 
     req.on('timeout', () => {
-      req.destroy(new Error(`Timed out connecting to ${target.toString()}`));
+      req.destroy(providerRequestError(`Timed out connecting to ${target.toString()}`, { retryable: true }));
     });
-    req.on('error', reject);
+    req.on('error', (error) => {
+      if (error?.name !== 'AbortError' && retryableNetworkCodes.has(error?.code)) {
+        error.retryable = true;
+      }
+      reject(error);
+    });
     if (signal) {
       const cancelRequest = () => req.destroy(abortError());
       signal.addEventListener('abort', cancelRequest, { once: true });
@@ -346,6 +387,7 @@ async function inspectOllamaProvider(provider, timeoutMs, signal) {
       status: 'offline',
       diagnostics: [error instanceof Error ? error.message : String(error)],
       endpoint: provider.baseUrl || 'http://127.0.0.1:11434',
+      retryable: error?.retryable === true,
     };
   }
 }
@@ -501,6 +543,17 @@ export async function inspectAiProviders(rootPath, { timeoutMs = 2_500, signal }
   const providers = await Promise.all(
     loaded.manifest.providers.map((provider) => inspectProvider(provider, timeoutMs, signal)),
   );
+  const requestPolicyDiagnostics = [...loaded.manifest.requestPolicy.diagnostics];
+  for (const providerId of loaded.manifest.requestPolicy.fallbackProviderIds) {
+    const provider = providers.find((candidate) => candidate.id === providerId);
+    if (!provider) {
+      requestPolicyDiagnostics.push(`Fallback AI provider ${providerId} is not configured for this workspace.`);
+    } else if (!provider.enabled) {
+      requestPolicyDiagnostics.push(`Fallback AI provider ${providerId} is disabled.`);
+    } else if (!provider.supportedInSlice) {
+      requestPolicyDiagnostics.push(`Fallback AI provider ${providerId} is not implemented in this slice.`);
+    }
+  }
 
   return {
     rootPath: loaded.rootPath,
@@ -510,6 +563,12 @@ export async function inspectAiProviders(rootPath, { timeoutMs = 2_500, signal }
     providerCount: providers.length,
     readyProviderCount: providers.filter((provider) => provider.available).length,
     providers,
+    requestPolicy: {
+      retryCount: loaded.manifest.requestPolicy.retryCount,
+      fallbackProviderIds: loaded.manifest.requestPolicy.fallbackProviderIds,
+      valid: requestPolicyDiagnostics.length === 0,
+      diagnostics: requestPolicyDiagnostics,
+    },
   };
 }
 
@@ -532,32 +591,53 @@ function resolveProvider(summary, providerId = '') {
   return provider;
 }
 
-export async function testAiProvider(
-  rootPath,
-  {
-    providerId = '',
-    prompt = aiDefaultSmokePrompt,
-    systemPrompt = aiDefaultSmokeSystemPrompt,
-    timeoutMs = 30_000,
-    signal,
-  } = {},
-) {
-  const summary = await inspectAiProviders(rootPath, { timeoutMs: Math.min(timeoutMs, 2_500), signal });
+function retryDelay(signal) {
   if (signal?.aborted) {
     throw abortError();
   }
-  const provider = resolveProvider(summary, providerId);
+  return new Promise((resolve, reject) => {
+    const cancel = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', cancel);
+      resolve();
+    }, 100);
+    signal?.addEventListener('abort', cancel, { once: true });
+  });
+}
+
+function attachAttempts(error, attempts) {
+  if (error && typeof error === 'object') {
+    error.attempts = attempts;
+  }
+  return error;
+}
+
+async function requestAiProviderOnce(summary, provider, {
+  prompt,
+  systemPrompt,
+  timeoutMs,
+  signal,
+}) {
+  if (signal?.aborted) {
+    throw abortError();
+  }
   if (!provider.enabled) {
     throw new Error(`AI provider ${provider.id} is disabled.`);
   }
   if (!provider.supportedInSlice) {
     throw new Error(provider.diagnostics[0] || `AI provider ${provider.id} is not implemented in this slice.`);
   }
-  if (!provider.available && provider.type !== 'fake') {
-    throw new Error(provider.diagnostics[0] || `AI provider ${provider.id} is not available.`);
+  if (!provider.available && provider.type !== 'fake'
+      && !(provider.type === 'ollama' && provider.selectedModel)) {
+    throw providerRequestError(
+      provider.diagnostics[0] || `AI provider ${provider.id} is not available.`,
+      { retryable: provider.retryable === true },
+    );
   }
 
-  const startedAt = Date.now();
   if (provider.type === 'fake') {
     if (signal?.aborted) {
       throw abortError();
@@ -571,7 +651,6 @@ export async function testAiProvider(
       content: deterministicFakeResponse(provider.id, prompt),
       finishReason: 'stop',
       usage: null,
-      durationMs: Date.now() - startedAt,
       requestId: `ai_request_${Date.now()}`,
       diagnostics: ['Served by the deterministic fake provider.'],
       prompt,
@@ -613,10 +692,77 @@ export async function testAiProvider(
     content,
     finishReason: trim(response?.choices?.[0]?.finish_reason) || 'stop',
     usage: normalizeTokenUsage(response?.usage),
-    durationMs: Date.now() - startedAt,
     requestId: trim(response?.id) || `ai_request_${Date.now()}`,
     diagnostics: [isOpenRouter ? 'Served by the configured OpenRouter provider.' : 'Served by the configured Ollama provider.'],
     prompt,
     systemPrompt,
   };
+}
+
+export async function testAiProvider(
+  rootPath,
+  {
+    providerId = '',
+    prompt = aiDefaultSmokePrompt,
+    systemPrompt = aiDefaultSmokeSystemPrompt,
+    timeoutMs = 30_000,
+    signal,
+  } = {},
+) {
+  const startedAt = Date.now();
+  const summary = await inspectAiProviders(rootPath, { timeoutMs: Math.min(timeoutMs, 2_500), signal });
+  if (signal?.aborted) {
+    throw abortError();
+  }
+  const primaryProvider = resolveProvider(summary, providerId);
+  if (!summary.requestPolicy.valid) {
+    throw new Error(summary.requestPolicy.diagnostics[0]);
+  }
+  const providers = [
+    primaryProvider,
+    ...summary.requestPolicy.fallbackProviderIds
+      .map((fallbackId) => summary.providers.find((provider) => provider.id === fallbackId))
+      .filter((provider) => provider && provider.id !== primaryProvider.id),
+  ];
+  const attempts = [];
+  let lastError = new Error(`AI provider ${primaryProvider.id} did not complete a request.`);
+
+  for (const provider of providers) {
+    for (let retryIndex = 0; retryIndex <= summary.requestPolicy.retryCount; retryIndex += 1) {
+      try {
+        const result = await requestAiProviderOnce(summary, provider, {
+          prompt,
+          systemPrompt,
+          timeoutMs,
+          signal,
+        });
+        attempts.push({ providerId: provider.id, status: 'completed' });
+        return {
+          ...result,
+          durationMs: Date.now() - startedAt,
+          attemptCount: attempts.length,
+          fallbackUsed: provider.id !== primaryProvider.id,
+          attemptedProviderIds: attempts.map((attempt) => attempt.providerId),
+        };
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw attachAttempts(error, attempts);
+        }
+        lastError = error instanceof Error ? error : new Error(String(error));
+        attempts.push({
+          providerId: provider.id,
+          status: 'failed',
+          retryable: lastError.retryable === true,
+        });
+        if (lastError.retryable !== true) {
+          throw attachAttempts(lastError, attempts);
+        }
+        if (retryIndex < summary.requestPolicy.retryCount) {
+          await retryDelay(signal);
+        }
+      }
+    }
+  }
+
+  throw attachAttempts(lastError, attempts);
 }

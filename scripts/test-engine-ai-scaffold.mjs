@@ -13,6 +13,7 @@ const sessionStateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-ai
 const sessionStorePath = path.join(sessionStateDir, 'sessions.json');
 const tempProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-ai-project-'));
 const engineCliPath = path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs');
+const providerConfigPath = path.join(tempProjectRoot, 'ai', 'providers.toml');
 const providerRequests = [];
 const openRouterServer = http.createServer((request, response) => {
   if (request.method === 'GET' && request.url === '/api/tags') {
@@ -33,8 +34,24 @@ const openRouterServer = http.createServer((request, response) => {
       path: request.url,
     });
     const prompt = body.messages?.at(-1)?.content;
+    const matchingAttemptCount = providerRequests.filter(
+      (candidate) => candidate.body?.model === body.model
+        && candidate.body?.messages?.at(-1)?.content === prompt,
+    ).length;
     const respond = () => {
       if (response.destroyed) return;
+      if (body.model === 'moonshotai/kimi-k3'
+          && (prompt === 'Fallback after retries.'
+            || (prompt === 'Retry then succeed.' && matchingAttemptCount === 1))) {
+        response.writeHead(503, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'temporary provider failure' }));
+        return;
+      }
+      if (body.model === 'moonshotai/kimi-k3' && prompt === 'Do not fallback.') {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'invalid request' }));
+        return;
+      }
       const content = prompt === 'Return an oversized response.'
         ? 'x'.repeat(1024 * 1024 + 1)
         : 'ready';
@@ -68,9 +85,13 @@ process.env.SHADER_FORGE_AI_TEST_ALLOW_OPENROUTER_BASE_URL = '1';
 
 await fs.mkdir(path.join(tempProjectRoot, 'ai'), { recursive: true });
 await fs.writeFile(
-  path.join(tempProjectRoot, 'ai', 'providers.toml'),
+  providerConfigPath,
   [
     'default_provider = "local_fake"',
+    '',
+    '[request]',
+    'retry_count = 1',
+    'fallback_providers = ["openrouter_glm"]',
     '',
     '[provider.local_fake]',
     'type = "fake"',
@@ -180,6 +201,12 @@ try {
   const bundledGlmProvider = bundledProviders.providers.find((provider) => provider.id === 'openrouter_glm');
   assert.equal(bundledGlmProvider?.enabled, false);
   assert.equal(bundledGlmProvider?.selectedModel, 'z-ai/glm-5.2');
+  assert.deepEqual(bundledProviders.requestPolicy, {
+    retryCount: 0,
+    fallbackProviderIds: [],
+    valid: true,
+    diagnostics: [],
+  });
 
   const health = await requestJsonNoAuth(`${service.baseUrl}/health`);
   assert.equal(health.ok, true);
@@ -201,6 +228,12 @@ try {
   assert.equal(providerSummary.defaultProviderId, 'local_fake');
   assert.equal(providerSummary.providerCount, 7);
   assert.equal(providerSummary.readyProviderCount, 4);
+  assert.deepEqual(providerSummary.requestPolicy, {
+    retryCount: 1,
+    fallbackProviderIds: ['openrouter_glm'],
+    valid: true,
+    diagnostics: [],
+  });
   assert.equal(providerSummary.providers[0].id, 'local_fake');
   assert.equal(providerSummary.providers[0].status, 'ready');
   const openRouterProvider = providerSummary.providers.find((provider) => provider.id === 'openrouter_kimi');
@@ -262,6 +295,42 @@ try {
   const openRouterGlmRequest = providerRequests.find((request) => request.body?.model === 'z-ai/glm-5.2');
   assert.equal(openRouterGlmRequest?.authorization, 'Bearer test-openrouter-key');
   assert.equal(openRouterGlmRequest?.body?.max_tokens, 96);
+
+  const retriedSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Retry then succeed.',
+  });
+  assert.equal(retriedSmoke.providerId, 'openrouter_kimi');
+  assert.equal(retriedSmoke.attemptCount, 2);
+  assert.equal(retriedSmoke.fallbackUsed, false);
+  assert.deepEqual(retriedSmoke.attemptedProviderIds, ['openrouter_kimi', 'openrouter_kimi']);
+
+  const fallbackSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Fallback after retries.',
+  });
+  assert.equal(fallbackSmoke.providerId, 'openrouter_glm');
+  assert.equal(fallbackSmoke.attemptCount, 3);
+  assert.equal(fallbackSmoke.fallbackUsed, true);
+  assert.deepEqual(fallbackSmoke.attemptedProviderIds, [
+    'openrouter_kimi',
+    'openrouter_kimi',
+    'openrouter_glm',
+  ]);
+
+  const nonRetryableAttemptStart = providerRequests.length;
+  const nonRetryableSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Do not fallback.',
+  });
+  assert.match(nonRetryableSmoke.error || '', /invalid request/);
+  assert.deepEqual(
+    providerRequests.slice(nonRetryableAttemptStart).map((request) => request.body?.model),
+    ['moonshotai/kimi-k3'],
+  );
 
   const runningJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
     sessionId,
@@ -439,9 +508,18 @@ try {
   ]);
   assert.match(cliRequest.content, /^fake:local_fake:/);
 
+  const validProviderConfig = await fs.readFile(providerConfigPath, 'utf8');
+  await fs.writeFile(providerConfigPath, validProviderConfig.replace('retry_count = 1', 'retry_count = 3'), 'utf8');
+  const invalidRetryPolicy = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'local_fake',
+  });
+  assert.match(invalidRetryPolicy.error || '', /request\.retry_count must be an integer from 0 through 2/);
+
   console.log('Engine AI scaffold passed.');
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
   console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter Kimi/GLM request paths without exposing credentials');
+  console.log('- Verified manifest-bounded retry and explicit Kimi-to-GLM fallback for transient errors without fallback on invalid requests');
   console.log('- Verified bounded queued AI jobs, list/status/cancel APIs and CLI adapters, pending/running cancellation, and queue recovery');
   console.log('- Verified bounded durable metadata-only AI history through the API and CLI without prompt, response, error, or credential content');
   console.log('- Verified atomic per-workspace provider token usage persistence and API/CLI summaries for successful queued calls');
