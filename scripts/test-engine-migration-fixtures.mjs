@@ -203,6 +203,32 @@ assert.match(unityConvertManifest, /mapped_prefab_components = 2/);
 assert.match(unityConvertManifest, /mapped_script_bindings = 1/);
 await assertMigratedProjectBakes(unityProjectRoot, 'unity', 'unity-convert');
 
+const triggerUnityFixtureRoot = path.join(tempRoot, 'source-fixtures', 'unity-trigger-collider');
+fs.cpSync(unityFixtureRoot, triggerUnityFixtureRoot, { recursive: true });
+const triggerUnityScenePath = path.join(triggerUnityFixtureRoot, 'Assets', 'Scenes', 'Sandbox.unity');
+fs.writeFileSync(
+  triggerUnityScenePath,
+  fs.readFileSync(triggerUnityScenePath, 'utf8').replace('m_IsTrigger: 0', 'm_IsTrigger: 1'),
+  'utf8',
+);
+const triggerUnityRun = runCli([
+  'migrate',
+  'unity',
+  triggerUnityFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'unity-trigger-collider',
+]);
+assert.match(triggerUnityRun.stdout, /Mapped prefab components: 1/);
+assert.doesNotMatch(
+  fs.readFileSync(
+    path.join(tempRoot, 'unity-trigger-collider', 'shader-forge-project', 'content', 'prefabs', 'migrated', 'unity', 'sandbox_sandbox_root_player.prefab.toml'),
+    'utf8',
+  ),
+  /\[component\.collision\]/,
+);
+
 const unrealRun = runCli([
   'migrate',
   'unreal',
