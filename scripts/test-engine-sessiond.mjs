@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
@@ -79,6 +80,47 @@ async function startService() {
 }
 
 let service = await startService();
+
+function postAccumulatedJsonBody(url, chunks) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const request = http.request({
+      method: 'POST',
+      hostname: parsed.hostname,
+      port: parsed.port,
+      path: parsed.pathname + parsed.search,
+      headers: {
+        'Content-Type': 'application/json',
+        Connection: 'close',
+      },
+    }, (response) => {
+      const parts = [];
+      response.on('data', (chunk) => {
+        parts.push(chunk);
+      });
+      response.on('end', () => {
+        const text = Buffer.concat(parts).toString('utf8');
+        let payload = {};
+        if (text) {
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            payload = { error: text };
+          }
+        }
+        resolve({ status: response.statusCode, payload, text });
+      });
+    });
+    request.setTimeout(10_000, () => {
+      request.destroy(new Error('Timed out posting accumulated JSON body.'));
+    });
+    request.on('error', reject);
+    for (const chunk of chunks) {
+      request.write(chunk);
+    }
+    request.end();
+  });
+}
 
 async function requestCoordination(pathname, method = 'GET', body, credential = '') {
   const headers = {};
@@ -287,6 +329,22 @@ try {
   assert.ok(health.capabilities.includes('coordination'));
   assert.ok(health.capabilities.includes('operations'));
   assert.ok(health.capabilities.includes('operations:file-write'));
+  assert.ok(health.capabilities.includes('operations:scene-asset'));
+
+  const jsonLimitBytes = 1024 * 1024;
+  const oversizedPrefix = Buffer.from('{"content":"');
+  const oversizedSuffix = Buffer.from('"}');
+  const oversizedBody = await postAccumulatedJsonBody(`${service.baseUrl}/api/sessions`, [
+    oversizedPrefix,
+    Buffer.alloc(jsonLimitBytes, 0x61),
+    Buffer.from('a'),
+    oversizedSuffix,
+  ]);
+  assert.equal(oversizedBody.status, 413);
+  assert.equal(typeof oversizedBody.payload.error, 'string');
+  assert.match(oversizedBody.payload.error, /1 MiB/i);
+  assert.equal(oversizedBody.text.includes('a'.repeat(64)), false);
+  assert.ok(oversizedBody.payload.error.length < 256);
 
   const corsPreflight = await fetch(`${service.baseUrl}/api/sessions/example`, {
     method: 'OPTIONS',

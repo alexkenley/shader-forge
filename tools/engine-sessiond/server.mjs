@@ -38,6 +38,7 @@ import {
 
 const PUBLIC_FILE_LIST_MAX_ENTRIES = 4096;
 const PUBLIC_FILE_READ_MAX_BYTES = 1024 * 1024;
+const PUBLIC_JSON_BODY_MAX_BYTES = 1024 * 1024;
 
 function requestOrigin(request) {
   const value = request?.headers?.origin;
@@ -163,14 +164,39 @@ function assertAllowedOrigin(request) {
 
 async function readJsonBody(request) {
   const chunks = [];
+  let totalBytes = 0;
+  let overflowed = false;
   for await (const chunk of request) {
-    chunks.push(chunk);
+    if (overflowed) {
+      continue;
+    }
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > PUBLIC_JSON_BODY_MAX_BYTES) {
+      chunks.length = 0;
+      overflowed = true;
+      continue;
+    }
+    chunks.push(buffer);
+  }
+  if (overflowed) {
+    throw createHttpError(413, 'Request body exceeds the 1 MiB limit.');
   }
   if (!chunks.length) {
     return {};
   }
   const rawBody = Buffer.concat(chunks).toString('utf8');
-  return rawBody ? JSON.parse(rawBody) : {};
+  if (!rawBody) {
+    return {};
+  }
+  try {
+    return JSON.parse(rawBody);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw createHttpError(400, 'Invalid JSON request body.');
+    }
+    throw error;
+  }
 }
 
 function createEventHub() {
@@ -713,6 +739,7 @@ function createRouter({
           'operations',
           'operations:file-write',
           'operations:spatial-attachment',
+          'operations:scene-asset',
           'events',
         ];
         if (runtimeStore.supportsPause()) {
