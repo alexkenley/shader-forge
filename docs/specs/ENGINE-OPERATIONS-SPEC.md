@@ -1,6 +1,6 @@
 # Engine Operations Spec
 
-Status: hardened text-file write slice plus bounded selected-operation diff, transient spatial evaluation, attachment preview context, semantic scene/prefab backend operations, and CLI adapter implemented
+Status: hardened text-file write slice plus bounded selected-operation diff, transient spatial evaluation, attachment preview context, semantic scene/prefab backend and World-shell operations, and CLI adapter implemented
 
 Date: 2026-08-31
 
@@ -8,7 +8,7 @@ Date: 2026-08-31
 
 Shader Forge mutations must be previewable, revision-checked, attributable, atomically applied, and undoable before shell, CLI, and MCP clients share a write path.
 
-This spec is the canonical contract for engine-owned operations. The implemented slice is a workspace-scoped text-file write workflow owned by `engine_sessiond`. It is the shared backend for Activity review, the spatial CLI and Assets tuner, and the first lease-gated `sf-mcp` spatial mutation tools. It does not replace `POST /api/files/write`.
+This spec is the canonical contract for engine-owned operations. The implemented slice is a workspace-scoped text-file write workflow owned by `engine_sessiond`. It is the shared backend for Activity review, World scene/prefab authoring, the spatial CLI and Assets tuner, and the first lease-gated `sf-mcp` spatial mutation tools. It does not replace `POST /api/files/write` for unrelated legacy callers.
 
 `sf-mcp` exposes only the spatial attachment operation family because it has durable resource keys and authoritative lease checks. Generic MCP file apply/undo remains disabled. Actor strings recorded on operations are local provenance, not cryptographic attribution.
 
@@ -211,6 +211,12 @@ The native `Code` workspace uses bounded session file list/read routes and the g
 
 Session, tab, read, action, and operation-id guards reject late responses after navigation or workspace changes. Clean tabs close on session change; dirty tabs remain explicitly detached and read-only until closed or their original session becomes active again. Structured revision conflicts remain tab-bound, preserve the draft, and require Reload then Re-preview. The optional legacy bridge does not own another event subscription or mutation path.
 
+## World Shell Adapter
+
+The `World` workspace never calls `POST /api/files/write`. Parsed scene and prefab documents retain their authoritative revision; new create/duplicate targets use `missing`. One shell helper covers scene save, prefab save, create, and duplicate. It registers a short-lived agent, requests the exact sorted target resource plus duplicate source resource, previews a `scene_asset` operation, verifies the returned operation/session/path/base/proposed/context identity, approves, heartbeats and rereads the lease, applies, then rereads the authored file.
+
+Duplicate binds the source subject and SHA-256 revision as well as the target. A queued or lost lease, revision conflict, late workspace response, or failed identity check leaves the in-memory draft unchanged. An uncertain apply is never retried: the shell reads the operation and file once and accepts success only when the same operation is authoritatively `applied` and the file revision equals its proposed/applied revision. Lease release and agent disconnect are best-effort terminal cleanup.
+
 ## Spatial MCP Adapter
 
 The process-scoped `sf-mcp` server exposes `operation_list`, `operation_read`, `spatial_attachment_preview`, `operation_approve`, `operation_reject`, `operation_apply`, and `operation_undo` over this same contract. Session id, MCP actor, coordinator agent id, and credential come from process state rather than model-provided arguments.
@@ -242,7 +248,7 @@ Payloads are operation views. They do not include file contents or credentials.
 
 Operations reuse `SessionStore` path resolution. Symlinks and junctions cannot escape the session root. This slice does not introduce a second path resolver.
 
-`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, shell scene-operation integration, Activity apply/undo coordination, and non-spatial MCP mutation tools are later slices.
+`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, Activity apply/undo coordination, and non-spatial MCP mutation tools are later slices.
 
 ## Persistence Validation
 
@@ -306,4 +312,4 @@ Invalid records are skipped. They cannot be listed as applicable operations.
 
 `npm run test:spatial-operations` additionally covers the revision-safe GET, strict path/symlink and source-ID binding, exact staged baseline/candidate bytes, exact fail-closed joint-limit protocol and recomputed truth, new-file `baseline: null`, final-read revision drift, malformed or wrong-ID evaluator output, bounded unavailable/infrastructure errors, temporary cleanup, journal absence for GET, non-persistence of preview evaluations, and the post-evaluation preview lease recheck.
 
-`npm run test:data-tool` compiles and executes the native selected-asset validator. `npm run test:scene-operations` covers save/create/duplicate context, canonical resource keys, target/source revisions, lease coverage, no-write preview, HTTP routing, mutation-lane apply/undo validation, retryable validation failure, native response binding, credential exclusion, and rename refusal.
+`npm run test:data-tool` compiles and executes the native selected-asset validator. `npm run test:scene-operations` covers save/create/duplicate context, canonical resource keys, target/source revisions, lease coverage, no-write preview, HTTP routing, mutation-lane apply/undo validation, retryable validation failure, native response binding, fail-closed validator absence, credential exclusion, and rename refusal. `npm run test:scene-authoring` asserts that World uses the typed semantic client, revision-bearing documents, exact coordination cleanup, and apply reconciliation rather than raw writes.

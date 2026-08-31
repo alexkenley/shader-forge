@@ -12,7 +12,7 @@ const [app, activity, client, styles, operationStore] = await Promise.all([
   fs.readFile(path.join(repoRoot, 'tools', 'engine-sessiond', 'lib', 'operation-store.mjs'), 'utf8'),
 ]);
 
-assert.match(app, /const bottomTabs = \['Terminal', 'Logs', 'Output', 'Activity'\] as const;/);
+assert.match(app, /const bottomTabs = SHELL_BOTTOM_TABS;/);
 assert.match(app, /<ActivityDockView/);
 assert.equal((app.match(/subscribeSessiondEvents\(/g) || []).length, 1, 'App must retain one SSE subscription');
 assert.match(app, /listOperations\(sessionId\)/);

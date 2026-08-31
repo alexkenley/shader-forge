@@ -10,8 +10,11 @@ export type SceneEntityDocument = {
   scale: Vector3Value;
 };
 
+export const MISSING_SCENE_ASSET_REVISION = 'missing';
+
 export type SceneAssetDocument = {
   path: string;
+  revision: string;
   schema: string;
   schemaVersion: number;
   name: string;
@@ -26,6 +29,7 @@ export type SceneAssetDocument = {
 
 export type PrefabAssetDocument = {
   path: string;
+  revision: string;
   schema: string;
   schemaVersion: number;
   name: string;
@@ -218,10 +222,12 @@ export function parseSceneAssetDocument(payload: {
   path: string;
   content: string;
   modifiedAt: string;
+  revision: string;
 }): SceneAssetDocument {
   const document = parseStructuredTomlDocument(payload.content);
   return {
     path: payload.path,
+    revision: payload.revision,
     schema: readStringField(document.fields, 'schema', 'shader_forge.scene'),
     schemaVersion: readNumberField(document.fields, 'schema_version', 1),
     name: readStringField(document.fields, 'name', basenameWithoutSuffix(payload.path, '.scene.toml')),
@@ -239,12 +245,14 @@ export function parsePrefabAssetDocument(payload: {
   path: string;
   content: string;
   modifiedAt: string;
+  revision: string;
 }): PrefabAssetDocument {
   const document = parseStructuredTomlDocument(payload.content);
   const renderSection = document.sections.find((section) => section.name === 'component.render');
   const effectSection = document.sections.find((section) => section.name === 'component.effect');
   return {
     path: payload.path,
+    revision: payload.revision,
     schema: readStringField(document.fields, 'schema', 'shader_forge.prefab'),
     schemaVersion: readNumberField(document.fields, 'schema_version', 1),
     name: readStringField(document.fields, 'name', basenameWithoutSuffix(payload.path, '.prefab.toml')),
@@ -375,6 +383,7 @@ export function createSceneAssetDocument(sceneName: string, primaryPrefab: strin
     : [];
   return {
     path: buildSceneAssetPath(sanitizedName || 'new_scene'),
+    revision: MISSING_SCENE_ASSET_REVISION,
     schema: 'shader_forge.scene',
     schemaVersion: 1,
     name: sanitizedName || 'new_scene',
@@ -393,6 +402,7 @@ export function cloneSceneForDuplicate(source: SceneAssetDocument, nextName: str
   return {
     ...source,
     path: buildSceneAssetPath(sanitizedName),
+    revision: MISSING_SCENE_ASSET_REVISION,
     name: sanitizedName,
     title: nextName.trim() || `${source.title} Copy`,
     entities: source.entities.map(cloneSceneEntity),

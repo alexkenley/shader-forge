@@ -1209,6 +1209,46 @@ export async function previewSpatialAttachment(options: {
   });
 }
 
+export type SceneAssetPreviewResult = {
+  operation: EngineOperation;
+  validation: unknown;
+};
+
+export async function previewSceneAsset(options: {
+  sessionId: string;
+  assetKind: 'scene' | 'prefab';
+  intent: 'save' | 'create' | 'duplicate';
+  subjectId: string;
+  content: string;
+  baseRevision: string;
+  label: string;
+  agentId: string;
+  leaseId: string;
+  credential: string;
+  sourceSubjectId?: string;
+  sourceRevision?: string;
+}) {
+  return requestJson<SceneAssetPreviewResult>('/api/operations/scene-asset/preview', {
+    method: 'POST',
+    headers: credentialHeader(options.credential),
+    body: JSON.stringify({
+      sessionId: options.sessionId,
+      assetKind: options.assetKind,
+      intent: options.intent,
+      subjectId: options.subjectId,
+      content: options.content,
+      baseRevision: options.baseRevision,
+      label: options.label,
+      actor: engineShellActor,
+      agentId: options.agentId,
+      leaseId: options.leaseId,
+      ...(options.sourceSubjectId
+        ? { sourceSubjectId: options.sourceSubjectId, sourceRevision: options.sourceRevision }
+        : {}),
+    }),
+  });
+}
+
 export async function transitionOperation(
   operationId: string,
   action: 'approve' | 'reject' | 'apply' | 'undo',

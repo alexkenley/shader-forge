@@ -178,7 +178,7 @@ Recommended model:
 - `Play` saves the current draft before building and running; `Apply and restart` supports tuning while the game is already running
 - the World workspace stays mounted during ordinary shell navigation so in-progress edits are not lost
 
-The current World slice still writes source assets through the raw file API. Revision-bound semantic save operations remain the next persistence migration.
+The current World slice now writes scene and prefab assets through revision-bound semantic operations with exact resource leases, native `DataFoundation` validation, and authoritative apply reconciliation. Multi-file rename remains deferred until the journal can represent referer updates atomically.
 
 This gives the project three equal authoring paths:
 

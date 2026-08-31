@@ -1,11 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   type BuildStatus,
-  listFiles,
-  readFile,
-  writeFile,
+  disconnectCoordinationAgent,
+  engineShellActor,
+  type EngineOperation,
   type EngineSession,
+  fetchCoordinationLease,
+  fetchOperation,
+  heartbeatCoordinationAgent,
+  listFiles,
+  previewSceneAsset,
+  readFile,
+  registerCoordinationAgent,
+  releaseCoordinationLease,
+  requestCoordinationLease,
   type RuntimeStatus,
+  type SessionFileRead,
+  transitionOperation,
 } from './lib/sessiond';
 import {
   buildSceneAssetPath,
@@ -106,6 +117,194 @@ function cloneSnapshot(snapshot: EditorSnapshot) {
     scene: cloneSceneDocument(snapshot.scene),
     prefab: clonePrefabDocument(snapshot.prefab),
   };
+}
+
+type SceneAssetMutation = {
+  sessionId: string;
+  path: string;
+  content: string;
+  baseRevision: string;
+  assetKind: 'scene' | 'prefab';
+  intent: 'save' | 'create' | 'duplicate';
+  subjectId: string;
+  sourceSubjectId?: string;
+  sourceRevision?: string;
+  label: string;
+};
+
+function sceneAssetResourceKey(assetKind: 'scene' | 'prefab', subjectId: string) {
+  return `${assetKind === 'scene' ? 'scene/world' : 'scene/prefab'}/${subjectId}`;
+}
+
+async function sha256Revision(content: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
+  return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function sameStringList(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function assertSceneAssetOperation(
+  operation: EngineOperation,
+  expected: SceneAssetMutation & {
+    leaseId: string;
+    operationId?: string;
+    proposedRevision: string;
+    resourceKeys: string[];
+  },
+  state: EngineOperation['state'],
+) {
+  const context = operation.context;
+  if (
+    !operation.id
+    || (expected.operationId != null && operation.id !== expected.operationId)
+    || operation.kind !== 'file_write'
+    || operation.state !== state
+    || operation.sessionId !== expected.sessionId
+    || operation.path !== expected.path
+    || operation.baseRevision !== expected.baseRevision
+    || operation.proposedRevision !== expected.proposedRevision
+    || context?.type !== 'scene_asset'
+    || context.assetKind !== expected.assetKind
+    || context.intent !== expected.intent
+    || context.label !== expected.label
+    || context.subjectId !== expected.subjectId
+    || context.leaseId !== expected.leaseId
+    || !sameStringList(context.resourceKeys, expected.resourceKeys)
+    || (expected.intent === 'duplicate'
+      ? context.sourceSubjectId !== expected.sourceSubjectId || context.sourceRevision !== expected.sourceRevision
+      : context.sourceSubjectId != null || context.sourceRevision != null)
+    || (state === 'applied'
+      ? operation.appliedRevision !== expected.proposedRevision
+      : operation.appliedRevision != null)
+    || operation.resultingRevision != null
+  ) {
+    throw new Error('Sessiond returned a scene asset operation that did not match the requested identity.');
+  }
+}
+
+async function mutateSceneAsset(request: SceneAssetMutation): Promise<SessionFileRead> {
+  if (request.intent === 'duplicate' && (!request.sourceSubjectId || !request.sourceRevision)) {
+    throw new Error('Duplicate requires sourceSubjectId and sourceRevision.');
+  }
+
+  const resourceKeys = [...new Set([
+    sceneAssetResourceKey(request.assetKind, request.subjectId),
+    ...(request.intent === 'duplicate' && request.sourceSubjectId
+      ? [sceneAssetResourceKey(request.assetKind, request.sourceSubjectId)]
+      : []),
+  ])].sort();
+  const proposedRevision = await sha256Revision(request.content);
+  const registration = await registerCoordinationAgent(request.sessionId);
+  const agentId = registration.agent.id;
+  const credential = registration.credential;
+  let leaseId = '';
+
+  try {
+    if (registration.agent.sessionId !== request.sessionId || !agentId || !credential) {
+      throw new Error('Sessiond returned an invalid World coordination identity.');
+    }
+    const lease = await requestCoordinationLease(agentId, credential, resourceKeys);
+    leaseId = lease.id;
+    if (
+      !leaseId
+      || lease.agentId !== agentId
+      || lease.sessionId !== request.sessionId
+      || lease.mode !== 'write'
+    ) {
+      throw new Error('Sessiond returned a World write lock with the wrong identity. The draft was preserved.');
+    }
+    if (lease.status !== 'granted') {
+      throw new Error(
+        lease.status === 'queued'
+          ? 'World write lock is queued. The draft was preserved.'
+          : `World write lock is ${lease.status}. The draft was preserved.`,
+      );
+    }
+    if (!sameStringList([...lease.resources].sort(), resourceKeys)) {
+      throw new Error('World write lock did not cover the exact scene resources. The draft was preserved.');
+    }
+
+    const expected = { ...request, leaseId, proposedRevision, resourceKeys };
+    const previewed = await previewSceneAsset({
+      sessionId: request.sessionId,
+      assetKind: request.assetKind,
+      intent: request.intent,
+      subjectId: request.subjectId,
+      content: request.content,
+      baseRevision: request.baseRevision,
+      label: request.label,
+      agentId,
+      leaseId,
+      credential,
+      ...(request.intent === 'duplicate'
+        ? { sourceSubjectId: request.sourceSubjectId, sourceRevision: request.sourceRevision }
+        : {}),
+    });
+    assertSceneAssetOperation(previewed.operation, expected, 'previewed');
+    const operationExpected = { ...expected, operationId: previewed.operation.id };
+
+    const approved = await transitionOperation(previewed.operation.id, 'approve', { actor: engineShellActor });
+    assertSceneAssetOperation(approved.operation, operationExpected, 'approved');
+
+    await heartbeatCoordinationAgent(agentId, credential);
+    const currentLease = await fetchCoordinationLease(leaseId);
+    if (
+      currentLease.id !== leaseId
+      || currentLease.agentId !== agentId
+      || currentLease.sessionId !== request.sessionId
+      || currentLease.mode !== 'write'
+      || currentLease.status !== 'granted'
+      || !sameStringList([...currentLease.resources].sort(), resourceKeys)
+    ) {
+      throw new Error('World write lock was lost. The draft was preserved.');
+    }
+
+    let applied: EngineOperation;
+    try {
+      const result = await transitionOperation(previewed.operation.id, 'apply', {
+        actor: engineShellActor,
+        coordination: { agentId, leaseId, credential },
+      });
+      assertSceneAssetOperation(result.operation, operationExpected, 'applied');
+      applied = result.operation;
+    } catch (error) {
+      let reconciled: SessionFileRead | null = null;
+      try {
+        const authoritative = await fetchOperation(previewed.operation.id);
+        const latest = await readFile(request.sessionId, request.path);
+        if (
+          latest.path === request.path
+          && latest.revision === expected.proposedRevision
+        ) {
+          assertSceneAssetOperation(authoritative, operationExpected, 'applied');
+          reconciled = latest;
+        }
+      } catch {
+        reconciled = null;
+      }
+      if (reconciled) {
+        return reconciled;
+      }
+      throw error;
+    }
+
+    const latest = await readFile(request.sessionId, request.path);
+    if (
+      latest.path !== request.path
+      || latest.revision !== expected.proposedRevision
+      || latest.revision !== applied.appliedRevision
+    ) {
+      throw new Error('Authoritative scene file did not match the applied revision.');
+    }
+    return latest;
+  } finally {
+    if (leaseId) {
+      await releaseCoordinationLease(leaseId, agentId, credential).catch(() => undefined);
+    }
+    await disconnectCoordinationAgent(agentId, credential).catch(() => undefined);
+  }
 }
 
 function isMissingDirectoryError(error: unknown) {
@@ -841,11 +1040,16 @@ export function SceneEditorView({
     const targetPath = sceneDraft.path;
     setBusy(true);
     try {
-      const savedPayload = await writeFile(
-        targetSessionId,
-        targetPath,
-        formatSceneAssetDocument(sceneDraft),
-      );
+      const savedPayload = await mutateSceneAsset({
+        sessionId: targetSessionId,
+        path: targetPath,
+        content: formatSceneAssetDocument(sceneDraft),
+        baseRevision: sceneDraft.revision,
+        assetKind: 'scene',
+        intent: 'save',
+        subjectId: sceneDraft.name,
+        label: `save scene ${sceneDraft.name}`,
+      });
       if (
         activeSessionIdRef.current !== targetSessionId
         || sceneDraftPathRef.current !== targetPath
@@ -896,11 +1100,16 @@ export function SceneEditorView({
     const targetPath = prefabDraft.path;
     setBusy(true);
     try {
-      const savedPayload = await writeFile(
-        targetSessionId,
-        targetPath,
-        formatPrefabAssetDocument(prefabDraft),
-      );
+      const savedPayload = await mutateSceneAsset({
+        sessionId: targetSessionId,
+        path: targetPath,
+        content: formatPrefabAssetDocument(prefabDraft),
+        baseRevision: prefabDraft.revision,
+        assetKind: 'prefab',
+        intent: 'save',
+        subjectId: prefabDraft.name,
+        label: `save prefab ${prefabDraft.name}`,
+      });
       if (
         activeSessionIdRef.current !== targetSessionId
         || prefabDraftPathRef.current !== targetPath
@@ -977,11 +1186,16 @@ export function SceneEditorView({
 
     setBusy(true);
     try {
-      const savedPayload = await writeFile(
-        targetSessionId,
-        nextScene.path,
-        formatSceneAssetDocument(nextScene),
-      );
+      const savedPayload = await mutateSceneAsset({
+        sessionId: targetSessionId,
+        path: nextScene.path,
+        content: formatSceneAssetDocument(nextScene),
+        baseRevision: nextScene.revision,
+        assetKind: 'scene',
+        intent: 'create',
+        subjectId: nextScene.name,
+        label: `create scene ${nextScene.name}`,
+      });
       if (!worldResponseIsCurrent(targetAuthority)) {
         return;
       }
@@ -1034,11 +1248,18 @@ export function SceneEditorView({
 
     setBusy(true);
     try {
-      const savedPayload = await writeFile(
-        targetSessionId,
-        duplicateDocument.path,
-        formatSceneAssetDocument(duplicateDocument),
-      );
+      const savedPayload = await mutateSceneAsset({
+        sessionId: targetSessionId,
+        path: duplicateDocument.path,
+        content: formatSceneAssetDocument(duplicateDocument),
+        baseRevision: duplicateDocument.revision,
+        assetKind: 'scene',
+        intent: 'duplicate',
+        subjectId: duplicateDocument.name,
+        sourceSubjectId: sceneDraft.name,
+        sourceRevision: sceneDraft.revision,
+        label: `duplicate scene ${duplicateDocument.name}`,
+      });
       if (!worldResponseIsCurrent(targetAuthority)) {
         return;
       }

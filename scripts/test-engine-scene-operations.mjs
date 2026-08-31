@@ -183,6 +183,22 @@ try {
   }), (error) => error.statusCode === 413);
   await sessionStore.writeTextFileAtomic(session.id, foundationPath, originalFoundation.content);
 
+  const unavailableLease = lease(['scene/world/validator_missing']);
+  const previousDataBinary = process.env.SHADER_FORGE_DATA_BINARY;
+  process.env.SHADER_FORGE_DATA_BINARY = path.join(root, 'missing', 'shader_forge_data.exe');
+  try {
+    const unavailableService = new SceneAssetService({ sessionStore, coordinationStore, operationStore });
+    await assert.rejects(unavailableService.previewAsset({
+      sessionId: session.id, assetKind: 'scene', intent: 'create', subjectId: 'validator_missing',
+      content: scene('validator_missing'), baseRevision: MISSING_FILE_REVISION, actor,
+      agentId: registration.agent.id, credential: registration.credential, leaseId: unavailableLease.id,
+    }), (error) => error.statusCode === 503 && error.code === 'scene_asset_validator_unavailable');
+  } finally {
+    if (previousDataBinary == null) delete process.env.SHADER_FORGE_DATA_BINARY;
+    else process.env.SHADER_FORGE_DATA_BINARY = previousDataBinary;
+    coordinationStore.releaseLease(unavailableLease.id, auth(unavailableLease));
+  }
+
   const persisted = await fs.readFile(path.join(state, 'operations.json'), 'utf8');
   assert.doesNotMatch(persisted, new RegExp(registration.credential));
   const reloaded = new OperationStore({ sessionStore, storageFilePath: path.join(state, 'operations.json') });

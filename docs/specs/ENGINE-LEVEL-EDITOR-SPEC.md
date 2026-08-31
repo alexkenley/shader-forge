@@ -51,12 +51,16 @@ Current implemented behavior:
 - `Apply and restart` saves tuning changes and restarts the running game in one action
 - low-level build, runtime, and bridge information is collapsed under diagnostics instead of filling the default authoring surface
 - the World workspace remains mounted during ordinary shell navigation so local drafts survive moving between workspaces
+- scene and prefab documents retain their authoritative SHA-256 revision, while new targets use the explicit `missing` revision
+- save, create, duplicate, and reusable-object save use one semantic scene-asset operation path with exact `scene/world/<id>` or `scene/prefab/<id>` write leases, native `DataFoundation` validation, approve/apply, and an authoritative reread
+- duplicate binds both the target and source identity/revision; queued leases, conflicts, workspace changes, or uncertain apply preserve the draft and never trigger a blind retry
+- changing the active project/session either confirms discard or leaves dirty World drafts visibly detached and read-only until their original workspace returns
 
 Current boundary:
 
 - viewport gizmos, in-viewport manipulation, deeper scene/component payload editing, and procedural bake-back are still ahead
 - this slice is intentionally honest about being shell-side authoring over current text assets, not a fake full visual editor
-- World saves still use raw file writes; migration to revision-bound semantic operations is pending
+- multi-file scene/prefab rename remains ahead because referer updates cannot fit the current single-file semantic operation
 
 ## Core Surfaces
 
@@ -81,6 +85,7 @@ Expected properties:
 - stable identifiers for entities and prefab references
 - explicit component payloads
 - clear separation between authored source assets and cooked runtime output
+- revision-bound semantic mutation with exact resource leases and native catalog validation
 
 ## Procedural And Bake Workflow
 

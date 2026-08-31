@@ -78,6 +78,18 @@ try {
   assert.match(sceneEditorView, /role="tablist"/);
   assert.match(sceneEditorView, /aria-controls="scene-sidebar-panel-scenes"/);
   assert.match(sceneEditorView, /aria-labelledby="scene-sidebar-tab-scenes"/);
+  assert.doesNotMatch(sceneEditorView, /\bwriteFile\b/);
+  assert.match(sceneEditorView, /async function mutateSceneAsset/);
+  assert.match(sceneEditorView, /crypto\.subtle\.digest\('SHA-256'/);
+  assert.match(sceneEditorView, /registerCoordinationAgent/);
+  assert.match(sceneEditorView, /requestCoordinationLease/);
+  assert.match(sceneEditorView, /previewSceneAsset/);
+  assert.match(sceneEditorView, /fetchOperation/);
+  assert.match(sceneEditorView, /operation\.id !== expected\.operationId/);
+  assert.match(sceneEditorView, /operation\.appliedRevision !== expected\.proposedRevision/);
+  assert.match(sceneEditorView, /latest\.revision === expected\.proposedRevision/);
+  assert.match(sceneEditorView, /releaseCoordinationLease/);
+  assert.match(sceneEditorView, /disconnectCoordinationAgent/);
   assert.match(sceneAuthoringSource, /formatSceneAssetDocument/);
   assert.match(sceneAuthoringSource, /formatPrefabAssetDocument/);
   assert.match(sceneAuthoringSource, /\[entity\./);
@@ -86,9 +98,13 @@ try {
   assert.match(sceneAuthoringSource, /createSceneEntityDocument/);
   assert.match(sceneAuthoringSource, /sourcePrefab/);
   assert.match(sceneAuthoringSource, /content\/scenes/);
-  assert.match(sessiondClient, /writeFile/);
+  assert.match(sceneAuthoringSource, /revision: string/);
+  assert.match(sceneAuthoringSource, /MISSING_SCENE_ASSET_REVISION = 'missing'/);
+  assert.match(sessiondClient, /export async function previewSceneAsset/);
+  assert.match(sessiondClient, /\/api\/operations\/scene-asset\/preview/);
   assert.match(sessiondServer, /\/api\/files\/write/);
   assert.match(sessiondServer, /files:write/);
+  assert.match(sessiondServer, /\/api\/operations\/scene-asset\/preview/);
 
   const sessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
     name: 'scene-authoring',
@@ -177,7 +193,8 @@ try {
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log('- Verified the World workspace exposes draft-safe Edit/Verify, one-click Play, guarded navigation, plain-language object tools, and collapsed advanced settings');
   console.log('- Verified dirty World drafts keep stable workspace authority and detach from incompatible session or root changes');
-  console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component assets can be written through engine_sessiond inside a session root');
+  console.log('- Verified World mutations use revision-bound semantic operations, exact coordination leases, and authoritative apply reconciliation');
+  console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component fixture assets inside a session root');
 } finally {
   await service.close();
   await fs.rm(sessionStateDir, { recursive: true, force: true });

@@ -41,6 +41,8 @@ Known non-blocking warnings: `test:sessiond` can print the Windows `node-pty` `A
 
 ### 1. Move World writes onto semantic operations
 
+Status: completed. World scene/prefab documents now carry revisions; save/create/duplicate/reusable-object save share the semantic operation helper with exact leases and authoritative reconciliation. Dirty project/session changes detach instead of resetting, public JSON input is bounded while streaming, and `shader_forge_data` is provisioned by the CLI/runtime/clean-start paths with fail-closed coverage.
+
 Replace every raw World scene/prefab write with the existing `SceneAssetService` operation lane. Add revision-bearing scene/prefab documents and a typed shell preview call. One helper should cover save, create, duplicate, and reusable-object save: register agent, acquire canonical write lease(s), preview, verify captured session/path/content/base revision and operation identity, approve, recheck/heartbeat lease, apply, then authoritatively reread. Preserve drafts on conflicts, late responses, queued work, and uncertain apply; reconcile by rereading the operation and file, never blind-retry.
 
 Critical rules:

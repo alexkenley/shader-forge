@@ -641,11 +641,11 @@ Exit criteria:
 
 ### Gate 1: Make Mutations Safe and Observable
 
-Current status: the hardened text-file write operation contract is implemented in `engine_sessiond`, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, and loopback-only bind. The shell consumes durable list/detail and event views in a review-only Activity dock, and `sf-mcp` consumes the lease-gated spatial attachment workflow. Scene/asset operations, exact public diffs, Activity apply/undo coordination, and non-spatial MCP mutation tools remain open.
+Current status: the hardened text-file write operation contract is implemented in `engine_sessiond`, including journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, loopback-only bind, bounded public JSON input, and exact public diffs. The shell consumes durable list/detail and event views in a review-only Activity dock; World consumes revision-bound lease-gated scene/prefab save/create/duplicate; and `sf-mcp` consumes the lease-gated spatial attachment workflow. Multi-file change sets, Activity apply/undo coordination, and non-spatial MCP mutation tools remain open.
 
 Actions:
 
-- replace lossy scene writes with revision-safe, atomic operations
+- completed: replace lossy scene writes with revision-safe, lease-gated semantic operations
 - add document hashes or revisions and conflict responses
 - add structured previews and diffs for mutations
 - add operation provenance and history
