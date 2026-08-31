@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "tools": [
+    {
+      "id": "engine.ai.providers.inspect",
+      "label": "Inspect AI providers",
+      "capability": "ai:providers",
+      "allowedClients": ["cli", "shell"],
+      "permission": "read_only",
+      "dryRun": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "providerCount": { "type": "integer" },
+          "readyProviderCount": { "type": "integer" }
+        },
+        "required": ["providerCount", "readyProviderCount"],
+        "additionalProperties": true
+      }
+    },
+    {
+      "id": "engine.ai.usage.inspect",
+      "label": "Inspect AI token usage",
+      "capability": "ai:usage",
+      "allowedClients": ["cli", "shell"],
+      "permission": "read_only",
+      "dryRun": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "requestCount": { "type": "integer" },
+          "totalTokens": { "type": "integer" }
+        },
+        "required": ["requestCount", "totalTokens"],
+        "additionalProperties": true
+      }
+    }
+  ],
+  "skills": [
+    {
+      "id": "engine.ai.health.inspect",
+      "label": "Inspect AI health",
+      "toolIds": ["engine.ai.providers.inspect", "engine.ai.usage.inspect"],
+      "allowedClients": ["cli", "shell"],
+      "permission": "read_only"
+    }
+  ]
+}

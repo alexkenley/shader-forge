@@ -18,6 +18,7 @@ import {
   inspectAiProviders,
   testAiProvider,
 } from '../shared/engine-ai-service.mjs';
+import { inspectAiRegistry } from '../shared/engine-ai-registry.mjs';
 import {
   inspectPackagingPreset,
   packageProjectRelease,
@@ -55,6 +56,8 @@ Usage:
   engine policy promote <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]
   engine policy quarantine <path> [--session <id>] [--root <path>] [--base-url <url>] [--decision-by <name>] [--note <text>]
   engine ai providers [--root <path>]
+  engine ai tools [--root <path>]
+  engine ai skills [--root <path>]
   engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
   engine ai submit <prompt> [--session <id>] [--provider <id>] [--system <text>] [--base-url <url>]
@@ -748,6 +751,17 @@ async function testAiProviderCommand(positionals, flags, mode = 'test') {
   console.log(JSON.stringify(result, null, 2));
 }
 
+async function inspectAiRegistryCollection(flags, collection) {
+  const registry = await inspectAiRegistry(resolvePolicyRoot(flags));
+  console.log(JSON.stringify({
+    rootPath: registry.rootPath,
+    configPath: registry.configPath,
+    configSource: registry.configSource,
+    [`${collection.slice(0, -1)}Count`]: registry[`${collection.slice(0, -1)}Count`],
+    [collection]: registry[collection],
+  }, null, 2));
+}
+
 async function submitAiJob(positionals, flags) {
   const prompt = positionals.join(' ').trim();
   if (!prompt) {
@@ -1133,6 +1147,10 @@ export async function runCli(argv = process.argv.slice(2)) {
     }
     if (subcommand === 'providers') {
       await inspectAiProviderState(flags);
+      return;
+    }
+    if (subcommand === 'tools' || subcommand === 'skills') {
+      await inspectAiRegistryCollection(flags, subcommand);
       return;
     }
     if (subcommand === 'test') {

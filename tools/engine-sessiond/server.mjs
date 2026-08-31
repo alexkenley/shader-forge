@@ -29,6 +29,7 @@ import {
   inspectAiProviders,
   testAiProvider,
 } from '../shared/engine-ai-service.mjs';
+import { inspectAiRegistry } from '../shared/engine-ai-registry.mjs';
 import {
   inspectPackagingPreset,
   packageProjectRelease,
@@ -763,6 +764,8 @@ function createRouter({
           'ai:test',
           'ai:jobs',
           'ai:history',
+          'ai:tools',
+          'ai:skills',
           'ai:usage',
           'package:inspect',
           'package:run',
@@ -814,6 +817,31 @@ function createRouter({
           },
         );
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'GET' && (pathname === '/api/ai/tools' || pathname === '/api/ai/skills')) {
+        const sessionId = searchParams.get('sessionId') || '';
+        const registry = await inspectAiRegistry(
+          resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+        );
+        if (pathname === '/api/ai/tools') {
+          writeJson(response, 200, {
+            rootPath: registry.rootPath,
+            configPath: registry.configPath,
+            configSource: registry.configSource,
+            toolCount: registry.toolCount,
+            tools: registry.tools,
+          });
+        } else {
+          writeJson(response, 200, {
+            rootPath: registry.rootPath,
+            configPath: registry.configPath,
+            configSource: registry.configSource,
+            skillCount: registry.skillCount,
+            skills: registry.skills,
+          });
+        }
         return;
       }
 

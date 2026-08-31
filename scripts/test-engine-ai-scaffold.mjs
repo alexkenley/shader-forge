@@ -214,6 +214,8 @@ try {
   assert.ok(health.capabilities.includes('ai:test'));
   assert.ok(health.capabilities.includes('ai:jobs'));
   assert.ok(health.capabilities.includes('ai:history'));
+  assert.ok(health.capabilities.includes('ai:tools'));
+  assert.ok(health.capabilities.includes('ai:skills'));
   assert.ok(health.capabilities.includes('ai:usage'));
 
   const createSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
@@ -250,6 +252,26 @@ try {
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'openrouter_bad_limit')?.status, 'invalid');
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'provider_type_typo')?.status, 'invalid');
   assert.doesNotMatch(JSON.stringify(providerSummary), /test-openrouter-key/);
+
+  const toolSummary = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/tools?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.equal(toolSummary.configSource, 'bundled');
+  assert.equal(toolSummary.toolCount, 2);
+  assert.equal(toolSummary.tools[0].permission, 'read_only');
+  assert.equal(toolSummary.tools[0].inputSchema.additionalProperties, false);
+  const skillSummary = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/skills?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.equal(skillSummary.skillCount, 1);
+  assert.deepEqual(skillSummary.skills[0].toolIds, [
+    'engine.ai.providers.inspect',
+    'engine.ai.usage.inspect',
+  ]);
+  const cliTools = await runCli(['ai', 'tools', '--root', tempProjectRoot]);
+  assert.equal(cliTools.toolCount, 2);
+  const cliSkills = await runCli(['ai', 'skills', '--root', tempProjectRoot]);
+  assert.equal(cliSkills.skillCount, 1);
 
   const aiSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
@@ -516,6 +538,22 @@ try {
   });
   assert.match(invalidRetryPolicy.error || '', /request\.retry_count must be an integer from 0 through 2/);
 
+  await fs.writeFile(path.join(tempProjectRoot, 'ai', 'registry.json'), JSON.stringify({
+    schemaVersion: 1,
+    tools: [],
+    skills: [{
+      id: 'invalid.skill',
+      label: 'Invalid skill',
+      toolIds: ['missing.tool'],
+      allowedClients: ['cli'],
+      permission: 'read_only',
+    }],
+  }), 'utf8');
+  const invalidRegistry = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/skills?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  assert.match(invalidRegistry.error || '', /references unknown tool missing\.tool/);
+
   console.log('Engine AI scaffold passed.');
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
   console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter Kimi/GLM request paths without exposing credentials');
@@ -523,6 +561,7 @@ try {
   console.log('- Verified bounded queued AI jobs, list/status/cancel APIs and CLI adapters, pending/running cancellation, and queue recovery');
   console.log('- Verified bounded durable metadata-only AI history through the API and CLI without prompt, response, error, or credential content');
   console.log('- Verified atomic per-workspace provider token usage persistence and API/CLI summaries for successful queued calls');
+  console.log('- Verified bounded read-only tool/skill registry discovery, schemas, client narrowing, and reference validation');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {
