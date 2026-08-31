@@ -440,6 +440,7 @@ export type PackageReport = {
     id: string;
     status: string;
     message: string;
+    outputPath?: string;
   }>;
   files: Array<{
     path: string;

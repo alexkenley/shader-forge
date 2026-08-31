@@ -14,4 +14,4 @@ data_foundation = "data/foundation/engine-data-layout.toml"
 tooling_layout = "tooling/layouts/default.tooling-layout.toml"
 cooked_root = "build/cooked"
 package_root = "build/package/default"
-platform_hooks = ["archive_zip_placeholder", "installer_placeholder"]
+platform_hooks = ["archive_zip", "installer_placeholder"]

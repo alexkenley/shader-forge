@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { preparePackagingFixture } from './lib/package-profile-fixture.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
@@ -32,6 +33,27 @@ async function runCli(args) {
   return JSON.parse(messages.join('\n'));
 }
 
+function readLocalZipEntries(archive) {
+  const entries = new Map();
+  let offset = 0;
+  while (archive.readUInt32LE(offset) === 0x04034b50) {
+    const method = archive.readUInt16LE(offset + 8);
+    const compressedSize = archive.readUInt32LE(offset + 18);
+    const contentSize = archive.readUInt32LE(offset + 22);
+    const nameSize = archive.readUInt16LE(offset + 26);
+    const extraSize = archive.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const contentStart = nameStart + nameSize + extraSize;
+    const name = archive.subarray(nameStart, nameStart + nameSize).toString('utf8');
+    const compressed = archive.subarray(contentStart, contentStart + compressedSize);
+    const content = method === 8 ? inflateRawSync(compressed) : compressed;
+    assert.equal(content.length, contentSize);
+    entries.set(name, content);
+    offset = contentStart + compressedSize;
+  }
+  return entries;
+}
+
 const exportInspect = await runCli(['export', 'inspect', '--root', tempProjectRoot]);
 assert.equal(exportInspect.ready, true);
 assert.equal(exportInspect.presetId, 'default');
@@ -54,6 +76,15 @@ assert.equal(packageReport.prerequisiteActions.length, 1);
 assert.equal(packageReport.prerequisiteActions[0].id, 'asset_bake');
 assert.equal(packageReport.prerequisiteActions[0].outputRoot, 'build/cooked');
 assert.equal(packageReport.prerequisiteActions[0].reportPath, 'build/cooked/asset-pipeline-report.json');
+const archiveHook = packageReport.hookResults.find((hook) => hook.id === 'archive_zip');
+assert.equal(archiveHook.status, 'completed');
+assert.equal(archiveHook.outputPath, 'build/package/default.zip');
+assert.equal(packageReport.hookResults.find((hook) => hook.id === 'installer_placeholder').status, 'declared_only');
+
+const archiveEntries = readLocalZipEntries(await fs.readFile(path.join(tempProjectRoot, archiveHook.outputPath)));
+assert.ok(archiveEntries.has('default/run-package.sh'));
+assert.ok(archiveEntries.has('default/config/runtime-launch.json'));
+assert.ok(archiveEntries.has('default/reports/package-report.json'));
 
 const writtenPackageReport = JSON.parse(
   await fs.readFile(path.join(tempProjectRoot, packageReport.reportPath), 'utf8'),
@@ -99,13 +130,15 @@ try {
   assert.ok(runPayload.fileCount >= 10);
   assert.equal(runPayload.prerequisiteActions.length, 1);
   assert.equal(runPayload.prerequisiteActions[0].id, 'asset_bake');
+  assert.equal(runPayload.hookResults.find((hook) => hook.id === 'archive_zip').status, 'completed');
 
   await fs.access(path.join(tempProjectRoot, 'build', 'package', 'default', 'run-package.sh'));
   await fs.access(path.join(tempProjectRoot, 'build', 'package', 'default', 'config', 'runtime-launch.json'));
+  await fs.access(path.join(tempProjectRoot, 'build', 'package', 'default.zip'));
 
   console.log('Engine packaging scaffold passed.');
   console.log('- Verified default export-preset inspection exposes missing cooked-output prep state through the engine CLI and engine_sessiond');
-  console.log('- Verified packaging auto-bakes cooked outputs when needed, records prerequisite actions, and emits a reproducible release layout with launch scripts, packaged authored roots, bundled cooked outputs, and a package report');
+  console.log('- Verified packaging auto-bakes cooked outputs when needed, records prerequisite actions, emits the release layout, and executes the default ZIP archive hook');
 } finally {
   await service.close();
 }

@@ -31,12 +31,13 @@ The first Phase 6.2 checkpoint is now real:
 - `engine package` now emits a reproducible release-layout scaffold under `build/package/<preset>/`
 - `engine package` now also auto-bakes missing cooked outputs by default, and the package report records those prerequisite actions explicitly
 - the current package layout bundles the runtime binary, packaged authored runtime roots, cooked outputs, launch scripts, the resolved export preset, a runtime-launch manifest, and a package report
+- the default `archive_zip` platform hook now writes a standard UTF-8 ZIP beside the release layout through a dependency-free ZIP32 writer; the report records its output while unknown hooks remain explicitly `declared_only`
 - `engine_sessiond` and the shell `Workspace` tab now expose the same inspect/package flow for workspace-backed operators, including visible prep state before package generation
 - deterministic harness coverage now exists for the packaging/export scaffold
 
 ## Current Boundary
 
-The current launch scripts still point at packaged authored roots rather than cooked-runtime inputs. Cooked outputs are bundled in the release layout now so the workflow is reproducible and inspectable before cooked-runtime loading, runtime-binary orchestration, signing, archive generation, and real platform hook execution land.
+The current launch scripts still point at packaged authored roots rather than cooked-runtime inputs. Cooked outputs are bundled in the release layout and the default ZIP hook is real, but cooked-runtime loading, runtime-binary orchestration, installers, signing, ZIP64, and additional platform-hook execution remain ahead.
 
 ## Non-Goals
 

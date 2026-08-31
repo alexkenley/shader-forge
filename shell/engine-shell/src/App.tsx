@@ -896,7 +896,7 @@ function renderRightPanel(
           </div>
           <p className="panel-copy">
             {packageSummary
-              ? 'Phase 6.2 now exposes a text-backed export preset, release-layout inspection, deterministic package generation, and safe auto-bake preparation when cooked outputs are missing. The current launchers bundle cooked outputs, but still run against packaged authored roots until cooked-runtime loading lands.'
+              ? 'Phase 6.2 now exposes a text-backed export preset, release-layout inspection, deterministic package generation, safe auto-bake preparation, and a default sibling ZIP archive. The current launchers bundle cooked outputs, but still run against packaged authored roots until cooked-runtime loading lands.'
               : 'Select a workspace to inspect the default export preset and generate the first reproducible release layout.'}
           </p>
           {packageSummary ? (
@@ -3469,10 +3469,14 @@ export default function App() {
       ]);
       if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;
       setSessiondState('connected');
+      const archivePath = result.hookResults.find((hook) => hook.id === 'archive_zip' && hook.status === 'completed')?.outputPath;
+      const releaseTarget = archivePath
+        ? `release layout at ${result.packageRootPath} and ZIP archive at ${archivePath}`
+        : `release layout at ${result.packageRootPath}`;
       setSessiondMessage(
         result.prerequisiteActions.length
-          ? `Packaged release layout at ${result.packageRootPath} after ${result.prerequisiteActions.length} prerequisite action${result.prerequisiteActions.length === 1 ? '' : 's'}`
-          : `Packaged release layout at ${result.packageRootPath}`,
+          ? `Packaged ${releaseTarget} after ${result.prerequisiteActions.length} prerequisite action${result.prerequisiteActions.length === 1 ? '' : 's'}`
+          : `Packaged ${releaseTarget}`,
       );
     } catch (error) {
       if (!activeWorkspaceIsCurrent(targetSessionId, workspaceGeneration)) return;

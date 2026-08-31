@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
+import { promisify } from 'node:util';
+import { deflateRaw } from 'node:zlib';
 import { bakeAssetPipeline } from '../engine-cli/lib/asset-pipeline.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +14,21 @@ const packageReportSchema = 'shader_forge.package_report';
 const exportInspectSchema = 'shader_forge.export_inspect';
 const hashAlgorithm = 'sha256';
 const runtimeBinaryName = process.platform === 'win32' ? 'shader_forge_runtime.exe' : 'shader_forge_runtime';
+const archiveZipHookId = 'archive_zip';
+const deflateRawAsync = promisify(deflateRaw);
+const maximumZip32Value = 0xffffffff;
+const maximumZipEntryCount = 0xffff;
+const zipUtf8Flag = 0x0800;
+const zipCompressionMethod = 8;
+const zipDosDate = 0x21;
+
+const crc32Table = Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) {
+    crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+  }
+  return crc >>> 0;
+});
 
 function trim(value) {
   return String(value || '').trim();
@@ -311,6 +328,130 @@ async function collectFileManifest(rootPath, directoryPath) {
   return files;
 }
 
+function crc32(content) {
+  let crc = 0xffffffff;
+  for (const byte of content) {
+    crc = crc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function assertZip32Value(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximumZip32Value) {
+    throw new Error(`${label} exceeds the built-in ZIP32 archive limit.`);
+  }
+}
+
+async function writeAll(fileHandle, content) {
+  let offset = 0;
+  while (offset < content.length) {
+    const { bytesWritten } = await fileHandle.write(content, offset, content.length - offset);
+    if (!bytesWritten) {
+      throw new Error('Archive write stopped before the ZIP payload was complete.');
+    }
+    offset += bytesWritten;
+  }
+}
+
+// ponytail: ZIP32 covers the default desktop archive; add ZIP64 only when package size requires it.
+async function createZipArchive(packageRoot, archivePath, files) {
+  if (files.length > maximumZipEntryCount) {
+    throw new Error('Package contains more than 65535 files; ZIP64 archives are not implemented.');
+  }
+
+  const tempArchivePath = `${archivePath}.${process.pid}.${Date.now()}.tmp`;
+  const archiveRootName = path.basename(packageRoot);
+  const centralDirectory = [];
+  let archiveOffset = 0;
+  let fileHandle = null;
+
+  await ensureDirectory(path.dirname(archivePath));
+  try {
+    fileHandle = await fs.open(tempArchivePath, 'wx');
+    for (const file of files) {
+      const sourcePath = path.join(packageRoot, file.path);
+      const stats = await fs.stat(sourcePath);
+      assertZip32Value(stats.size, `Package file ${file.path}`);
+      const content = await fs.readFile(sourcePath);
+      const compressed = await deflateRawAsync(content, { level: 9 });
+      assertZip32Value(compressed.length, `Compressed package file ${file.path}`);
+      assertZip32Value(archiveOffset, 'ZIP archive offset');
+
+      const entryName = Buffer.from(normalizeSlashes(path.join(archiveRootName, file.path)), 'utf8');
+      if (entryName.length > 0xffff) {
+        throw new Error(`Package path is too long for ZIP: ${file.path}`);
+      }
+
+      const checksum = crc32(content);
+      const localHeader = Buffer.alloc(30);
+      localHeader.writeUInt32LE(0x04034b50, 0);
+      localHeader.writeUInt16LE(20, 4);
+      localHeader.writeUInt16LE(zipUtf8Flag, 6);
+      localHeader.writeUInt16LE(zipCompressionMethod, 8);
+      localHeader.writeUInt16LE(0, 10);
+      localHeader.writeUInt16LE(zipDosDate, 12);
+      localHeader.writeUInt32LE(checksum, 14);
+      localHeader.writeUInt32LE(compressed.length, 18);
+      localHeader.writeUInt32LE(content.length, 22);
+      localHeader.writeUInt16LE(entryName.length, 26);
+      localHeader.writeUInt16LE(0, 28);
+
+      const centralHeader = Buffer.alloc(46);
+      centralHeader.writeUInt32LE(0x02014b50, 0);
+      centralHeader.writeUInt16LE(0x0314, 4);
+      centralHeader.writeUInt16LE(20, 6);
+      centralHeader.writeUInt16LE(zipUtf8Flag, 8);
+      centralHeader.writeUInt16LE(zipCompressionMethod, 10);
+      centralHeader.writeUInt16LE(0, 12);
+      centralHeader.writeUInt16LE(zipDosDate, 14);
+      centralHeader.writeUInt32LE(checksum, 16);
+      centralHeader.writeUInt32LE(compressed.length, 20);
+      centralHeader.writeUInt32LE(content.length, 24);
+      centralHeader.writeUInt16LE(entryName.length, 28);
+      centralHeader.writeUInt16LE(0, 30);
+      centralHeader.writeUInt16LE(0, 32);
+      centralHeader.writeUInt16LE(0, 34);
+      centralHeader.writeUInt16LE(0, 36);
+      centralHeader.writeUInt32LE(((stats.mode & 0xffff) << 16) >>> 0, 38);
+      centralHeader.writeUInt32LE(archiveOffset, 42);
+
+      await writeAll(fileHandle, localHeader);
+      await writeAll(fileHandle, entryName);
+      await writeAll(fileHandle, compressed);
+      centralDirectory.push(centralHeader, entryName);
+      archiveOffset += localHeader.length + entryName.length + compressed.length;
+    }
+
+    const centralDirectoryOffset = archiveOffset;
+    for (const content of centralDirectory) {
+      await writeAll(fileHandle, content);
+      archiveOffset += content.length;
+    }
+    const centralDirectorySize = archiveOffset - centralDirectoryOffset;
+    assertZip32Value(centralDirectoryOffset, 'ZIP central-directory offset');
+    assertZip32Value(centralDirectorySize, 'ZIP central-directory size');
+
+    const endRecord = Buffer.alloc(22);
+    endRecord.writeUInt32LE(0x06054b50, 0);
+    endRecord.writeUInt16LE(0, 4);
+    endRecord.writeUInt16LE(0, 6);
+    endRecord.writeUInt16LE(files.length, 8);
+    endRecord.writeUInt16LE(files.length, 10);
+    endRecord.writeUInt32LE(centralDirectorySize, 12);
+    endRecord.writeUInt32LE(centralDirectoryOffset, 16);
+    endRecord.writeUInt16LE(0, 20);
+    await writeAll(fileHandle, endRecord);
+    await fileHandle.close();
+    fileHandle = null;
+
+    await fs.rm(archivePath, { force: true });
+    await fs.rename(tempArchivePath, archivePath);
+  } finally {
+    await fileHandle?.close();
+    await fs.rm(tempArchivePath, { force: true });
+  }
+}
+
 async function copyPath(sourcePath, targetPath) {
   const stats = await fs.stat(sourcePath);
   if (stats.isDirectory()) {
@@ -384,8 +525,9 @@ function buildLaunchManifest(summary, packagedBinaryRelativePath) {
 function buildWarnings(summary) {
   const warnings = [...summary.warnings];
   warnings.push('Current package launchers still target packaged authored asset roots; cooked outputs are bundled alongside the layout for later runtime integration.');
-  if (summary.platformHooks.length) {
-    warnings.push('Declared platform hooks are recorded in the package report, but hook execution is still a later slice.');
+  const declaredOnlyHooks = summary.platformHooks.filter((hookId) => hookId !== archiveZipHookId);
+  if (declaredOnlyHooks.length) {
+    warnings.push(`Unsupported platform hooks remain declared only: ${declaredOnlyHooks.join(', ')}.`);
   }
   return warnings;
 }
@@ -571,10 +713,15 @@ export async function packageProjectRelease(rootPath, options = {}) {
   const files = await collectFileManifest(packageRoot, packageRoot);
   const fileCount = files.length;
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  const archivePath = `${packageRoot}.zip`;
+  const archiveOutputPath = relativePathFromRoot(resolvedRoot, archivePath);
   const hookResults = summary.platformHooks.map((hookId) => ({
     id: hookId,
-    status: 'declared_only',
-    message: 'Hook declaration captured in the package report; execution is not implemented in this slice.',
+    status: hookId === archiveZipHookId ? 'completed' : 'declared_only',
+    message: hookId === archiveZipHookId
+      ? `Created ZIP archive at ${archiveOutputPath}.`
+      : 'Hook declaration captured in the package report; execution is not implemented in this slice.',
+    ...(hookId === archiveZipHookId ? { outputPath: archiveOutputPath } : {}),
   }));
   const packagedAt = new Date().toISOString();
   const report = {
@@ -613,6 +760,16 @@ export async function packageProjectRelease(rootPath, options = {}) {
 
   const reportPath = path.join(packageRoot, 'reports', 'package-report.json');
   await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8');
+
+  if (summary.platformHooks.includes(archiveZipHookId)) {
+    try {
+      const archiveFiles = await collectFileManifest(packageRoot, packageRoot);
+      await createZipArchive(packageRoot, archivePath, archiveFiles);
+    } catch (error) {
+      await fs.rm(reportPath, { force: true });
+      throw error;
+    }
+  }
 
   return {
     ...report,
