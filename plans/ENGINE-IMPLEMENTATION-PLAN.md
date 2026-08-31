@@ -769,8 +769,8 @@ Current checkpoint now implemented:
 - `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider inspection, and smoke-test execution so the shell, CLI, and session backend do not invent separate AI clients
 - OpenRouter execution pins the official API root plus `OPENROUTER_API_KEY`, rejects arbitrary remote endpoint redirection, bounds responses to 1 MiB, keeps credentials out of public results, fails closed on unknown provider types/explicit IDs, validates a 1–4096 `max_output_tokens` ceiling (default 256), and returns normalized provider token usage
 - `engine_sessiond` now exposes `GET /api/ai/providers` plus `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
-- `engine_sessiond` now exposes a bounded one-active-request AI job queue through `POST /api/ai/jobs` and per-job `GET`/`DELETE`, with pending/running cancellation, provider abort propagation, and metadata-only `ai.job` SSE lifecycle events
-- `engine ai providers`, `engine ai test`, and `engine ai request` now expose the same first AI slice directly from the terminal
+- `engine_sessiond` now exposes a bounded one-active-request AI job queue through collection `POST`/`GET` and per-job `GET`/`DELETE`, with result-free bounded listings, pending/running cancellation, provider abort propagation, and metadata-only `ai.job` SSE lifecycle events
+- `engine ai providers|test|request` exposes direct execution while `engine ai submit|jobs|status|cancel` provides thin queue adapters from the terminal
 - the shell `Workspace` panel now surfaces AI manifest source, ready-provider counts, provider diagnostics, and an inline smoke-test action
 - deterministic coverage now exists through `scripts/test-engine-ai-scaffold.mjs`
 - the committed `.agents/mcp_config.json` connects Google Antigravity to the separate `sf-mcp` external-agent lane with portable relative paths and no credential

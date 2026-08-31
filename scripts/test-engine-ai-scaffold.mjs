@@ -299,6 +299,26 @@ try {
   const unknownJob = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs/missing-job`);
   assert.match(unknownJob.error || '', /Unknown AI job/);
 
+  const cliQueuedJob = await runCli([
+    'ai',
+    'submit',
+    'Queue this deterministic request.',
+    '--session', sessionId,
+    '--provider', 'local_fake',
+    '--base-url', service.baseUrl,
+  ]);
+  const cliCompletedJob = await waitForAiJob(service.baseUrl, cliQueuedJob.id, ['completed']);
+  const cliJobStatus = await runCli(['ai', 'status', cliQueuedJob.id, '--base-url', service.baseUrl]);
+  assert.equal(cliJobStatus.status, 'completed');
+  assert.equal(cliJobStatus.result?.content, cliCompletedJob.result.content);
+  const cliCompletedJobs = await runCli([
+    'ai', 'jobs', '--session', sessionId, '--status', 'completed', '--base-url', service.baseUrl,
+  ]);
+  assert.ok(cliCompletedJobs.some((job) => job.id === cliQueuedJob.id));
+  assert.equal(Object.hasOwn(cliCompletedJobs[0], 'result'), false);
+  const cliCancelCompleted = await runCli(['ai', 'cancel', cliQueuedJob.id, '--base-url', service.baseUrl]);
+  assert.equal(cliCancelCompleted.status, 'completed');
+
   const oversizedResponse = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
     providerId: 'openrouter_kimi',
@@ -341,7 +361,7 @@ try {
   console.log('Engine AI scaffold passed.');
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
   console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter Kimi/GLM request paths without exposing credentials');
-  console.log('- Verified bounded queued AI jobs, status reads, pending/running cancellation, and queue recovery');
+  console.log('- Verified bounded queued AI jobs, list/status/cancel APIs and CLI adapters, pending/running cancellation, and queue recovery');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {

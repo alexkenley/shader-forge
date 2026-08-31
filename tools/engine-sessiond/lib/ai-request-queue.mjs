@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { testAiProvider } from '../../shared/engine-ai-service.mjs';
 
 const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
+const jobStatuses = new Set(['queued', 'running', ...terminalStatuses]);
 
 export class AiRequestQueue {
   constructor({ execute = testAiProvider, emitEvent = () => {}, maxJobs = 128 } = {}) {
@@ -50,6 +51,18 @@ export class AiRequestQueue {
   get(jobId) {
     const job = this.jobs.get(jobId);
     return job ? this.snapshot(job) : null;
+  }
+
+  list({ sessionId = '', status = 'all' } = {}) {
+    if (status !== 'all' && !jobStatuses.has(status)) {
+      const error = new Error(`Unknown AI job status: ${status}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return [...this.jobs.values()]
+      .filter((job) => (!sessionId || job.sessionId === sessionId) && (status === 'all' || job.status === status))
+      .reverse()
+      .map((job) => this.snapshot(job, { includeResult: false }));
   }
 
   cancel(jobId) {
@@ -140,8 +153,8 @@ export class AiRequestQueue {
     }
   }
 
-  snapshot(job) {
-    return {
+  snapshot(job, { includeResult = true } = {}) {
+    const snapshot = {
       id: job.id,
       sessionId: job.sessionId,
       providerId: job.providerId || null,
@@ -149,9 +162,12 @@ export class AiRequestQueue {
       createdAt: job.createdAt,
       startedAt: job.startedAt,
       finishedAt: job.finishedAt,
-      result: job.result,
       error: job.error,
     };
+    if (includeResult) {
+      snapshot.result = job.result;
+    }
+    return snapshot;
   }
 
   emit(job) {

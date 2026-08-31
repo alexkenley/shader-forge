@@ -827,6 +827,16 @@ function createRouter({
         return;
       }
 
+      if (request.method === 'GET' && pathname === '/api/ai/jobs') {
+        writeJson(response, 200, {
+          jobs: aiRequestQueue.list({
+            sessionId: searchParams.get('sessionId') || '',
+            status: searchParams.get('status') || 'all',
+          }),
+        });
+        return;
+      }
+
       const aiJobMatch = pathname.match(/^\/api\/ai\/jobs\/([^/]+)$/);
       if (request.method === 'GET' && aiJobMatch) {
         const jobId = decodeURIComponent(aiJobMatch[1]);

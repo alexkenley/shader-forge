@@ -57,6 +57,10 @@ Usage:
   engine ai providers [--root <path>]
   engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
+  engine ai submit <prompt> [--session <id>] [--provider <id>] [--system <text>] [--base-url <url>]
+  engine ai jobs [--session <id>] [--status queued|running|completed|failed|cancelled|all] [--base-url <url>]
+  engine ai status <job-id> [--base-url <url>]
+  engine ai cancel <job-id> [--base-url <url>]
   engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]
   engine package [--root <path>] [--preset <id>] [--package-root <path>] [--skip-bake] [--force-bake]
   engine profile list [--root <path>] [--session <id>] [--base-url <url>] [--limit <count>]
@@ -742,6 +746,45 @@ async function testAiProviderCommand(positionals, flags, mode = 'test') {
   console.log(JSON.stringify(result, null, 2));
 }
 
+async function submitAiJob(positionals, flags) {
+  const prompt = positionals.join(' ').trim();
+  if (!prompt) {
+    throw new Error('engine ai submit requires a prompt.');
+  }
+  const payload = await requestJson(resolvedBaseUrl(flags), '/api/ai/jobs', {
+    method: 'POST',
+    body: {
+      sessionId: flags.session ? String(flags.session) : '',
+      providerId: flags.provider ? String(flags.provider) : '',
+      prompt,
+      systemPrompt: flags.system ? String(flags.system) : undefined,
+    },
+  });
+  console.log(JSON.stringify(payload.job, null, 2));
+}
+
+async function listAiJobs(flags) {
+  const baseUrl = resolvedBaseUrl(flags);
+  const query = new URL('/api/ai/jobs', baseUrl);
+  if (flags.session) query.searchParams.set('sessionId', String(flags.session));
+  if (flags.status) query.searchParams.set('status', String(flags.status));
+  const payload = await requestJson(baseUrl, query.pathname + query.search);
+  console.log(JSON.stringify(payload.jobs, null, 2));
+}
+
+async function readOrCancelAiJob(positionals, flags, cancel = false) {
+  const jobId = positionals[0]?.trim();
+  if (!jobId || positionals.length !== 1) {
+    throw new Error(`engine ai ${cancel ? 'cancel' : 'status'} requires exactly one job id.`);
+  }
+  const payload = await requestJson(
+    resolvedBaseUrl(flags),
+    `/api/ai/jobs/${encodeURIComponent(jobId)}`,
+    cancel ? { method: 'DELETE' } : {},
+  );
+  console.log(JSON.stringify(payload.job, null, 2));
+}
+
 async function inspectExportPreset(flags) {
   const result = await inspectPackagingPreset(resolvePolicyRoot(flags), {
     presetId: flags.preset ? String(flags.preset) : 'default',
@@ -1078,6 +1121,22 @@ export async function runCli(argv = process.argv.slice(2)) {
     }
     if (subcommand === 'request') {
       await testAiProviderCommand(positionals, flags, 'request');
+      return;
+    }
+    if (subcommand === 'submit') {
+      await submitAiJob(positionals, flags);
+      return;
+    }
+    if (subcommand === 'jobs') {
+      await listAiJobs(flags);
+      return;
+    }
+    if (subcommand === 'status') {
+      await readOrCancelAiJob(positionals, flags);
+      return;
+    }
+    if (subcommand === 'cancel') {
+      await readOrCancelAiJob(positionals, flags, true);
       return;
     }
     throw new Error(`Unknown ai subcommand: ${subcommand}`);

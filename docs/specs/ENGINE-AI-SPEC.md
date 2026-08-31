@@ -264,9 +264,9 @@ Current implemented behavior:
 - unknown manifest provider types report `invalid`, and an explicit unknown `--provider` selection fails instead of falling back
 - other hosted-provider types remain inspection-only, with deployment mode plus required `api_key_env` diagnostics
 - `engine_sessiond` now exposes `GET /api/ai/providers` and `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
-- `engine_sessiond` also exposes bounded process-scoped AI jobs through `POST /api/ai/jobs` plus per-job `GET` and `DELETE`; one request runs at a time, queued and active jobs can be cancelled, provider sockets receive abort signals, and `ai.job` lifecycle events use the existing SSE stream without including prompts or response content
+- `engine_sessiond` also exposes bounded process-scoped AI jobs through collection `POST`/`GET` plus per-job `GET`/`DELETE`; one request runs at a time, list responses omit result bodies, queued and active jobs can be cancelled, provider sockets receive abort signals, and `ai.job` lifecycle events use the existing SSE stream without including prompts or response content
 - the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
-- the CLI now exposes `engine ai providers`, `engine ai test`, and `engine ai request`
+- the CLI now exposes direct `engine ai providers|test|request` plus queued `submit|jobs|status|cancel` commands
 - deterministic coverage now exists through `npm run test:ai-scaffold`
 
 Still ahead in Phase 5.9:
