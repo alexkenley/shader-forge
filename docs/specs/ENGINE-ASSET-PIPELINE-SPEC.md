@@ -25,6 +25,7 @@ The current first slice in the repo now includes:
 - text-backed animation skeletons, clips, and graphs under `animation/`
 - text-backed physics layers, materials, and primitive bodies under `physics/`
 - deterministic generated-mesh preview payloads under `build/cooked/generated-meshes/`
+- fail-closed procgeo scalar validation and a 65,536-vertex ceiling for generated plane-grid previews
 - staged cooked audio bus, sound, and event metadata under `build/cooked/audio/`
 - staged cooked animation skeleton, clip, and graph metadata under `build/cooked/animation/`
 - staged cooked physics layer, material, and body metadata under `build/cooked/physics/`

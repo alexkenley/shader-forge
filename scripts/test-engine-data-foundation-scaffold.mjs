@@ -312,6 +312,16 @@ int main(int argc, char** argv) {
   if (rejectedProcgeoInteger.loadFromDisk(config, &error) || error.empty()) return 28;
   writeFile(pistolProcgeoPath, originalPistolProcgeo);
 
+  std::string oversizedPistolProcgeo = originalPistolProcgeo;
+  if (!replaceOnce(&oversizedPistolProcgeo, "rows = 1", "rows = 65536")) return 29;
+  writeFile(pistolProcgeoPath, oversizedPistolProcgeo);
+  DataFoundation rejectedProcgeoBudget;
+  error.clear();
+  if (!rejectedProcgeoBudget.loadFromDisk(config, &error)) return 30;
+  const auto oversizedProcgeo = rejectedProcgeoBudget.procgeoSource("weapon.pistol.mk1");
+  if (!oversizedProcgeo || oversizedProcgeo->valid) return 31;
+  writeFile(pistolProcgeoPath, originalPistolProcgeo);
+
   const std::filesystem::path cameraScenePath = std::filesystem::path(argv[1]) / "scenes/camera.scene.toml";
   const std::string originalCameraScene = readFile(cameraScenePath);
   const std::vector<std::pair<std::string, std::string>> sceneVectorMutations{

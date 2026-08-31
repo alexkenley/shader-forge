@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+const MAX_GENERATED_PROCGEO_VERTICES = 65_536;
+
 function trim(value) {
   return String(value || '').trim();
 }
@@ -105,7 +107,7 @@ function parseStrictIntegerValue(rawValue) {
     return null;
   }
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? parsed : null;
+  return Number.isSafeInteger(parsed) && parsed >= -2_147_483_648 && parsed <= 2_147_483_647 ? parsed : null;
 }
 
 function parseBooleanValue(rawValue) {
@@ -567,6 +569,11 @@ function loadProcgeoAsset(repoRoot, outputRoot, filePath, fields, config, manife
   }
   if (generator === 'plane_grid' && (!Number.isInteger(rows) || rows < 1 || !Number.isInteger(columns) || columns < 1)) {
     problems.push('plane_grid requires rows and columns >= 1');
+  }
+  if (generator === 'plane_grid' && rows >= 1 && columns >= 1
+      && (rows + 1 > MAX_GENERATED_PROCGEO_VERTICES
+        || columns + 1 > Math.floor(MAX_GENERATED_PROCGEO_VERTICES / (rows + 1)))) {
+    problems.push('plane_grid must generate at most 65536 vertices');
   }
 
   return {

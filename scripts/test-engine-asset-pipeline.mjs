@@ -381,6 +381,15 @@ for (const { label, relativePath, source, from, to, assetName, expectedProblem }
     assetName: 'sandbox_floor',
     expectedProblem: /plane_grid requires rows and columns >= 1/,
   },
+  {
+    label: 'procgeo-grid-vertex-budget',
+    relativePath: path.join('procgeo', 'sandbox_floor.procgeo.toml'),
+    source: procgeoFloor,
+    from: 'rows = 12',
+    to: 'rows = 65536',
+    assetName: 'sandbox_floor',
+    expectedProblem: /plane_grid must generate at most 65536 vertices/,
+  },
 ]) {
   const procgeoPath = path.join(invalidContentRoot, relativePath);
   fs.writeFileSync(procgeoPath, source.replace(from, to));

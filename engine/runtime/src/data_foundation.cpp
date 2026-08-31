@@ -19,6 +19,8 @@ namespace shader_forge::runtime {
 
 namespace {
 
+constexpr std::size_t kMaxGeneratedProcgeoVertices = 65'536;
+
 std::string trim(std::string_view value) {
   std::size_t start = 0;
   while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])) != 0) {
@@ -1061,8 +1063,16 @@ std::optional<std::string> validateAsset(
       || asset.width <= 0.0F || asset.height <= 0.0F || asset.depth <= 0.0F) {
       return "width, height, and depth must be finite positive numbers";
     }
-    if (asset.generator == "plane_grid" && (asset.rows < 1 || asset.columns < 1)) {
-      return "plane_grid requires rows and columns >= 1";
+    if (asset.generator == "plane_grid") {
+      if (asset.rows < 1 || asset.columns < 1) {
+        return "plane_grid requires rows and columns >= 1";
+      }
+      const std::size_t vertexRows = static_cast<std::size_t>(asset.rows) + 1;
+      const std::size_t vertexColumns = static_cast<std::size_t>(asset.columns) + 1;
+      if (vertexRows > kMaxGeneratedProcgeoVertices
+          || vertexColumns > kMaxGeneratedProcgeoVertices / vertexRows) {
+        return "plane_grid must generate at most 65536 vertices";
+      }
     }
   }
 

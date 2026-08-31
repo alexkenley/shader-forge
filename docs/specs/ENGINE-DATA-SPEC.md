@@ -33,7 +33,7 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - scene transform vectors share one strict quoted, complete, finite float32 acceptance domain across native catalog loading and `engine bake`
 - the spatial evaluator reuses this same prefab-to-render-procgeo chain to expose exact authored box corners for attachment tuning; it does not create a second prefab geometry schema, and the visual box is not collision geometry
 - authored prefab collision is independent of render procgeo and is not yet consumed by runtime physics, the spatial evaluator, clipping diagnostics, or the staged prefab cook lane
-- procgeo dimensions must be complete, unquoted, finite positive float32 numbers, and plane-grid row/column counts must be complete decimal integers, before a source can become valid evaluator or cook input
+- procgeo dimensions must be complete, unquoted, finite positive float32 numbers, plane-grid row/column counts must be complete decimal integers, and a grid may generate at most 65,536 vertices before a source can become valid evaluator or cook input
 - runtime startup now resolves the active scene and overlay preference from the text-backed source assets when possible
 - cooked outputs are still planning targets only in this slice, but they now target a stable `FlatBuffers` runtime-data lane under `build/cooked/`
 - the current staged cook lane now also validates prefab-component references and stages prefab component payloads into cooked prefab outputs under the same deterministic authored-data workflow
