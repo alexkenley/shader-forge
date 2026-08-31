@@ -15,6 +15,15 @@ mode = "LocalOnly"
 base_url = "http://127.0.0.1:11434"
 model = ""
 
+[provider.openrouter_kimi]
+type = "openrouter"
+label = "OpenRouter / Kimi K3"
+enabled = false
+mode = "BringYourOwnKey"
+base_url = "https://openrouter.ai/api/v1"
+model = "moonshotai/kimi-k3"
+api_key_env = "OPENROUTER_API_KEY"
+
 [provider.openai_dev]
 type = "openai"
 label = "OpenAI"

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
 import { SessionStore } from '../tools/engine-sessiond/lib/session-store.mjs';
@@ -12,6 +13,46 @@ const sessionStateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-ai
 const sessionStorePath = path.join(sessionStateDir, 'sessions.json');
 const tempProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-ai-project-'));
 const engineCliPath = path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs');
+const providerRequests = [];
+const openRouterServer = http.createServer((request, response) => {
+  if (request.method === 'GET' && request.url === '/api/tags') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ models: [{ name: 'test-local' }] }));
+    return;
+  }
+  let rawBody = '';
+  request.setEncoding('utf8');
+  request.on('data', (chunk) => {
+    rawBody += chunk;
+  });
+  request.on('end', () => {
+    const body = rawBody ? JSON.parse(rawBody) : {};
+    providerRequests.push({
+      authorization: request.headers.authorization || '',
+      body,
+      path: request.url,
+    });
+    const content = body.messages?.at(-1)?.content === 'Return an oversized response.'
+      ? 'x'.repeat(1024 * 1024 + 1)
+      : 'ready';
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'openrouter-test-request',
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }],
+    }));
+  });
+});
+await new Promise((resolve, reject) => {
+  openRouterServer.once('error', reject);
+  openRouterServer.listen(0, '127.0.0.1', resolve);
+});
+const openRouterAddress = openRouterServer.address();
+assert.ok(openRouterAddress && typeof openRouterAddress === 'object');
+const openRouterBaseUrl = `http://127.0.0.1:${openRouterAddress.port}/api/v1`;
+const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
+const previousOpenRouterTestOverride = process.env.SHADER_FORGE_AI_TEST_ALLOW_OPENROUTER_BASE_URL;
+process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+process.env.SHADER_FORGE_AI_TEST_ALLOW_OPENROUTER_BASE_URL = '1';
 
 await fs.mkdir(path.join(tempProjectRoot, 'ai'), { recursive: true });
 await fs.writeFile(
@@ -29,25 +70,59 @@ await fs.writeFile(
     '[provider.local_ollama]',
     'type = "ollama"',
     'label = "Local Ollama"',
-    'enabled = false',
+    'enabled = true',
     'mode = "LocalOnly"',
-    'base_url = "http://127.0.0.1:11434"',
-    'model = ""',
+    `base_url = "http://127.0.0.1:${openRouterAddress.port}"`,
+    'model = "test-local"',
+    '',
+    '[provider.openrouter_kimi]',
+    'type = "openrouter"',
+    'label = "OpenRouter / Kimi K3"',
+    'enabled = true',
+    'mode = "BringYourOwnKey"',
+    `base_url = "${openRouterBaseUrl}"`,
+    'model = "moonshotai/kimi-k3"',
+    'api_key_env = "OPENROUTER_API_KEY"',
+    '',
+    '[provider.openrouter_redirect]',
+    'type = "openrouter"',
+    'label = "Invalid OpenRouter Redirect"',
+    'enabled = true',
+    'mode = "BringYourOwnKey"',
+    'base_url = "https://example.invalid/api/v1"',
+    'model = "moonshotai/kimi-k3"',
+    'api_key_env = "OPENROUTER_API_KEY"',
+    '',
+    '[provider.provider_type_typo]',
+    'type = "opnrouter"',
+    'label = "Provider Type Typo"',
+    'enabled = true',
+    'mode = "BringYourOwnKey"',
+    'model = "moonshotai/kimi-k3"',
     '',
   ].join('\n'),
   'utf8',
 );
 
 function runCli(args, cwd = repoRoot) {
-  const result = spawnSync(process.execPath, [engineCliPath, ...args], {
-    cwd,
-    encoding: 'utf8',
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [engineCliPath, ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => {
+      try {
+        assert.equal(status, 0, stderr || stdout);
+        resolve(JSON.parse(stdout));
+      } catch (error) {
+        reject(error);
+      }
+    });
   });
-  if (result.error) {
-    throw result.error;
-  }
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return JSON.parse(result.stdout);
 }
 
 const service = await startEngineSessiond({
@@ -72,10 +147,17 @@ try {
     `${service.baseUrl}/api/ai/providers?sessionId=${encodeURIComponent(sessionId)}`,
   );
   assert.equal(providerSummary.defaultProviderId, 'local_fake');
-  assert.equal(providerSummary.providerCount, 2);
-  assert.equal(providerSummary.readyProviderCount, 1);
+  assert.equal(providerSummary.providerCount, 5);
+  assert.equal(providerSummary.readyProviderCount, 3);
   assert.equal(providerSummary.providers[0].id, 'local_fake');
   assert.equal(providerSummary.providers[0].status, 'ready');
+  const openRouterProvider = providerSummary.providers.find((provider) => provider.id === 'openrouter_kimi');
+  assert.equal(openRouterProvider?.supportedInSlice, true);
+  assert.equal(openRouterProvider?.status, 'ready');
+  assert.equal(openRouterProvider?.selectedModel, 'moonshotai/kimi-k3');
+  assert.equal(providerSummary.providers.find((provider) => provider.id === 'openrouter_redirect')?.status, 'invalid');
+  assert.equal(providerSummary.providers.find((provider) => provider.id === 'provider_type_typo')?.status, 'invalid');
+  assert.doesNotMatch(JSON.stringify(providerSummary), /test-openrouter-key/);
 
   const aiSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
@@ -83,11 +165,47 @@ try {
   assert.equal(aiSmoke.providerId, 'local_fake');
   assert.equal(aiSmoke.content, 'ready');
 
-  const cliProviders = runCli(['ai', 'providers', '--root', tempProjectRoot]);
-  assert.equal(cliProviders.defaultProviderId, 'local_fake');
-  assert.equal(cliProviders.providerCount, 2);
+  const ollamaSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'local_ollama',
+  });
+  assert.equal(ollamaSmoke.providerId, 'local_ollama');
+  assert.equal(ollamaSmoke.model, 'test-local');
+  assert.equal(ollamaSmoke.content, 'ready');
+  assert.equal(providerRequests.find((request) => request.path === '/v1/chat/completions')?.authorization, '');
 
-  const cliSmoke = runCli([
+  const openRouterSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+  });
+  assert.equal(openRouterSmoke.providerId, 'openrouter_kimi');
+  assert.equal(openRouterSmoke.providerType, 'openrouter');
+  assert.equal(openRouterSmoke.model, 'moonshotai/kimi-k3');
+  assert.equal(openRouterSmoke.content, 'ready');
+  const openRouterRequest = providerRequests.find((request) => request.path === '/api/v1/chat/completions');
+  assert.equal(openRouterRequest?.authorization, 'Bearer test-openrouter-key');
+  assert.equal(openRouterRequest?.body?.model, 'moonshotai/kimi-k3');
+  assert.doesNotMatch(JSON.stringify(openRouterSmoke), /test-openrouter-key/);
+
+  const oversizedResponse = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Return an oversized response.',
+  });
+  assert.match(oversizedResponse.error, /AI provider response exceeded 1048576 bytes/);
+
+  const unknownProviderResponse = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
+    sessionId,
+    providerId: 'missing_provider',
+  });
+  assert.match(unknownProviderResponse.error, /AI provider missing_provider is not configured/);
+
+  const cliProviders = await runCli(['ai', 'providers', '--root', tempProjectRoot]);
+  assert.equal(cliProviders.defaultProviderId, 'local_fake');
+  assert.equal(cliProviders.providerCount, 5);
+  assert.equal(cliProviders.readyProviderCount, 3);
+
+  const cliSmoke = await runCli([
     'ai',
     'test',
     '--root',
@@ -97,7 +215,7 @@ try {
   ]);
   assert.equal(cliSmoke.content, 'ready');
 
-  const cliRequest = runCli([
+  const cliRequest = await runCli([
     'ai',
     'request',
     'Summarize the gameplay lane briefly.',
@@ -110,8 +228,21 @@ try {
 
   console.log('Engine AI scaffold passed.');
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
-  console.log('- Verified the deterministic fake provider can satisfy smoke-test and freeform request paths');
+  console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter/Kimi request paths without exposing credentials');
+  console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {
   await service.close();
+  openRouterServer.closeAllConnections();
+  await new Promise((resolve) => openRouterServer.close(resolve));
+  if (previousOpenRouterKey === undefined) {
+    delete process.env.OPENROUTER_API_KEY;
+  } else {
+    process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
+  }
+  if (previousOpenRouterTestOverride === undefined) {
+    delete process.env.SHADER_FORGE_AI_TEST_ALLOW_OPENROUTER_BASE_URL;
+  } else {
+    process.env.SHADER_FORGE_AI_TEST_ALLOW_OPENROUTER_BASE_URL = previousOpenRouterTestOverride;
+  }
 }

@@ -137,7 +137,7 @@ Assistant entry points:
 - See `docs/specs/ENGINE-OPERATIONS-SPEC.md` for the canonical contract.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
-- `GET /api/ai/providers` and `POST /api/ai/test` now expose the first Phase 5.9 AI provider inspection and smoke-test lane from `engine_sessiond`.
+- `GET /api/ai/providers` and `POST /api/ai/test` expose deterministic fake, optional Ollama, and enabled OpenRouter provider inspection/smoke tests from `engine_sessiond`, without returning provider credentials.
 - `GET /api/package/inspect` and `POST /api/package/run` now expose the first Phase 6.2 release-layout inspect/package flow from `engine_sessiond`, including package prep state and optional auto-bake execution.
 - `GET /api/profile/live`, `GET /api/profile/captures`, and `POST /api/profile/capture` now expose the first Phase 6.3 diagnostics snapshot, capture-history, and capture-report lanes from `engine_sessiond`.
 - `GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.
@@ -155,7 +155,7 @@ Assistant entry points:
 ### Shader Forge MCP
 
 - Shader Forge MCP is the external-agent adapter; use `sf-mcp` as its short name.
-- The current adapter is a process-scoped stdio server. Each Codex, Grok CLI, or other MCP client launches its own process, while stdout remains reserved for MCP protocol messages and diagnostics go to stderr.
+- The current adapter is a process-scoped stdio server. Each Codex, Grok CLI, Google Antigravity, or other MCP client launches its own process, while stdout remains reserved for MCP protocol messages and diagnostics go to stderr.
 - Start it with a stable project selection using `--root <path>`, or attach to an existing backend session with `--session <id>`. `--base-url <url>` selects `engine_sessiond`, and `--name <client-name>` identifies the client process.
 - Each `sf-mcp` process registers one workspace-scoped coordinator agent, keeps the returned credential private in process memory, heartbeats while connected, and disconnects on shutdown so held leases do not strand other agents.
 - The current resources are `shaderforge://project`, `shaderforge://coordination`, and `shaderforge://spatial/review/{reviewId}`.
@@ -163,12 +163,12 @@ Assistant entry points:
 - Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.
 - Current operation tools are bounded `operation_list`, `operation_read`, lease-free `spatial_attachment_validate`, `spatial_attachment_preview`, explicit `spatial_review_reserve` / `spatial_review_recapture`, separate `operation_approve` / `operation_reject`, and spatial-only `operation_apply` / `operation_undo`.
 - The MCP actor and session come from process state. Validation first rejects foreign-session operations and sends no credential or lease. Preview/apply/undo require the process-owned agent/credential and an owned granted write lease; recapture requires explicit owned source/capture/review leases; sessiond rechecks authority immediately before mutation or publication.
-- Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical writes queue through `engine_sessiond` instead of running over each other.
+- Separate Codex, Grok, and Antigravity processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical writes queue through `engine_sessiond` instead of running over each other.
 - The mutation surface is limited to semantic spatial attachments. Generic file/scene/code writes, build/runtime mutation, arbitrary commands, and HTTP transport remain excluded.
 - `sf-mcp` never calls `/api/files/write`, accepts caller-provided identity or credentials, or automatically acquires authority, approves, retries, applies, or undoes. Successful recapture releases its three purpose-specific leases through sessiond; ordinary leases remain explicit. Structured 409 results preserve safe conflict data plus a refreshed authoritative operation when available.
 - Shader Forge MCP does not contain a built-in assistant, model execution, provider picker, or prompt UI. External clients own the AI experience.
 - Run `npm run test:mcp` for deterministic stdio, boundary, coordination, revision-bound spatial rest/sample reads, full spatial and review operation/resource coverage, structured conflicts, and disconnect cleanup.
-- See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and `docs/guides/SHADER-FORGE-MCP-SETUP.md` for Codex/Grok setup.
+- See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and `docs/guides/SHADER-FORGE-MCP-SETUP.md` for Codex/Grok/Antigravity setup.
 
 ### Engine CLI Surfaces
 
@@ -176,8 +176,8 @@ Assistant entry points:
 - `engine session create` and `engine session list` expose session bring-up from the terminal.
 - `engine file list` and `engine file read` expose safe file inspection.
 - `engine ai providers [--root <path>]` now prints the workspace AI provider manifest, default provider, readiness state, and diagnostics.
-- `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` now runs the first shared AI smoke-test lane.
-- `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` now reuses that same first-slice request path for deterministic fake output and optional Ollama-backed prompts.
+- `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` runs the shared deterministic fake, optional Ollama, or enabled OpenRouter smoke-test lane.
+- `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` reuses that path for freeform prompts; `openrouter_kimi` is disabled by default and uses `OPENROUTER_API_KEY` with `moonshotai/kimi-k3` when enabled.
 - `engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]` now prints the resolved export preset, path readiness, cooked-asset counts, and last-package summary for a workspace.
 - `engine package [--root <path>] [--preset <id>] [--package-root <path>] [--skip-bake] [--force-bake]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, and a package report; missing cooked outputs are auto-baked unless that step is explicitly skipped.
 - `engine profile live [--root <path>]` now prints the first diagnostics snapshot lane, and `--session` plus `--base-url` can switch that to a live `engine_sessiond` snapshot.
@@ -203,7 +203,7 @@ Assistant entry points:
 - `engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane, lower conversion confidence, and low-confidence Blueprint package manifests when exporter-assisted Unreal data is unavailable in the current slice.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import` is still a later phase.
-- `ai/providers.toml` is now the current source-controlled provider manifest, with deterministic `fake` coverage for offline harnesses and an optional Ollama-backed local model lane.
+- `ai/providers.toml` is the source-controlled provider manifest, with deterministic `fake`, optional Ollama, and disabled-by-default OpenRouter/Kimi K3 lanes. OpenRouter pins the official API root/key name, rejects remote redirects, caps responses at 1 MiB, never returns credentials, and fails closed on unknown provider types or explicit IDs.
 - `npm run test:ai-scaffold` is the deterministic harness for the first AI provider/status/test slice.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
 - The CLI packaging lane is now real, but it still packages authored runtime roots plus bundled cooked outputs rather than a final cooked-runtime shipping layout.

@@ -7,10 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const bundledAiProvidersPath = path.join(repoRoot, 'ai', 'providers.toml');
+const openRouterApiBaseUrl = 'https://openrouter.ai/api/v1/';
+const openRouterApiKeyEnv = 'OPENROUTER_API_KEY';
+const maxAiResponseBytes = 1024 * 1024;
 
 export const aiProviderTypes = [
   'fake',
   'ollama',
+  'openrouter',
   'openai',
   'anthropic',
   'gemini',
@@ -116,7 +120,7 @@ function normalizeProvider(id, source) {
   }
 
   const provider = source && typeof source === 'object' ? source : {};
-  const type = aiProviderTypes.includes(provider.type) ? provider.type : 'fake';
+  const type = aiProviderTypes.includes(provider.type) ? provider.type : 'unsupported';
   const mode = aiDeploymentModes.includes(provider.mode) ? provider.mode : 'LocalOnly';
   const label = trim(provider.label) || id;
   const model = trim(provider.model) || '';
@@ -199,7 +203,7 @@ function baseProviderStatus(provider) {
     model: provider.model || null,
     endpoint: provider.baseUrl || null,
     apiKeyEnv: provider.apiKeyEnv || null,
-    supportedInSlice: provider.type === 'fake' || provider.type === 'ollama',
+    supportedInSlice: provider.type === 'fake' || provider.type === 'ollama' || provider.type === 'openrouter',
     available: false,
     status: provider.enabled ? 'configured' : 'disabled',
     diagnostics: [],
@@ -208,10 +212,18 @@ function baseProviderStatus(provider) {
   };
 }
 
-function requestJson(baseUrl, pathname, { method = 'GET', body, timeoutMs = 2_500 } = {}) {
-  const target = new URL(pathname, baseUrl);
+function requestJson(baseUrl, pathname, { method = 'GET', body, headers = {}, timeoutMs = 2_500 } = {}) {
+  const target = new URL(String(pathname || '').replace(/^\/+/, ''), `${String(baseUrl || '').replace(/\/+$/, '')}/`);
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    throw new Error('AI provider endpoint must use HTTP or HTTPS.');
+  }
   const requestBody = body ? JSON.stringify(body) : '';
   const transport = target.protocol === 'https:' ? https : http;
+  const requestHeaders = { ...headers };
+  if (requestBody) {
+    requestHeaders['Content-Type'] = 'application/json';
+    requestHeaders['Content-Length'] = Buffer.byteLength(requestBody);
+  }
 
   return new Promise((resolve, reject) => {
     const req = transport.request({
@@ -220,19 +232,29 @@ function requestJson(baseUrl, pathname, { method = 'GET', body, timeoutMs = 2_50
       port: target.port || (target.protocol === 'https:' ? 443 : 80),
       path: `${target.pathname}${target.search}`,
       timeout: timeoutMs,
-      headers: requestBody
-        ? {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(requestBody),
-          }
-        : undefined,
+      headers: requestHeaders,
     }, (response) => {
       let rawBody = '';
+      let responseBytes = 0;
+      let responseTooLarge = false;
       response.setEncoding('utf8');
       response.on('data', (chunk) => {
+        if (responseTooLarge) {
+          return;
+        }
+        responseBytes += Buffer.byteLength(chunk);
+        if (responseBytes > maxAiResponseBytes) {
+          responseTooLarge = true;
+          response.destroy();
+          reject(new Error(`AI provider response exceeded ${maxAiResponseBytes} bytes.`));
+          return;
+        }
         rawBody += chunk;
       });
       response.on('end', () => {
+        if (responseTooLarge) {
+          return;
+        }
         let payload = {};
         try {
           payload = rawBody ? JSON.parse(rawBody) : {};
@@ -302,6 +324,83 @@ async function inspectOllamaProvider(provider, timeoutMs) {
   }
 }
 
+function resolveOpenRouterEndpoint(provider) {
+  const configuredUrl = provider.baseUrl || openRouterApiBaseUrl;
+  let endpoint;
+  try {
+    endpoint = new URL(configuredUrl);
+  } catch {
+    throw new Error('OpenRouter base_url must be a valid URL.');
+  }
+  if (endpoint.username || endpoint.password) {
+    throw new Error('OpenRouter base_url must not contain credentials.');
+  }
+
+  const normalizedEndpoint = `${endpoint.toString().replace(/\/+$/, '')}/`;
+  if (normalizedEndpoint === openRouterApiBaseUrl) {
+    return normalizedEndpoint;
+  }
+
+  const hostname = endpoint.hostname.replace(/^\[|\]$/g, '');
+  const loopback = hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
+  if (process.env.SHADER_FORGE_AI_TEST_ALLOW_OPENROUTER_BASE_URL === '1' && loopback) {
+    return normalizedEndpoint;
+  }
+  throw new Error(`OpenRouter base_url must be ${openRouterApiBaseUrl}`);
+}
+
+async function inspectOpenRouterProvider(provider) {
+  const status = baseProviderStatus(provider);
+  if (!provider.enabled) {
+    return {
+      ...status,
+      endpoint: openRouterApiBaseUrl,
+      apiKeyEnv: openRouterApiKeyEnv,
+    };
+  }
+
+  try {
+    const endpoint = resolveOpenRouterEndpoint(provider);
+    if (provider.apiKeyEnv && provider.apiKeyEnv !== openRouterApiKeyEnv) {
+      throw new Error(`OpenRouter api_key_env must be ${openRouterApiKeyEnv}.`);
+    }
+    if (!provider.model) {
+      return {
+        ...status,
+        endpoint,
+        apiKeyEnv: openRouterApiKeyEnv,
+        status: 'needs_model',
+        diagnostics: ['Configure an OpenRouter model slug before enabling requests.'],
+      };
+    }
+    if (!trim(process.env[openRouterApiKeyEnv])) {
+      return {
+        ...status,
+        endpoint,
+        apiKeyEnv: openRouterApiKeyEnv,
+        status: 'needs_auth',
+        diagnostics: [`Set ${openRouterApiKeyEnv} to enable OpenRouter requests.`],
+      };
+    }
+    return {
+      ...status,
+      endpoint,
+      apiKeyEnv: openRouterApiKeyEnv,
+      available: true,
+      status: 'ready',
+      diagnostics: ['OpenRouter model and credential are configured; connectivity is checked on request.'],
+    };
+  } catch (error) {
+    return {
+      ...status,
+      endpoint: provider.baseUrl || openRouterApiBaseUrl,
+      apiKeyEnv: openRouterApiKeyEnv,
+      status: 'invalid',
+      diagnostics: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
 async function inspectHostedProvider(provider) {
   const status = baseProviderStatus(provider);
   if (!provider.enabled) {
@@ -324,11 +423,21 @@ async function inspectHostedProvider(provider) {
 }
 
 async function inspectProvider(provider, timeoutMs) {
+  if (provider.type === 'unsupported') {
+    return {
+      ...baseProviderStatus(provider),
+      status: 'invalid',
+      diagnostics: [`AI provider ${provider.id} has an unsupported type.`],
+    };
+  }
   if (provider.type === 'fake') {
     return inspectFakeProvider(provider);
   }
   if (provider.type === 'ollama') {
     return inspectOllamaProvider(provider, timeoutMs);
+  }
+  if (provider.type === 'openrouter') {
+    return inspectOpenRouterProvider(provider);
   }
   return inspectHostedProvider(provider);
 }
@@ -359,8 +468,15 @@ export async function inspectAiProviders(rootPath, { timeoutMs = 2_500 } = {}) {
 }
 
 function resolveProvider(summary, providerId = '') {
-  const requestedId = trim(providerId) || summary.defaultProviderId || '';
-  const provider = summary.providers.find((candidate) => candidate.id === requestedId)
+  const explicitProviderId = trim(providerId);
+  if (explicitProviderId) {
+    const explicitProvider = summary.providers.find((candidate) => candidate.id === explicitProviderId);
+    if (!explicitProvider) {
+      throw new Error(`AI provider ${explicitProviderId} is not configured for this workspace.`);
+    }
+    return explicitProvider;
+  }
+  const provider = summary.providers.find((candidate) => candidate.id === summary.defaultProviderId)
     || summary.providers.find((candidate) => candidate.available)
     || summary.providers[0]
     || null;
@@ -409,9 +525,15 @@ export async function testAiProvider(
     };
   }
 
-  const response = await requestJson(provider.endpoint, '/v1/chat/completions', {
+  const isOpenRouter = provider.type === 'openrouter';
+  const apiKey = isOpenRouter ? trim(process.env[provider.apiKeyEnv]) : '';
+  if (isOpenRouter && !apiKey) {
+    throw new Error(`Set ${provider.apiKeyEnv} to enable OpenRouter requests.`);
+  }
+  const response = await requestJson(provider.endpoint, isOpenRouter ? 'chat/completions' : 'v1/chat/completions', {
     method: 'POST',
     timeoutMs,
+    headers: isOpenRouter ? { Authorization: `Bearer ${apiKey}` } : {},
     body: {
       model: provider.selectedModel,
       temperature: 0,
@@ -436,7 +558,7 @@ export async function testAiProvider(
     finishReason: trim(response?.choices?.[0]?.finish_reason) || 'stop',
     durationMs: Date.now() - startedAt,
     requestId: trim(response?.id) || `ai_request_${Date.now()}`,
-    diagnostics: ['Served by the configured Ollama provider.'],
+    diagnostics: [isOpenRouter ? 'Served by the configured OpenRouter provider.' : 'Served by the configured Ollama provider.'],
     prompt,
     systemPrompt,
   };

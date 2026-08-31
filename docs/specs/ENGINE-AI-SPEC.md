@@ -39,6 +39,7 @@ Initial provider targets:
 - OpenAI
 - Anthropic
 - Gemini
+- OpenRouter
 - OpenAI-compatible endpoints
 - local model endpoints such as Ollama
 
@@ -64,6 +65,9 @@ Rules:
 - player-supplied API keys are an advanced optional feature, not the default architecture
 - browser shell code should not become the primary storage location for provider secrets
 - provider secrets should flow through local secure storage hooks or trusted backend surfaces
+- remote provider adapters must pin credential names and trusted endpoints rather than allowing a workspace manifest to redirect arbitrary environment secrets
+- provider responses must be bounded before JSON materialization
+- unknown provider types and explicitly requested provider IDs must fail closed rather than silently becoming or falling back to the fake provider
 - the engine must support rate limits, spend caps, per-feature budgets, and provider allowlists
 - game projects must be able to disable external AI completely
 - assistant-triggered compile, load, hot reload, install, or apply actions must pass through explicit engine permission and code-trust policy surfaces
@@ -249,11 +253,14 @@ The first implemented Phase 5.9 slice is the provider/status/test foundation.
 Current implemented behavior:
 
 - `ai/providers.toml` is now the source-controlled provider manifest for workspace or repo-root AI configuration
-- provider manifests currently support deterministic `fake`, optional `ollama`, and reserved hosted-provider entries for `openai`, `anthropic`, `gemini`, and `openai_compatible`
+- provider manifests currently support deterministic `fake`, optional `ollama`, a real `openrouter` BYOK adapter, and reserved hosted-provider entries for `openai`, `anthropic`, `gemini`, and `openai_compatible`
 - `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider normalization, provider inspection, and smoke-test execution for game-facing AI configuration
 - the deterministic `fake` provider is the current offline and harness-safe default so Phase 5.9 work does not depend on a live model endpoint
 - the optional Ollama lane now probes `/api/tags`, selects an installed model when possible, and can issue a basic `/v1/chat/completions` smoke test against a reachable local endpoint
-- hosted-provider execution is not implemented yet, but the manifest and inspection layer already expose deployment mode plus required `api_key_env` diagnostics
+- the disabled-by-default `openrouter_kimi` entry targets the current `moonshotai/kimi-k3` route and uses only `OPENROUTER_API_KEY`
+- OpenRouter requests use its fixed official HTTPS API root, bearer authentication, the existing chat-completions payload, and a 1 MiB response limit; only the deterministic harness can opt into a loopback endpoint
+- unknown manifest provider types report `invalid`, and an explicit unknown `--provider` selection fails instead of falling back
+- other hosted-provider types remain inspection-only, with deployment mode plus required `api_key_env` diagnostics
 - `engine_sessiond` now exposes `GET /api/ai/providers` and `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
 - the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
 - the CLI now exposes `engine ai providers`, `engine ai test`, and `engine ai request`
@@ -263,7 +270,7 @@ Still ahead in Phase 5.9:
 
 - queued request lifecycle, cancellation, timeout, retry, and fallback control beyond direct smoke-test execution
 - usage budgets, spend limits, and request logging
-- real hosted-provider adapters and secure key-management hooks
+- additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
 - game-facing tool registry, skill registry, and structured action schemas
 - gameplay-facing AI integrations
 
@@ -294,6 +301,7 @@ Deterministic lane:
 Optional real lanes:
 
 - local Ollama smoke harness
+- OpenRouter smoke harness gated by `OPENROUTER_API_KEY`
 - provider-specific smoke harnesses gated by environment configuration
 
 ## Non-Goals

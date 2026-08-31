@@ -8,7 +8,7 @@ Date: 2026-08-30
 
 Shader Forge MCP is the external-agent control adapter for Shader Forge. Its short name is `sf-mcp`.
 
-It lets Codex, Grok CLI, and other MCP clients inspect the same project state and participate in the engine-owned multi-agent coordinator without embedding an assistant, model, prompt surface, or provider configuration inside Shader Forge.
+It lets Codex, Grok CLI, Google Antigravity, and other MCP clients inspect the same project state and participate in the engine-owned multi-agent coordinator without embedding an assistant, model, prompt surface, or provider configuration inside Shader Forge.
 
 ## Current Transport And Startup
 
@@ -34,7 +34,7 @@ Each `sf-mcp` process registers one workspace-scoped coordinator agent when it s
 - the process sends heartbeats while connected
 - normal shutdown and input closure disconnect the coordinator agent
 - heartbeat expiry and disconnect release held leases and allow queued work to progress
-- every client process has its own agent identity, so Codex and Grok do not share one global bridge slot
+- every client process has its own agent identity, so Codex, Grok, and Antigravity do not share one global bridge slot
 
 The coordinator allows concurrent reads and non-overlapping work. Hierarchical conflicts, queued writers, and workspace-exclusive `build` or `runtime` resources are still enforced by `engine_sessiond`.
 
@@ -87,7 +87,7 @@ The adapter injects the `sf-mcp` process's selected session ID and calls `GET /a
 
 ## Multi-Agent Use
 
-A Codex process and a Grok CLI process can launch separate `sf-mcp` servers against the same `--root`.
+Codex, Grok CLI, and Antigravity processes can launch separate `sf-mcp` servers against the same `--root`.
 
 - both processes can inspect project state concurrently
 - agents can request resource scopes before work begins
@@ -164,4 +164,4 @@ Implemented tools:
 
 Current mutation and recapture tools use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. `spatial_attachment_validate` first verifies the operation belongs to the MCP process's selected session, accepts only the bounded exact sample input, and calls the sessiond validation route without a lease or credential. Review reservation returns the exact review resource key; recapture accepts only process-owned granted leases and canonical cameras before sessiond repeats the authoritative lease/revision checks. Read and resource calls pin the process-selected session. Capture holds the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.
 
-See [SHADER-FORGE-MCP-SETUP.md](../guides/SHADER-FORGE-MCP-SETUP.md) for Codex and Grok CLI registration and verification.
+See [SHADER-FORGE-MCP-SETUP.md](../guides/SHADER-FORGE-MCP-SETUP.md) for Codex, Grok CLI, and Antigravity registration and verification.

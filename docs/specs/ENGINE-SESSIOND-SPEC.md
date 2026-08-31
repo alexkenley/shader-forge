@@ -115,8 +115,8 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - artifact files under `<session-root>/.shader-forge/code-trust-artifacts.json` use serialized atomic replacement
 - cooperative engine clients are covered by that serialized lane; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee
 - sessiond now exposes workspace-backed AI provider inspection and smoke-test routes so the shell and harnesses can inspect `ai/providers.toml` without building their own provider clients
-- `GET /api/ai/providers` now reports manifest source, default provider, provider readiness, installed Ollama models when reachable, and diagnostics for unimplemented hosted-provider entries
-- `POST /api/ai/test` now runs the current first-slice smoke-test path through the shared AI layer, with deterministic fake-provider coverage and optional Ollama-backed requests
+- `GET /api/ai/providers` now reports manifest source, default provider, provider readiness, installed Ollama models when reachable, OpenRouter BYOK readiness, and diagnostics for other unimplemented hosted-provider entries
+- `POST /api/ai/test` now runs the shared AI smoke-test path with deterministic fake-provider coverage plus optional Ollama- and OpenRouter-backed requests; OpenRouter credentials stay server-side and provider responses are bounded to 1 MiB
 - sessiond now exposes workspace-backed export-preset inspection and release-layout packaging routes so the shell can drive the first Phase 6.2 package workflow without scraping terminal output
 - `GET /api/package/inspect` reports export preset source, prerequisite path readiness, cooked-asset counts, and last package metadata for a workspace, including whether runtime build or asset-bake prep is still needed
 - `POST /api/package/run` now emits the first reproducible release-layout scaffold under `build/package/<preset>/`, bundling the runtime binary, packaged authored runtime roots, cooked outputs, launch scripts, and a package report; missing cooked outputs can be auto-baked before packaging

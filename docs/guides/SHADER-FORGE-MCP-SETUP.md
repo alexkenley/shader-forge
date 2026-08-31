@@ -1,6 +1,6 @@
 # Shader Forge MCP Setup
 
-Shader Forge MCP (`sf-mcp`) is a local stdio adapter. Each external client launches its own process, so Codex and Grok CLI receive separate coordinator identities and leases.
+Shader Forge MCP (`sf-mcp`) is a local stdio adapter. Each external client launches its own process, so Codex, Grok CLI, and Google Antigravity receive separate coordinator identities and leases.
 
 ## Prerequisites
 
@@ -39,6 +39,28 @@ grok mcp doctor sf-mcp
 ```
 
 Grok also supports `--scope project`, but do not commit a machine-specific absolute path. Start a new Grok session after changing the MCP server tool surface.
+
+## Google Antigravity
+
+Antigravity supports local stdio MCP servers. Add this workspace-scoped entry to `.agents/mcp_config.json`, replacing `<repo-root>` with the absolute repository path on the machine running Antigravity:
+
+```json
+{
+  "mcpServers": {
+    "sf-mcp": {
+      "command": "node",
+      "args": [
+        "<repo-root>/tools/engine-mcp/server.mjs",
+        "--base-url", "http://127.0.0.1:41741",
+        "--root", "<repo-root>",
+        "--name", "antigravity"
+      ]
+    }
+  }
+}
+```
+
+Open Antigravity's MCP manager to reload the workspace server and inspect connection logs. Do not commit the expanded machine-specific absolute path.
 
 ## Safe Spatial Mutation Flow
 
