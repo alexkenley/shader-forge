@@ -913,6 +913,7 @@ function parseUnitySceneNodes(source) {
       return {
         fileId: document.fileId,
         name,
+        active: parseUnityNumber(document.lines, 'm_IsActive', 0) === 1,
         parentFileId,
         position: (transform?.position || [0, 0, 0]).map(formatSceneNumber).join(', '),
         rotation: unityQuaternionToEuler(transform?.rotation || [0, 0, 0, 1]),
@@ -934,7 +935,19 @@ function parseUnitySceneNodes(source) {
     pathCache.set(node.fileId, sourceNodePath);
     return sourceNodePath;
   }
-  return nodes.map((node) => ({
+  const activeCache = new Map();
+  function isActiveInHierarchy(node, visited = new Set()) {
+    if (activeCache.has(node.fileId)) return activeCache.get(node.fileId);
+    if (!node.active || visited.has(node.fileId)) {
+      activeCache.set(node.fileId, false);
+      return false;
+    }
+    const parent = nodeByFileId.get(node.parentFileId);
+    const active = !parent || isActiveInHierarchy(parent, new Set([...visited, node.fileId]));
+    activeCache.set(node.fileId, active);
+    return active;
+  }
+  return nodes.filter((node) => isActiveInHierarchy(node)).map((node) => ({
     ...node,
     sourceNodePath: resolvePath(node),
     sourceNodeType: 'GameObject',
@@ -1350,7 +1363,7 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
       mappedNodeCount: nodes.length,
       nodes,
     };
-  }));
+  })).filter((scene) => scene.nodes.length > 0);
 
   const allocatedPrefabNames = new Set(prefabs.map((prefab) => prefab.name));
   const sceneNodePrefabs = [];
@@ -1418,7 +1431,9 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
   prefabs = uniqueBy([...prefabs, ...sceneNodePrefabs], (item) => item.name);
 
   prefabs = ensureFallbackPrefabsForScenes(scenes, prefabs, 'unity');
-  scenes = ensureFallbackScenesForPrefabs(scenes, prefabs, 'unity').map((scene) => ({
+  scenes = (sceneFiles.length > 0 && scenes.length === 0
+    ? scenes
+    : ensureFallbackScenesForPrefabs(scenes, prefabs, 'unity')).map((scene) => ({
     ...scene,
     primaryPrefab: scene.primaryPrefab || prefabs[0]?.name || '',
     entityId: scene.entityId || normalizeToken(`${prefabs[0]?.name || scene.name}_instance`) || 'primary_instance',

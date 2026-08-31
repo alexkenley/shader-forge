@@ -45,7 +45,7 @@ Implemented now:
 - a declared startup scene that cannot be resolved is fail-closed: no plausible-looking bootstrap is emitted, the setting is marked `skipped`, and the report carries a manual task
 - when no startup scene is declared, the first source-relative converted scene is selected deterministically and the setting is marked `approximated`
 - manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
-- Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; enabled valid perspective `Camera` optics and enabled valid non-trigger `BoxCollider` center/size geometry map into the existing strict prefab components
+- Unity text-YAML scenes now map active `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; `m_IsActive: 0` objects and their hierarchy subtrees fail closed, while enabled valid perspective `Camera` optics and enabled valid non-trigger `BoxCollider` center/size geometry map into the existing strict prefab components
 - Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, preserve source paths/types as generated comments, and map valid explicit perspective `Camera3D` optics plus enabled non-`Area3D` `CollisionShape3D`-referenced `BoxShape3D` geometry into strict prefab components; explicitly disabled and `Area3D` trigger collision shapes fail closed
 - migration manifests and reports include `mapped_scene_entities`, `mapped_prefab_components`, and `mapped_script_bindings`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
@@ -151,7 +151,7 @@ Preferred approach:
 
 Current implemented slice:
 
-- parse text-YAML `GameObject`, `Transform`, and `RectTransform` documents from `.unity` scenes
+- parse active text-YAML `GameObject`, `Transform`, and `RectTransform` documents from `.unity` scenes while omitting `m_IsActive: 0` hierarchy subtrees
 - preserve source file IDs, parent hierarchy, and local position/rotation/scale in generated scene entities and scene-owned placeholder prefabs
 - normalize source quaternions into deterministic Euler-degree output for reviewable generated records
 - map enabled valid perspective `Camera` field-of-view and near/far clip values into `[component.camera]` while retaining the source component ID

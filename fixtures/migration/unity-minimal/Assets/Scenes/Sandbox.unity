@@ -5,6 +5,7 @@ GameObject:
   m_Component:
   - component: {fileID: 4}
   m_Name: SandboxRoot
+  m_IsActive: 1
 --- !u!4 &4
 Transform:
   m_GameObject: {fileID: 1}
@@ -20,6 +21,7 @@ GameObject:
   - component: {fileID: 9}
   - component: {fileID: 10}
   m_Name: Player
+  m_IsActive: 1
 --- !u!4 &5
 Transform:
   m_GameObject: {fileID: 2}
@@ -55,6 +57,7 @@ GameObject:
   - component: {fileID: 7}
   - component: {fileID: 11}
   m_Name: Camera
+  m_IsActive: 1
 --- !u!4 &6
 Transform:
   m_GameObject: {fileID: 3}

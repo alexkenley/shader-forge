@@ -229,6 +229,79 @@ assert.doesNotMatch(
   /\[component\.collision\]/,
 );
 
+const inactiveUnityFixtureRoot = path.join(tempRoot, 'source-fixtures', 'unity-inactive-hierarchy');
+fs.cpSync(unityFixtureRoot, inactiveUnityFixtureRoot, { recursive: true });
+const inactiveUnityScenePath = path.join(inactiveUnityFixtureRoot, 'Assets', 'Scenes', 'Sandbox.unity');
+fs.writeFileSync(
+  inactiveUnityScenePath,
+  fs.readFileSync(inactiveUnityScenePath, 'utf8').replace(
+    'm_Name: Player\n  m_IsActive: 1',
+    'm_Name: Player\n  m_IsActive: 0',
+  ),
+  'utf8',
+);
+const inactiveUnityRun = runCli([
+  'migrate',
+  'unity',
+  inactiveUnityFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'unity-inactive-hierarchy',
+]);
+assert.match(inactiveUnityRun.stdout, /Mapped scene entities: 1/);
+assert.match(inactiveUnityRun.stdout, /Mapped prefab components: 0/);
+assert.match(inactiveUnityRun.stdout, /Mapped script bindings: 0/);
+const inactiveUnityProjectRoot = path.join(tempRoot, 'unity-inactive-hierarchy', 'shader-forge-project');
+const inactiveUnityScene = fs.readFileSync(
+  path.join(inactiveUnityProjectRoot, 'content', 'scenes', 'migrated', 'unity', 'sandbox.scene.toml'),
+  'utf8',
+);
+assert.doesNotMatch(inactiveUnityScene, /SandboxRoot\/Player|source_object_id = "2"|source_object_id = "3"/);
+assert.equal(
+  fs.existsSync(path.join(inactiveUnityProjectRoot, 'content', 'prefabs', 'migrated', 'unity', 'sandbox_sandbox_root_player.prefab.toml')),
+  false,
+  'An inactive Unity GameObject subtree must not become active target prefabs.',
+);
+await assertMigratedProjectBakes(inactiveUnityProjectRoot, 'unity', 'unity-inactive-hierarchy');
+
+const inactiveUnityRootFixture = path.join(tempRoot, 'source-fixtures', 'unity-inactive-root');
+fs.cpSync(unityFixtureRoot, inactiveUnityRootFixture, { recursive: true });
+const inactiveUnityRootScenePath = path.join(inactiveUnityRootFixture, 'Assets', 'Scenes', 'Sandbox.unity');
+fs.writeFileSync(
+  inactiveUnityRootScenePath,
+  fs.readFileSync(inactiveUnityRootScenePath, 'utf8').replace(
+    'm_Name: SandboxRoot\n  m_IsActive: 1',
+    'm_Name: SandboxRoot\n  m_IsActive: 0',
+  ),
+  'utf8',
+);
+const inactiveUnityRootRun = runCli([
+  'migrate',
+  'unity',
+  inactiveUnityRootFixture,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'unity-inactive-root',
+]);
+assert.match(inactiveUnityRootRun.stdout, /Mapped scene entities: 0/);
+const inactiveUnityRootProject = path.join(tempRoot, 'unity-inactive-root', 'shader-forge-project');
+assert.equal(
+  fs.existsSync(path.join(inactiveUnityRootProject, 'content', 'scenes', 'migrated', 'unity', 'sandbox.scene.toml')),
+  false,
+  'An inactive Unity scene root must not produce a fallback scene.',
+);
+assert.equal(
+  fs.existsSync(path.join(inactiveUnityRootProject, 'content', 'data', 'migrated', 'unity', 'runtime_bootstrap.data.toml')),
+  false,
+  'An inactive Unity startup scene must not produce a runtime bootstrap.',
+);
+assert.match(
+  fs.readFileSync(path.join(tempRoot, 'unity-inactive-root', 'report.toml'), 'utf8'),
+  /\[startup_scene\][\s\S]*status = "skipped"/,
+);
+
 const unrealRun = runCli([
   'migrate',
   'unreal',
@@ -515,7 +588,7 @@ const duplicateUnityFixtureRoot = path.join(tempRoot, 'source-fixtures', 'unity-
 fs.cpSync(unityFixtureRoot, duplicateUnityFixtureRoot, { recursive: true });
 const duplicateUnityScenePath = path.join(duplicateUnityFixtureRoot, 'Assets', 'Bonus', 'Sandbox.unity');
 fs.mkdirSync(path.dirname(duplicateUnityScenePath), { recursive: true });
-fs.writeFileSync(duplicateUnityScenePath, '%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: BonusSandbox\n', 'utf8');
+fs.writeFileSync(duplicateUnityScenePath, '%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: BonusSandbox\n  m_IsActive: 1\n', 'utf8');
 fs.writeFileSync(
   path.join(duplicateUnityFixtureRoot, 'ProjectSettings', 'EditorBuildSettings.asset'),
   [
