@@ -33,7 +33,7 @@
         {
           "id": "reference-sources",
           "title": "Reference Sources",
-          "summary": "Use the repo-native guide files first so terminal assistants, shell users, and later native assistants all resolve the same current guidance.",
+          "summary": "Use the repo-native guide files first so external development agents and shell users resolve the same current guidance.",
           "keywords": ["docs", "json", "markdown", "searchable", "assistant-facing"],
           "references": [
             "docs/reference/ENGINE-REFERENCE-GUIDE.md",
@@ -49,7 +49,7 @@
               "keywords": ["entry points", "lookup", "index"],
               "items": [
                 "Use `docs/reference/ENGINE-REFERENCE-GUIDE.md` as the plain-text guide for terminal assistants and repo search.",
-                "Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and future native assistants.",
+                "Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and external development agents.",
                 "Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.",
                 "Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.",
                 "Use `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the implemented native spatial schema/query/cook/rest evaluation, v2 sampled two-bone secondary-hand IK, exact Assets rest/sampled rig workbench, and attachment-preview operation slices plus the deferred rendered review workflow.",
@@ -839,7 +839,7 @@
                 "A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.",
                 "A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. `sf-mcp` now consumes its lease-gated spatial attachment family; other MCP operation families still require equivalent resource-key contracts. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.",
                 "A native spatial schema/query/cook/rest and sampled attachment evaluation slice with v2 two-bone secondary-hand IK, explicit v1 pre-IK compatibility, and diagnose-only joint-limit aggregate/per-bone PASS/FAIL, plus a constrained Assets tuner and accessible native-evaluated three-projection rest/sampled rig schematics with resolved v2 pole projection, exact full-input evidence binding, guarded event reconciliation, and no rendered-review claim in the shell.",
-                "A searchable in-app guide and repo-native assistant guide."
+                "A searchable in-app guide and repo-native external-agent guide."
               ]
             },
             {

@@ -43,7 +43,7 @@ Implemented now:
 - `F8` triggers `save_runtime_state`, `F9` triggers `load_runtime_state`, and `F11`/`F12` cycle the active runtime save slot through the engine-owned input system
 - the current snapshot captures active scene name, controlled-entity identity, transform state, animation graph/state context, and triggered overlap-body state for manual runtime iteration
 - the runtime can now enumerate save-slot metadata through `SaveSystem` and surface the current active slot plus available-slot count in runtime state
-- the current save payload is intentionally text-backed and inspectable so terminal assistants, shell tooling, and future native assistants can reason about the same runtime persistence format
+- the current save payload is intentionally text-backed and inspectable so external development agents, shell tooling, and runtime code can reason about the same persistence format
 
 Current boundary:
 

@@ -46,7 +46,7 @@ Borrow:
 
 Adapt for Shader Forge:
 - keep Shader Forge scene and prefab source in `.scene.toml` and `.prefab.toml`
-- route assistant edits through `engine_sessiond`, the CLI, and future native in-engine assistant tools
+- route external-agent edits through `engine_sessiond`, the CLI, and `sf-mcp`
 - make scene inspection and mutation explicit engine tools, not ad-hoc hidden editor magic
 
 ### 2. Tool Registry, Dock Layouts, And Context Keybindings

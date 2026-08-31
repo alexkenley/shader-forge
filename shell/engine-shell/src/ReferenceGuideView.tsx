@@ -205,7 +205,7 @@ export function ReferenceGuideView({ guide }: ReferenceGuideViewProps) {
         <div className="guide-search__meta">
           {query.trim()
             ? `Filtered to ${filteredGuide.categories.length} categories and ${filteredPageCount} guides`
-            : 'Guide content is mirrored in repo-native sources for terminal and future native assistants.'}
+            : 'Guide content is mirrored in repo-native sources for external development agents.'}
         </div>
       </div>
 

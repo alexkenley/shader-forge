@@ -24,7 +24,7 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 - VFX framework direction: Effekseer integration plus code-defined engine effect descriptors
 - data framework direction: TOML source via `toml++`, FlatBuffers cooked data, SQLite tooling/session DB
 - large-scale gameplay-data authoring direction: keep schemas, manifests, and validation rules text-backed, but use a queryable authoring store for large tabular datasets instead of forcing high-volume gameplay data into giant TOML assets
-- data access direction: shell UI, terminal assistants via CLI/`engine_sessiond`, and the future native in-engine assistant should all use the same engine-owned data query/update/validate/cook services with explicit policy gates
+- data access direction: shell UI and external development agents through CLI/`engine_sessiond`/`sf-mcp` use the same engine-owned data query/update/validate/cook services with explicit policy gates
 - shell model: editor/viewer tabs, split layouts, PTY terminals
 - primary development workflow: Windows + WSL2, with native Linux support
 - runtime bring-up: native runtime window first
@@ -126,7 +126,7 @@ What is already done:
 - Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read/write, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
 - The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, runtime build/run/pause/log controls, external-window viewer workflow diagnostics, and text-backed scene/prefab authoring saves.
-- The shell now has a first in-app reference guide foundation backed by repo-native markdown plus structured guide content so operators, terminal assistants, and future native assistants can search the same current workflow/reference surface.
+- The shell now has a first in-app reference guide foundation backed by repo-native markdown plus structured guide content so operators and external development agents can search the same current workflow/reference surface.
 - The shell `Scene` workspace now loads current scene and prefab assets from the active session, supports deterministic save/reload/duplicate flows, and exposes the first real outliner/details/assets authoring lane with placed-entity create/duplicate/delete, transform editing, prefab component payload editing, and discard-by-default play mode separation.
 - Shell runtime play/restart now carry the active session root into the native runtime launch so authored scene files and external-window manual testing stay pointed at the same project data.
 - The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
@@ -455,7 +455,7 @@ Scope:
 - SQLite tooling/session/asset database path
 - queryable authoring/query path for large gameplay and tabular datasets
 - shell-side data workspace for search, filtering, paging, saved queries, and bulk edit workflows
-- shared data query/update/validate/cook surfaces for CLI, `engine_sessiond`, terminal assistants, and the future native in-engine assistant
+- shared data query/update/validate/cook surfaces for CLI, `engine_sessiond`, the shell, and external agents through `sf-mcp`
 - preview, dry-run, validation, and approval flows for destructive or assistant-driven bulk data edits
 - Effekseer runtime integration plan
 - code-defined simple effect descriptor model
@@ -466,7 +466,7 @@ Still ahead inside this phase:
 - land the SQLite-backed authoring/query store and shell data-workspace surfaces for large gameplay datasets
 - make large data workflows page- and query-based so humans and assistants do not have to load entire tables or giant assets at once
 - keep runtime consumption on cooked data rather than reading the live authoring/query store directly
-- expose the same data operations through shell UI, CLI/`engine_sessiond`, and native assistant tool surfaces instead of creating separate editor-only paths
+- expose the same data operations through shell UI, CLI/`engine_sessiond`, and `sf-mcp` instead of creating separate editor-only paths
 
 Reference inputs:
 - for import/cook/cache flow and tooling data boundaries, consult the [Distill guide](../docs/guides/ENGINE-DISTILL-BORROW-GUIDE.md), [O3DE guide](../docs/guides/ENGINE-O3DE-BORROW-GUIDE.md), [Stride guide](../docs/guides/ENGINE-STRIDE-BORROW-GUIDE.md), [Godot guide](../docs/guides/ENGINE-GODOT-BORROW-GUIDE.md), [Bevy guide](../docs/guides/ENGINE-BEVY-BORROW-GUIDE.md), and [Hell2025 borrow plan](../docs/guides/ENGINE-HELL2025-BORROW-PLAN.md)
@@ -739,8 +739,8 @@ Scope:
 - shared skill registry for higher-level engine workflows
 - structured scene-bridge workflows for assistant-friendly scene inspection and scene patch application
 - shell and CLI inspection/test surfaces
-- native in-engine assistant surface for runtime/editor workflows
-- shared provider and tool/skill core for terminal and in-engine assistant clients
+- typed `sf-mcp` tools and resources for external development-agent workflows
+- game-facing provider and tool/skill core that remains separate from external-agent model hosting
 - shared data-authoring tool surfaces for schema discovery, paged queries, relationship lookups, bulk-update preview, validation, and cook operations
 - explicit policy hooks for assistant-triggered compile, hot reload, install, and apply operations
 - optional BYOK desktop mode
@@ -753,7 +753,7 @@ Exit criteria:
 - a project can configure at least one local model path and one hosted-provider path
 - the engine can issue structured AI requests without blocking frame-critical systems
 - AI-facing gameplay outputs are validated through explicit schemas and deterministic code paths
-- terminal, shell, and native in-engine assistants can discover and execute shared tools and skills through explicit policies
+- external development agents can discover and execute typed `sf-mcp` tools through explicit policies, while game-facing roles use separately scoped runtime tools
 - assistant scene-authoring workflows can inspect and patch structured scene data without relying on hidden editor-only state
 - assistant data-authoring workflows can query, preview, validate, and apply bulk gameplay-data changes through shared engine services instead of ad-hoc editor-only mutations
 - deterministic and optional real-provider harness lanes exist for the subsystem
@@ -770,7 +770,7 @@ Still ahead inside this phase:
 - queued request submit/cancel/event-stream behavior beyond direct smoke-test execution
 - hosted-provider execution, budgets, and secure key-management hooks
 - shared tool and skill registries plus structured action-schema enforcement
-- native in-engine assistant surfaces and gameplay-facing AI integration
+- typed external-agent MCP coverage and gameplay-facing AI integration
 
 ## Phase 5.95: Code Access, Trust, And Hot Reload Safety
 

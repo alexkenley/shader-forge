@@ -32,7 +32,7 @@ Assistant entry points:
 ### Reference Sources
 
 - Use `docs/reference/ENGINE-REFERENCE-GUIDE.md` as the plain-text guide for terminal assistants and repo search.
-- Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and future native assistants.
+- Use `docs/reference/ENGINE-REFERENCE-GUIDE.json` as the structured guide source for the shell and external development agents.
 - Use `shell/engine-shell/src/reference-guide.ts` as the shell adapter that imports the structured guide data.
 - Use `plans/ENGINE-IMPLEMENTATION-PLAN.md` to check current phase order, progress, and dependency gates.
 - Use `docs/specs/ENGINE-SYSTEMS-INDEX.md` to jump to the subsystem specs that define the current architecture.

@@ -13,7 +13,7 @@ This is a later-phase guide. It does not block the current SDL3/Vulkan bring-up,
 Shader Forge is explicitly moving toward:
 
 - assistant-editable engine assets and workflows
-- a native in-engine assistant
+- an external development agent connected through `sf-mcp`
 - reusable tools and skills that can modify projects
 - future hot reload and rapid iteration loops
 
@@ -92,7 +92,7 @@ Shader Forge should have explicit, source-controlled policy data for:
 
 ### 3. Treat Assistant Actions As Policy-Bound
 
-The in-engine assistant and terminal assistant should not get a hidden bypass.
+External development agents should not get a hidden bypass.
 
 - if a tool triggers compile, load, install, or hot reload, it should pass through the same policy layer as human-driven tooling
 - dry-run and approval modes should exist for risky actions

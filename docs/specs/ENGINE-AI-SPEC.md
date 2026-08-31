@@ -9,8 +9,7 @@ It exists to support:
 - dialogue and conversation systems
 - high-level NPC and director-style decisions
 - quest, lore, and social interactions
-- assistant-friendly game tooling and test surfaces
-- native developer-assistant surfaces in the shell, CLI, and future in-engine tools
+- game-facing AI tooling and deterministic provider test surfaces
 
 It should not turn remote model output into the only source of core gameplay behavior.
 
@@ -24,14 +23,12 @@ Rules:
 - each game owns prompts, personas, tools, skills, memory rules, and AI-facing gameplay policies
 - deterministic systems such as combat resolution, movement, pathfinding, physics, and authoritative world mutation remain engine/game code, not raw model output
 
-The engine should support both:
+Development agents and game-facing AI are separate products:
 
-- developer-assistant surfaces
-  - shell, CLI, and native in-engine tool assistants for editing, inspection, testing, and workflow automation
-- game-facing AI surfaces
-  - dialogue, director, and other shipped gameplay-facing AI behaviors
+- external development agents such as Codex and Grok own their models, prompts, and conversation UI, and operate Shader Forge through `sf-mcp`
+- this subsystem owns optional game-facing dialogue, director, and other shipped runtime AI behaviors
 
-These should share the same provider core, policy controls, and structured tool architecture where practical.
+They may call the same engine-owned operations, but development agents do not depend on this provider core and Shader Forge does not host a built-in development assistant.
 
 ## Supported Provider Model
 
@@ -87,7 +84,6 @@ Recommended modules:
 - `engine_ai_cache`
 - `engine_ai_tool_registry`
 - `engine_ai_skill_registry`
-- `engine_ai_client_shell`
 - `engine_ai_client_cli`
 - `engine_ai_client_runtime`
 
@@ -155,7 +151,7 @@ Rules:
 - tools own capability
 - skills own workflow
 - tools and text assets remain the source of truth, not skill-local hidden state
-- terminal, shell, and native in-engine assistants should share the same underlying tool and skill registries where practical
+- game-facing AI roles may share engine-owned tool and skill registries where practical
 - skills may compose tools, but they should not bypass engine permission and validation layers
 
 Recommended tool categories:
@@ -198,7 +194,7 @@ Examples:
 
 Games should explicitly choose which tools are exposed to each AI-driven role.
 
-Examples of developer-assistant skills:
+Examples of external-agent workflows exposed through `sf-mcp` rather than hosted by this subsystem:
 
 - `setup_third_person_controller`
 - `wire_animation_events_to_audio`
@@ -206,7 +202,7 @@ Examples of developer-assistant skills:
 - `package_windows_playtest_build`
 - `blockout_combat_arena`
 
-These workflows should be able to operate against structured scene and prefab data so that assistant-visible text assets, shell tools, and future native tools converge on the same source of truth.
+These workflows should operate against structured scene and prefab data so external agents, shell tools, CLI commands, and the runtime converge on the same source of truth.
 
 ## Authoring Model
 
@@ -233,15 +229,9 @@ Tool and skill assets should be able to declare:
 - undo/apply behavior where relevant
 - dependency on other tools or skills
 
-## Shell And CLI Surfaces
+## Tooling And CLI Surfaces
 
-Expected shell surfaces:
-
-- provider status
-- budget/usage panel
-- prompt and schema inspection
-- request log viewer
-- local model/Ollama connection status
+The main editor does not host provider selection, prompts, chat, token controls, or a general-purpose development assistant. Project diagnostics may report whether game-facing AI configuration is healthy, but provider setup and smoke testing remain CLI/backend concerns.
 
 Expected CLI surfaces:
 
@@ -252,13 +242,6 @@ Expected CLI surfaces:
 - `engine ai tools`
 - `engine ai skills`
 
-Expected native in-engine assistant surfaces:
-
-- runtime-aware assistant panel
-- structured tool calls for scene, animation, audio, and runtime inspection/edit workflows
-- context-aware capability/skill routing for engine-native tasks
-- structured scene dump, query, and patch workflows for authoring tasks that need spatial context without hidden editor-only state
-
 ## Current Phase 5.9 Checkpoint
 
 The first implemented Phase 5.9 slice is the provider/status/test foundation.
@@ -267,12 +250,12 @@ Current implemented behavior:
 
 - `ai/providers.toml` is now the source-controlled provider manifest for workspace or repo-root AI configuration
 - provider manifests currently support deterministic `fake`, optional `ollama`, and reserved hosted-provider entries for `openai`, `anthropic`, `gemini`, and `openai_compatible`
-- `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider normalization, provider inspection, and smoke-test execution so sessiond, CLI, and future assistant clients share one local AI surface
+- `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider normalization, provider inspection, and smoke-test execution for game-facing AI configuration
 - the deterministic `fake` provider is the current offline and harness-safe default so Phase 5.9 work does not depend on a live model endpoint
 - the optional Ollama lane now probes `/api/tags`, selects an installed model when possible, and can issue a basic `/v1/chat/completions` smoke test against a reachable local endpoint
 - hosted-provider execution is not implemented yet, but the manifest and inspection layer already expose deployment mode plus required `api_key_env` diagnostics
 - `engine_sessiond` now exposes `GET /api/ai/providers` and `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
-- the shell `Workspace` panel now shows AI provider status, manifest source, ready-provider counts, and a smoke-test action beside the existing code-trust controls
+- the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
 - the CLI now exposes `engine ai providers`, `engine ai test`, and `engine ai request`
 - deterministic coverage now exists through `npm run test:ai-scaffold`
 
@@ -281,28 +264,10 @@ Still ahead in Phase 5.9:
 - queued request lifecycle, cancellation, timeout, retry, and fallback control beyond direct smoke-test execution
 - usage budgets, spend limits, and request logging
 - real hosted-provider adapters and secure key-management hooks
-- shared tool registry, skill registry, and structured engine action schemas
-- native in-engine assistant surfaces and gameplay-facing AI integrations
+- game-facing tool registry, skill registry, and structured action schemas
+- gameplay-facing AI integrations
 
-The terminal coding assistant and the native in-engine assistant should be complementary, not mutually exclusive:
-
-- terminal/CLI assistant is best for repo-wide code, files, build, and test work
-- native in-engine assistant is best for structured engine-editing, runtime inspection, and tool-driven asset workflows
-- both should use the same underlying provider and policy layer where possible
-
-This implies a shared architecture:
-
-1. provider and policy core
-2. tool registry
-3. skill registry
-4. client-specific surfaces
-
-The clients should differ mainly in context, permissions, and UI, not in fundamental AI capability definitions.
-
-They should also share the same trust boundary:
-
-- a native in-engine assistant should not get more implicit execution authority than the terminal assistant
-- compile, hot reload, plugin install, and other risky transitions should route through the same explicit policy checks
+External development agents use `sf-mcp` and the engine operation/code-trust boundary. They never receive implicit compile, hot-reload, plugin-install, apply, or filesystem authority from this subsystem.
 
 ## Sessiond Integration
 
@@ -313,8 +278,8 @@ They should also share the same trust boundary:
 - AI request/event log streaming
 - local-model health checks
 - optional secure key-management hooks for local desktop workflows
-- tool discovery and invocation surfaces for shell and runtime clients
-- skill discovery and execution surfaces for shell and runtime clients
+- game-facing tool discovery and invocation surfaces for runtime clients
+- game-facing skill discovery and execution surfaces for runtime clients
 
 ## Harness Requirements
 
@@ -337,3 +302,5 @@ Optional real lanes:
 - making model output authoritative over low-level gameplay
 - baking one universal NPC prompt system into the engine
 - forcing player API keys as the main product model
+- hosting a built-in development assistant or provider UI in the main editor
+- replacing external-agent MCP integration with an engine-owned chat client
