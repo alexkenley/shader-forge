@@ -168,7 +168,7 @@ Assistant entry points:
 - The mutation surface is limited to semantic spatial attachments. Generic file/scene/code writes, build/runtime mutation, arbitrary commands, and HTTP transport remain excluded.
 - `sf-mcp` never calls `/api/files/write`, accepts caller-provided identity or credentials, or automatically acquires authority, approves, retries, applies, or undoes. Successful recapture releases its three purpose-specific leases through sessiond; ordinary leases remain explicit. Structured 409 results preserve safe conflict data plus a refreshed authoritative operation when available.
 - Shader Forge MCP does not contain a built-in assistant, model execution, provider picker, or prompt UI. External clients own the AI experience.
-- Run `npm run test:mcp` for the Antigravity workspace-config contract plus deterministic stdio, boundary, coordination, revision-bound spatial rest/sample reads, full spatial and review operation/resource coverage, structured conflicts, and disconnect cleanup.
+- Run `npm run test:mcp` to launch through the Antigravity workspace command/cwd shape and verify deterministic stdio, boundary, coordination, revision-bound spatial rest/sample reads, full spatial and review operation/resource coverage, structured conflicts, and disconnect cleanup.
 - See `docs/specs/ENGINE-MCP-SPEC.md` for the canonical contract and `docs/guides/SHADER-FORGE-MCP-SETUP.md` for Codex/Grok/Antigravity setup.
 
 ### Engine CLI Surfaces

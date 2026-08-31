@@ -20,7 +20,8 @@ const MCP_EXIT_TIMEOUT_MS = 5_000;
 const sampledEvaluationCalls = [];
 
 const antigravityConfig = JSON.parse(await fs.readFile(path.join(repoRoot, '.agents', 'mcp_config.json'), 'utf8'));
-assert.deepEqual(antigravityConfig.mcpServers?.['sf-mcp'], {
+const antigravityMcp = antigravityConfig.mcpServers?.['sf-mcp'];
+assert.deepEqual(antigravityMcp, {
   command: 'node',
   args: [
     'tools/engine-mcp/server.mjs',
@@ -346,13 +347,12 @@ async function main() {
   const otherSession = await sessionStore.createSession({ name: 'other', rootPath: otherWorkspaceRoot });
   let child;
   try {
-    child = spawn(process.execPath, [
-      path.join(repoRoot, 'tools', 'engine-mcp', 'server.mjs'),
-      '--base-url', sessiond.baseUrl,
-      '--root', workspaceRoot,
-      '--name', 'sf-mcp-harness',
-    ], {
-      cwd: repoRoot,
+    const mcpArgs = [...antigravityMcp.args];
+    mcpArgs[mcpArgs.indexOf('--base-url') + 1] = sessiond.baseUrl;
+    mcpArgs[mcpArgs.indexOf('--root') + 1] = workspaceRoot;
+    mcpArgs[mcpArgs.indexOf('--name') + 1] = 'sf-mcp-harness';
+    child = spawn(antigravityMcp.command, mcpArgs, {
+      cwd: path.resolve(repoRoot, antigravityMcp.cwd),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });

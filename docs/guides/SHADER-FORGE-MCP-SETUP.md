@@ -85,4 +85,4 @@ No tool auto-acquires, auto-approves, retries, applies, or undoes. Recapture's t
 npm run test:mcp
 ```
 
-The deterministic harness starts an isolated backend and real stdio server, exercises lease-free validation, the lease-gated attachment workflow, explicit review reservation/recapture, tool/resource packet reads, and cleanup plus credential exclusion.
+The deterministic harness starts the real stdio server through the committed Antigravity command/cwd shape against an isolated backend, then exercises lease-free validation, the lease-gated attachment workflow, explicit review reservation/recapture, tool/resource packet reads, and cleanup plus credential exclusion.

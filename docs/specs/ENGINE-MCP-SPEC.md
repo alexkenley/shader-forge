@@ -130,7 +130,7 @@ The deterministic MCP harness must:
 - verify selected-session operation boundaries and rejection of generic apply/undo
 - verify structured revision and transition conflict recovery without credential leakage
 - verify stdout contains protocol messages only
-- verify the committed Antigravity workspace configuration keeps the exact relative stdio command, root, loopback endpoint, and client name
+- verify the committed Antigravity workspace configuration keeps the exact relative stdio command, root, loopback endpoint, and client name, then launch that command shape against the isolated harness backend
 - shut down all child processes cleanly
 
 Run it with `npm run test:mcp`.
