@@ -678,12 +678,12 @@ Current checkpoint now implemented:
 - `engine migrate detect` remains the honest detect/report lane with normalized manifest, warnings, and manual follow-up scaffolding
 - `engine migrate unity`, `engine migrate unreal`, and `engine migrate godot` now emit a self-contained `shader-forge-project/` skeleton under each migration run root
 - the current Unity, Unreal, and Godot fixtures now convert into first-pass `.scene.toml`, `.prefab.toml`, `.data.toml`, and script-porting manifest outputs
-- migration reports now record converted, approximated, skipped, and manual counts instead of only detect-only notes
+- migration CLI output, manifests, and reports now record converted, approximated, skipped, manual, mapped scene-entity, mapped prefab-component, and mapped script-binding counts instead of only detect-only notes
 - startup selection maps Unity's first enabled `ProjectSettings/EditorBuildSettings.asset` scene, Unreal's `[/Script/EngineSettings.GameMapsSettings].GameDefaultMap`, and Godot's `[application].run/main_scene` when it uses `res://`, resolving against exact source-project-relative scene records
 - duplicate scene basenames receive deterministic source-path-derived target names; `[startup_scene]` records source/target provenance and separate converted, approximated, or skipped project-setting counts
 - explicit unresolved startup settings fail closed with no `runtime_bootstrap.data.toml` plus a warning/manual task; projects with no declared startup scene use the first source-relative converted scene and mark the choice `approximated`
 - emitted scene, prefab, and optional bootstrap records pass the production asset-pipeline baker; `asset_conversion` remains `Manual` until actual source payload import exists
-- Unity text-YAML `.unity` conversion now maps `GameObject` plus `Transform`/`RectTransform` documents into parent-linked entities and scene-owned prefabs, preserves source file IDs, converts local quaternions to deterministic Euler degrees, maps valid perspective Camera optics and BoxCollider geometry, resolves MonoBehaviour GUID bindings through `.cs.meta`, and reports mapped scene entities
+- Unity text-YAML `.unity` conversion now maps `GameObject` plus `Transform`/`RectTransform` documents into parent-linked entities and scene-owned prefabs, preserves source file IDs, converts local quaternions to deterministic Euler degrees, maps valid perspective Camera optics and BoxCollider geometry, resolves MonoBehaviour GUID bindings through `.cs.meta`, and reports each mapped coverage class separately
 - Godot `.tscn` conversion now maps node hierarchy, explicit position/rotation/scale, node-type-derived prefab tags, source comments, and a `mapped_scene_entities` count; normalized node-name collisions are disambiguated deterministically
 
 Still ahead inside this phase:

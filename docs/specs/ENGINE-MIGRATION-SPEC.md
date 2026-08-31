@@ -47,7 +47,7 @@ Implemented now:
 - manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
 - Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; valid perspective `Camera` optics and valid `BoxCollider` center/size geometry map into the existing strict prefab components
 - Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, and preserve source paths/types as generated comments
-- migration manifests and reports include `mapped_scene_entities`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
+- migration manifests and reports include `mapped_scene_entities`, `mapped_prefab_components`, and `mapped_script_bindings`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
 - Unity `MonoBehaviour` records now resolve script GUIDs through `.cs.meta` files and emit per-component binding manifests with source scene, node path, GameObject file ID, component file ID, and resolution confidence; C# behavior and serialized fields remain manual
 - the Unreal offline fallback now derives scene/prefab/script outputs from `.uproject`, `.umap`, `.uasset` package names, and C++ class symbols when no exporter-assisted data is available
@@ -221,6 +221,7 @@ Every run must emit a structured report with:
 - skipped assets
 - unsupported project features
 - code/script translation output
+- mapped scene-entity, prefab-component, and script-binding counts
 - manual tasks remaining
 - setting-level source file, source key/value, resolved source-relative path, target file/key/value, status, and reason for startup-scene translation
 

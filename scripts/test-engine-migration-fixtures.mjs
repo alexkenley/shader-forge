@@ -133,6 +133,8 @@ assert.match(unityConvertRun.stdout, /Source engine: unity/);
 assert.match(unityConvertRun.stdout, /Target project root:/);
 assert.match(unityConvertRun.stdout, /first-pass Shader Forge project skeleton was generated/i);
 assert.match(unityConvertRun.stdout, /Mapped scene entities: 3/);
+assert.match(unityConvertRun.stdout, /Mapped prefab components: 2/);
+assert.match(unityConvertRun.stdout, /Mapped script bindings: 1/);
 
 const unityConvertRoot = path.join(tempRoot, 'unity-convert');
 const unityProjectRoot = path.join(unityConvertRoot, 'shader-forge-project');
@@ -185,12 +187,16 @@ assert.match(unityConvertReport, /asset_conversion = "Manual"/);
 assert.match(unityConvertReport, /scene_conversion = "BestEffort"/);
 assert.match(unityConvertReport, /converted_items = 6/);
 assert.match(unityConvertReport, /mapped_scene_entities = 3/);
+assert.match(unityConvertReport, /mapped_prefab_components = 2/);
+assert.match(unityConvertReport, /mapped_script_bindings = 1/);
 assert.match(unityConvertReport, /converted_project_settings = 1/);
 assert.match(unityConvertReport, /\[startup_scene\][\s\S]*source_file = "ProjectSettings\/EditorBuildSettings\.asset"/);
 assert.match(unityConvertReport, /\[startup_scene\][\s\S]*resolved_source_path = "Assets\/Scenes\/Sandbox\.unity"/);
 assert.match(unityConvertReport, /\[startup_scene\][\s\S]*status = "converted"/);
 assert.match(unityConvertManifest, /\[startup_scene\][\s\S]*target_value = "sandbox"/);
 assert.match(unityConvertManifest, /mapped_scene_entities = 3/);
+assert.match(unityConvertManifest, /mapped_prefab_components = 2/);
+assert.match(unityConvertManifest, /mapped_script_bindings = 1/);
 await assertMigratedProjectBakes(unityProjectRoot, 'unity', 'unity-convert');
 
 const unrealRun = runCli([
@@ -499,6 +505,9 @@ assert.match(reportRun.stdout, /Detection support: Supported/);
 assert.match(reportRun.stdout, /Active lane: unity_project_skeleton/);
 assert.match(reportRun.stdout, /Target project root:/);
 assert.match(reportRun.stdout, /Converted items: 6/);
+assert.match(reportRun.stdout, /Mapped scene entities: 3/);
+assert.match(reportRun.stdout, /Mapped prefab components: 2/);
+assert.match(reportRun.stdout, /Mapped script bindings: 1/);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 

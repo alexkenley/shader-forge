@@ -1653,6 +1653,12 @@ function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan
     buildTargetProjectReadme(detection.engine, detection, conversionOutputs, migrationLane),
   );
 
+  const mappedPrefabComponents = plan.scenes.reduce((count, scene) =>
+    count + (scene.nodes || []).reduce((nodeCount, node) =>
+      nodeCount + Number(Boolean(node.camera)) + Number(Boolean(node.collision)), 0), 0);
+  const mappedScriptBindings = plan.scenes.reduce((count, scene) =>
+    count + (scene.nodes || []).reduce((nodeCount, node) => nodeCount + (node.scriptBindings?.length || 0), 0), 0);
+
   return {
     targetProjectRoot: conversionOutputs.targetProjectRoot,
     outputs: conversionOutputs,
@@ -1662,6 +1668,8 @@ function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan
       (count, scene) => count + (scene.mappedNodeCount ?? scene.entities?.length ?? (scene.entityId ? 1 : 0)),
       0,
     ),
+    mappedPrefabComponents,
+    mappedScriptBindings,
     startupScene: {
       source_file: plan.startupScene.sourceFile,
       source_key: plan.startupScene.sourceKey,
@@ -1743,6 +1751,8 @@ export async function createMigrationRun(options) {
         convertedItems: 0,
         approximatedItems: 0,
         mappedSceneEntities: 0,
+        mappedPrefabComponents: 0,
+        mappedScriptBindings: 0,
         startupScene: {
           source_file: '',
           source_key: '',
@@ -1799,6 +1809,8 @@ export async function createMigrationRun(options) {
       data_files: conversion.outputs.dataFiles.length,
       script_manifests: conversion.outputs.scriptManifestFiles.length,
       mapped_scene_entities: conversion.mappedSceneEntities,
+      mapped_prefab_components: conversion.mappedPrefabComponents,
+      mapped_script_bindings: conversion.mappedScriptBindings,
     },
     conversion_outputs: {
       scene_files: conversion.outputs.sceneFiles,
@@ -1843,6 +1855,8 @@ export async function createMigrationRun(options) {
     approximated_project_settings: approximatedProjectSettings,
     skipped_project_settings: skippedProjectSettings,
     mapped_scene_entities: conversion.mappedSceneEntities,
+    mapped_prefab_components: conversion.mappedPrefabComponents,
+    mapped_script_bindings: conversion.mappedScriptBindings,
     manual_items: manualTasks.length,
     warning_count: warnings.length,
     migration_lane: {
@@ -1938,6 +1952,8 @@ export async function createMigrationRun(options) {
     convertedItems: conversion.convertedItems,
     approximatedItems: conversion.approximatedItems,
     mappedSceneEntities: conversion.mappedSceneEntities,
+    mappedPrefabComponents: conversion.mappedPrefabComponents,
+    mappedScriptBindings: conversion.mappedScriptBindings,
     skippedItems,
     startupScene: conversion.startupScene,
     conversionOutputs: conversion.outputs,
@@ -1983,6 +1999,9 @@ export function summarizeMigrationReport(reportInputPath) {
       `- Scene conversion support: ${trim(support.scene_conversion) || 'unknown'}`,
       `- Script porting support: ${trim(support.script_porting) || 'unknown'}`,
       `- Converted items: ${Number(report.converted_items || 0)}`,
+      `- Mapped scene entities: ${Number(report.mapped_scene_entities || 0)}`,
+      `- Mapped prefab components: ${Number(report.mapped_prefab_components || 0)}`,
+      `- Mapped script bindings: ${Number(report.mapped_script_bindings || 0)}`,
       `- Approximated items: ${Number(report.approximated_items || 0)}`,
       `- Manual tasks: ${Number(report.manual_items || 0)}`,
       `- Warnings: ${Number(report.warning_count || 0)}`,

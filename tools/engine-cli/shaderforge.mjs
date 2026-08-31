@@ -601,6 +601,8 @@ async function runMigration(commandName, positionals, flags) {
     console.log(`- Target project root: ${result.targetProjectRoot}`);
     console.log(`- Converted items: ${result.convertedItems}`);
     console.log(`- Mapped scene entities: ${result.mappedSceneEntities}`);
+    console.log(`- Mapped prefab components: ${result.mappedPrefabComponents}`);
+    console.log(`- Mapped script bindings: ${result.mappedScriptBindings}`);
     console.log(`- Approximated items: ${result.approximatedItems}`);
     console.log(`- Script manifests: ${result.conversionOutputs.scriptManifestFiles.length}`);
   }
