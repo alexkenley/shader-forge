@@ -137,7 +137,7 @@ Assistant entry points:
 - See `docs/specs/ENGINE-OPERATIONS-SPEC.md` for the canonical contract.
 - Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.
 - Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.
-- `GET /api/ai/providers` and `POST /api/ai/test` expose deterministic fake, optional Ollama, and enabled OpenRouter provider inspection/smoke tests from `engine_sessiond`, without returning provider credentials.
+- `GET /api/ai/providers` and `POST /api/ai/test` expose deterministic fake, optional Ollama, and enabled OpenRouter provider inspection/smoke tests from `engine_sessiond`, without returning provider credentials. `POST /api/ai/jobs` plus per-job `GET` and `DELETE` provide a bounded process-scoped one-active-request queue with status, cancellation, provider abort propagation, and metadata-only `ai.job` lifecycle events on the existing SSE stream.
 - `GET /api/package/inspect` and `POST /api/package/run` now expose the first Phase 6.2 release-layout inspect/package flow from `engine_sessiond`, including package prep state and optional auto-bake execution.
 - `GET /api/profile/live`, `GET /api/profile/captures`, and `POST /api/profile/capture` now expose the first Phase 6.3 diagnostics snapshot, capture-history, and capture-report lanes from `engine_sessiond`.
 - `GET /api/code-trust/summary` and `POST /api/code-trust/evaluate` now expose the shared code-trust boundary for shell, CLI, and future assistant clients.
@@ -205,7 +205,7 @@ Assistant entry points:
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import` is still a later phase.
 - `ai/providers.toml` is the source-controlled provider manifest, with deterministic `fake`, optional Ollama, and disabled-by-default OpenRouter/Kimi K3 plus GLM 5.2 lanes. Real requests default to a 256-token output ceiling and return normalized provider usage when present; OpenRouter validates 1–4096, pins the official API root/key name, rejects remote redirects, caps responses at 1 MiB, never returns credentials, and fails closed on unknown provider types or explicit IDs.
-- `npm run test:ai-scaffold` is the deterministic harness for the first AI provider/status/test slice.
+- `npm run test:ai-scaffold` is the deterministic harness for provider inspection/execution plus queued status, pending/running cancellation, and recovery.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
 - The CLI packaging lane is now real, but it still packages authored runtime roots plus bundled cooked outputs rather than a final cooked-runtime shipping layout.
 - The CLI profiling lane is now real, but it still captures JSON diagnostics snapshots rather than Tracy, RenderDoc, or native in-process profiling panels.

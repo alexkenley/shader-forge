@@ -219,7 +219,18 @@ function baseProviderStatus(provider) {
   };
 }
 
-function requestJson(baseUrl, pathname, { method = 'GET', body, headers = {}, timeoutMs = 2_500 } = {}) {
+function abortError() {
+  const error = new Error('AI provider request was cancelled.');
+  error.name = 'AbortError';
+  return error;
+}
+
+function requestJson(baseUrl, pathname, {
+  method = 'GET', body, headers = {}, timeoutMs = 2_500, signal,
+} = {}) {
+  if (signal?.aborted) {
+    throw abortError();
+  }
   const target = new URL(String(pathname || '').replace(/^\/+/, ''), `${String(baseUrl || '').replace(/\/+$/, '')}/`);
   if (target.protocol !== 'http:' && target.protocol !== 'https:') {
     throw new Error('AI provider endpoint must use HTTP or HTTPS.');
@@ -281,6 +292,14 @@ function requestJson(baseUrl, pathname, { method = 'GET', body, headers = {}, ti
       req.destroy(new Error(`Timed out connecting to ${target.toString()}`));
     });
     req.on('error', reject);
+    if (signal) {
+      const cancelRequest = () => req.destroy(abortError());
+      signal.addEventListener('abort', cancelRequest, { once: true });
+      req.once('close', () => signal.removeEventListener('abort', cancelRequest));
+      if (signal.aborted) {
+        cancelRequest();
+      }
+    }
     if (requestBody) {
       req.write(requestBody);
     }
@@ -298,14 +317,14 @@ async function inspectFakeProvider(provider) {
   };
 }
 
-async function inspectOllamaProvider(provider, timeoutMs) {
+async function inspectOllamaProvider(provider, timeoutMs, signal) {
   const status = baseProviderStatus(provider);
   if (!provider.enabled) {
     return status;
   }
 
   try {
-    const response = await requestJson(provider.baseUrl || 'http://127.0.0.1:11434', '/api/tags', { timeoutMs });
+    const response = await requestJson(provider.baseUrl || 'http://127.0.0.1:11434', '/api/tags', { timeoutMs, signal });
     const installedModels = Array.isArray(response.models)
       ? response.models.map((model) => trim(model.name || model.model)).filter(Boolean)
       : [];
@@ -432,7 +451,7 @@ async function inspectHostedProvider(provider) {
   };
 }
 
-async function inspectProvider(provider, timeoutMs) {
+async function inspectProvider(provider, timeoutMs, signal) {
   if (provider.type === 'unsupported') {
     return {
       ...baseProviderStatus(provider),
@@ -444,7 +463,7 @@ async function inspectProvider(provider, timeoutMs) {
     return inspectFakeProvider(provider);
   }
   if (provider.type === 'ollama') {
-    return inspectOllamaProvider(provider, timeoutMs);
+    return inspectOllamaProvider(provider, timeoutMs, signal);
   }
   if (provider.type === 'openrouter') {
     return inspectOpenRouterProvider(provider);
@@ -477,10 +496,10 @@ function normalizeTokenUsage(usage) {
   };
 }
 
-export async function inspectAiProviders(rootPath, { timeoutMs = 2_500 } = {}) {
+export async function inspectAiProviders(rootPath, { timeoutMs = 2_500, signal } = {}) {
   const loaded = await loadAiProviders(rootPath);
   const providers = await Promise.all(
-    loaded.manifest.providers.map((provider) => inspectProvider(provider, timeoutMs)),
+    loaded.manifest.providers.map((provider) => inspectProvider(provider, timeoutMs, signal)),
   );
 
   return {
@@ -520,9 +539,13 @@ export async function testAiProvider(
     prompt = aiDefaultSmokePrompt,
     systemPrompt = aiDefaultSmokeSystemPrompt,
     timeoutMs = 30_000,
+    signal,
   } = {},
 ) {
-  const summary = await inspectAiProviders(rootPath, { timeoutMs: Math.min(timeoutMs, 2_500) });
+  const summary = await inspectAiProviders(rootPath, { timeoutMs: Math.min(timeoutMs, 2_500), signal });
+  if (signal?.aborted) {
+    throw abortError();
+  }
   const provider = resolveProvider(summary, providerId);
   if (!provider.enabled) {
     throw new Error(`AI provider ${provider.id} is disabled.`);
@@ -536,6 +559,9 @@ export async function testAiProvider(
 
   const startedAt = Date.now();
   if (provider.type === 'fake') {
+    if (signal?.aborted) {
+      throw abortError();
+    }
     return {
       rootPath: summary.rootPath,
       configPath: summary.configPath,
@@ -561,6 +587,7 @@ export async function testAiProvider(
   const response = await requestJson(provider.endpoint, isOpenRouter ? 'chat/completions' : 'v1/chat/completions', {
     method: 'POST',
     timeoutMs,
+    signal,
     headers: isOpenRouter ? { Authorization: `Bearer ${apiKey}` } : {},
     body: {
       model: provider.selectedModel,

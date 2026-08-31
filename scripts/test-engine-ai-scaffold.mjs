@@ -4,7 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
+import { delay, repoRootFromScript, requestJsonNoAuth } from './lib/harness-utils.mjs';
 import { startEngineSessiond } from '../tools/engine-sessiond/server.mjs';
 import { SessionStore } from '../tools/engine-sessiond/lib/session-store.mjs';
 
@@ -32,17 +32,26 @@ const openRouterServer = http.createServer((request, response) => {
       body,
       path: request.url,
     });
-    const content = body.messages?.at(-1)?.content === 'Return an oversized response.'
-      ? 'x'.repeat(1024 * 1024 + 1)
-      : 'ready';
-    response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({
-      id: 'openrouter-test-request',
-      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }],
-      usage: request.url === '/v1/chat/completions'
-        ? { prompt_tokens: 10, completion_tokens: 2 }
-        : { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
-    }));
+    const prompt = body.messages?.at(-1)?.content;
+    const respond = () => {
+      if (response.destroyed) return;
+      const content = prompt === 'Return an oversized response.'
+        ? 'x'.repeat(1024 * 1024 + 1)
+        : 'ready';
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({
+        id: 'openrouter-test-request',
+        choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }],
+        usage: request.url === '/v1/chat/completions'
+          ? { prompt_tokens: 10, completion_tokens: 2 }
+          : { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+      }));
+    };
+    if (prompt === 'Wait for cancellation.') {
+      setTimeout(respond, 1_000);
+    } else {
+      respond();
+    }
   });
 });
 await new Promise((resolve, reject) => {
@@ -149,6 +158,17 @@ function runCli(args, cwd = repoRoot) {
   });
 }
 
+async function waitForAiJob(baseUrl, jobId, expectedStatuses) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const payload = await requestJsonNoAuth(`${baseUrl}/api/ai/jobs/${encodeURIComponent(jobId)}`);
+    if (expectedStatuses.includes(payload.job?.status)) {
+      return payload.job;
+    }
+    await delay(10);
+  }
+  assert.fail(`AI job ${jobId} did not reach ${expectedStatuses.join(' or ')}.`);
+}
+
 const service = await startEngineSessiond({
   host: '127.0.0.1',
   port: 0,
@@ -165,6 +185,7 @@ try {
   assert.equal(health.ok, true);
   assert.ok(health.capabilities.includes('ai:providers'));
   assert.ok(health.capabilities.includes('ai:test'));
+  assert.ok(health.capabilities.includes('ai:jobs'));
 
   const createSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
     name: 'ai-project',
@@ -240,6 +261,44 @@ try {
   assert.equal(openRouterGlmRequest?.authorization, 'Bearer test-openrouter-key');
   assert.equal(openRouterGlmRequest?.body?.max_tokens, 96);
 
+  const runningJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
+    sessionId,
+    providerId: 'openrouter_kimi',
+    prompt: 'Wait for cancellation.',
+  });
+  assert.match(runningJobPayload.job?.id || '', /^ai_job_/);
+  const runningJob = await waitForAiJob(service.baseUrl, runningJobPayload.job.id, ['running']);
+  assert.equal(runningJob.providerId, 'openrouter_kimi');
+
+  const queuedJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
+    sessionId,
+    providerId: 'local_fake',
+  });
+  assert.equal(queuedJobPayload.job?.status, 'queued');
+  const cancelledQueuedJob = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/jobs/${encodeURIComponent(queuedJobPayload.job.id)}`,
+    'DELETE',
+  );
+  assert.equal(cancelledQueuedJob.job?.status, 'cancelled');
+
+  const cancelledRunningJob = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/jobs/${encodeURIComponent(runningJob.id)}`,
+    'DELETE',
+  );
+  assert.equal(cancelledRunningJob.job?.status, 'cancelled');
+  await waitForAiJob(service.baseUrl, runningJob.id, ['cancelled']);
+
+  const completedJobPayload = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs`, 'POST', {
+    sessionId,
+    providerId: 'local_fake',
+  });
+  const completedJob = await waitForAiJob(service.baseUrl, completedJobPayload.job.id, ['completed']);
+  assert.equal(completedJob.result?.content, 'ready');
+  assert.equal(completedJob.error, null);
+
+  const unknownJob = await requestJsonNoAuth(`${service.baseUrl}/api/ai/jobs/missing-job`);
+  assert.match(unknownJob.error || '', /Unknown AI job/);
+
   const oversizedResponse = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
     providerId: 'openrouter_kimi',
@@ -282,6 +341,7 @@ try {
   console.log('Engine AI scaffold passed.');
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
   console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter Kimi/GLM request paths without exposing credentials');
+  console.log('- Verified bounded queued AI jobs, status reads, pending/running cancellation, and queue recovery');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {

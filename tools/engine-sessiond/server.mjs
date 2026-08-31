@@ -1,6 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
+import { AiRequestQueue } from './lib/ai-request-queue.mjs';
 import { BuildStore } from './lib/build-store.mjs';
 import { CodeTrustApprovalStore } from './lib/code-trust-approval-store.mjs';
 import { CoordinationStore } from './lib/coordination-store.mjs';
@@ -711,6 +712,7 @@ function createRouter({
   sceneAssetService,
   eventHub,
   diagnosticsRecorder,
+  aiRequestQueue,
 }) {
   return async function route(request, response) {
     if (!request.url) {
@@ -755,6 +757,7 @@ function createRouter({
           'code-trust:approvals',
           'ai:providers',
           'ai:test',
+          'ai:jobs',
           'package:inspect',
           'package:run',
           'profile:live',
@@ -805,6 +808,42 @@ function createRouter({
           },
         );
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/ai/jobs') {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const job = aiRequestQueue.submit({
+          sessionId,
+          rootPath: resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+          providerId: typeof body.providerId === 'string' ? body.providerId.trim() : '',
+          prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : undefined,
+          systemPrompt: typeof body.systemPrompt === 'string' && body.systemPrompt.trim()
+            ? body.systemPrompt.trim()
+            : undefined,
+        });
+        writeJson(response, 202, { job });
+        return;
+      }
+
+      const aiJobMatch = pathname.match(/^\/api\/ai\/jobs\/([^/]+)$/);
+      if (request.method === 'GET' && aiJobMatch) {
+        const jobId = decodeURIComponent(aiJobMatch[1]);
+        const job = aiRequestQueue.get(jobId);
+        if (!job) {
+          throw createHttpError(404, `Unknown AI job: ${jobId}`);
+        }
+        writeJson(response, 200, { job });
+        return;
+      }
+      if (request.method === 'DELETE' && aiJobMatch) {
+        const jobId = decodeURIComponent(aiJobMatch[1]);
+        const job = aiRequestQueue.cancel(jobId);
+        if (!job) {
+          throw createHttpError(404, `Unknown AI job: ${jobId}`);
+        }
+        writeJson(response, 200, { job });
         return;
       }
 
@@ -1717,6 +1756,7 @@ export async function startEngineSessiond({
   approvalStore,
   coordinationStore,
   operationStore,
+  aiRequestQueue,
   spatialAttachmentService,
   sceneAssetService,
   validateDataFoundation,
@@ -1775,6 +1815,11 @@ export async function startEngineSessiond({
     evaluateSampledAttachment,
     captureSampleAttachment,
   });
+  const resolvedAiRequestQueue = aiRequestQueue || new AiRequestQueue({
+    emitEvent: (type, data) => {
+      diagnosticsRecorder.emit(type, data);
+    },
+  });
   const resolvedSceneAssetService = sceneAssetService || new SceneAssetService({
     sessionStore,
     coordinationStore: resolvedCoordinationStore,
@@ -1799,6 +1844,7 @@ export async function startEngineSessiond({
     sceneAssetService: resolvedSceneAssetService,
     eventHub,
     diagnosticsRecorder,
+    aiRequestQueue: resolvedAiRequestQueue,
   }));
 
   await new Promise((resolve, reject) => {
@@ -1822,7 +1868,9 @@ export async function startEngineSessiond({
     approvalStore: resolvedApprovalStore,
     coordinationStore: resolvedCoordinationStore,
     operationStore: resolvedOperationStore,
+    aiRequestQueue: resolvedAiRequestQueue,
     close: async () => {
+      await resolvedAiRequestQueue.close();
       await buildStore.close();
       await runtimeStore.close();
       terminalStore.closeAll();

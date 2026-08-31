@@ -264,13 +264,14 @@ Current implemented behavior:
 - unknown manifest provider types report `invalid`, and an explicit unknown `--provider` selection fails instead of falling back
 - other hosted-provider types remain inspection-only, with deployment mode plus required `api_key_env` diagnostics
 - `engine_sessiond` now exposes `GET /api/ai/providers` and `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
+- `engine_sessiond` also exposes bounded process-scoped AI jobs through `POST /api/ai/jobs` plus per-job `GET` and `DELETE`; one request runs at a time, queued and active jobs can be cancelled, provider sockets receive abort signals, and `ai.job` lifecycle events use the existing SSE stream without including prompts or response content
 - the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
 - the CLI now exposes `engine ai providers`, `engine ai test`, and `engine ai request`
 - deterministic coverage now exists through `npm run test:ai-scaffold`
 
 Still ahead in Phase 5.9:
 
-- queued request lifecycle, cancellation, timeout, retry, and fallback control beyond direct smoke-test execution
+- retry and fallback control plus durable request history beyond the current process-scoped queue, cancellation, timeout, status, and event lifecycle
 - cumulative usage persistence, budgets, spend limits, and request logging beyond the current per-request output ceiling and returned usage evidence
 - additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
 - game-facing tool registry, skill registry, and structured action schemas
@@ -283,8 +284,8 @@ External development agents use `sf-mcp` and the engine operation/code-trust bou
 `engine_sessiond` should eventually expose:
 
 - provider availability
-- AI job submission and cancellation
-- AI request/event log streaming
+- durable AI job submission and cancellation beyond the current process-scoped queue
+- durable AI request/event logging beyond the current metadata-only `ai.job` SSE events
 - local-model health checks
 - optional secure key-management hooks for local desktop workflows
 - game-facing tool discovery and invocation surfaces for runtime clients
