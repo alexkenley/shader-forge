@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,6 +29,20 @@ const operationValidationMaxSamples = 64;
 const operationValidationMaxPhaseLength = 128;
 const operationValidationSampleKeys = new Set(['phase', 'normalizedTime']);
 const spatialCommandTimeoutMs = 10_000;
+const spatialCaptureTimeoutMs = 60_000;
+const spatialReviewIdPattern = /^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const spatialResourceIdPattern = /^[a-z0-9][a-z0-9._-]*$/;
+const spatialReviewCameraIds = Object.freeze([
+  'close_front',
+  'close_side',
+  'close_top',
+  'close_three_quarter',
+]);
+const spatialReviewAllowedCameraIds = new Set([...spatialReviewCameraIds, 'player_camera']);
+const spatialReviewMaxPhases = 16;
+const spatialReviewMaxResolutionPx = 1024;
+const spatialReviewMinResolutionPx = 64;
+const spatialReviewReservationLimit = 256;
 const primaryAttachmentLayer = 'primary_attachment';
 const secondaryHandIkLayer = 'secondary_hand_ik';
 const dataFoundationRelativePath = 'data/foundation/engine-data-layout.toml';
@@ -149,7 +164,11 @@ function normalizeActor(actor) {
   if (!actorKinds.has(kind)) {
     throw serviceError(400, 'spatial_request_invalid', 'actor.kind must be human, shell, cli, or mcp.');
   }
-  return actor;
+  return {
+    kind,
+    id: typeof actor.id === 'string' ? actor.id.trim() : '',
+    name: typeof actor.name === 'string' ? actor.name.trim() : '',
+  };
 }
 
 function parseAttachmentPath(value) {
@@ -305,6 +324,408 @@ function normalizeOperationValidationSamples(value) {
     seen.add(duplicateKey);
     return { phase, normalizedTime: sample.normalizedTime };
   });
+}
+
+function normalizeSpatialResourceId(value, fieldName) {
+  const normalized = requiredString(value, fieldName).toLowerCase();
+  if (!spatialResourceIdPattern.test(normalized)) {
+    throw serviceError(400, 'spatial_request_invalid', `${fieldName} is invalid.`);
+  }
+  return normalized;
+}
+
+function normalizeReviewPhases(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > spatialReviewMaxPhases) {
+    throw serviceError(
+      400,
+      'spatial_request_invalid',
+      `phases must contain between 1 and ${spatialReviewMaxPhases} entries.`,
+    );
+  }
+  const phases = value.map((phase, index) => {
+    const normalized = typeof phase === 'string' ? phase.trim() : '';
+    if (
+      !normalized
+      || normalized.length > operationValidationMaxPhaseLength
+      || !spatialResourceIdPattern.test(normalized)
+    ) {
+      throw serviceError(400, 'spatial_request_invalid', `phases[${index}] is invalid.`);
+    }
+    return normalized;
+  });
+  if (new Set(phases).size !== phases.length) {
+    throw serviceError(400, 'spatial_request_invalid', 'phases must not contain duplicates.');
+  }
+  return phases;
+}
+
+function normalizeReviewCameras(value) {
+  if (!Array.isArray(value) || value.length < spatialReviewCameraIds.length) {
+    throw serviceError(400, 'spatial_request_invalid', 'cameras must include every close camera.');
+  }
+  const cameras = value.map((camera, index) => {
+    const normalized = typeof camera === 'string' ? camera.trim() : '';
+    if (!spatialReviewAllowedCameraIds.has(normalized)) {
+      throw serviceError(400, 'spatial_request_invalid', `cameras[${index}] is invalid.`);
+    }
+    return normalized;
+  });
+  if (new Set(cameras).size !== cameras.length) {
+    throw serviceError(400, 'spatial_request_invalid', 'cameras must not contain duplicates.');
+  }
+  if (spatialReviewCameraIds.some((camera) => !cameras.includes(camera))) {
+    throw serviceError(400, 'spatial_request_invalid', 'cameras must include every close camera.');
+  }
+  const canonical = [
+    ...spatialReviewCameraIds,
+    ...(cameras.includes('player_camera') ? ['player_camera'] : []),
+  ];
+  if (JSON.stringify(cameras) !== JSON.stringify(canonical)) {
+    throw serviceError(400, 'spatial_request_invalid', 'cameras must use canonical review order.');
+  }
+  return cameras;
+}
+
+function normalizeReviewResolution(value, fieldName) {
+  if (
+    !Number.isInteger(value)
+    || value < spatialReviewMinResolutionPx
+    || value > spatialReviewMaxResolutionPx
+  ) {
+    throw serviceError(
+      400,
+      'spatial_request_invalid',
+      `${fieldName} must be an integer in [${spatialReviewMinResolutionPx}, ${spatialReviewMaxResolutionPx}].`,
+    );
+  }
+  return value;
+}
+
+function normalizeReviewId(value) {
+  const reviewId = requiredString(value, 'reviewId').toLowerCase();
+  if (!spatialReviewIdPattern.test(reviewId)) {
+    throw serviceError(400, 'spatial_request_invalid', 'reviewId is invalid.');
+  }
+  return reviewId;
+}
+
+function normalizeRecaptureRequest(request = {}) {
+  const cameras = normalizeReviewCameras(request.cameras);
+  const includesPlayerCamera = cameras.includes('player_camera');
+  return {
+    actor: normalizeActor(request.actor),
+    agentId: requiredString(request.agentId, 'agentId'),
+    credential: requiredString(request.credential, 'Agent credential'),
+    reviewId: normalizeReviewId(request.reviewId),
+    sourceLeaseId: requiredString(request.sourceLeaseId, 'sourceLeaseId'),
+    captureLeaseId: requiredString(request.captureLeaseId, 'captureLeaseId'),
+    reviewLeaseId: requiredString(request.reviewLeaseId, 'reviewLeaseId'),
+    phases: normalizeReviewPhases(request.phases),
+    cameras,
+    widthPx: normalizeReviewResolution(request.widthPx, 'widthPx'),
+    heightPx: normalizeReviewResolution(request.heightPx, 'heightPx'),
+    playerCameraScene: includesPlayerCamera
+      ? normalizeSpatialResourceId(request.playerCameraScene, 'playerCameraScene')
+      : '',
+    playerCameraPrefab: includesPlayerCamera
+      ? normalizeSpatialResourceId(request.playerCameraPrefab, 'playerCameraPrefab')
+      : '',
+  };
+}
+
+function captureProtocolError() {
+  throw serviceError(
+    500,
+    'spatial_capture_protocol_error',
+    'Spatial capture tool returned an invalid report.',
+  );
+}
+
+function captureExactObject(value, keys) {
+  if (!isPlainObject(value)) captureProtocolError();
+  const actual = Object.keys(value);
+  if (actual.length !== keys.length || keys.some((key) => !actual.includes(key))) {
+    captureProtocolError();
+  }
+  return value;
+}
+
+function captureFiniteTuple(value, length) {
+  if (
+    !Array.isArray(value)
+    || value.length !== length
+    || value.some((entry) => typeof entry !== 'number' || !Number.isFinite(entry))
+  ) {
+    captureProtocolError();
+  }
+  return value;
+}
+
+function captureFiniteNumber(value, { min = -Infinity, max = Infinity } = {}) {
+  if (
+    typeof value !== 'number'
+    || !Number.isFinite(value)
+    || Object.is(value, -0)
+    || value < min
+    || value > max
+  ) {
+    captureProtocolError();
+  }
+  return value;
+}
+
+function normalizeCaptureSource(value) {
+  const source = captureExactObject(value, ['id', 'path']);
+  if (
+    typeof source.id !== 'string'
+    || !source.id
+    || typeof source.path !== 'string'
+    || !source.path
+    || source.path.includes('\\')
+    || source.path.startsWith('/')
+    || source.path.split('/').some((part) => !part || part === '.' || part === '..')
+  ) {
+    captureProtocolError();
+  }
+  return { id: source.id, path: source.path };
+}
+
+function normalizeCaptureBounds(value) {
+  const bounds = captureExactObject(value, ['min', 'max', 'center']);
+  const min = captureFiniteTuple(bounds.min, 3);
+  const max = captureFiniteTuple(bounds.max, 3);
+  const center = captureFiniteTuple(bounds.center, 3);
+  for (let index = 0; index < 3; index += 1) {
+    if (min[index] > max[index] || Math.abs(center[index] - (min[index] + max[index]) / 2) > 1e-9) {
+      captureProtocolError();
+    }
+  }
+  return structuredClone(bounds);
+}
+
+function normalizeCaptureCamera(value, widthPx, heightPx) {
+  const camera = captureExactObject(value, [
+    'id', 'position', 'target', 'up', 'fovDegrees', 'nearMeters', 'farMeters',
+    'widthPx', 'heightPx',
+  ]);
+  if (!spatialReviewAllowedCameraIds.has(camera.id)) captureProtocolError();
+  captureFiniteTuple(camera.position, 3);
+  captureFiniteTuple(camera.target, 3);
+  const up = captureFiniteTuple(camera.up, 3);
+  if (Math.abs(Math.hypot(...up) - 1) > unitTolerance) captureProtocolError();
+  captureFiniteNumber(camera.fovDegrees, { min: Number.EPSILON, max: 179.999999 });
+  captureFiniteNumber(camera.nearMeters, { min: Number.EPSILON });
+  captureFiniteNumber(camera.farMeters, { min: camera.nearMeters });
+  if (camera.farMeters <= camera.nearMeters) captureProtocolError();
+  if (camera.widthPx !== widthPx || camera.heightPx !== heightPx) captureProtocolError();
+  return structuredClone(camera);
+}
+
+function normalizeCaptureReport(report, expected) {
+  const result = captureExactObject(report, [
+    'schema', 'schemaVersion', 'attachment', 'phase', 'normalizedTime',
+    'renderGeometryKinds', 'sources', 'bounds', 'lighting', 'cameras', 'captures',
+  ]);
+  if (
+    result.schema !== 'shader_forge.spatial_capture_sample'
+    || result.schemaVersion !== 1
+    || !isPlainObject(result.attachment)
+    || result.attachment.id !== expected.attachmentId
+    || result.phase !== expected.phase
+    || result.normalizedTime !== expected.normalizedTime
+    || JSON.stringify(result.renderGeometryKinds) !== JSON.stringify([
+      'authored_procgeo_box', 'posed_bone_prisms',
+    ])
+  ) {
+    captureProtocolError();
+  }
+  const sourceKeys = [
+    'skeleton', 'attachment', 'clip', 'itemPrefab', 'itemProcgeo',
+    ...(expected.includesPlayerCamera ? ['playerCameraScene', 'playerCameraPrefab'] : []),
+  ];
+  const sources = captureExactObject(result.sources, sourceKeys);
+  const normalizedSources = Object.fromEntries(
+    sourceKeys.map((key) => [key, normalizeCaptureSource(sources[key])]),
+  );
+  if (
+    normalizedSources.attachment.id !== expected.attachmentId
+    || normalizedSources.clip.id !== expected.clipId
+    || normalizedSources.skeleton.id !== expected.skeletonId
+    || normalizedSources.itemPrefab.id !== expected.itemPrefabId
+    || (expected.includesPlayerCamera
+      && (normalizedSources.playerCameraScene.id.toLowerCase() !== expected.playerCameraScene
+        || normalizedSources.playerCameraPrefab.id.toLowerCase() !== expected.playerCameraPrefab))
+  ) {
+    captureProtocolError();
+  }
+  const bounds = captureExactObject(result.bounds, ['character', 'item', 'combined']);
+  const normalizedBounds = {
+    character: normalizeCaptureBounds(bounds.character),
+    item: normalizeCaptureBounds(bounds.item),
+    combined: normalizeCaptureBounds(bounds.combined),
+  };
+  const lighting = captureExactObject(result.lighting, [
+    'keyDirection', 'keyIntensity', 'fillDirection', 'fillIntensity',
+    'ambientIntensity', 'exposure',
+  ]);
+  for (const key of ['keyDirection', 'fillDirection']) {
+    const direction = captureFiniteTuple(lighting[key], 3);
+    if (Math.abs(Math.hypot(...direction) - 1) > unitTolerance) captureProtocolError();
+  }
+  for (const key of ['keyIntensity', 'fillIntensity', 'ambientIntensity', 'exposure']) {
+    captureFiniteNumber(lighting[key], { min: 0 });
+  }
+  if (!Array.isArray(result.cameras) || result.cameras.length !== expected.cameras.length) {
+    captureProtocolError();
+  }
+  const cameras = result.cameras.map((camera) => (
+    normalizeCaptureCamera(camera, expected.widthPx, expected.heightPx)
+  ));
+  if (JSON.stringify(cameras.map((camera) => camera.id)) !== JSON.stringify(expected.cameras)) {
+    captureProtocolError();
+  }
+  const captures = captureExactObject(result.captures, expected.cameras);
+  for (const camera of expected.cameras) {
+    if (captures[camera] !== `${camera}.png`) captureProtocolError();
+  }
+  return {
+    sources: normalizedSources,
+    bounds: normalizedBounds,
+    lighting: structuredClone(lighting),
+    cameras,
+    captures: structuredClone(captures),
+  };
+}
+
+function normalizeProfileGrip(profile) {
+  const grip = profile?.primaryGrip;
+  if (
+    !isPlainObject(grip)
+    || typeof grip.socket !== 'string'
+    || !grip.socket
+    || grip.space !== 'socket'
+    || !Array.isArray(grip.translation)
+    || grip.translation.length !== 3
+    || grip.translation.some((entry) => typeof entry !== 'number' || !Number.isFinite(entry))
+    || !Array.isArray(grip.rotation)
+    || grip.rotation.length !== 4
+    || grip.rotation.some((entry) => typeof entry !== 'number' || !Number.isFinite(entry))
+    || Math.abs(Math.hypot(...grip.rotation) - 1) > unitTolerance
+    || grip.rotation[3] < 0
+  ) {
+    captureProtocolError();
+  }
+  return {
+    socket: grip.socket,
+    space: grip.space,
+    translation: [...grip.translation],
+    rotation: [...grip.rotation],
+  };
+}
+
+function resolveReviewEnvelope(profile, requestedPhases) {
+  if (!Array.isArray(profile?.motionEnvelopes)) captureProtocolError();
+  const byPhase = new Map();
+  for (const envelope of profile.motionEnvelopes) {
+    if (
+      !isPlainObject(envelope)
+      || typeof envelope.phase !== 'string'
+      || !envelope.phase
+      || typeof envelope.clip !== 'string'
+      || !envelope.clip
+      || !Array.isArray(envelope.normalizedTimes)
+      || envelope.normalizedTimes.length === 0
+      || envelope.normalizedTimes.some((time) => (
+        typeof time !== 'number'
+        || !Number.isFinite(time)
+        || Object.is(time, -0)
+        || time < 0
+        || time > 1
+      ))
+      || new Set(envelope.normalizedTimes).size !== envelope.normalizedTimes.length
+      || !Array.isArray(envelope.proceduralLayers)
+      || envelope.proceduralLayers.some((layer) => typeof layer !== 'string' || !layer)
+      || byPhase.has(envelope.phase)
+    ) {
+      captureProtocolError();
+    }
+    byPhase.set(envelope.phase, envelope);
+  }
+  const selected = requestedPhases.map((phase) => {
+    const envelope = byPhase.get(phase);
+    if (!envelope) {
+      throw serviceError(
+        422,
+        'spatial_capture_phase_invalid',
+        `Authored motion-envelope phase does not exist: ${phase}`,
+      );
+    }
+    return structuredClone(envelope);
+  });
+  const sampleCount = selected.reduce((count, envelope) => count + envelope.normalizedTimes.length, 0);
+  if (sampleCount > operationValidationMaxSamples) {
+    throw serviceError(
+      422,
+      'spatial_capture_sample_limit',
+      `Selected motion envelope exceeds ${operationValidationMaxSamples} samples.`,
+    );
+  }
+  return selected;
+}
+
+function reviewContactBounds(evaluation) {
+  const transforms = [
+    evaluation?.item?.primaryContactWorld,
+    evaluation?.hands?.dominant?.palmWorld,
+    evaluation?.hands?.secondary?.palmWorld,
+    evaluation?.hands?.secondary?.targetWorld,
+  ].filter((transform) => isPlainObject(transform) && Array.isArray(transform.translation));
+  if (!transforms.length) {
+    return { status: 'unavailable', reason: 'contact_frames_unavailable' };
+  }
+  const points = transforms.map((transform) => captureFiniteTuple(transform.translation, 3));
+  const min = [0, 1, 2].map((axis) => Math.min(...points.map((point) => point[axis])));
+  const max = [0, 1, 2].map((axis) => Math.max(...points.map((point) => point[axis])));
+  return {
+    status: 'available',
+    min,
+    max,
+    center: min.map((value, axis) => (value + max[axis]) / 2),
+  };
+}
+
+function sourceRevisionFromCapture(staged, rootName, source) {
+  const sourcePath = `${rootName}/${source.path}`;
+  const revision = staged.sourceRevisions.find((entry) => entry.path === sourcePath)?.revision;
+  if (!revision) captureProtocolError();
+  return { id: source.id, path: sourcePath, revision };
+}
+
+async function assertCapturePngs(outputDir, captures, widthPx, heightPx) {
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  for (const fileName of Object.values(captures)) {
+    const filePath = path.join(outputDir, fileName);
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile() || stat.size < 24 || stat.size > 8 * 1024 * 1024) {
+      captureProtocolError();
+    }
+    const handle = await fs.open(filePath, 'r');
+    try {
+      const prefix = Buffer.alloc(24);
+      const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
+      if (
+        bytesRead !== prefix.length
+        || !prefix.subarray(0, 8).equals(pngSignature)
+        || prefix.toString('ascii', 12, 16) !== 'IHDR'
+        || prefix.readUInt32BE(16) !== widthPx
+        || prefix.readUInt32BE(20) !== heightPx
+      ) {
+        captureProtocolError();
+      }
+    } finally {
+      await handle.close();
+    }
+  }
 }
 
 function boundedDiagnostic(error) {
@@ -1497,7 +1918,12 @@ function resolveSpatialBinaryPath() {
     || path.join(repoRoot, 'build', 'runtime', 'bin', binaryName);
 }
 
-async function runSpatialJsonCommand(args, unavailableCode, toolName) {
+async function runSpatialJsonCommand(
+  args,
+  unavailableCode,
+  toolName,
+  timeoutMs = spatialCommandTimeoutMs,
+) {
   const binaryPath = resolveSpatialBinaryPath();
   try {
     const { stdout } = await execFileAsync(
@@ -1506,7 +1932,7 @@ async function runSpatialJsonCommand(args, unavailableCode, toolName) {
       {
         encoding: 'utf8',
         maxBuffer: 8 * 1024 * 1024,
-        timeout: spatialCommandTimeoutMs,
+        timeout: timeoutMs,
         windowsHide: true,
       },
     );
@@ -1606,6 +2032,50 @@ async function defaultEvaluateSampledAttachment(
   }
 }
 
+async function defaultCaptureSampleAttachment(
+  animationRoot,
+  contentRoot,
+  foundationPath,
+  attachmentId,
+  phase,
+  normalizedTime,
+  outputDir,
+  widthPx,
+  heightPx,
+  playerCameraScene,
+) {
+  const args = [
+    'capture-sample',
+    '--animation-root', animationRoot,
+    '--attachment', attachmentId,
+    '--phase', phase,
+    '--normalized-time', formatSampleNormalizedTime(normalizedTime),
+    '--content-root', contentRoot,
+    '--data-foundation', foundationPath,
+    '--output-dir', outputDir,
+    '--width', String(widthPx),
+    '--height', String(heightPx),
+  ];
+  if (playerCameraScene) args.push('--player-camera-scene', playerCameraScene);
+  try {
+    return await runSpatialJsonCommand(
+      args,
+      'spatial_capture_unavailable',
+      'capture tool',
+      spatialCaptureTimeoutMs,
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw serviceError(
+        500,
+        'spatial_capture_protocol_error',
+        'Spatial capture tool returned malformed JSON.',
+      );
+    }
+    throw error;
+  }
+}
+
 export class SpatialAttachmentService {
   #sessionStore;
   #coordinationStore;
@@ -1613,6 +2083,8 @@ export class SpatialAttachmentService {
   #validateAnimationRoot;
   #evaluateRestAttachment;
   #evaluateSampledAttachment;
+  #captureSampleAttachment;
+  #reviewReservations = new Map();
 
   constructor({
     sessionStore,
@@ -1621,6 +2093,7 @@ export class SpatialAttachmentService {
     validateAnimationRoot,
     evaluateRestAttachment,
     evaluateSampledAttachment,
+    captureSampleAttachment,
   } = {}) {
     this.#sessionStore = sessionStore;
     this.#coordinationStore = coordinationStore;
@@ -1634,6 +2107,489 @@ export class SpatialAttachmentService {
     this.#evaluateSampledAttachment = typeof evaluateSampledAttachment === 'function'
       ? evaluateSampledAttachment
       : defaultEvaluateSampledAttachment;
+    this.#captureSampleAttachment = typeof captureSampleAttachment === 'function'
+      ? captureSampleAttachment
+      : defaultCaptureSampleAttachment;
+  }
+
+  async reserveReview(operationId, { sessionId, agentId, credential } = {}) {
+    const resolvedSessionId = requiredString(sessionId, 'sessionId');
+    const resolvedAgentId = requiredString(agentId, 'agentId');
+    const resolvedCredential = requiredString(credential, 'Agent credential');
+    const candidate = await this.#operationStore.getSpatialValidationCandidate(operationId);
+    if (candidate.sessionId !== resolvedSessionId) {
+      throw serviceError(409, 'spatial_operation_session_mismatch', 'Operation belongs to a different session.');
+    }
+    if (
+      candidate.validation?.status !== 'completed'
+      || candidate.validation.proposedRevision !== candidate.proposedRevision
+    ) {
+      throw serviceError(
+        409,
+        'spatial_capture_validation_required',
+        'A completed validation pass is required before recapture.',
+      );
+    }
+    this.#coordinationStore.assertConnectedAgent({
+      sessionId: resolvedSessionId,
+      agentId: resolvedAgentId,
+      credential: resolvedCredential,
+    });
+    if (this.#reviewReservations.size >= spatialReviewReservationLimit) {
+      // ponytail: bounded in-memory reservations; persist them only if captures must survive daemon restarts.
+      this.#reviewReservations.delete(this.#reviewReservations.keys().next().value);
+    }
+    const reviewId = `rev_${randomUUID()}`;
+    const reservation = {
+      reviewId,
+      operationId: candidate.id,
+      sessionId: resolvedSessionId,
+      agentId: resolvedAgentId,
+      resourceKey: `spatial/review/${reviewId}`,
+    };
+    this.#reviewReservations.set(reviewId, reservation);
+    return structuredClone(reservation);
+  }
+
+  async recaptureOperation(operationId, request = {}) {
+    const normalized = normalizeRecaptureRequest(request);
+    const candidate = await this.#operationStore.getSpatialValidationCandidate(operationId);
+    if (
+      candidate.validation?.status !== 'completed'
+      || candidate.validation.proposedRevision !== candidate.proposedRevision
+    ) {
+      throw serviceError(
+        409,
+        'spatial_capture_validation_required',
+        'A completed validation pass is required before recapture.',
+      );
+    }
+    const reservation = this.#reviewReservations.get(normalized.reviewId);
+    if (
+      !reservation
+      || reservation.operationId !== candidate.id
+      || reservation.sessionId !== candidate.sessionId
+      || reservation.agentId !== normalized.agentId
+    ) {
+      throw serviceError(
+        409,
+        'spatial_review_reservation_invalid',
+        'Review reservation does not match this operation, session, and agent.',
+      );
+    }
+
+    const parsedPath = parseAttachmentPath(candidate.path);
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-recapture-'));
+    let reviewTemporaryRoot = '';
+    let published = false;
+    let leasesAccepted = false;
+    try {
+      const staged = await this.#stageAuthoredSpatialInputs(candidate.sessionId, temporaryRoot);
+      const stagedAttachmentPath = path.join(staged.animationRoot, parsedPath.stagedSource);
+      const baselineContent = await readOptionalUtf8(stagedAttachmentPath);
+      const baselineRevision = baselineContent === null
+        ? MISSING_FILE_REVISION
+        : textContentRevision(baselineContent);
+      if (baselineRevision !== candidate.baseRevision) {
+        throw revisionConflict(candidate.path, candidate.baseRevision, baselineRevision);
+      }
+
+      const baselineReport = await this.#validateStagedAnimationRoot(staged.animationRoot, 'baseline');
+      const baselineProfile = baselineContent === null
+        ? null
+        : profileBySource(baselineReport, parsedPath.stagedSource);
+      await fs.writeFile(stagedAttachmentPath, candidate.proposedContent, 'utf8');
+      const proposedReport = await this.#validateStagedAnimationRoot(staged.animationRoot, 'candidate');
+      const proposedProfile = profileBySource(proposedReport, parsedPath.stagedSource);
+      const proposedAttachment = requiredProfileIdentity(
+        proposedProfile,
+        'spatial_candidate_source_missing',
+        'Validator did not return the proposed attachment source.',
+      );
+      assertSpatialOperationContext(
+        candidate.context,
+        proposedAttachment,
+        [
+          ...(baselineProfile ? [requiredProfileIdentity(
+            baselineProfile,
+            'spatial_baseline_source_missing',
+            'Validator did not return the authored attachment source.',
+          )] : []),
+          proposedAttachment,
+        ],
+      );
+
+      const candidateGrip = normalizeProfileGrip(proposedProfile);
+      const baselineGrip = baselineProfile ? normalizeProfileGrip(baselineProfile) : null;
+      const envelopes = resolveReviewEnvelope(proposedProfile, normalized.phases);
+      const requiresPlayerCamera = ['first_person', 'both'].includes(proposedAttachment.perspective);
+      if (requiresPlayerCamera && !normalized.cameras.includes('player_camera')) {
+        throw serviceError(
+          422,
+          'spatial_player_camera_required',
+          'This attachment perspective requires player_camera review evidence.',
+        );
+      }
+
+      const sourceResourceKeys = [
+        `spatial/skeleton/${proposedAttachment.skeleton.toLowerCase()}`,
+        `spatial/skeleton/${proposedAttachment.skeleton.toLowerCase()}/socket/${candidateGrip.socket.toLowerCase()}`,
+        ...candidate.context.resourceKeys,
+        `scene/prefab/${proposedAttachment.itemPrefab.toLowerCase()}`,
+        ...envelopes.map((envelope) => `animation/clip/${envelope.clip.toLowerCase()}`),
+        ...(normalized.cameras.includes('player_camera') ? [
+          `scene/world/${normalized.playerCameraScene}`,
+          `scene/prefab/${normalized.playerCameraPrefab}`,
+        ] : []),
+      ];
+      const leaseRequest = {
+        sessionId: candidate.sessionId,
+        agentId: normalized.agentId,
+        credential: normalized.credential,
+      };
+      const assertLeases = () => {
+        this.#coordinationStore.assertGrantedReadLease({
+          ...leaseRequest,
+          leaseId: normalized.sourceLeaseId,
+          resources: sourceResourceKeys,
+        });
+        this.#coordinationStore.assertGrantedWriteLease({
+          ...leaseRequest,
+          leaseId: normalized.captureLeaseId,
+          resources: ['spatial/runtime-capture'],
+        });
+        this.#coordinationStore.assertGrantedWriteLease({
+          ...leaseRequest,
+          leaseId: normalized.reviewLeaseId,
+          resources: [reservation.resourceKey],
+        });
+      };
+      assertLeases();
+      leasesAccepted = true;
+
+      const reviewRoot = await this.#ensureReviewRoot(candidate.sessionId);
+      const finalReviewRoot = path.join(reviewRoot, normalized.reviewId);
+      try {
+        await fs.lstat(finalReviewRoot);
+        throw serviceError(
+          409,
+          'spatial_review_exists',
+          'Review packet already exists and cannot be overwritten.',
+        );
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+      reviewTemporaryRoot = await fs.mkdtemp(path.join(reviewRoot, `.tmp-${normalized.reviewId}-`));
+
+      const packetSamples = [];
+      const packetCameras = [];
+      const captureSources = [];
+      let lighting = null;
+      let sampleIndex = 0;
+      for (const envelope of envelopes) {
+        const phaseRoot = path.join(reviewTemporaryRoot, 'clean', envelope.phase);
+        await fs.mkdir(phaseRoot, { recursive: true });
+        for (const normalizedTime of envelope.normalizedTimes) {
+          const sampleOutput = path.join(phaseRoot, String(sampleIndex).padStart(3, '0'));
+          const evaluation = await this.#evaluateStagedOperationSample(
+            staged,
+            proposedAttachment,
+            envelope.phase,
+            normalizedTime,
+          );
+          let rawCapture;
+          try {
+            rawCapture = await this.#captureSampleAttachment(
+              staged.animationRoot,
+              staged.contentRoot,
+              staged.foundationPath,
+              proposedAttachment.id,
+              envelope.phase,
+              normalizedTime,
+              sampleOutput,
+              normalized.widthPx,
+              normalized.heightPx,
+              normalized.cameras.includes('player_camera') ? normalized.playerCameraScene : '',
+            );
+          } catch (error) {
+            if (error?.code === 'spatial_capture_unavailable') throw error;
+            if (error?.code === 'spatial_capture_protocol_error') throw error;
+            throw serviceError(
+              422,
+              'spatial_capture_failed',
+              'Native spatial capture could not produce the requested review frame set.',
+            );
+          }
+          const capture = normalizeCaptureReport(rawCapture, {
+            attachmentId: proposedAttachment.id,
+            skeletonId: proposedAttachment.skeleton,
+            itemPrefabId: proposedAttachment.itemPrefab,
+            clipId: envelope.clip,
+            phase: envelope.phase,
+            normalizedTime,
+            cameras: normalized.cameras,
+            widthPx: normalized.widthPx,
+            heightPx: normalized.heightPx,
+            includesPlayerCamera: normalized.cameras.includes('player_camera'),
+            playerCameraScene: normalized.playerCameraScene,
+            playerCameraPrefab: normalized.playerCameraPrefab,
+          });
+          await assertCapturePngs(
+            sampleOutput,
+            capture.captures,
+            normalized.widthPx,
+            normalized.heightPx,
+          );
+          if (lighting === null) lighting = capture.lighting;
+          else if (JSON.stringify(lighting) !== JSON.stringify(capture.lighting)) captureProtocolError();
+
+          const clean = Object.fromEntries(Object.entries(capture.captures).map(([cameraId, fileName]) => [
+            cameraId,
+            path.posix.join('clean', envelope.phase, String(sampleIndex).padStart(3, '0'), fileName),
+          ]));
+          const cameras = capture.cameras.map((camera) => ({
+            ...camera,
+            posePhase: envelope.phase,
+            normalizedTime,
+            sampleIndex,
+          }));
+          packetCameras.push(...cameras);
+          captureSources.push(capture.sources);
+          packetSamples.push({
+            posePhase: envelope.phase,
+            normalizedTime,
+            clip: envelope.clip,
+            proceduralLayersRequested: evaluation.pose.proceduralLayersRequested,
+            proceduralLayersApplied: evaluation.pose.proceduralLayersApplied,
+            proceduralLayersUnavailable: evaluation.pose.proceduralLayersUnavailable,
+            bones: evaluation.bones,
+            sockets: evaluation.sockets,
+            item: evaluation.item,
+            hands: evaluation.hands,
+            diagnostics: evaluation.diagnostics,
+            bounds: {
+              character: capture.bounds.character,
+              item: capture.bounds.item,
+              combined: capture.bounds.combined,
+              contactRegion: reviewContactBounds(evaluation),
+            },
+            cameras,
+            captures: { clean },
+          });
+          sampleIndex += 1;
+        }
+      }
+      if (!packetSamples.length || !captureSources.length || !lighting) captureProtocolError();
+
+      const firstSources = captureSources[0];
+      const clipRevisions = [];
+      for (const sources of captureSources) {
+        const revision = sourceRevisionFromCapture(staged, 'animation', sources.clip);
+        if (!clipRevisions.some((entry) => entry.id === revision.id)) clipRevisions.push(revision);
+        if (
+          JSON.stringify(sources.skeleton) !== JSON.stringify(firstSources.skeleton)
+          || JSON.stringify(sources.attachment) !== JSON.stringify(firstSources.attachment)
+          || JSON.stringify(sources.itemPrefab) !== JSON.stringify(firstSources.itemPrefab)
+          || JSON.stringify(sources.itemProcgeo) !== JSON.stringify(firstSources.itemProcgeo)
+          || JSON.stringify(sources.playerCameraScene) !== JSON.stringify(firstSources.playerCameraScene)
+          || JSON.stringify(sources.playerCameraPrefab) !== JSON.stringify(firstSources.playerCameraPrefab)
+        ) {
+          captureProtocolError();
+        }
+      }
+      const attachmentSourcePath = `animation/${firstSources.attachment.path}`;
+      const inputManifest = staged.sourceRevisions.map((entry) => (
+        entry.path === attachmentSourcePath
+          ? { ...entry, revision: candidate.proposedRevision, baseRevision: entry.revision }
+          : entry
+      ));
+      const packet = {
+        schema: 'shader_forge.spatial_review_packet',
+        schemaVersion: 1,
+        immutable: true,
+        reviewId: normalized.reviewId,
+        actor: structuredClone(normalized.actor),
+        selection: {
+          skeletonId: proposedAttachment.skeleton,
+          attachmentId: proposedAttachment.id,
+          socketId: candidateGrip.socket,
+          itemPrefabId: proposedAttachment.itemPrefab,
+        },
+        sourceRevisions: {
+          skeleton: sourceRevisionFromCapture(staged, 'animation', firstSources.skeleton),
+          attachment: {
+            id: firstSources.attachment.id,
+            path: attachmentSourcePath,
+            revision: candidate.proposedRevision,
+            baseRevision: candidate.baseRevision,
+          },
+          itemPrefab: sourceRevisionFromCapture(staged, 'content', firstSources.itemPrefab),
+          itemProcgeo: sourceRevisionFromCapture(staged, 'content', firstSources.itemProcgeo),
+          clip: clipRevisions,
+          ...(firstSources.playerCameraScene ? {
+            playerCameraScene: sourceRevisionFromCapture(
+              staged,
+              'content',
+              firstSources.playerCameraScene,
+            ),
+            playerCameraPrefab: sourceRevisionFromCapture(
+              staged,
+              'content',
+              firstSources.playerCameraPrefab,
+            ),
+          } : {}),
+          inputs: inputManifest,
+        },
+        motionEnvelope: envelopes,
+        cameras: packetCameras,
+        lighting,
+        samples: packetSamples,
+        candidateTransform: {
+          space: candidateGrip.space,
+          translation: candidateGrip.translation,
+          rotation: candidateGrip.rotation,
+          label: 'preview-candidate',
+        },
+        baselineTransform: baselineGrip ? {
+          space: baselineGrip.space,
+          translation: baselineGrip.translation,
+          rotation: baselineGrip.rotation,
+        } : null,
+        operationId: candidate.id,
+        leaseIds: [
+          normalized.sourceLeaseId,
+          normalized.captureLeaseId,
+          normalized.reviewLeaseId,
+        ],
+      };
+      await fs.writeFile(
+        path.join(reviewTemporaryRoot, 'manifest.json'),
+        `${JSON.stringify(packet, null, 2)}\n`,
+        { encoding: 'utf8', flag: 'wx' },
+      );
+
+      await this.#sessionStore.runSerializedFileMutation(async () => {
+        await this.#assertSpatialSourcesMatchSnapshot(
+          candidate.sessionId,
+          staged.sourceRevisions,
+          candidate.path,
+        );
+        assertLeases();
+        try {
+          await fs.lstat(finalReviewRoot);
+          throw serviceError(
+            409,
+            'spatial_review_exists',
+            'Review packet already exists and cannot be overwritten.',
+          );
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+        await fs.rename(reviewTemporaryRoot, finalReviewRoot);
+        published = true;
+      }, { sessionId: candidate.sessionId });
+      this.#reviewReservations.delete(normalized.reviewId);
+      return structuredClone(packet);
+    } finally {
+      if (reviewTemporaryRoot && !published) {
+        await fs.rm(reviewTemporaryRoot, { recursive: true, force: true });
+      }
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+      if (leasesAccepted) {
+        for (const leaseId of [
+          normalized.sourceLeaseId,
+          normalized.captureLeaseId,
+          normalized.reviewLeaseId,
+        ]) {
+          try {
+            this.#coordinationStore.releaseLease(leaseId, {
+              agentId: normalized.agentId,
+              credential: normalized.credential,
+            });
+          } catch {
+            // The lease may have expired or been released during capture; the original result wins.
+          }
+        }
+      }
+    }
+  }
+
+  async readReview({ sessionId, reviewId } = {}) {
+    const resolvedSessionId = requiredString(sessionId, 'sessionId');
+    const resolvedReviewId = normalizeReviewId(reviewId);
+    let manifest;
+    try {
+      manifest = await this.#sessionStore.readFileBounded(
+        resolvedSessionId,
+        `build/spatial-reviews/${resolvedReviewId}/manifest.json`,
+        { rejectSymbolicPath: true, maxBytes: 8 * 1024 * 1024 },
+      );
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw serviceError(404, 'spatial_review_not_found', 'Spatial review packet was not found.');
+      }
+      throw error;
+    }
+    let packet;
+    try {
+      packet = JSON.parse(manifest.content);
+    } catch {
+      throw serviceError(500, 'spatial_review_invalid', 'Spatial review manifest is malformed.');
+    }
+    if (
+      !isPlainObject(packet)
+      || packet.schema !== 'shader_forge.spatial_review_packet'
+      || packet.schemaVersion !== 1
+      || packet.immutable !== true
+      || packet.reviewId !== resolvedReviewId
+      || !Array.isArray(packet.samples)
+    ) {
+      throw serviceError(500, 'spatial_review_invalid', 'Spatial review manifest is invalid.');
+    }
+    return structuredClone(packet);
+  }
+
+  async readReviewCapture({ sessionId, reviewId, name } = {}) {
+    const resolvedSessionId = requiredString(sessionId, 'sessionId');
+    const resolvedReviewId = normalizeReviewId(reviewId);
+    const captureName = requiredString(name, 'name').replaceAll('\\', '/');
+    if (
+      captureName.length > 512
+      || captureName.startsWith('/')
+      || captureName.split('/').some((part) => !part || part === '.' || part === '..')
+      || !captureName.endsWith('.png')
+    ) {
+      throw serviceError(400, 'spatial_request_invalid', 'Capture name is invalid.');
+    }
+    const packet = await this.readReview({
+      sessionId: resolvedSessionId,
+      reviewId: resolvedReviewId,
+    });
+    const referencedCaptures = new Set(packet.samples.flatMap((sample) => [
+      ...Object.values(sample?.captures?.clean || {}),
+      ...Object.values(sample?.captures?.annotated || {}),
+    ]));
+    if (!referencedCaptures.has(captureName)) {
+      throw serviceError(404, 'spatial_capture_not_found', 'Spatial review capture was not found.');
+    }
+    let capture;
+    try {
+      capture = await this.#sessionStore.readBinaryFileBounded(
+        resolvedSessionId,
+        `build/spatial-reviews/${resolvedReviewId}/${captureName}`,
+        { rejectSymbolicPath: true, maxBytes: 8 * 1024 * 1024 },
+      );
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw serviceError(404, 'spatial_capture_not_found', 'Spatial review capture was not found.');
+      }
+      throw error;
+    }
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (capture.bytes.length < signature.length || !capture.bytes.subarray(0, 8).equals(signature)) {
+      throw serviceError(500, 'spatial_review_invalid', 'Spatial review capture is not a PNG.');
+    }
+    return { bytes: capture.bytes, contentType: 'image/png' };
   }
 
   async previewAttachment(request = {}) {
@@ -2277,6 +3233,37 @@ export class SpatialAttachmentService {
       phase,
       normalizedTime,
     );
+  }
+
+  async #ensureReviewRoot(sessionId) {
+    const workspaceRoot = await this.#sessionStore.resolveCanonicalWorkspaceRoot(sessionId);
+    let current = workspaceRoot;
+    for (const segment of ['build', 'spatial-reviews']) {
+      current = path.join(current, segment);
+      try {
+        await fs.mkdir(current);
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw serviceError(
+          400,
+          'spatial_review_path_invalid',
+          'Spatial review output path must use real project directories.',
+        );
+      }
+      current = await fs.realpath(current);
+      const relative = path.relative(workspaceRoot, current);
+      if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw serviceError(
+          400,
+          'spatial_review_path_invalid',
+          'Spatial review output path escapes the workspace root.',
+        );
+      }
+    }
+    return current;
   }
 
   async #readAuthoredAnimationSources(sessionId) {

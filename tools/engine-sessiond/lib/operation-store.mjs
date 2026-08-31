@@ -1671,8 +1671,10 @@ export class OperationStore {
       state: record.state,
       baseRevision: record.baseRevision,
       proposedRevision: record.proposedRevision,
+      beforeContent: record.beforeContent,
       proposedContent: record.proposedContent,
       context: record.context,
+      validation: record.validation,
       updatedAt: record.updatedAt,
     });
   }

@@ -67,7 +67,7 @@ Current boundary:
 
 - the runtime now has first visible composed-scene rendering through projected debug proxies, but not a full mesh/material/shader pipeline yet
 - those debug-proxy cards are not spatial-review evidence and must not be captured as attachment-tuning screenshots
-- authored camera projection and deterministic native close-camera spatial sample capture exist, but player-camera capture, review-camera staging, and immutable review packets remain deferred
+- authored camera projection, deterministic native close/player-camera spatial sample capture, and session-owned immutable review packets exist; gameplay attachment rendering and review presentation adapters remain deferred
 - spatial authoring still needs a later sampling/IK/capture path in this native process; the current validate/cook tool is one short-lived executable and does not add a daemon
 - the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, first projected physics-debug lane, first multi-slot quick-save/quick-load lane, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, full world-state persistence, or deeper mounted-project/package layering yet
 - Dear ImGui-native panels, real asset-backed geometry submission, and player-facing game UI are still later widening passes

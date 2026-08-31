@@ -830,6 +830,7 @@ bool writePngFile(const std::filesystem::path& path, const std::vector<std::uint
 bool writeSpatialCaptureSample(
   const SpatialSampledAttachmentEvaluationSnapshot& sampled,
   const SpatialCaptureItemBox& itemBox,
+  const std::optional<SpatialCaptureCameraSnapshot>& playerCamera,
   const std::filesystem::path& outputDir,
   int widthPx,
   int heightPx,
@@ -895,8 +896,8 @@ bool writeSpatialCaptureSample(
     {"close_three_quarter", {1.0, 0.45, 1.0}, {0.0, 1.0, 0.0}},
   };
 
-  std::array<CameraState, 4> cameras{};
-  std::array<ImageBuffer, 4> images{};
+  std::vector<CameraState> cameras(4);
+  std::vector<ImageBuffer> images(4);
   for (int index = 0; index < 4; ++index) {
     cameras[index].id = presets[index].id;
     cameras[index].widthPx = widthPx;
@@ -909,8 +910,29 @@ bool writeSpatialCaptureSample(
     }
   }
 
-  std::array<std::vector<std::uint8_t>, 4> encodedFrames{};
-  for (int index = 0; index < 4; ++index) {
+  if (playerCamera) {
+    CameraState camera;
+    camera.id = "player_camera";
+    camera.position = fromSnapshot(playerCamera->position);
+    camera.target = fromSnapshot(playerCamera->target);
+    camera.up = fromSnapshot(playerCamera->up);
+    camera.fovDegrees = playerCamera->fovDegrees;
+    camera.nearMeters = playerCamera->nearMeters;
+    camera.farMeters = playerCamera->farMeters;
+    camera.widthPx = widthPx;
+    camera.heightPx = heightPx;
+    if (!finiteVec(camera.position) || !finiteVec(camera.target) || !finiteVec(camera.up)
+        || !composeCamera(&camera)) {
+      return fail(errorMessage, "Authored player camera is invalid.");
+    }
+    ImageBuffer image;
+    if (!rasterize(camera, triangles, &image, errorMessage)) return false;
+    cameras.push_back(std::move(camera));
+    images.push_back(std::move(image));
+  }
+
+  std::vector<std::vector<std::uint8_t>> encodedFrames(cameras.size());
+  for (std::size_t index = 0; index < cameras.size(); ++index) {
     encodedFrames[index] = encodePng(widthPx, heightPx, images[index].rgb);
   }
 
@@ -929,7 +951,7 @@ bool writeSpatialCaptureSample(
     std::filesystem::remove_all(finalOutput, cleanupError);
   };
 
-  for (int index = 0; index < 4; ++index) {
+  for (std::size_t index = 0; index < cameras.size(); ++index) {
     const std::string fileName = cameras[index].id + ".png";
     const std::filesystem::path pngPath = finalOutput / fileName;
     if (!pathStaysUnder(pngPath, finalOutput) || pngPath.filename().string() != fileName) {
@@ -963,8 +985,8 @@ bool writeSpatialCaptureSample(
   result->lighting.ambientIntensity = kAmbientIntensity;
   result->lighting.exposure = kExposure;
   result->frames.clear();
-  result->frames.reserve(4);
-  for (int index = 0; index < 4; ++index) {
+  result->frames.reserve(cameras.size());
+  for (std::size_t index = 0; index < cameras.size(); ++index) {
     SpatialCaptureFrameSnapshot frame;
     frame.camera.id = cameras[index].id;
     frame.camera.position = toSnapshot(cameras[index].position);

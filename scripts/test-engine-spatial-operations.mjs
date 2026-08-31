@@ -469,6 +469,84 @@ async function evaluateSampledAttachment(
   return sampleEvaluateImpl(animationRoot, attachmentId, phase, normalizedTime);
 }
 
+const captureCalls = [];
+let captureHook = async () => {};
+let validationPerspectiveOverride = '';
+async function captureSampleAttachment(
+  animationRoot,
+  contentRoot,
+  foundationFile,
+  attachmentId,
+  phase,
+  normalizedTime,
+  outputDir,
+  widthPx,
+  heightPx,
+  playerCameraScene,
+) {
+  await assertStagedDataInputs(contentRoot, foundationFile);
+  const cameraIds = [
+    'close_front', 'close_side', 'close_top', 'close_three_quarter',
+    ...(playerCameraScene ? ['player_camera'] : []),
+  ];
+  await fs.mkdir(outputDir);
+  const pngSignature = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(pngSignature);
+  pngSignature.writeUInt32BE(13, 8);
+  pngSignature.write('IHDR', 12, 'ascii');
+  pngSignature.writeUInt32BE(widthPx, 16);
+  pngSignature.writeUInt32BE(heightPx, 20);
+  for (const cameraId of cameraIds) {
+    await fs.writeFile(path.join(outputDir, `${cameraId}.png`), pngSignature);
+  }
+  captureCalls.push({
+    animationRoot, attachmentId, phase, normalizedTime, outputDir, widthPx, heightPx,
+    playerCameraScene,
+  });
+  await captureHook({ phase, normalizedTime, outputDir });
+  return {
+    schema: 'shader_forge.spatial_capture_sample',
+    schemaVersion: 1,
+    attachment: { id: attachmentId },
+    phase,
+    normalizedTime,
+    renderGeometryKinds: ['authored_procgeo_box', 'posed_bone_prisms'],
+    sources: {
+      skeleton: { id: 'test.skeleton', path: 'skeletons/test.skeleton.toml' },
+      attachment: { id: attachmentId, path: 'attachments/rifle.attachment.toml' },
+      clip: { id: 'test', path: 'clips/test.anim.toml' },
+      itemPrefab: { id: 'test.item', path: 'prefabs/weapon_rifle_mk1.prefab.toml' },
+      itemProcgeo: { id: 'weapon_rifle_mk1', path: 'procgeo/weapon_rifle_mk1.procgeo.toml' },
+      ...(playerCameraScene ? {
+        playerCameraScene: { id: playerCameraScene, path: 'scenes/capture_camera.scene.toml' },
+        playerCameraPrefab: { id: 'debug_camera', path: 'prefabs/debug_camera.prefab.toml' },
+      } : {}),
+    },
+    bounds: {
+      character: { min: [-1, 0, -1], max: [1, 2, 1], center: [0, 1, 0] },
+      item: { min: [-0.5, 0.5, -0.5], max: [0.5, 1.5, 0.5], center: [0, 1, 0] },
+      combined: { min: [-1, 0, -1], max: [1, 2, 1], center: [0, 1, 0] },
+    },
+    lighting: {
+      keyDirection: [0, 1, 0], keyIntensity: 0.8,
+      fillDirection: [1, 0, 0], fillIntensity: 0.3,
+      ambientIntensity: 0.2, exposure: 1,
+    },
+    cameras: cameraIds.map((id) => ({
+      id,
+      position: [0, 1, -4],
+      target: [0, 1, 0],
+      up: [0, 1, 0],
+      fovDegrees: id === 'player_camera' ? 70 : 35,
+      nearMeters: 0.1,
+      farMeters: 100,
+      widthPx,
+      heightPx,
+    })),
+    captures: Object.fromEntries(cameraIds.map((id) => [id, `${id}.png`])),
+  };
+}
+
 async function validateAnimationRoot(animationRoot) {
   stagedRoots.push(animationRoot);
   for (const directory of ['skeletons', 'clips', 'graphs', 'attachments']) {
@@ -494,8 +572,21 @@ async function validateAnimationRoot(animationRoot) {
       schemaVersion: profileSchemaVersion(content),
       skeleton: profileString(content, 'skeleton'),
       itemPrefab: profileString(content, 'item_prefab'),
+      dominantHand: 'right',
       mode: profileString(content, 'mode'),
-      perspective: profileString(content, 'perspective'),
+      perspective: validationPerspectiveOverride || profileString(content, 'perspective'),
+      primaryGrip: {
+        socket: 'socket.hand_r.primary',
+        space: 'socket',
+        translation: id.endsWith('.new') ? [0.1, 0, 0] : [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+      },
+      motionEnvelopes: [{
+        phase: 'idle',
+        clip: 'test',
+        normalizedTimes: [0, 0.5, 1],
+        proceduralLayers: ['primary_attachment'],
+      }],
     });
   }
   return {
@@ -694,6 +785,7 @@ try {
     validateAnimationRoot,
     evaluateRestAttachment,
     evaluateSampledAttachment,
+    captureSampleAttachment,
   });
   const firstSession = await sessionStore.createSession({ name: 'spatial', rootPath: projectRoot });
   const secondSession = await sessionStore.createSession({ name: 'other', rootPath: secondProjectRoot });
@@ -2363,6 +2455,16 @@ try {
   });
   assert.equal(JSON.stringify(failedValidation.payload).includes('private native'), false);
   assert.equal('proposedContent' in failedValidation.payload.operation, false);
+  const reservationBeforeValidation = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/review-reservations`,
+    {
+      method: 'POST', credential,
+      body: { sessionId: firstSession.id, agentId: agent.id },
+    },
+  );
+  assert.equal(reservationBeforeValidation.status, 409);
+  assert.equal(reservationBeforeValidation.payload.code, 'spatial_capture_validation_required');
 
   sampleEvaluateImpl = normalSampleEvaluate;
   const validationRestCalls = evaluatedCalls.length;
@@ -2407,6 +2509,272 @@ try {
   });
   assert.equal('proposedContent' in completedValidation.payload.operation, false);
   assert.equal(JSON.stringify(completedValidation.payload).includes(credential), false);
+
+  const reviewSourceResources = [
+    'spatial/skeleton/test.skeleton',
+    'spatial/skeleton/test.skeleton/socket/socket.hand_r.primary',
+    'spatial/attachment/weapon.rifle.old',
+    'spatial/attachment/weapon.rifle.new',
+    'scene/prefab/test.item',
+    'animation/clip/test',
+  ];
+  const reserveReview = async () => {
+    const response = await request(
+      service.baseUrl,
+      `/api/operations/${operationId}/review-reservations`,
+      {
+        method: 'POST', credential,
+        body: { sessionId: firstSession.id, agentId: agent.id },
+      },
+    );
+    assert.equal(response.status, 201);
+    assert.match(response.payload.reservation.reviewId, /^rev_[0-9a-f-]+$/);
+    assert.equal(
+      response.payload.reservation.resourceKey,
+      `spatial/review/${response.payload.reservation.reviewId}`,
+    );
+    return response.payload.reservation;
+  };
+  const requestReviewLeases = async (reviewResource, sourceMode = 'read', extraResources = []) => {
+    const source = await request(service.baseUrl, '/api/coordination/leases', {
+      method: 'POST', credential,
+      body: {
+        agentId: agent.id,
+        mode: sourceMode,
+        resources: [...reviewSourceResources, ...extraResources],
+      },
+    });
+    const capture = await request(service.baseUrl, '/api/coordination/leases', {
+      method: 'POST', credential,
+      body: { agentId: agent.id, mode: 'write', resources: ['spatial/runtime-capture'] },
+    });
+    const review = await request(service.baseUrl, '/api/coordination/leases', {
+      method: 'POST', credential,
+      body: { agentId: agent.id, mode: 'write', resources: [reviewResource] },
+    });
+    for (const lease of [source, capture, review]) {
+      assert.equal(lease.status, 200);
+      assert.equal(lease.payload.lease.status, 'granted');
+    }
+    return {
+      source: source.payload.lease,
+      capture: capture.payload.lease,
+      review: review.payload.lease,
+    };
+  };
+  const recaptureBody = (reservation, leases) => ({
+    actor,
+    agentId: agent.id,
+    reviewId: reservation.reviewId,
+    sourceLeaseId: leases.source.id,
+    captureLeaseId: leases.capture.id,
+    reviewLeaseId: leases.review.id,
+    phases: ['idle'],
+    cameras: ['close_front', 'close_side', 'close_top', 'close_three_quarter'],
+    widthPx: 192,
+    heightPx: 160,
+  });
+
+  const firstReservation = await reserveReview();
+  let reviewLeases = await requestReviewLeases(firstReservation.resourceKey, 'write');
+  const wrongSourceLease = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/recapture`,
+    { method: 'POST', credential, body: recaptureBody(firstReservation, reviewLeases) },
+  );
+  assert.equal(wrongSourceLease.status, 409);
+  assert.equal(wrongSourceLease.payload.code, 'lease_read_required');
+  await request(service.baseUrl, `/api/coordination/leases/${reviewLeases.source.id}/release`, {
+    method: 'POST', credential, body: { agentId: agent.id },
+  });
+  const sourceRead = await request(service.baseUrl, '/api/coordination/leases', {
+    method: 'POST', credential,
+    body: { agentId: agent.id, mode: 'read', resources: reviewSourceResources },
+  });
+  reviewLeases = { ...reviewLeases, source: sourceRead.payload.lease };
+
+  const capturesBeforeReview = captureCalls.length;
+  const recaptured = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/recapture`,
+    { method: 'POST', credential, body: recaptureBody(firstReservation, reviewLeases) },
+  );
+  assert.equal(recaptured.status, 201, JSON.stringify(recaptured.payload));
+  const reviewPacket = recaptured.payload.review;
+  assert.equal(reviewPacket.schema, 'shader_forge.spatial_review_packet');
+  assert.equal(reviewPacket.schemaVersion, 1);
+  assert.equal(reviewPacket.immutable, true);
+  assert.equal(reviewPacket.reviewId, firstReservation.reviewId);
+  assert.equal(reviewPacket.operationId, operationId);
+  assert.deepEqual(reviewPacket.selection, {
+    skeletonId: 'test.skeleton',
+    attachmentId: 'weapon.rifle.new',
+    socketId: 'socket.hand_r.primary',
+    itemPrefabId: 'test.item',
+  });
+  assert.deepEqual(reviewPacket.candidateTransform, {
+    space: 'socket', translation: [0.1, 0, 0], rotation: [0, 0, 0, 1],
+    label: 'preview-candidate',
+  });
+  assert.deepEqual(reviewPacket.baselineTransform, {
+    space: 'socket', translation: [0, 0, 0], rotation: [0, 0, 0, 1],
+  });
+  assert.equal(reviewPacket.samples.length, 3, 'recapture must expand every authored sample');
+  assert.equal(reviewPacket.cameras.length, 12);
+  assert.equal(captureCalls.length, capturesBeforeReview + 3);
+  assert.deepEqual(reviewPacket.sourceRevisions.clip.map((entry) => entry.id), ['test']);
+  assert.equal(reviewPacket.sourceRevisions.attachment.revision, textContentRevision(candidateContent));
+  assert.equal(reviewPacket.sourceRevisions.attachment.baseRevision, textContentRevision(originalContent));
+  assert.deepEqual(reviewPacket.leaseIds, [
+    reviewLeases.source.id, reviewLeases.capture.id, reviewLeases.review.id,
+  ]);
+  for (const sample of reviewPacket.samples) {
+    assert.deepEqual(sample.bounds.contactRegion, {
+      status: 'unavailable', reason: 'contact_frames_unavailable',
+    });
+    assert.deepEqual(Object.keys(sample.captures.clean), [
+      'close_front', 'close_side', 'close_top', 'close_three_quarter',
+    ]);
+  }
+  const reviewDirectory = path.join(
+    projectRoot, 'build', 'spatial-reviews', firstReservation.reviewId,
+  );
+  const manifest = JSON.parse(await fs.readFile(path.join(reviewDirectory, 'manifest.json'), 'utf8'));
+  assert.deepEqual(manifest, reviewPacket);
+  const readReview = await request(
+    service.baseUrl,
+    `/api/spatial/reviews/${firstReservation.reviewId}?sessionId=${encodeURIComponent(firstSession.id)}`,
+  );
+  assert.equal(readReview.status, 200);
+  assert.deepEqual(readReview.payload.review, reviewPacket);
+  const firstCapturePath = reviewPacket.samples[0].captures.clean.close_front;
+  const captureResponse = await fetch(new URL(
+    `/api/spatial/reviews/${firstReservation.reviewId}/captures/${encodeURIComponent(firstCapturePath)}?sessionId=${encodeURIComponent(firstSession.id)}`,
+    service.baseUrl,
+  ));
+  assert.equal(captureResponse.status, 200);
+  assert.equal(captureResponse.headers.get('content-type'), 'image/png');
+  assert.match(captureResponse.headers.get('cache-control') || '', /immutable/);
+  const servedCapture = Buffer.from(await captureResponse.arrayBuffer());
+  assert.deepEqual(
+    servedCapture.subarray(0, 8),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  );
+  assert.equal(servedCapture.readUInt32BE(16), 192);
+  assert.equal(servedCapture.readUInt32BE(20), 160);
+  const unreferencedCapture = await request(
+    service.baseUrl,
+    `/api/spatial/reviews/${firstReservation.reviewId}/captures/${encodeURIComponent('clean/idle/000/not-present.png')}?sessionId=${encodeURIComponent(firstSession.id)}`,
+  );
+  assert.equal(unreferencedCapture.status, 404);
+  assert.equal(unreferencedCapture.payload.code, 'spatial_capture_not_found');
+  for (const lease of Object.values(reviewLeases)) {
+    assert.equal(service.coordinationStore.getLease(lease.id).status, 'released');
+  }
+
+  await fs.writeFile(
+    path.join(projectRoot, 'content', 'scenes', 'capture_camera.scene.toml'),
+    'name = "capture_camera"\n',
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(projectRoot, 'content', 'prefabs', 'debug_camera.prefab.toml'),
+    'name = "debug_camera"\n',
+    'utf8',
+  );
+  validationPerspectiveOverride = 'both';
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    evaluation.attachment.perspective = 'both';
+    return evaluation;
+  };
+  const playerReservation = await reserveReview();
+  let playerLeases = await requestReviewLeases(playerReservation.resourceKey);
+  const missingPlayerCamera = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/recapture`,
+    { method: 'POST', credential, body: recaptureBody(playerReservation, playerLeases) },
+  );
+  assert.equal(missingPlayerCamera.status, 422);
+  assert.equal(missingPlayerCamera.payload.code, 'spatial_player_camera_required');
+  for (const lease of Object.values(playerLeases)) {
+    await request(service.baseUrl, `/api/coordination/leases/${lease.id}/release`, {
+      method: 'POST', credential, body: { agentId: agent.id },
+    });
+  }
+  playerLeases = await requestReviewLeases(
+    playerReservation.resourceKey,
+    'read',
+    ['scene/world/capture_camera', 'scene/prefab/debug_camera'],
+  );
+  const playerRecaptured = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/recapture`,
+    {
+      method: 'POST', credential,
+      body: {
+        ...recaptureBody(playerReservation, playerLeases),
+        cameras: [
+          'close_front', 'close_side', 'close_top', 'close_three_quarter', 'player_camera',
+        ],
+        playerCameraScene: 'capture_camera',
+        playerCameraPrefab: 'debug_camera',
+      },
+    },
+  );
+  assert.equal(playerRecaptured.status, 201, JSON.stringify(playerRecaptured.payload));
+  assert.equal(playerRecaptured.payload.review.samples.length, 3);
+  assert.equal(playerRecaptured.payload.review.cameras.length, 15);
+  assert.equal(
+    playerRecaptured.payload.review.sourceRevisions.playerCameraScene.path,
+    'content/scenes/capture_camera.scene.toml',
+  );
+  assert.equal(
+    playerRecaptured.payload.review.sourceRevisions.playerCameraPrefab.path,
+    'content/prefabs/debug_camera.prefab.toml',
+  );
+  validationPerspectiveOverride = '';
+  sampleEvaluateImpl = normalSampleEvaluate;
+
+  const driftReservation = await reserveReview();
+  const driftLeases = await requestReviewLeases(driftReservation.resourceKey);
+  let injectedCaptureDrift = false;
+  captureHook = async () => {
+    if (injectedCaptureDrift) return;
+    injectedCaptureDrift = true;
+    await fs.writeFile(clipPath, 'name = "recapture drift"\n', 'utf8');
+  };
+  const driftedRecapture = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/recapture`,
+    { method: 'POST', credential, body: recaptureBody(driftReservation, driftLeases) },
+  );
+  assert.equal(driftedRecapture.status, 409);
+  assert.equal(driftedRecapture.payload.code, 'spatial_evaluation_inputs_changed');
+  assert.equal(
+    await fs.stat(path.join(projectRoot, 'build', 'spatial-reviews', firstReservation.reviewId))
+      .then(() => true),
+    true,
+  );
+  await assert.rejects(
+    fs.stat(path.join(projectRoot, 'build', 'spatial-reviews', driftReservation.reviewId)),
+    { code: 'ENOENT' },
+  );
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(path.join(reviewDirectory, 'manifest.json'), 'utf8')),
+    reviewPacket,
+    'failed recapture must not mutate an older immutable packet',
+  );
+  for (const lease of Object.values(driftLeases)) {
+    assert.equal(service.coordinationStore.getLease(lease.id).status, 'released');
+  }
+  captureHook = async () => {};
+  await fs.writeFile(clipPath, originalClipContent, 'utf8');
 
   const validationBeforeDrift = completedValidation.payload.operation.validation;
   const validatedEventsBeforeDrift = completedValidation.payload.operation.events
@@ -2694,3 +3062,4 @@ console.log('- Verified native-backed no-write preview, durable context, revisio
 console.log('- Verified exact profile leases, rename coverage, contention, renewal, apply, and undo gates');
 console.log('- Verified read-only rest/sample evaluation, full-input revisions, exact staged truth, and journal exclusion');
 console.log('- Verified strict operation samples, controlled summaries, manifest/CAS drift, and mutation revalidation');
+console.log('- Verified exact recapture leases, authored-camera gates, immutable packet publication, and capture reads');

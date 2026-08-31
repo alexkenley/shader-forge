@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <locale>
 #include <optional>
@@ -139,6 +140,23 @@ struct ItemVisualBoxEvidence {
   double height = 0.0;
   double depth = 0.0;
   std::array<SpatialVector3Snapshot, 8> worldCorners{};
+};
+
+struct CaptureSourcePaths {
+  std::string skeletonId;
+  std::string skeletonPath;
+  std::string attachmentId;
+  std::string attachmentPath;
+  std::string clipId;
+  std::string clipPath;
+  std::string itemPrefabId;
+  std::string itemPrefabPath;
+  std::string itemProcgeoId;
+  std::string itemProcgeoPath;
+  std::string playerCameraSceneId;
+  std::string playerCameraScenePath;
+  std::string playerCameraPrefabId;
+  std::string playerCameraPrefabPath;
 };
 
 struct ItemCollisionBoxEvidence {
@@ -272,6 +290,91 @@ bool resolveAuthoredVisualBox(
   evidence->width = width;
   evidence->height = height;
   evidence->depth = depth;
+  return true;
+}
+
+bool resolveAuthoredPlayerCamera(
+  const DataFoundation& foundation,
+  std::string_view sceneId,
+  int widthPx,
+  int heightPx,
+  SpatialCaptureCameraSnapshot* camera,
+  std::string* errorMessage) {
+  const auto scene = foundation.composeScene(sceneId);
+  if (!scene || !scene->valid) {
+    if (errorMessage) *errorMessage = "Authored player-camera scene is missing or invalid.";
+    return false;
+  }
+  const auto playerCamera = std::find_if(
+    scene->entities.begin(),
+    scene->entities.end(),
+    [](const auto& entity) { return entity.spawnTag == "player_camera"; });
+  if (playerCamera == scene->entities.end()
+      || std::find_if(
+        std::next(playerCamera),
+        scene->entities.end(),
+        [](const auto& entity) { return entity.spawnTag == "player_camera"; }) != scene->entities.end()) {
+    if (errorMessage) *errorMessage = "Authored scene must contain exactly one player_camera.";
+    return false;
+  }
+  if (!playerCamera->parent.empty() || !playerCamera->cameraComponent
+      || playerCamera->cameraComponent->projection != "perspective") {
+    if (errorMessage) *errorMessage = "Authored player_camera must be a root perspective camera.";
+    return false;
+  }
+
+  const double yaw = static_cast<double>(playerCamera->worldRotation[1]) * (3.14159265358979323846 / 180.0);
+  const double pitch = static_cast<double>(playerCamera->worldRotation[0]) * (3.14159265358979323846 / 180.0);
+  const double roll = static_cast<double>(playerCamera->worldRotation[2]) * (3.14159265358979323846 / 180.0);
+  const double cosYaw = std::cos(yaw);
+  const double sinYaw = std::sin(yaw);
+  const double cosPitch = std::cos(pitch);
+  const double sinPitch = std::sin(pitch);
+  const double cosRoll = std::cos(roll);
+  const double sinRoll = std::sin(roll);
+  const SpatialVector3Snapshot position{
+    playerCamera->worldPosition[0],
+    playerCamera->worldPosition[1],
+    playerCamera->worldPosition[2],
+  };
+  const SpatialVector3Snapshot forward{
+    sinYaw * cosPitch,
+    -sinPitch,
+    cosYaw * cosPitch,
+  };
+  const SpatialVector3Snapshot right{
+    cosYaw,
+    0.0,
+    -sinYaw,
+  };
+  const SpatialVector3Snapshot pitchUp{
+    sinYaw * sinPitch,
+    cosPitch,
+    cosYaw * sinPitch,
+  };
+  const SpatialVector3Snapshot up{
+    -right.x * sinRoll + pitchUp.x * cosRoll,
+    -right.y * sinRoll + pitchUp.y * cosRoll,
+    -right.z * sinRoll + pitchUp.z * cosRoll,
+  };
+  if (!finiteVector(position) || !finiteVector(forward) || !finiteVector(up)) {
+    if (errorMessage) *errorMessage = "Authored player_camera transform is non-finite.";
+    return false;
+  }
+
+  camera->id = "player_camera";
+  camera->position = position;
+  camera->target = {
+    position.x + forward.x,
+    position.y + forward.y,
+    position.z + forward.z,
+  };
+  camera->up = up;
+  camera->fovDegrees = playerCamera->cameraComponent->verticalFovDegrees;
+  camera->nearMeters = playerCamera->cameraComponent->nearMeters;
+  camera->farMeters = playerCamera->cameraComponent->farMeters;
+  camera->widthPx = widthPx;
+  camera->heightPx = heightPx;
   return true;
 }
 
@@ -1235,7 +1338,17 @@ void appendCaptureCamera(std::ostringstream& out, const SpatialCaptureCameraSnap
       << '}';
 }
 
-void appendCaptureResult(std::ostringstream& out, const SpatialCaptureResultSnapshot& capture) {
+void appendCaptureSource(
+  std::ostringstream& out,
+  std::string_view id,
+  std::string_view sourcePath) {
+  out << "{\"id\":" << jsonString(id) << ",\"path\":" << jsonString(sourcePath) << '}';
+}
+
+void appendCaptureResult(
+  std::ostringstream& out,
+  const SpatialCaptureResultSnapshot& capture,
+  const CaptureSourcePaths& sources) {
   out << "{\"schema\":\"shader_forge.spatial_capture_sample\",\"schemaVersion\":1"
       << ",\"attachment\":{\"id\":" << jsonString(capture.attachmentId) << '}'
       << ",\"phase\":" << jsonString(capture.phase)
@@ -1243,7 +1356,23 @@ void appendCaptureResult(std::ostringstream& out, const SpatialCaptureResultSnap
   appendNumber(out, capture.normalizedTime);
   out << ",\"renderGeometryKinds\":";
   appendStringArray(out, capture.renderGeometryKinds);
-  out << ",\"bounds\":{\"character\":";
+  out << ",\"sources\":{\"skeleton\":";
+  appendCaptureSource(out, sources.skeletonId, sources.skeletonPath);
+  out << ",\"attachment\":";
+  appendCaptureSource(out, sources.attachmentId, sources.attachmentPath);
+  out << ",\"clip\":";
+  appendCaptureSource(out, sources.clipId, sources.clipPath);
+  out << ",\"itemPrefab\":";
+  appendCaptureSource(out, sources.itemPrefabId, sources.itemPrefabPath);
+  out << ",\"itemProcgeo\":";
+  appendCaptureSource(out, sources.itemProcgeoId, sources.itemProcgeoPath);
+  if (!sources.playerCameraSceneId.empty()) {
+    out << ",\"playerCameraScene\":";
+    appendCaptureSource(out, sources.playerCameraSceneId, sources.playerCameraScenePath);
+    out << ",\"playerCameraPrefab\":";
+    appendCaptureSource(out, sources.playerCameraPrefabId, sources.playerCameraPrefabPath);
+  }
+  out << "},\"bounds\":{\"character\":";
   appendCaptureBounds(out, capture.characterBounds);
   out << ",\"item\":";
   appendCaptureBounds(out, capture.itemBounds);
@@ -1360,7 +1489,7 @@ int usageError(std::string_view message) {
             << "       shader_forge_spatial cook --animation-root <path> --output-root <path>\n"
             << "       shader_forge_spatial evaluate-rest --animation-root <path> --attachment <attachment-id> --content-root <path> --data-foundation <path>\n"
             << "       shader_forge_spatial evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path>\n"
-            << "       shader_forge_spatial capture-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path> --output-dir <path> --width <px> --height <px>\n";
+            << "       shader_forge_spatial capture-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path> --output-dir <path> --width <px> --height <px> [--player-camera-scene <scene-id>]\n";
   return 2;
 }
 
@@ -1396,6 +1525,7 @@ int main(int argc, char** argv) {
   std::filesystem::path requestedOutputDir;
   std::string requestedAttachmentId;
   std::string requestedPhase;
+  std::string requestedPlayerCameraScene;
   double requestedNormalizedTime = 0.0;
   int requestedWidth = 0;
   int requestedHeight = 0;
@@ -1510,6 +1640,7 @@ int main(int argc, char** argv) {
     bool hasOutputDir = false;
     bool hasWidth = false;
     bool hasHeight = false;
+    bool hasPlayerCameraScene = false;
     std::string requestedNormalizedTimeRaw;
     std::string requestedWidthRaw;
     std::string requestedHeightRaw;
@@ -1544,6 +1675,9 @@ int main(int argc, char** argv) {
       } else if (flag == "--height" && !hasHeight) {
         requestedHeightRaw = value;
         hasHeight = true;
+      } else if (flag == "--player-camera-scene" && !hasPlayerCameraScene) {
+        requestedPlayerCameraScene = value;
+        hasPlayerCameraScene = true;
       } else {
         return usageError("unknown or duplicate capture-sample flag");
       }
@@ -1586,8 +1720,8 @@ int main(int argc, char** argv) {
   const auto skeletons = animation.snapshotSkeletons();
   const auto profiles = animation.snapshotAttachmentProfiles();
   DataFoundation dataFoundation;
+  std::filesystem::path contentRoot;
   if (command == "evaluate-rest" || command == "evaluate-sample" || command == "capture-sample") {
-    std::filesystem::path contentRoot;
     std::filesystem::path dataFoundationPath;
     if (!resolvePath(requestedContentRoot, "content root", &contentRoot)) return 1;
     if (!resolvePath(requestedDataFoundation, "data foundation", &dataFoundationPath)) return 1;
@@ -1712,9 +1846,96 @@ int main(int argc, char** argv) {
     itemBox.height = geometry.height;
     itemBox.depth = geometry.depth;
     itemBox.world = evaluation->evaluation.itemWorld;
+    CaptureSourcePaths captureSources;
+    const auto profile = animation.snapshotAttachmentProfile(*attachmentId);
+    const auto skeleton = profile ? animation.snapshotSkeleton(profile->skeletonHandle) : std::nullopt;
+    const auto clips = animation.snapshotClips();
+    const auto clip = std::find_if(
+      clips.begin(),
+      clips.end(),
+      [&](const auto& candidate) { return candidate.name == evaluation->clipName; });
+    const auto itemPrefab = profile
+      ? dataFoundation.prefabSource(profile->itemPrefab)
+      : std::nullopt;
+    const auto itemProcgeo = dataFoundation.procgeoSource(geometry.procgeoId);
+    if (!profile || !skeleton || clip == clips.end() || !itemPrefab || !itemProcgeo) {
+      std::cerr << "shader_forge_spatial: capture-sample failed for "
+                << jsonString(requestedAttachmentId) << ": capture source identity is unavailable\n";
+      return 1;
+    }
+    captureSources.skeletonId = skeleton->id;
+    captureSources.skeletonPath = relativeSourcePath(skeleton->sourcePath, animationRoot);
+    captureSources.attachmentId = profile->id;
+    captureSources.attachmentPath = relativeSourcePath(profile->sourcePath, animationRoot);
+    captureSources.clipId = clip->name;
+    captureSources.clipPath = relativeSourcePath(clip->sourcePath, animationRoot);
+    captureSources.itemPrefabId = profile->itemPrefab;
+    captureSources.itemPrefabPath = relativeSourcePath(itemPrefab->sourcePath, contentRoot);
+    captureSources.itemProcgeoId = itemPrefab->renderComponent.procgeo;
+    captureSources.itemProcgeoPath = relativeSourcePath(itemProcgeo->sourcePath, contentRoot);
+    if (captureSources.skeletonPath.empty()
+        || captureSources.attachmentPath.empty()
+        || captureSources.clipPath.empty()
+        || captureSources.itemPrefabPath.empty()
+        || captureSources.itemProcgeoPath.empty()) {
+      std::cerr << "shader_forge_spatial: capture-sample failed for "
+                << jsonString(requestedAttachmentId) << ": capture source is outside its authored root\n";
+      return 1;
+    }
+    std::optional<SpatialCaptureCameraSnapshot> playerCamera;
+    if (!requestedPlayerCameraScene.empty()) {
+      SpatialCaptureCameraSnapshot resolvedCamera;
+      if (!resolveAuthoredPlayerCamera(
+            dataFoundation,
+            requestedPlayerCameraScene,
+            requestedWidth,
+            requestedHeight,
+            &resolvedCamera,
+            &error)) {
+        std::cerr << "shader_forge_spatial: capture-sample failed for "
+                  << jsonString(requestedAttachmentId) << ": " << error << '\n';
+        return 1;
+      }
+      playerCamera = resolvedCamera;
+      const auto scene = dataFoundation.composeScene(requestedPlayerCameraScene);
+      if (!scene) {
+        std::cerr << "shader_forge_spatial: capture-sample failed for "
+                  << jsonString(requestedAttachmentId) << ": player-camera source identity is unavailable\n";
+        return 1;
+      }
+      const auto cameraEntity = std::find_if(
+        scene->entities.begin(),
+        scene->entities.end(),
+        [](const auto& entity) { return entity.spawnTag == "player_camera"; });
+      const auto cameraPrefab = cameraEntity != scene->entities.end()
+        ? dataFoundation.prefabSource(cameraEntity->prefabName)
+        : std::nullopt;
+      if (cameraEntity == scene->entities.end() || !cameraPrefab) {
+        std::cerr << "shader_forge_spatial: capture-sample failed for "
+                  << jsonString(requestedAttachmentId) << ": player-camera source identity is unavailable\n";
+        return 1;
+      }
+      captureSources.playerCameraSceneId = scene->name;
+      captureSources.playerCameraScenePath = relativeSourcePath(scene->sourcePath, contentRoot);
+      captureSources.playerCameraPrefabId = cameraPrefab->name;
+      captureSources.playerCameraPrefabPath = relativeSourcePath(cameraPrefab->sourcePath, contentRoot);
+      if (captureSources.playerCameraScenePath.empty()
+          || captureSources.playerCameraPrefabPath.empty()) {
+        std::cerr << "shader_forge_spatial: capture-sample failed for "
+                  << jsonString(requestedAttachmentId) << ": player-camera source is outside the authored content root\n";
+        return 1;
+      }
+    }
     SpatialCaptureResultSnapshot capture;
     if (!writeSpatialCaptureSample(
-          *evaluation, itemBox, outputDir, requestedWidth, requestedHeight, &capture, &error)) {
+          *evaluation,
+          itemBox,
+          playerCamera,
+          outputDir,
+          requestedWidth,
+          requestedHeight,
+          &capture,
+          &error)) {
       std::cerr << "shader_forge_spatial: capture-sample failed for "
                 << jsonString(requestedAttachmentId) << ": " << error << '\n';
       return 1;
@@ -1722,7 +1943,7 @@ int main(int argc, char** argv) {
     std::ostringstream out;
     out.imbue(std::locale::classic());
     out << std::setprecision(std::numeric_limits<double>::max_digits10);
-    appendCaptureResult(out, capture);
+    appendCaptureResult(out, capture, captureSources);
     std::cout << out.str();
     return 0;
   }
@@ -1781,8 +2002,16 @@ int main(int argc, char** argv) {
         << ",\"source\":" << jsonString(source)
         << ",\"skeleton\":" << jsonString(profile.skeletonId)
         << ",\"itemPrefab\":" << jsonString(profile.itemPrefab)
+        << ",\"dominantHand\":" << jsonString(profile.dominantHand)
         << ",\"mode\":" << jsonString(profile.mode)
         << ",\"perspective\":" << jsonString(profile.perspective)
+        << ",\"primaryGrip\":{\"socket\":" << jsonString(profile.primaryGrip.socket)
+        << ",\"space\":" << jsonString(profile.primaryGrip.space)
+        << ",\"translation\":";
+    appendVector(out, profile.primaryGrip.translation);
+    out << ",\"rotation\":";
+    appendQuaternion(out, profile.primaryGrip.rotation);
+    out << '}'
         << ",\"motionEnvelopePhaseCount\":" << profile.motionEnvelopes.size()
         << ",\"motionEnvelopeSampleCount\":" << sampleCount
         << ",\"motionEnvelopes\":[";

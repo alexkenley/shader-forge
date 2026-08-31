@@ -227,6 +227,21 @@ export class CoordinationStore {
     return view;
   }
 
+  assertConnectedAgent({ sessionId, agentId, credential } = {}) {
+    this.sweepExpired();
+    const agent = this.#requireConnectedAgent(agentId, credential);
+    const resolvedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!resolvedSessionId) {
+      throw createStoreError(400, 'sessionId is required.', { code: 'lease_session_required' });
+    }
+    if (agent.sessionId !== resolvedSessionId) {
+      throw createStoreError(403, 'Agent is registered to a different workspace session.', {
+        code: 'lease_agent_session_mismatch',
+      });
+    }
+    return structuredClone(agentView(agent));
+  }
+
   requestLease({ agentId, credential, resources, mode } = {}) {
     this.sweepExpired();
     const agent = this.#requireConnectedAgent(agentId, credential);
@@ -284,7 +299,18 @@ export class CoordinationStore {
     return this.#publicLease(record);
   }
 
-  assertGrantedWriteLease({ sessionId, agentId, credential, leaseId, resources } = {}) {
+  assertGrantedWriteLease(request = {}) {
+    return this.#assertGrantedLease(request, 'write');
+  }
+
+  assertGrantedReadLease(request = {}) {
+    return this.#assertGrantedLease(request, 'read');
+  }
+
+  #assertGrantedLease(
+    { sessionId, agentId, credential, leaseId, resources } = {},
+    requiredMode,
+  ) {
     this.sweepExpired();
     const agent = this.#requireConnectedAgent(agentId, credential);
     const resolvedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -323,9 +349,9 @@ export class CoordinationStore {
         lease: this.#publicLease(lease),
       });
     }
-    if (lease.mode !== 'write') {
-      throw createStoreError(409, 'A granted write lease is required.', {
-        code: 'lease_write_required',
+    if (lease.mode !== requiredMode) {
+      throw createStoreError(409, `A granted ${requiredMode} lease is required.`, {
+        code: `lease_${requiredMode}_required`,
         lease: this.#publicLease(lease),
       });
     }

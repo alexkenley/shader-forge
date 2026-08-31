@@ -500,6 +500,23 @@ export class SessionStore {
   async readFileBounded(
     sessionId,
     relativePath,
+    options = {},
+  ) {
+    const binary = await this.readBinaryFileBounded(sessionId, relativePath, options);
+    const content = decodeUtf8Strict(binary.bytes, binary.path);
+    return {
+      session: binary.session,
+      path: binary.path,
+      size: binary.size,
+      modifiedAt: binary.modifiedAt,
+      revision: textContentRevision(content),
+      content,
+    };
+  }
+
+  async readBinaryFileBounded(
+    sessionId,
+    relativePath,
     { rejectSymbolicPath = false, maxBytes = 1024 * 1024 } = {},
   ) {
     if (!relativePath) throw new Error('File path is required.');
@@ -534,17 +551,12 @@ export class SessionStore {
         }
         chunks.push(chunk.subarray(0, bytesRead));
       }
-      const content = decodeUtf8Strict(
-        Buffer.concat(chunks, size),
-        normalizeDisplayPath(session.rootPath, displayPath),
-      );
       return {
         session,
         path: normalizeDisplayPath(session.rootPath, displayPath),
         size,
         modifiedAt: stat.mtime.toISOString(),
-        revision: textContentRevision(content),
-        content,
+        bytes: Buffer.concat(chunks, size),
       };
     } finally {
       await handle.close();

@@ -155,6 +155,16 @@ function writeJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload, null, 2));
 }
 
+function writeBinary(response, statusCode, bytes, contentType) {
+  response.writeHead(statusCode, {
+    ...corsHeaders(response.req),
+    'Content-Type': contentType,
+    'Content-Length': bytes.length,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  });
+  response.end(bytes);
+}
+
 function assertAllowedOrigin(request) {
   if (isRequestOriginAllowed(request)) {
     return;
@@ -1310,6 +1320,60 @@ function createRouter({
         return;
       }
 
+      const reviewReservationMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/operations\/([^/]+)\/review-reservations$/)
+        : null;
+      if (reviewReservationMatch) {
+        const operationId = decodeURIComponent(reviewReservationMatch[1]);
+        const body = await readJsonBody(request);
+        const reservation = await spatialAttachmentService.reserveReview(operationId, {
+          sessionId: requireTrimmedString(body?.sessionId, 'sessionId'),
+          agentId: requireTrimmedString(body?.agentId, 'agentId'),
+          credential: readAgentCredential(request),
+        });
+        writeJson(response, 201, { reservation });
+        return;
+      }
+
+      const operationRecaptureMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/operations\/([^/]+)\/recapture$/)
+        : null;
+      if (operationRecaptureMatch) {
+        const operationId = decodeURIComponent(operationRecaptureMatch[1]);
+        const body = await readJsonBody(request);
+        const review = await spatialAttachmentService.recaptureOperation(operationId, {
+          ...body,
+          credential: readAgentCredential(request),
+        });
+        writeJson(response, 201, { review });
+        return;
+      }
+
+      const spatialReviewCaptureMatch = request.method === 'GET'
+        ? pathname.match(/^\/api\/spatial\/reviews\/([^/]+)\/captures\/([^/]+)$/)
+        : null;
+      if (spatialReviewCaptureMatch) {
+        const capture = await spatialAttachmentService.readReviewCapture({
+          sessionId: searchParams.get('sessionId') || '',
+          reviewId: decodeURIComponent(spatialReviewCaptureMatch[1]),
+          name: decodeURIComponent(spatialReviewCaptureMatch[2]),
+        });
+        writeBinary(response, 200, capture.bytes, capture.contentType);
+        return;
+      }
+
+      const spatialReviewMatch = request.method === 'GET'
+        ? pathname.match(/^\/api\/spatial\/reviews\/([^/]+)$/)
+        : null;
+      if (spatialReviewMatch) {
+        const review = await spatialAttachmentService.readReview({
+          sessionId: searchParams.get('sessionId') || '',
+          reviewId: decodeURIComponent(spatialReviewMatch[1]),
+        });
+        writeJson(response, 200, { review });
+        return;
+      }
+
       const operationActionMatch = request.method === 'POST'
         ? pathname.match(/^\/api\/operations\/([^/]+)\/(approve|reject|apply|undo)$/)
         : null;
@@ -1659,6 +1723,7 @@ export async function startEngineSessiond({
   validateAnimationRoot,
   evaluateRestAttachment,
   evaluateSampledAttachment,
+  captureSampleAttachment,
   now,
   heartbeatTimeoutMs,
 } = {}) {
@@ -1708,6 +1773,7 @@ export async function startEngineSessiond({
     validateAnimationRoot,
     evaluateRestAttachment,
     evaluateSampledAttachment,
+    captureSampleAttachment,
   });
   const resolvedSceneAssetService = sceneAssetService || new SceneAssetService({
     sessionStore,

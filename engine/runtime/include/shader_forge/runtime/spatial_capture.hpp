@@ -3,6 +3,7 @@
 #include "shader_forge/runtime/animation_system.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,7 @@ struct SpatialCaptureResultSnapshot {
 bool writeSpatialCaptureSample(
   const SpatialSampledAttachmentEvaluationSnapshot& sampled,
   const SpatialCaptureItemBox& itemBox,
+  const std::optional<SpatialCaptureCameraSnapshot>& playerCamera,
   const std::filesystem::path& outputDir,
   int widthPx,
   int heightPx,

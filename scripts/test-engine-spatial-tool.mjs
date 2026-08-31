@@ -40,6 +40,7 @@ assert.match(toolSourceText, /DataFoundation/);
 assert.match(toolSourceText, /authored_visual_box/);
 assert.match(toolSourceText, /--content-root/);
 assert.match(toolSourceText, /--data-foundation/);
+assert.match(toolSourceText, /--player-camera-scene/);
 assert.match(toolSourceText, /prefabSource/);
 assert.match(toolSourceText, /procgeoSource/);
 
@@ -161,6 +162,28 @@ fs.cpSync(
   path.join(spatialFixtures, 'content', 'procgeo'),
   path.join(contentRoot, 'procgeo'),
   { recursive: true },
+);
+fs.writeFileSync(path.join(contentRoot, 'scenes', 'capture_camera.scene.toml'), [
+  'schema = "shader_forge.scene"',
+  'schema_version = 1',
+  'name = "capture_camera"',
+  'owner_system = "scene_system"',
+  'runtime_format = "flatbuffer"',
+  'title = "Capture Camera"',
+  'primary_prefab = "debug_camera"',
+  '',
+  '[entity.camera]',
+  'display_name = "Camera"',
+  'source_prefab = "debug_camera"',
+  'parent = ""',
+  'position = "0, 1.6, -4"',
+  'rotation = "0, 0, 0"',
+  'scale = "1, 1, 1"',
+  '',
+].join('\n'));
+fs.copyFileSync(
+  path.join(repoRoot, 'content', 'prefabs', 'debug_camera.prefab.toml'),
+  path.join(contentRoot, 'prefabs', 'debug_camera.prefab.toml'),
 );
 fs.writeFileSync(path.join(contentRoot, 'prefabs', 'README.txt'), 'this is not authored TOML');
 fs.cpSync(fixtureRoot, invalidRoot, { recursive: true });
@@ -346,8 +369,10 @@ try {
       'source',
       'skeleton',
       'itemPrefab',
+      'dominantHand',
       'mode',
       'perspective',
+      'primaryGrip',
       'motionEnvelopePhaseCount',
       'motionEnvelopeSampleCount',
       'motionEnvelopes',
@@ -361,8 +386,15 @@ try {
     assert.equal(report.attachmentProfiles[1].schemaVersion, 2);
     assert.equal(report.attachmentProfiles[1].skeleton, 'humanoid.standard.v2');
     assert.equal(report.attachmentProfiles[1].itemPrefab, 'weapon.rifle.mk1');
+    assert.equal(report.attachmentProfiles[1].dominantHand, 'right');
     assert.equal(report.attachmentProfiles[1].mode, 'two_hand');
     assert.equal(report.attachmentProfiles[1].perspective, 'both');
+    assert.deepEqual(report.attachmentProfiles[1].primaryGrip, {
+      socket: 'socket.hand_r.primary',
+      space: 'socket',
+      translation: [0, -0.015, 0.02],
+      rotation: [0, 0, 0, 1],
+    });
     assert.equal(report.attachmentProfiles[1].motionEnvelopePhaseCount, 2);
     assert.equal(report.attachmentProfiles[1].motionEnvelopeSampleCount, 6);
     assert.deepEqual(report.attachmentProfiles[1].motionEnvelopes, [
@@ -964,6 +996,13 @@ try {
     assert.equal(capture.phase, 'idle');
     assert.equal(capture.normalizedTime, 0.5);
     assert.deepEqual(capture.renderGeometryKinds, ['authored_procgeo_box', 'posed_bone_prisms']);
+    assert.deepEqual(capture.sources, {
+      skeleton: { id: 'humanoid.standard.v2', path: 'skeletons/spatial_humanoid.skeleton.toml' },
+      attachment: { id: 'weapon.rifle.mk1.humanoid', path: 'attachments/rifle_mk1_humanoid.attachment.toml' },
+      clip: { id: 'rifle_ready', path: 'clips/rifle_ready.anim.toml' },
+      itemPrefab: { id: 'weapon.rifle.mk1', path: 'prefabs/weapon_rifle_mk1.prefab.toml' },
+      itemProcgeo: { id: 'weapon_rifle_mk1', path: 'procgeo/weapon_rifle_mk1.procgeo.toml' },
+    });
     assert.deepEqual(Object.keys(capture.bounds), ['character', 'item', 'combined']);
     for (const [name, bounds] of Object.entries(capture.bounds)) {
       assert.deepEqual(Object.keys(bounds), ['min', 'max', 'center'], `${name} bounds keys`);
@@ -1014,6 +1053,42 @@ try {
     }
     assert.equal(new Set(viewBytes).size, 4, 'the four camera views must produce distinct frames');
 
+    const playerCaptureDir = path.join(tempRoot, 'capture player camera');
+    const playerCaptureRepeatDir = path.join(tempRoot, 'capture player camera repeat');
+    const playerCaptureArgs = (outputDir) => captureArgs(outputDir).concat(
+      '--player-camera-scene', 'capture_camera',
+    );
+    const playerCaptureRun = invoke(playerCaptureArgs(playerCaptureDir));
+    const playerCaptureRepeatRun = invoke(playerCaptureArgs(playerCaptureRepeatDir));
+    assert.equal(playerCaptureRun.status, 0, playerCaptureRun.stderr || playerCaptureRun.stdout);
+    assert.equal(
+      playerCaptureRepeatRun.stdout,
+      playerCaptureRun.stdout,
+      'authored player-camera capture metadata must be byte-stable',
+    );
+    const playerCapture = JSON.parse(playerCaptureRun.stdout);
+    assert.deepEqual(
+      playerCapture.cameras.map((camera) => camera.id),
+      [...captureIds, 'player_camera'],
+    );
+    assert.deepEqual(playerCapture.sources.playerCameraScene, {
+      id: 'capture_camera', path: 'scenes/capture_camera.scene.toml',
+    });
+    assert.deepEqual(playerCapture.sources.playerCameraPrefab, {
+      id: 'debug_camera', path: 'prefabs/debug_camera.prefab.toml',
+    });
+    const authoredCamera = playerCapture.cameras.at(-1);
+    assert.deepEqual(authoredCamera.position, [0, 1.600000023841858, -4]);
+    assert.deepEqual(authoredCamera.target, [0, 1.600000023841858, -3]);
+    assert.deepEqual(authoredCamera.up, [0, 1, 0]);
+    assert.equal(authoredCamera.fovDegrees, 70);
+    assert.ok(Math.abs(authoredCamera.nearMeters - 0.15) <= 1e-6);
+    assert.equal(authoredCamera.farMeters, 1000);
+    const playerPng = readCapturePng(path.join(playerCaptureDir, 'player_camera.png'));
+    const playerRepeatPng = readCapturePng(path.join(playerCaptureRepeatDir, 'player_camera.png'));
+    assertRenderedCapture(playerPng, 'player_camera');
+    assert.deepEqual(playerRepeatPng.bytes, playerPng.bytes);
+
     const existingCaptureBytes = fs.readFileSync(path.join(firstCaptureDir, 'close_front.png'));
     const existingCaptureRun = invoke(captureArgs(firstCaptureDir));
     assert.notEqual(existingCaptureRun.status, 0, 'capture must not overwrite an existing output directory');
@@ -1030,6 +1105,7 @@ try {
       [captureArgs(path.join(tempRoot, 'capture bad flag')).concat('--widht', '192'), /unknown or duplicate capture-sample flag/, path.join(tempRoot, 'capture bad flag')],
       [captureArgs(path.join(tempRoot, 'capture duplicate')).concat('--width', '192'), /unknown or duplicate capture-sample flag/, path.join(tempRoot, 'capture duplicate')],
       [captureArgs(path.join(tempRoot, 'capture low resolution')).map((value) => value === '192' ? '63' : value), /width must be an integer/, path.join(tempRoot, 'capture low resolution')],
+      [captureArgs(path.join(tempRoot, 'capture missing player camera')).concat('--player-camera-scene', 'missing'), /player-camera scene is missing or invalid/, path.join(tempRoot, 'capture missing player camera')],
       [withContent([
         'capture-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
         '--phase', 'unknown', '--normalized-time', '0.5', '--output-dir', path.join(tempRoot, 'capture unknown phase'),
@@ -1554,7 +1630,7 @@ console.log('- Verified byte-stable complete cooking and invalid-input output pr
 console.log('- Verified rest-pose geometry, fixture invariants, and parent-rotated composition');
 console.log('- Verified authored visual-box evidence from DataFoundation procgeo in rest and sample');
 console.log('- Verified v1 pre-IK compatibility and v2 sampled two-bone IK truth');
-console.log('- Verified deterministic depth-tested native capture PNGs and strict output failure behavior');
+console.log('- Verified deterministic close/player-camera PNGs, source identity, and strict output failure behavior');
 console.log('- Verified CLI strict flags, help, and build-first behavior');
 assert.equal(nativeChecked, true, 'native spatial execution is required');
 console.log('- Compiled and ran shader_forge_spatial against isolated fixtures');

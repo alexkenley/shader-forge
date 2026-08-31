@@ -3042,6 +3042,7 @@ try {
   const candidate = await validationOps.getSpatialValidationCandidate(spatialPreview.id);
   assert.deepEqual(Object.keys(candidate).sort(), [
     'baseRevision',
+    'beforeContent',
     'context',
     'id',
     'path',
@@ -3050,10 +3051,13 @@ try {
     'sessionId',
     'state',
     'updatedAt',
+    'validation',
   ]);
   assert.equal(candidate.id, spatialPreview.id);
   assert.equal(candidate.sessionId, validationSession.id);
   assert.equal(candidate.path, validationAttachmentPath);
+  assert.equal(candidate.beforeContent, validationBefore);
+  assert.equal(candidate.validation, null);
   assert.equal(candidate.state, 'previewed');
   assert.equal(candidate.baseRevision, spatialPreview.baseRevision);
   assert.equal(candidate.proposedRevision, spatialPreview.proposedRevision);
