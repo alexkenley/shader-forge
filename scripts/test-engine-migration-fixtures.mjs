@@ -167,6 +167,17 @@ assert.ok(
   fs.readdirSync(path.join(unityConvertRoot, 'script-porting')).some((name) => name.endsWith('.port.toml')),
   'Expected Unity script-porting manifest.',
 );
+const unityScriptBindingPath = path.join(unityConvertRoot, 'script-porting', 'playercontroller_sandbox_2_9.port.toml');
+assert.ok(fs.existsSync(unityScriptBindingPath), 'Expected Unity MonoBehaviour scene-binding manifest.');
+const unityScriptBinding = fs.readFileSync(unityScriptBindingPath, 'utf8');
+assert.match(unityScriptBinding, /source_path = "fixtures\/migration\/unity-minimal\/Assets\/Scripts\/PlayerController\.cs"/);
+assert.match(unityScriptBinding, /source_kind = "scene_mono_behaviour_binding"/);
+assert.match(unityScriptBinding, /source_guid = "0123456789abcdef0123456789abcdef"/);
+assert.match(unityScriptBinding, /source_scene = "Assets\/Scenes\/Sandbox\.unity"/);
+assert.match(unityScriptBinding, /source_node = "SandboxRoot\/Player"/);
+assert.match(unityScriptBinding, /source_object_id = "2"/);
+assert.match(unityScriptBinding, /source_component_id = "9"/);
+assert.match(unityScriptBinding, /extraction_confidence = "high"/);
 const unityConvertReport = fs.readFileSync(path.join(unityConvertRoot, 'report.toml'), 'utf8');
 const unityConvertManifest = fs.readFileSync(path.join(unityConvertRoot, 'migration-manifest.toml'), 'utf8');
 assert.match(unityConvertReport, /current_slice = "project_skeleton_conversion"/);
@@ -494,4 +505,4 @@ fs.rmSync(tempRoot, { recursive: true, force: true });
 console.log('Engine migration fixtures harness passed.');
 console.log(`- Verified migration fixtures under ${path.join(repoRoot, 'fixtures', 'migration')}`);
 console.log(`- Verified CLI migration detect/report surfaces through ${cliPath}`);
-console.log('- Verified normalized migration manifest/report outputs plus first-pass migrated project skeletons, including Unity/Godot hierarchy and transforms plus both Unreal conversion lanes');
+console.log('- Verified normalized migration outputs, Unity/Godot hierarchy and transforms, Unity component/script provenance, and both Unreal conversion lanes');

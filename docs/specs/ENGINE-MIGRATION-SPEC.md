@@ -49,6 +49,7 @@ Implemented now:
 - Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, and preserve source paths/types as generated comments
 - migration manifests and reports include `mapped_scene_entities`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
+- Unity `MonoBehaviour` records now resolve script GUIDs through `.cs.meta` files and emit per-component binding manifests with source scene, node path, GameObject file ID, component file ID, and resolution confidence; C# behavior and serialized fields remain manual
 - the Unreal offline fallback now derives scene/prefab/script outputs from `.uproject`, `.umap`, `.uasset` package names, and C++ class symbols when no exporter-assisted data is available
 - deterministic Unity, Unreal, Unreal offline fallback, and Godot fixture projects under `fixtures/migration/`
 
@@ -154,6 +155,7 @@ Current implemented slice:
 - normalize source quaternions into deterministic Euler-degree output for reviewable generated records
 - map valid perspective `Camera` field-of-view and near/far clip values into `[component.camera]` while retaining the source component ID
 - map valid `BoxCollider` center and size into `[component.collision]` box geometry with identity collider-local rotation while retaining the source component ID
+- resolve `MonoBehaviour` script GUIDs through `.cs.meta` files and emit binding-specific script-porting provenance without claiming behavior conversion
 - leave prefab instances, other serialized component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, source assets, runtime physics consumption, and coordinate-system remediation explicit manual work
 
 ### Unreal Engine
@@ -280,7 +282,7 @@ The migration subsystem needs deterministic fixture-based coverage.
 
 Required harnesses:
 
-- Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, perspective Camera optics, BoxCollider geometry, and production-bakeable generated prefabs
+- Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, perspective Camera optics, BoxCollider geometry, MonoBehaviour-to-`.cs.meta` GUID binding provenance, and production-bakeable generated prefabs
 - Unreal offline fallback migration smoke, including `GameDefaultMap` binding for both C++ and package-only fixtures
 - Godot text-scene migration smoke, including exact `res://` binding, explicit-unresolved fail-closed behavior, and no-declaration approximation
 - migration manifest/report provenance and project-setting count validation

@@ -570,7 +570,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
     if (detection.engine === 'unity') {
-      warnings.push('Unity conversion maps text-YAML hierarchy, valid perspective Camera optics, and valid BoxCollider center/size geometry; prefab instances, other component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, assets, and coordinate-system remediation are still manual.');
+      warnings.push('Unity conversion maps text-YAML hierarchy, valid perspective Camera optics, valid BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
       warnings.push('Godot conversion maps text-scene node hierarchy plus explicit Vector3 position, rotation, and scale fields; transform matrices, resource instances, and component payload translation are still ahead.');
     }
@@ -705,6 +705,11 @@ function parseUnityFileId(lines, key) {
   return line?.match(/\{\s*fileID:\s*(-?\d+)\s*\}/)?.[1] || '';
 }
 
+function parseUnityGuid(lines, key) {
+  const line = lines.find((candidate) => candidate.startsWith(`${key}:`));
+  return line?.match(/\bguid:\s*([0-9a-f]{32})\b/i)?.[1].toLowerCase() || '';
+}
+
 function parseUnityNumber(lines, key, fallback = null) {
   const line = lines.find((candidate) => candidate.startsWith(`${key}:`));
   const value = Number(line?.slice(`${key}:`.length).trim());
@@ -791,6 +796,15 @@ function parseUnitySceneNodes(source) {
       } : null];
     })
     .filter(([gameObjectId, collision]) => gameObjectId && collision));
+  const scriptBindingsByGameObject = new Map();
+  for (const document of documents.filter((candidate) => candidate.classId === 114)) {
+    const gameObjectId = parseUnityFileId(document.lines, 'm_GameObject');
+    const scriptGuid = parseUnityGuid(document.lines, 'm_Script');
+    if (!gameObjectId || !scriptGuid) continue;
+    const bindings = scriptBindingsByGameObject.get(gameObjectId) || [];
+    bindings.push({ sourceComponentId: document.fileId, scriptGuid });
+    scriptBindingsByGameObject.set(gameObjectId, bindings);
+  }
   const nodes = documents
     .filter((document) => document.classId === 1)
     .map((document) => {
@@ -807,6 +821,7 @@ function parseUnitySceneNodes(source) {
         scale: (transform?.scale || [1, 1, 1]).map(formatSceneNumber).join(', '),
         camera: cameraByGameObject.get(document.fileId) || null,
         collision: boxColliderByGameObject.get(document.fileId) || null,
+        scriptBindings: scriptBindingsByGameObject.get(document.fileId) || [],
       };
     });
   const nodeByFileId = new Map(nodes.map((node) => [node.fileId, node]));
@@ -1172,6 +1187,11 @@ function buildScriptPortManifestDocument(manifest) {
     source_path: manifest.sourcePath,
     source_symbol: manifest.sourceSymbol,
     source_kind: manifest.sourceKind || 'source_symbol',
+    ...(manifest.sourceGuid ? { source_guid: manifest.sourceGuid } : {}),
+    ...(manifest.sourceScene ? { source_scene: manifest.sourceScene } : {}),
+    ...(manifest.sourceNodePath ? { source_node: manifest.sourceNodePath } : {}),
+    ...(manifest.sourceObjectId ? { source_object_id: manifest.sourceObjectId } : {}),
+    ...(manifest.sourceComponentId ? { source_component_id: manifest.sourceComponentId } : {}),
     extraction_confidence: manifest.extractionConfidence || 'medium',
     strategy: manifest.strategy || 'best_effort_manifest_only',
     status: manifest.status || 'manual_review_required',
@@ -1189,6 +1209,15 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
   const prefabFiles = files.filter((filePath) => filePath.endsWith('.prefab'));
   const sceneFiles = files.filter((filePath) => filePath.endsWith('.unity'));
   const scriptFiles = files.filter((filePath) => filePath.endsWith('.cs'));
+  const scriptByGuid = new Map(scriptFiles.flatMap((filePath) => {
+    const metaPath = `${filePath}.meta`;
+    const guid = parseUnityGuid(readFileIfPresent(metaPath).split(/\r?\n/).map(trim), 'guid');
+    if (!guid) return [];
+    const symbols = extractScriptSymbols(filePath, 'unity');
+    const fileToken = normalizeToken(basenameWithoutExtension(filePath));
+    const sourceSymbol = symbols.find((symbol) => normalizeToken(symbol) === fileToken) || symbols[0] || basenameWithoutExtension(filePath);
+    return [[guid, { filePath, sourceSymbol }]];
+  }));
 
   let prefabs = uniqueBy(prefabFiles.map((filePath) => {
     const source = fs.readFileSync(filePath, 'utf8');
@@ -1295,14 +1324,40 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
     entityDisplayName: scene.entityDisplayName || prefabs[0]?.displayName || displayNameFromToken(scene.name),
   }));
 
-  const scriptManifests = uniqueBy(scriptFiles.flatMap((filePath) =>
+  const sourceScriptManifests = scriptFiles.flatMap((filePath) =>
     extractScriptSymbols(filePath, 'unity').map((symbol) => ({
       name: normalizeToken(symbol) || 'unity_script',
       sourcePath: relativePathFromRepo(repoRoot, filePath),
       sourceSymbol: symbol,
       sourceEngine: 'unity',
       sourceKind: 'source_class',
-    }))), (item) => item.name);
+    })));
+  const bindingManifests = sourceScenes.flatMap((scene) => scene.nodes.flatMap((node) =>
+    node.scriptBindings.map((binding) => {
+      const script = scriptByGuid.get(binding.scriptGuid);
+      const sourceSymbol = script?.sourceSymbol || 'UnresolvedMonoBehaviour';
+      return {
+        name: normalizeToken(`${sourceSymbol}_${scene.name}_${node.fileId}_${binding.sourceComponentId}`),
+        sourcePath: script ? relativePathFromRepo(repoRoot, script.filePath) : scene.sourcePath,
+        sourceSymbol,
+        sourceEngine: 'unity',
+        sourceKind: 'scene_mono_behaviour_binding',
+        sourceGuid: binding.scriptGuid,
+        sourceScene: scene.sourceProjectPath,
+        sourceNodePath: node.sourceNodePath,
+        sourceObjectId: node.fileId,
+        sourceComponentId: binding.sourceComponentId,
+        extractionConfidence: script ? 'high' : 'low',
+        strategy: 'unity_scene_binding_manifest',
+        notes: [
+          script
+            ? 'Resolved the Unity MonoBehaviour script GUID through its .cs.meta file.'
+            : 'The Unity MonoBehaviour script GUID did not resolve to a .cs.meta file in the source project.',
+          'Port the component fields and gameplay behavior manually before claiming parity.',
+        ],
+      };
+    })));
+  const scriptManifests = uniqueBy([...sourceScriptManifests, ...bindingManifests], (item) => item.name);
 
   return {
     scenes,
