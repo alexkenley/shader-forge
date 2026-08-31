@@ -72,6 +72,9 @@ Usage:
   engine spatial approve <operation-id> [--base-url <url>]
   engine spatial reject <operation-id> [--base-url <url>]
   engine spatial validate-operation <operation-id> --samples-file <path> [--base-url <url>]
+  engine spatial review reserve <operation-id> --session <id> --agent <id> [--base-url <url>]
+  engine spatial review read <review-id> --session <id> [--base-url <url>]
+  engine spatial recapture <operation-id> --review-id <id> --agent <id> --source-lease <id> --capture-lease <id> --review-lease <id> --phases <a,b> --cameras <a,b> --width <px> --height <px> [--player-camera-scene <id> --player-camera-prefab <id>] [--base-url <url>]
   engine spatial apply <operation-id> --agent <id> --lease <id> [--base-url <url>]
   engine spatial undo <operation-id> --agent <id> --lease <id> [--base-url <url>]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
@@ -387,6 +390,22 @@ function readSpatialSamplesFile(filePath) {
   return parsed;
 }
 
+function readCommaSeparatedFlag(value, flagName) {
+  const values = String(value).split(',').map((entry) => entry.trim());
+  if (values.some((entry) => !entry)) {
+    throw new Error(`engine spatial recapture --${flagName} must be a comma-separated list without empty entries.`);
+  }
+  return values;
+}
+
+function readSpatialCaptureSize(value, flagName) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 64 || parsed > 1024) {
+    throw new Error(`engine spatial recapture --${flagName} must be an integer in [64, 1024].`);
+  }
+  return parsed;
+}
+
 async function runSpatialOperation(subcommand, positionals, flags) {
   const baseUrl = resolvedBaseUrl(flags);
   if (subcommand === 'preview') {
@@ -411,6 +430,29 @@ async function runSpatialOperation(subcommand, positionals, flags) {
   }
 
   const operationId = positionals[0].trim();
+  if (subcommand === 'review-read') {
+    const payload = await requestJson(
+      baseUrl,
+      `/api/spatial/reviews/${encodeURIComponent(operationId)}?sessionId=${encodeURIComponent(flags.session)}`,
+    );
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  if (subcommand === 'review-reserve') {
+    const credential = requireSpatialAgentCredential('review reserve');
+    const payload = await requestJson(
+      baseUrl,
+      `/api/operations/${encodeURIComponent(operationId)}/review-reservations`,
+      {
+        method: 'POST',
+        headers: { 'X-Shader-Forge-Agent-Credential': credential },
+        redact: [credential],
+        body: { sessionId: flags.session, agentId: flags.agent },
+      },
+    );
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
   if (subcommand === 'validate-operation') {
     const payload = await requestJson(
       baseUrl,
@@ -420,6 +462,38 @@ async function runSpatialOperation(subcommand, positionals, flags) {
         body: {
           actor: spatialOperationActor,
           samples: readSpatialSamplesFile(flags['samples-file']),
+        },
+      },
+    );
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  if (subcommand === 'recapture') {
+    const credential = requireSpatialAgentCredential(subcommand);
+    const payload = await requestJson(
+      baseUrl,
+      `/api/operations/${encodeURIComponent(operationId)}/recapture`,
+      {
+        method: 'POST',
+        headers: { 'X-Shader-Forge-Agent-Credential': credential },
+        redact: [credential],
+        body: {
+          actor: spatialOperationActor,
+          agentId: flags.agent,
+          reviewId: flags['review-id'],
+          sourceLeaseId: flags['source-lease'],
+          captureLeaseId: flags['capture-lease'],
+          reviewLeaseId: flags['review-lease'],
+          phases: readCommaSeparatedFlag(flags.phases, 'phases'),
+          cameras: readCommaSeparatedFlag(flags.cameras, 'cameras'),
+          widthPx: readSpatialCaptureSize(flags.width, 'width'),
+          heightPx: readSpatialCaptureSize(flags.height, 'height'),
+          ...(flags['player-camera-scene']
+            ? { playerCameraScene: flags['player-camera-scene'] }
+            : {}),
+          ...(flags['player-camera-prefab']
+            ? { playerCameraPrefab: flags['player-camera-prefab'] }
+            : {}),
         },
       },
     );
@@ -850,10 +924,15 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === 'spatial') {
-    const spatialSubcommand = argv[1];
-    const { positionals, flags, duplicateFlags } = parseFlags(argv.slice(2));
+    const requestedSpatialSubcommand = argv[1];
+    const reviewAction = requestedSpatialSubcommand === 'review' ? argv[2] : '';
+    const spatialSubcommand = reviewAction ? `review-${reviewAction}` : requestedSpatialSubcommand;
+    const { positionals, flags, duplicateFlags } = parseFlags(argv.slice(reviewAction ? 3 : 2));
     const nativeSubcommands = ['validate', 'cook', 'evaluate-rest', 'evaluate-sample'];
-    const operationSubcommands = ['preview', 'approve', 'reject', 'validate-operation', 'apply', 'undo'];
+    const operationSubcommands = [
+      'preview', 'approve', 'reject', 'validate-operation', 'review-reserve', 'review-read',
+      'recapture', 'apply', 'undo',
+    ];
     if (![...nativeSubcommands, ...operationSubcommands].includes(spatialSubcommand)) {
       throw new Error(spatialSubcommand
         ? `Unknown spatial subcommand: ${spatialSubcommand}`
@@ -862,7 +941,10 @@ export async function runCli(argv = process.argv.slice(2)) {
     if (duplicateFlags.length) {
       throw new Error(`Duplicate engine spatial ${spatialSubcommand} flag: --${duplicateFlags[0]}`);
     }
-    const positionalCount = ['approve', 'reject', 'validate-operation', 'apply', 'undo'].includes(spatialSubcommand) ? 1 : 0;
+    const positionalCount = [
+      'approve', 'reject', 'validate-operation', 'review-reserve', 'review-read',
+      'recapture', 'apply', 'undo',
+    ].includes(spatialSubcommand) ? 1 : 0;
     if (positionals.length !== positionalCount) {
       throw new Error(positionalCount === 0
         ? `engine spatial ${spatialSubcommand} does not accept positional arguments.`
@@ -880,6 +962,12 @@ export async function runCli(argv = process.argv.slice(2)) {
       approve: ['base-url'],
       reject: ['base-url'],
       'validate-operation': ['samples-file', 'base-url'],
+      'review-reserve': ['session', 'agent', 'base-url'],
+      'review-read': ['session', 'base-url'],
+      recapture: [
+        'review-id', 'agent', 'source-lease', 'capture-lease', 'review-lease', 'phases',
+        'cameras', 'width', 'height', 'player-camera-scene', 'player-camera-prefab', 'base-url',
+      ],
       apply: ['agent', 'lease', 'base-url'],
       undo: ['agent', 'lease', 'base-url'],
     };
@@ -888,6 +976,12 @@ export async function runCli(argv = process.argv.slice(2)) {
       'evaluate-sample': ['attachment', 'phase', 'normalized-time'],
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease'],
       'validate-operation': ['samples-file'],
+      'review-reserve': ['session', 'agent'],
+      'review-read': ['session'],
+      recapture: [
+        'review-id', 'agent', 'source-lease', 'capture-lease', 'review-lease', 'phases',
+        'cameras', 'width', 'height',
+      ],
       apply: ['agent', 'lease'],
       undo: ['agent', 'lease'],
     };

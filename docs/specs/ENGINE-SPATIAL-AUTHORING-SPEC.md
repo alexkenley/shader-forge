@@ -1,6 +1,6 @@
 # Engine Spatial Authoring And Attachment Tuning Spec
 
-Status: native schema/query/cook/rest-schematic evaluation, compatible v1 plus strict v2 attachment profiles, deterministic schema-v2 clip sampling and sampled two-bone secondary-hand IK, authored v2 cone-twist parse/cook plus end-to-end diagnose-only joint-limit and capsule-to-item clipping diagnostics, deterministic depth-tested close/player-camera sample capture, revision-safe operation validation, lease-gated sessiond recapture, atomic immutable review packets and reads, semantic operation, constrained Assets tuner, exact authored rest/sampled Assets schematics, and lease-free typed MCP rest/sample reads implemented; generic collision, bake/runtime consumption, and CLI/MCP/shell review adapters deferred
+Status: native schema/query/cook/rest-schematic evaluation, compatible v1 plus strict v2 attachment profiles, deterministic schema-v2 clip sampling and sampled two-bone secondary-hand IK, authored v2 cone-twist parse/cook plus end-to-end diagnose-only joint-limit and capsule-to-item clipping diagnostics, deterministic depth-tested close/player-camera sample capture, revision-safe operation validation, lease-gated sessiond recapture, atomic immutable review packets and reads, semantic operation, constrained Assets tuner, exact authored rest/sampled Assets schematics, lease-free typed MCP rest/sample reads, and thin CLI/MCP review adapters implemented; generic collision, bake/runtime consumption, and shell review presentation deferred
 
 Date: 2026-08-31
 
@@ -10,7 +10,7 @@ Shader Forge spatial authoring is the engine-owned contract for skeleton sockets
 
 It exists so a weapon, tool, or held item has one authored truth that native runtime code, cooked data, the React shell, the CLI, and `sf-mcp` all share. It is the product answer to Unreal's split truth, where Blueprint or editor presentation can drift from native C++ behavior.
 
-This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, deterministic rest/sample evaluation, native v2 two-bone IK, authored v2 cone-twist parse/cook, native rest-relative joint-limit diagnostics, a diagnose-only capsule-axis-to-authored-oriented-box clipping metric, deterministic native close-camera plus strict authored root `player_camera` capture of sampled posed-bone and authored procgeo geometry, fail-closed operation validation, lease-gated sessiond recapture, atomic immutable review packets and capture reads, attachment preview/apply/undo, exact rest/sampled Assets schematics, and one session-pinned typed MCP rest/sample read tool. Sessiond binds animation, authored content TOML, and the foundation manifest into one sorted revision snapshot and fails closed on drift or symbolic sources. Recapture expands selected authored motion-envelope phases, records exact source/capture/review leases, writes only under a same-filesystem temporary review directory, rechecks every revision and lease, atomically publishes a new `rev_` directory, and releases its leases on success or failure. Assets keeps the authored visual box distinct from the authored collision box and diagnostic capsules, and labels clipping `CLEAR` or `OVERLAP` rather than reusing joint-limit PASS/FAIL. Schema-v1 two-hand profiles remain pre-IK. Runtime graph playback, general collision/contact evaluation, generic bake/runtime consumption, and typed CLI/MCP/shell review adapters remain open.
+This document specifies the complete target contract. The current slice implements compatible skeleton/attachment parsing, deterministic rest/sample evaluation, native v2 two-bone IK, authored v2 cone-twist parse/cook, native rest-relative joint-limit diagnostics, a diagnose-only capsule-axis-to-authored-oriented-box clipping metric, deterministic native close-camera plus strict authored root `player_camera` capture of sampled posed-bone and authored procgeo geometry, fail-closed operation validation, lease-gated sessiond recapture, atomic immutable review packets and capture reads, attachment preview/apply/undo, exact rest/sampled Assets schematics, one session-pinned typed MCP rest/sample read tool, explicit CLI review commands, MCP review tools, and the typed MCP review resource. Sessiond binds animation, authored content TOML, and the foundation manifest into one sorted revision snapshot and fails closed on drift or symbolic sources. Recapture expands selected authored motion-envelope phases, records exact source/capture/review leases, writes only under a same-filesystem temporary review directory, rechecks every revision and lease, atomically publishes a new `rev_` directory, and releases its leases on success or failure. Assets keeps the authored visual box distinct from the authored collision box and diagnostic capsules, and labels clipping `CLEAR` or `OVERLAP` rather than reusing joint-limit PASS/FAIL. Schema-v1 two-hand profiles remain pre-IK. Runtime graph playback, general collision/contact evaluation, generic bake/runtime consumption, and shell review presentation remain open.
 
 ## Authored-Truth Contract
 
@@ -642,10 +642,13 @@ Implemented sessiond-backed operation commands:
 
 These commands never write the attachment directly, auto-register an agent, acquire a lease, approve, build, or bypass sessiond. The native local `engine spatial validate|cook|evaluate-rest|evaluate-sample` commands remain separate from the sessiond operation adapter. Both evaluators are read-only; rest/sample require explicit content-root and data-foundation inputs, with project-relative defaults in `engine`. Sessiond invokes them only from isolated transient staging that contains exact animation files, the complete authored content TOML tree, and the foundation manifest. Rest reports have `pose.sampled=false` and never apply IK. Native/CLI/sessiond sample reports have `pose.sampled=true`, explicit procedural-layer truth, and `not_review_evidence`. Both emit exact typed `diagnostics.jointLimits` and `diagnostics.clipping` objects and keep `authored_visual_box` separate from `authored_collision_box`. Sessiond validates joint limits and independently recomputes the clipping metric fail-closed.
 
-Deferred commands:
+Implemented review commands:
 
-- `engine spatial recapture`
+- `engine spatial review reserve <operation-id>`
+- `engine spatial recapture <operation-id>`
 - `engine spatial review read <review-id>`
+
+Reserve and recapture use explicit caller-owned agent and lease IDs; the CLI never acquires or widens authority. Read is lease-free and requires an explicit session.
 
 ### Shell
 
@@ -659,14 +662,14 @@ Browsing is read-only and still attempts the lease-free evaluator GET when the c
 
 `App` retains one sessiond SSE subscription. It converts operation notifications for the active session into a small epoch passed to Assets; the tuner then fetches its active operation authoritatively and rejects selection/operation races. External approval updates available actions. Conflict rereads authoritative bytes while preserving the old candidate as visibly stale evidence; it retains the connection captured for that event only when the refreshed source parses and the captured lease covers the refreshed attachment ID. A failed conflict refresh closes only that captured connection so editing stays fail-closed. Reject, apply, and undo clear candidate evidence, reread source, and release/disconnect only the connection captured by that event or action, never a possibly newer connection. Applied state remains available for explicit Undo, which reacquires a fresh lease; rejected and undone state clear the active operation.
 
-The current shell does not yet consume review packets because capture/review operations do not exist. Neither rest nor sampled schematics are substitutes for them.
+The current shell does not yet consume the implemented review packets. Neither rest nor sampled schematics are substitutes for them.
 
 It does not:
 
 - scrape World viewport cameras
 - embed an assistant
 - treat proxy-card Playtest frames as spatial evidence
-- treat numeric source tuning as visual spatial evidence before capture/review operations exist
+- treat numeric source tuning as visual spatial evidence before a published review packet is loaded
 
 ### Native tooling overlay
 
@@ -676,28 +679,29 @@ Planned Dear ImGui diagnostics: candidate label, axis-probe readout, reach/joint
 
 `sf-mcp` stays an adapter. The implemented attachment validation and preview/review/apply/undo tools call the same sessiond operations already used by the CLI and Assets tuner. Session and actor are process-owned; preview/apply/undo require the process-owned agent id, credential, and a granted write lease, while validation is lease-free and sends no credential. Apply/undo reject non-spatial operations. The implemented `spatial_attachment_read` tool is a separate lease-free, read-only adapter over the same transient sessiond rest/sample GETs.
 
-Planned resources, after that gate:
+Implemented review resource:
+
+- `shaderforge://spatial/review/{reviewId}`
+
+Other planned spatial resources:
 
 - `shaderforge://spatial/skeleton/{skeletonId}`
 - `shaderforge://spatial/attachment/{attachmentId}`
-- `shaderforge://spatial/review/{reviewId}`
 
 Implemented tools:
 
 - `spatial_attachment_read`
 - `spatial_attachment_preview`
 - `spatial_attachment_validate`
+- `spatial_review_reserve`
+- `spatial_review_read`
+- `spatial_review_recapture`
 - generic `operation_approve`
 - generic `operation_reject`
 - spatial-only `operation_apply`
 - spatial-only `operation_undo`
 
-Planned after the corresponding sessiond operations exist:
-
-- `spatial_review_read`
-- `spatial_review_recapture`
-
-`spatial_attachment_read` accepts the strict union `{view:"rest", path, baseRevision}` or `{view:"sample", path, baseRevision, phase, normalizedTime}`. `spatial_attachment_validate` accepts `{operationId, samples?}` with at most 64 exact `{phase,normalizedTime}` objects, verifies the operation belongs to the selected MCP session, and calls the sessiond route without a lease or credential. Neither tool exposes caller-controlled session or credential input. Validation returns only the public operation and bounded summary; it never auto-applies or exposes proposed bytes/raw native stderr. The planned spatial resource family remains deferred with capture/review. Mutation tools send the private coordinator credential and hold the resource keys in this spec. They do not wrap `/api/files/write`, auto-acquire, auto-approve, retry, or apply. Structured conflicts direct the caller to reread and create a new preview.
+`spatial_attachment_read` accepts the strict union `{view:"rest", path, baseRevision}` or `{view:"sample", path, baseRevision, phase, normalizedTime}`. `spatial_attachment_validate` accepts `{operationId, samples?}` with at most 64 exact `{phase,normalizedTime}` objects, verifies the operation belongs to the selected MCP session, and calls the sessiond route without a lease or credential. Neither tool exposes caller-controlled session or credential input. Validation returns only the public operation and bounded summary; it never auto-applies or exposes proposed bytes/raw native stderr. Review reservation is operation/session/agent-bound; recapture requires three explicit process-owned leases and canonical cameras, while read and the review resource use the process-selected session without caller-supplied authority. Mutation tools send the private coordinator credential and hold the resource keys in this spec. They do not wrap `/api/files/write`, auto-acquire, auto-approve, retry, or apply. Structured conflicts direct the caller to reread and create a new preview.
 
 ## Storage
 
@@ -880,7 +884,7 @@ The fixtures remain outside `animation/skeletons/`, `animation/clips/`, `animati
 
 ## Acceptance Gates
 
-A complete spatial-authoring workflow requires all gates below. The implemented slice satisfies parsing, validation, typed handles, deterministic v1/v2 cooking including authored joint-limit/capsule metadata, strict typed prefab box-collision source truth, native clip pose sampling, rest evaluation, sampled v2 two-bone IK with explicit v1 fallback, native numeric cone-twist and capsule-to-box diagnostics serialized through `shader_forge_spatial`, deterministic native close/player-camera sample rendering, fail-closed sessiond validation/recomputation, exact recapture leases, final revision checks, atomic immutable review publication and reads, distinct Assets PASS/FAIL and CLEAR/OVERLAP presentation, exact transient rest/sample sessiond evidence, and one typed lease-free MCP rest/sample read. CLI/MCP/shell review adapters remain open.
+A complete spatial-authoring workflow requires all gates below. The implemented slice satisfies parsing, validation, typed handles, deterministic v1/v2 cooking including authored joint-limit/capsule metadata, strict typed prefab box-collision source truth, native clip pose sampling, rest evaluation, sampled v2 two-bone IK with explicit v1 fallback, native numeric cone-twist and capsule-to-box diagnostics serialized through `shader_forge_spatial`, deterministic native close/player-camera sample rendering, fail-closed sessiond validation/recomputation, exact recapture leases, final revision checks, atomic immutable review publication and reads, distinct Assets PASS/FAIL and CLEAR/OVERLAP presentation, exact transient rest/sample sessiond evidence, one typed lease-free MCP rest/sample read, and thin CLI/MCP review adapters. Shell review presentation remains open.
 
 1. Skeleton schema version 2 with hierarchy, roles, sockets, optional cone-twist limits, and optional diagnostic capsules validates natively. **Implemented, including native numeric cone-twist and capsule-to-authored-box diagnostics, `shader_forge_spatial` serialization, sessiond fail-closed validation/recomputation, and Assets diagnose-only presentation.**
 2. Attachment profiles validate and load to generation-safe typed handles, then cook with skeleton sockets and optional bone diagnostic metadata into a deterministic derived payload. **Implemented.** Generic bake and runtime-consumption integration remain deferred.
@@ -911,7 +915,7 @@ Dependency order, with no calendar estimates. This work starts after the operati
 8. **Sampling and procedural layers — native, sessiond, Assets, and typed MCP evidence implemented.** Native schema-v2 pose sampling feeds primary attachment and deterministic secondary-hand two-bone IK at exact authored envelope phase/time. Requested/applied/unavailable layers are explicit, v1 remains pre-IK, and v2 reports reachable/unreachable plus separate reach/contact/angular tolerance truth. Both rest and sampled reports carry the same exact typed joint-limit and clipping objects. The transient sessiond sampled GET binds the complete input manifest and fail-closed recomputed diagnostic truth; Assets and lease-free `spatial_attachment_read` consume that exact authored sample without creating review evidence.
 9. **Workbench and recapture — native renderer and sessiond packet publisher implemented.** `shader_forge_spatial capture-sample` evaluates one exact authored phase/time and software-rasterizes the authored procgeo item box plus every posed bone segment as depth-tested 3D triangles under fixed explicit lighting. It emits source identity, bounded camera/bounds/lighting metadata, four deterministic close-camera RGB PNGs, and an optional strict authored root `player_camera` frame only into a new output directory. Sessiond expands selected authored phases, validates every source/capture/review lease and PNG, rechecks source revisions, atomically publishes a new immutable packet, serves manifests and referenced captures, and cleans up on failure. Optional annotations remain deferred.
 10. **Constrained tuner and rest/sampled rig schematics — shell slice implemented.** The three-pane Assets workbench edits exact primary-grip translation/rotation fields through the operation workflow and presents exact native rest plus authored sampled evaluation in Front X/Y, Side Z/Y, and Top X/Z projections, including diagnose-only joint-limit PASS/FAIL and distinct clipping CLEAR/OVERLAP proxy evidence. Evidence remains fixed to its path/revision/operation/sample identity when drafts move; malformed reports and manifests fail closed; browsing and sampling remain lease-free; the shared App SSE lane reconciles active operation state authoritatively. Candidate sampling, native overlay, review-packet consumption, and capture presentation remain deferred; the separate native close-camera renderer does not upgrade these browser schematics into review evidence.
-11. **`sf-mcp` adapter — attachment read, validation, and mutation implemented.** One session-pinned, lease-free `spatial_attachment_read` tool adapts the exact revision-bound rest/sample responses, while lease-free `spatial_attachment_validate` adapts operation validation with bounded strict samples and no credential. Process-owned identity and credentials plus explicit leases adapt preview/review/apply/undo. Typed review resources and recapture/review tools over the implemented sessiond routes remain deferred.
+11. **`sf-mcp` adapter — attachment and review workflows implemented.** One session-pinned, lease-free `spatial_attachment_read` tool adapts the exact revision-bound rest/sample responses, while lease-free `spatial_attachment_validate` adapts operation validation with bounded strict samples and no credential. Process-owned identity and credentials plus explicit leases adapt preview/review/apply/undo. `spatial_review_reserve`, `spatial_review_recapture`, `spatial_review_read`, and `shaderforge://spatial/review/{reviewId}` adapt the implemented sessiond review workflow without caller-controlled session or credential input.
 12. **World/Assets visual polish.** Gizmos and viewport chrome may then consume the same candidate/operation contract. They must not introduce a second persistence path.
 
 If World/Assets polish starts first, it must not ship free-drag attachment editing, proxy-card reviews, or prefab-copied grips.

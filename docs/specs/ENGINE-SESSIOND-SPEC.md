@@ -52,6 +52,10 @@ Current implemented surfaces:
 - `POST /api/operations/scene-asset/preview`
 - `GET /api/spatial/attachment/evaluate`
 - `GET /api/spatial/attachment/evaluate-sample`
+- `POST /api/operations/:id/review-reservations`
+- `POST /api/operations/:id/recapture`
+- `GET /api/spatial/reviews/:reviewId`
+- `GET /api/spatial/reviews/:reviewId/captures/:name`
 - `GET /api/operations`
 - `GET /api/operations/:id`
 - `POST /api/operations/:id/approve`
@@ -169,11 +173,11 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - `sf-mcp` spatial attachment mutation tools now wire process-owned coordinator credentials and leases through this same contract; other MCP mutation families remain disabled until they persist resource keys and enforce equivalent leases
 - native `engine spatial evaluate-rest|evaluate-sample` remain local commands; sessiond invokes them through transient GETs and the operation-validation staging path while preview stays rest-only. The same lease-free GETs back the session-pinned MCP `spatial_attachment_read` tool. None creates a review packet
 - the canonical contract lives in [ENGINE-OPERATIONS-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-OPERATIONS-SPEC.md)
-- spatial attachment preview and operation validation are implemented through this journal. Recapture/review-packet operations specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md) remain deferred and reuse the same actor, revision, conflict, and lease model. They do not add a daemon. Capture holds the spatial keys plus the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers, then rechecks source revisions before publishing. Review artifacts belong under project `build/spatial-reviews/<review-id>/`, not provider-specific Saved/Codex paths.
+- spatial attachment preview, validation, and recapture use this same actor, revision, conflict, and lease model without adding a daemon. Sessiond reserves an operation/session/agent-bound review ID, then recapture holds exact spatial/source keys plus shared `scene/prefab/<id>` and `animation/clip/<id>` read keys, the exclusive capture key, and the reserved review write key. It expands authored samples, validates native metadata/PNGs, rechecks sources and leases in the serialized lane, atomically publishes under `build/spatial-reviews/<review-id>/`, releases capture leases, and serves only immutable manifests plus packet-referenced PNGs.
 
 ## Future AI APIs
 
 - a process-scoped MCP adapter over the engine-owned coordination and mutation contracts
 - MCP exposure of the existing file-write and semantic scene-asset operation workflows, plus later multi-file change sets
 - MCP resources for project, scene, asset, code, runtime, test, diagnostics, coordination, and activity state
-- later spatial-authoring resources and tools only as an adapter over sessiond spatial operations, after those operations exist for shell and CLI. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).
+- later spatial-authoring resources and tools remain adapters over sessiond operations. CLI and MCP review adapters now exist; shell packet presentation remains. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).

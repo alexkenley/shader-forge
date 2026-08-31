@@ -378,6 +378,64 @@ try {
     assert.equal('proposedContent' in recorded.operation, false);
   });
 
+  const reviewId = 'rev_12345678-1234-4123-8123-123456789abc';
+  await withRecordingServer(async (recordedBaseUrl, requests) => {
+    await runCli([
+      'spatial', 'review', 'reserve', operationId,
+      '--session', sessionId,
+      '--agent', agentId,
+      '--base-url', recordedBaseUrl,
+    ]);
+    await runCli([
+      'spatial', 'recapture', operationId,
+      '--review-id', reviewId,
+      '--agent', agentId,
+      '--source-lease', 'lease_source',
+      '--capture-lease', 'lease_capture',
+      '--review-lease', 'lease_review',
+      '--phases', 'idle,aim',
+      '--cameras', 'close_front,close_side,close_top,close_three_quarter',
+      '--width', '512',
+      '--height', '384',
+      '--base-url', recordedBaseUrl,
+    ]);
+    await runCli([
+      'spatial', 'review', 'read', reviewId,
+      '--session', sessionId,
+      '--base-url', recordedBaseUrl,
+    ], { credential: '' });
+    assert.equal(requests.length, 3);
+    assert.deepEqual(requests[0], {
+      method: 'POST',
+      url: `/api/operations/${operationId}/review-reservations`,
+      credential: expectedCredential,
+      body: { sessionId, agentId },
+    });
+    assert.deepEqual(requests[1], {
+      method: 'POST',
+      url: `/api/operations/${operationId}/recapture`,
+      credential: expectedCredential,
+      body: {
+        actor: { kind: 'cli', id: 'engine-cli', name: 'Shader Forge CLI' },
+        agentId,
+        reviewId,
+        sourceLeaseId: 'lease_source',
+        captureLeaseId: 'lease_capture',
+        reviewLeaseId: 'lease_review',
+        phases: ['idle', 'aim'],
+        cameras: ['close_front', 'close_side', 'close_top', 'close_three_quarter'],
+        widthPx: 512,
+        heightPx: 384,
+      },
+    });
+    assert.deepEqual(requests[2], {
+      method: 'GET',
+      url: `/api/spatial/reviews/${reviewId}?sessionId=${encodeURIComponent(sessionId)}`,
+      credential: '',
+      body: undefined,
+    });
+  });
+
   const approved = JSON.parse((await runCli([
     'spatial', 'approve', operationId, ...baseUrlArgs,
   ])).stdout);
@@ -421,6 +479,32 @@ try {
   await expectCliFailure(['spatial', 'approve', operationId, 'extra', ...baseUrlArgs], /requires exactly one operation id/);
   await expectCliFailure(['spatial', 'apply', operationId, '--agent', agentId, ...baseUrlArgs], /requires --lease/);
   await expectCliFailure([
+    'spatial', 'recapture', operationId,
+    '--review-id', reviewId,
+    '--agent', agentId,
+    '--source-lease', 'lease_source',
+    '--capture-lease', 'lease_capture',
+    '--review-lease', 'lease_review',
+    '--phases', 'idle,',
+    '--cameras', 'close_front,close_side,close_top,close_three_quarter',
+    '--width', '512',
+    '--height', '512',
+    ...baseUrlArgs,
+  ], /--phases must be a comma-separated list without empty entries/);
+  await expectCliFailure([
+    'spatial', 'recapture', operationId,
+    '--review-id', reviewId,
+    '--agent', agentId,
+    '--source-lease', 'lease_source',
+    '--capture-lease', 'lease_capture',
+    '--review-lease', 'lease_review',
+    '--phases', 'idle',
+    '--cameras', 'close_front,close_side,close_top,close_three_quarter',
+    '--width', '63',
+    '--height', '512',
+    ...baseUrlArgs,
+  ], /--width must be an integer in \[64, 1024\]/);
+  await expectCliFailure([
     ...previewArgs.map((value) => value === candidatePath ? invalidCandidatePath : value),
   ], /spatial_candidate_invalid: Proposed spatial attachment is invalid\.: native diagnostic included \[redacted\]/);
 } finally {
@@ -429,5 +513,5 @@ try {
 }
 
 console.log('Engine spatial CLI adapter passed.');
-console.log('- Verified preview, validate-operation, approve, reject, apply, and undo through sessiond');
+console.log('- Verified preview, validation, review reservation/read/recapture routing, apply, and undo through sessiond');
 console.log('- Verified strict arguments, UTF-8 input, server diagnostics, and credential redaction');

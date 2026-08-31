@@ -134,33 +134,34 @@ Run it with `npm run test:mcp`.
 
 ## Next Widening Gate
 
-The next MCP widening requires an engine-owned coordinated context for each additional operation family. Do not expose generic file apply/undo while context-free file operations lack persisted resource keys and authoritative lease checks. Scene, asset, build, runtime, validation, and review-packet tools land only after their matching sessiond operations define those keys and policies. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` remains loopback-only. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+The next MCP widening requires an engine-owned coordinated context for each additional operation family. Do not expose generic file apply/undo while context-free file operations lack persisted resource keys and authoritative lease checks. Further scene, asset, build, and runtime tools land only after their matching sessiond operations define those keys and policies. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` remains loopback-only. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
 
 ## Spatial Authoring Adapter
 
-Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). Exact typed rest/sample reads, lease-free operation validation, and preview/review/apply/undo are implemented through `sf-mcp`; sessiond now owns lease-gated recapture plus immutable review packets and capture reads, while their typed MCP adapters remain deferred. `sf-mcp` remains adapter-only.
+Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). Exact typed rest/sample reads, lease-free operation validation, preview/review/apply/undo, explicit review reservation/recapture/read tools, and the typed immutable review resource are implemented through `sf-mcp`. `sf-mcp` remains adapter-only.
 
-Planned resources after that gate:
+Implemented review resource:
+
+- `shaderforge://spatial/review/{reviewId}`
+
+Planned authored resources:
 
 - `shaderforge://spatial/skeleton/{skeletonId}`
 - `shaderforge://spatial/attachment/{attachmentId}`
-- `shaderforge://spatial/review/{reviewId}`
 
 Implemented tools:
 
 - `spatial_attachment_read`
 - `spatial_attachment_preview`
 - `spatial_attachment_validate`
+- `spatial_review_reserve`
+- `spatial_review_read`
+- `spatial_review_recapture`
 - `operation_approve`
 - `operation_reject`
 - `operation_apply`
 - `operation_undo`
 
-Planned after matching sessiond operations exist:
-
-- `spatial_review_read`
-- `spatial_review_recapture`
-
-Current mutation tools use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. `spatial_attachment_validate` first verifies the operation belongs to the MCP process's selected session, accepts only the bounded exact sample input, and calls the sessiond validation route without a lease or credential. Capture will also hold the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.
+Current mutation and recapture tools use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. `spatial_attachment_validate` first verifies the operation belongs to the MCP process's selected session, accepts only the bounded exact sample input, and calls the sessiond validation route without a lease or credential. Review reservation returns the exact review resource key; recapture accepts only process-owned granted leases and canonical cameras before sessiond repeats the authoritative lease/revision checks. Read and resource calls pin the process-selected session. Capture holds the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.
 
 See [SHADER-FORGE-MCP-SETUP.md](../guides/SHADER-FORGE-MCP-SETUP.md) for Codex and Grok CLI registration and verification.

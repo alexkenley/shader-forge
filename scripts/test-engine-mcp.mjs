@@ -150,8 +150,21 @@ async function validateAnimationRoot(animationRoot) {
       schemaVersion: 1,
       skeleton: 'test.skeleton',
       itemPrefab: 'test.item',
+      dominantHand: 'right',
       mode: 'one_hand',
       perspective: 'third_person',
+      primaryGrip: {
+        socket: 'hand_r',
+        space: 'socket',
+        translation: content.includes('[0.1') ? [0.1, 0, 0] : [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+      },
+      motionEnvelopes: [{
+        phase: 'idle',
+        clip: 'test',
+        normalizedTimes: [0.5],
+        proceduralLayers: ['primary_attachment'],
+      }],
     });
   }
   return {
@@ -185,7 +198,7 @@ async function evaluateSampledAttachment(
     kind: 'clip_sample',
     sampled: true,
     phase,
-    clip: 'test.clip',
+    clip: 'test',
     normalizedTime,
     proceduralLayersRequested: ['primary_attachment'],
     proceduralLayersApplied: ['primary_attachment'],
@@ -199,6 +212,70 @@ async function evaluateSampledAttachment(
     'item_mesh_unavailable',
   ];
   return evaluation;
+}
+
+async function captureSampleAttachment(
+  _animationRoot,
+  _contentRoot,
+  _foundationPath,
+  attachmentId,
+  phase,
+  normalizedTime,
+  outputDir,
+  widthPx,
+  heightPx,
+) {
+  const cameraIds = ['close_front', 'close_side', 'close_top', 'close_three_quarter'];
+  await fs.mkdir(outputDir);
+  const pngHeader = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(pngHeader);
+  pngHeader.writeUInt32BE(13, 8);
+  pngHeader.write('IHDR', 12, 'ascii');
+  pngHeader.writeUInt32BE(widthPx, 16);
+  pngHeader.writeUInt32BE(heightPx, 20);
+  await Promise.all(cameraIds.map((cameraId) => (
+    fs.writeFile(path.join(outputDir, `${cameraId}.png`), pngHeader)
+  )));
+  return {
+    schema: 'shader_forge.spatial_capture_sample',
+    schemaVersion: 1,
+    attachment: { id: attachmentId },
+    phase,
+    normalizedTime,
+    renderGeometryKinds: ['authored_procgeo_box', 'posed_bone_prisms'],
+    sources: {
+      skeleton: { id: 'test.skeleton', path: 'skeletons/test.skeleton.toml' },
+      attachment: { id: attachmentId, path: 'attachments/rifle.attachment.toml' },
+      clip: { id: 'test', path: 'clips/test.anim.toml' },
+      itemPrefab: { id: 'test.item', path: 'prefabs/weapon_rifle_mk1.prefab.toml' },
+      itemProcgeo: { id: 'weapon_rifle_mk1', path: 'procgeo/weapon_rifle_mk1.procgeo.toml' },
+    },
+    bounds: {
+      character: { min: [-1, 0, -1], max: [1, 2, 1], center: [0, 1, 0] },
+      item: { min: [-0.5, 0.5, -0.5], max: [0.5, 1.5, 0.5], center: [0, 1, 0] },
+      combined: { min: [-1, 0, -1], max: [1, 2, 1], center: [0, 1, 0] },
+    },
+    lighting: {
+      keyDirection: [0, 1, 0],
+      keyIntensity: 0.8,
+      fillDirection: [1, 0, 0],
+      fillIntensity: 0.3,
+      ambientIntensity: 0.2,
+      exposure: 1,
+    },
+    cameras: cameraIds.map((id) => ({
+      id,
+      position: [0, 1, -4],
+      target: [0, 1, 0],
+      up: [0, 1, 0],
+      fovDegrees: 35,
+      nearMeters: 0.1,
+      farMeters: 100,
+      widthPx,
+      heightPx,
+    })),
+    captures: Object.fromEntries(cameraIds.map((id) => [id, `${id}.png`])),
+  };
 }
 
 async function main() {
@@ -252,6 +329,7 @@ async function main() {
     validateAnimationRoot,
     evaluateRestAttachment,
     evaluateSampledAttachment,
+    captureSampleAttachment,
   });
   const otherSession = await sessionStore.createSession({ name: 'other', rootPath: otherWorkspaceRoot });
   let child;
@@ -284,6 +362,11 @@ async function main() {
       resources.resources.map((resource) => resource.uri).sort(),
       ['shaderforge://coordination', 'shaderforge://project'],
     );
+    const resourceTemplates = await client.request('resources/templates/list');
+    assert.deepEqual(
+      resourceTemplates.resourceTemplates.map((resource) => resource.uriTemplate),
+      ['shaderforge://spatial/review/{reviewId}'],
+    );
     const projectResource = await client.request('resources/read', { uri: 'shaderforge://project' });
     const project = JSON.parse(projectResource.contents[0].text);
     assert.equal(project.product, 'Shader Forge MCP');
@@ -312,6 +395,9 @@ async function main() {
         'spatial_attachment_preview',
         'spatial_attachment_read',
         'spatial_attachment_validate',
+        'spatial_review_read',
+        'spatial_review_recapture',
+        'spatial_review_reserve',
         'work_lease_release',
         'work_lease_request',
         'work_lease_status',
@@ -530,7 +616,7 @@ async function main() {
       mode: 'write',
     });
     assert.equal(queued.structuredContent.status, 'queued');
-    const spatialLeaseId = queued.structuredContent.lease.id;
+    let spatialLeaseId = queued.structuredContent.lease.id;
     const queuedPreview = await call('spatial_attachment_preview', {
       path: attachmentPath,
       content: candidateAttachment,
@@ -725,6 +811,61 @@ async function main() {
     });
     assert.equal(crossSessionValidate.isError, true);
     assert.equal(crossSessionValidate.structuredContent.code, 'operation_session_mismatch');
+
+    const recaptureValidation = await call('spatial_attachment_validate', {
+      operationId,
+      samples: [{ phase: 'idle', normalizedTime: 0.5 }],
+    });
+    assert.equal(recaptureValidation.structuredContent.operation.validation.status, 'completed');
+    await call('work_lease_release', { leaseId: spatialLeaseId });
+    const reservation = await call('spatial_review_reserve', { operationId });
+    assert.equal(reservation.isError, undefined, JSON.stringify(reservation.structuredContent));
+    const reviewId = reservation.structuredContent.reservation.reviewId;
+    assert.match(reviewId, /^rev_[0-9a-f-]+$/);
+    const sourceLease = await call('work_lease_request', {
+      mode: 'read',
+      resources: [
+        'spatial/skeleton/test.skeleton',
+        'spatial/skeleton/test.skeleton/socket/hand_r',
+        'spatial/attachment/weapon.rifle',
+        'scene/prefab/test.item',
+        'animation/clip/test',
+      ],
+    });
+    const captureLease = await call('work_lease_request', {
+      mode: 'write',
+      resources: ['spatial/runtime-capture'],
+    });
+    const reviewLease = await call('work_lease_request', {
+      mode: 'write',
+      resources: [reservation.structuredContent.reservation.resourceKey],
+    });
+    const recaptured = await call('spatial_review_recapture', {
+      operationId,
+      reviewId,
+      sourceLeaseId: sourceLease.structuredContent.lease.id,
+      captureLeaseId: captureLease.structuredContent.lease.id,
+      reviewLeaseId: reviewLease.structuredContent.lease.id,
+      phases: ['idle'],
+      cameras: ['close_front', 'close_side', 'close_top', 'close_three_quarter'],
+      widthPx: 128,
+      heightPx: 96,
+    });
+    assert.equal(recaptured.isError, undefined, JSON.stringify(recaptured.structuredContent));
+    assert.equal(recaptured.structuredContent.review.reviewId, reviewId);
+    assert.equal(recaptured.structuredContent.review.samples.length, 1);
+    const reviewRead = await call('spatial_review_read', { reviewId });
+    assert.equal(reviewRead.structuredContent.review.reviewId, reviewId);
+    const reviewResource = await client.request('resources/read', {
+      uri: `shaderforge://spatial/review/${reviewId}`,
+    });
+    assert.equal(JSON.parse(reviewResource.contents[0].text).reviewId, reviewId);
+    const reacquiredSpatialLease = await call('work_lease_request', {
+      resources: ['spatial/attachment/weapon.rifle'],
+      mode: 'write',
+    });
+    assert.equal(reacquiredSpatialLease.structuredContent.status, 'granted');
+    spatialLeaseId = reacquiredSpatialLease.structuredContent.lease.id;
 
     const genericOperation = await sessiond.operationStore.previewFileWrite({
       sessionId: project.session.id,

@@ -48,10 +48,13 @@ Grok also supports `--scope project`, but do not commit a machine-specific absol
 4. Call `spatial_attachment_preview` with the full candidate content, base revision, label, and owned lease id.
 5. Call lease-free `spatial_attachment_validate` with the operation id and up to 64 exact phase/time samples when sampled evidence is needed.
 6. Inspect the bounded validation summary and operation. Call `operation_approve` or `operation_reject` separately.
-7. Call `operation_apply` only after approval, using an owned write lease that covers every operation resource key.
-8. Release the lease when work is complete. Undo requires another currently granted covering lease if the prior lease was released.
+7. For rendered evidence, call `spatial_review_reserve`, release the attachment write lease, then explicitly request the packet's exact source-read, `spatial/runtime-capture` write, and reserved review-key write leases.
+8. Call `spatial_review_recapture` with those three leases, authored phases, canonical cameras, and bounded dimensions. Sessiond releases the three purpose-specific leases after an accepted capture attempt.
+9. Read the immutable result with `spatial_review_read` or `shaderforge://spatial/review/<review-id>`.
+10. Call `operation_apply` only after approval, reacquiring an owned write lease that covers every operation resource key when the tuning lease was released for capture.
+11. Release ordinary leases when work is complete. Undo requires another currently granted covering lease if the prior lease was released.
 
-No tool auto-acquires, auto-approves, retries, applies, undoes, or releases. A conflict is authoritative: reread current state and create a new preview. Generic file writes, commands, build/runtime mutation, spatial capture, and review-packet tools are not exposed through MCP.
+No tool auto-acquires, auto-approves, retries, applies, or undoes. Recapture's three purpose-specific leases are released by sessiond; other leases remain explicit. A conflict is authoritative: reread current state and create a new preview. Generic file writes, commands, and build/runtime mutation are not exposed through MCP.
 
 ## Verification
 
@@ -59,4 +62,4 @@ No tool auto-acquires, auto-approves, retries, applies, undoes, or releases. A c
 npm run test:mcp
 ```
 
-The deterministic harness starts an isolated backend and real stdio server, exercises lease-free validation plus the lease-gated attachment workflow, and verifies cleanup and credential exclusion.
+The deterministic harness starts an isolated backend and real stdio server, exercises lease-free validation, the lease-gated attachment workflow, explicit review reservation/recapture, tool/resource packet reads, and cleanup plus credential exclusion.

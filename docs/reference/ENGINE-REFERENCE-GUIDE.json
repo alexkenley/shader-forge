@@ -292,11 +292,11 @@
               "title": "Resources And Tools",
               "keywords": ["project", "files", "coordination state", "work lease", "operation validation"],
               "items": [
-                "The current resources are `shaderforge://project` and `shaderforge://coordination`.",
-                "Current read tools are `project_status`, `project_files_list`, `project_file_read`, `coordination_state`, and read-only/idempotent `spatial_attachment_read` for exact revision-bound rest or authored sampled evidence.",
+                "The current resources are `shaderforge://project`, `shaderforge://coordination`, and the typed `shaderforge://spatial/review/{reviewId}` template.",
+                "Current read tools are `project_status`, `project_files_list`, `project_file_read`, `coordination_state`, read-only/idempotent `spatial_attachment_read`, and immutable `spatial_review_read`.",
                 "Current coordination tools are `work_lease_request`, `work_lease_status`, `work_lease_release`, and `agent_heartbeat`.",
-                "Current operation tools are bounded `operation_list`, `operation_read`, lease-free `spatial_attachment_validate`, `spatial_attachment_preview`, separate `operation_approve` / `operation_reject`, and spatial-only `operation_apply` / `operation_undo`.",
-                "The MCP actor and session come from process state. Validation first rejects foreign-session operations and sends no credential or lease. Preview/apply/undo require the process-owned agent/credential and an owned granted write lease; apply/undo also require coverage for every persisted spatial resource key and sessiond rechecks immediately before mutation.",
+                "Current operation tools are bounded `operation_list`, `operation_read`, lease-free `spatial_attachment_validate`, `spatial_attachment_preview`, explicit `spatial_review_reserve` / `spatial_review_recapture`, separate `operation_approve` / `operation_reject`, and spatial-only `operation_apply` / `operation_undo`.",
+                "The MCP actor and session come from process state. Validation first rejects foreign-session operations and sends no credential or lease. Preview/apply/undo require the process-owned agent/credential and an owned granted write lease; recapture requires explicit owned source/capture/review leases; sessiond rechecks authority immediately before mutation or publication.",
                 "Separate Codex and Grok processes can inspect the same workspace concurrently and receive non-overlapping leases, while conflicting hierarchical work queues through `engine_sessiond`."
               ]
             },
@@ -305,10 +305,10 @@
               "keywords": ["read only", "mutation", "approval", "revision", "http", "assistant"],
               "items": [
                 "The mutation surface is limited to semantic spatial attachments. Generic file/scene/code writes, build/runtime mutation, arbitrary commands, and HTTP transport remain excluded.",
-                "`sf-mcp` never calls `/api/files/write`, accepts caller-provided identity or credentials, or automatically leases, approves, retries, applies, undoes, or releases. Structured 409 results preserve safe conflict data plus a refreshed authoritative operation when available.",
+                "`sf-mcp` never calls `/api/files/write`, accepts caller-provided identity or credentials, or automatically acquires authority, approves, retries, applies, or undoes. Successful recapture releases its three purpose-specific leases through the authoritative sessiond contract; ordinary leases remain explicit. Structured 409 results preserve safe conflict data plus a refreshed authoritative operation when available.",
                 "A granted lease coordinates ownership but does not grant authority to bypass engine mutation policy.",
                 "Shader Forge MCP does not contain model execution, provider selection, assistant chat, or prompt UI; external clients own the AI experience.",
-                "Run `npm run test:mcp` for deterministic stdio, boundary, coordination, revision-bound spatial rest/sample reads, full spatial operation, structured-conflict, and disconnect-cleanup coverage."
+                "Run `npm run test:mcp` for deterministic stdio, boundary, coordination, revision-bound spatial rest/sample reads, full spatial and review operation/resource coverage, structured conflicts, and disconnect cleanup."
               ]
             }
           ]
@@ -613,7 +613,7 @@
         {
           "id": "spatial-authoring",
           "title": "Spatial Authoring And Attachment Tuning",
-          "summary": "Spatial authoring now has a native schema/query/cook foundation, deterministic rest/sampled evaluation with joint-limit and capsule/item surface-clearance diagnostics, deterministic native close/player-camera rendering, lease-free operation validation through CLI/MCP, native apply/undo revalidation, lease-gated sessiond recapture with immutable packet/capture reads, a revision-bound typed MCP read, strict CLI queries, constrained Assets schematics, and an authored runtime camera; typed CLI/MCP/shell review adapters remain deferred.",
+          "summary": "Spatial authoring now has a native schema/query/cook foundation, deterministic rest/sampled evaluation with joint-limit and capsule/item surface-clearance diagnostics, deterministic native close/player-camera rendering, lease-free operation validation through CLI/MCP, native apply/undo revalidation, lease-gated sessiond recapture with immutable packet/capture reads, thin CLI/MCP review adapters and a typed review resource, constrained Assets schematics, and an authored runtime camera; shell review presentation remains deferred.",
           "keywords": [
             "spatial authoring",
             "attachment",
@@ -652,6 +652,7 @@
             "tools/engine-sessiond/lib/session-store.mjs",
             "tools/engine-sessiond/server.mjs",
             "tools/engine-cli/shaderforge.mjs",
+            "tools/engine-mcp/server.mjs",
             "animation/skeletons/debug_humanoid.skeleton.toml",
             "animation/fixtures/spatial/skeletons/spatial_humanoid.skeleton.toml",
             "animation/fixtures/spatial/attachments/rifle_mk1_humanoid.attachment.toml",
@@ -701,14 +702,14 @@
                 "The Assets workbench binds rest/sample evaluation to exact animation, content, and foundation revisions. Draft changes never move cached geometry; they mark it stale, and conflict remains visibly stale even when numeric values match.",
                 "Front X/Y, Side Z/Y, and Top X/Z projections show native evaluator frames, the exact render-procgeo visual-box outline, the independent authored collision OBB, and diagnostic capsule segments. A bounded deep validator recomposes both boxes and clipping-derived truth and rejects unknown reasons, malformed geometry, unsafe manifests, oversized payloads, non-finite transforms, and unsafe projection bounds.",
                 "Scene and spatial apply/undo share one semantic mutation dispatcher. The spatial branch independently native-validates and rest-evaluates staged current/resulting truth inside the existing file-mutation lane, rechecks the manifest without recursive locking, and rechecks the covering write lease before authored replacement. Validation failure writes nothing; native spatial child commands have a fixed timeout.",
-                "`engine spatial preview|validate-operation|approve|reject|apply|undo` are strict adapters over that same sessiond contract. Validation consumes a strict BOM-free UTF-8 top-level sample array and needs no credential; preview/apply/undo use only the environment-provided coordinator credential and never acquire coordination or bypass sessiond.",
+                "`engine spatial preview|validate-operation|approve|reject|apply|undo`, `review reserve|read`, and `recapture` are strict adapters over that same sessiond contract. Validation consumes a strict BOM-free UTF-8 top-level sample array and needs no credential; review read is lease-free; preview/apply/undo/reserve/recapture use only the environment-provided coordinator credential where required and never acquire coordination or bypass sessiond.",
                 "`npm run test:spatial-operations` covers revision-safe no-lease rest/sample GETs, path/symlink and exact-byte staging, strict operation-validation samples, controlled summary failures, complete source-manifest drift and stale-CAS rejection, sampled one-hand/v1-pre-IK/v2-applied-IK truth, native apply/undo revalidation, exact recapture leases, authored-camera gates, atomic immutable publication, binary capture reads, journal privacy, CORS, and temp cleanup.",
-                "`npm run test:spatial-cli` drives the real CLI against injected deterministic validator/evaluator seams and validates preview/review/apply/undo, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction.",
+                "`npm run test:spatial-cli` drives the real CLI against deterministic sessiond and recording seams and validates preview/validation/review reserve/read/recapture/apply/undo routing, strict arguments, fatal UTF-8 input, server diagnostics, and credential redaction.",
                 "The Assets workspace lists attachment profiles read-only. Lease-free native evaluation is still attempted when a readable source cannot be rewritten by the constrained parser. Explicit `Begin tuning` requests the exact profile lease and refreshes source after grant; only primary-grip translation and degree-displayed rotation are editable through strict byte-preserving source replacement.",
                 "Candidates are labelled `NOT APPLIED`; Preview, Approve, Apply, Reject, and Undo use the same sessiond operations. `App` retains one sessiond SSE subscription and Assets uses its event epoch to refetch the active operation with session/selection/id guards. Approval updates actions. Conflict rereads source, preserves stale candidate evidence, and retains its captured connection only after parse/resource checks. Reject/apply/undo clear and reread evidence plus clean up only the connection captured by that event/action, and Undo after apply reacquires a fresh covering lease.",
                 "Every rest or sampled Assets schematic is explicitly not review evidence. The authored visual box is neither a rendered mesh nor collision truth. Joint limits use diagnose-only aggregate/per-bone `PASS`/`FAIL`; capsule/item surface clearance uses aggregate/per-capsule `CLEAR`/`OVERLAP`, with exact unavailable states for both. Standalone native close/player-camera frames are also not packets; sessiond alone publishes revision- and lease-bound immutable evidence. V1 sampled two-hand evidence remains pre-IK while v2 exposes applied-IK numeric truth.",
                 "`npm run test:spatial-shell` validates exact source rewriting, independent authored-envelope parsing, sorted source-manifest guards, complete v1/v2 rest/sampled evaluator-schema/size/projection guards, exact phase/time/revision binding, one shared sessiond event subscription and authoritative operation refetch, Assets-only mounting, explicit locking, operation-only routing, accessible/responsive schematic markers, v1 pre-IK/v2 applied-IK truth, clipping overlays, resolved-v2 pole projection, and credential-free evaluation GETs.",
-                "`sf-mcp` exposes read-only `spatial_attachment_read` plus lease-free `spatial_attachment_validate`; the CLI exposes the same validation operation as `engine spatial validate-operation`. Both validation adapters accept the bounded exact sample schema, use selected operation/session authority, and expose neither credentials, proposed bytes, nor raw native stderr. Lease-gated attachment preview/review/apply/undo remains the mutation adapter. Sessiond recapture and immutable review reads are implemented; their thin CLI/MCP/shell adapters remain deferred with runtime collision/physics use."
+                "`sf-mcp` exposes read-only `spatial_attachment_read`, lease-free `spatial_attachment_validate`, explicit `spatial_review_reserve` / `spatial_review_recapture` / `spatial_review_read`, and the typed review resource; the CLI exposes the same validation and review workflow. Adapters use selected operation/session authority and explicit caller-owned leases while exposing neither credentials, proposed bytes, nor raw native stderr. Shell packet presentation remains deferred with runtime collision/physics use."
               ]
             },
             {
@@ -720,7 +721,7 @@
                 "Do not scrape a live cursor or camera to invent a packet.",
                 "Two-hand weapons use dominant-hand item drive, then off-hand IK. VLM or visual scores never apply.",
                 "Generated packets live under `build/spatial-reviews/<review-id>/`. Provider-specific `Saved/Codex` paths are forbidden.",
-                "`sf-mcp` revision-bound `spatial_attachment_read`, lease-free `spatial_attachment_validate`, and attachment mutation adapters are implemented; recapture/review tools now wait only for thin adapters over the implemented engine operations.",
+                "`sf-mcp` revision-bound `spatial_attachment_read`, lease-free `spatial_attachment_validate`, attachment mutation adapters, explicit review reserve/recapture/read tools, and the typed immutable review resource are implemented.",
                 "Implementation is ordered after the existing operation layer and before broad World/Assets visual polish."
               ],
               "note": "See `docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md` for the full schema, rifle example, native handle example, harness gates, and staged implementation order."
@@ -880,7 +881,7 @@
                 "The content pipeline still needs the real FlatBuffers writer, import lanes, and deeper preview surfaces beyond the first staged bake path.",
                 "Audio still needs the real playback backend, bus mixing/control, and preview surfaces on top of the new authored event-definition lane.",
                 "Animation still needs runtime graph consumption of the deterministic sampler, blending, graph-parameter control, root-motion application, and preview tooling on top of the authored graph-definition lane.",
-                "Spatial authoring still needs generic bake/runtime consumption, runtime collision/physics integration, gameplay attachment rendering, and typed CLI/MCP/shell review adapters beyond the implemented sessiond/CLI/MCP operation validation, authored close/player-camera capture, revision-bound spatial attachment read, lease-gated recapture, immutable packet reads, mutation revalidation, and diagnostics.",
+                "Spatial authoring still needs generic bake/runtime consumption, runtime collision/physics integration, gameplay attachment rendering, and shell review presentation beyond the implemented sessiond/CLI/MCP operation validation, authored close/player-camera capture, revision-bound spatial attachment read, lease-gated recapture, immutable packet reads, CLI/MCP review adapters, mutation revalidation, and diagnostics.",
                 "Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.",
                 "Migration still needs high-fidelity scene/prefab graphs, real asset payload import, gameplay conversion, conflict-safe reimport, and exporter-assisted Unreal extraction beyond the current fixture-backed project skeleton and startup-setting lane.",
                 "Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.",

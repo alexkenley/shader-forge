@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { McpServer } from '@modelcontextprotocol/server';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 
@@ -10,6 +10,7 @@ const HEARTBEAT_INTERVAL_MS = 10_000;
 const SESSIOND_REQUEST_TIMEOUT_MS = 5_000;
 const SPATIAL_READ_TIMEOUT_MS = 30_000;
 const SPATIAL_VALIDATION_TIMEOUT_MS = 12 * 60_000;
+const SPATIAL_CAPTURE_TIMEOUT_MS = 12 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 const MAX_OPERATION_LIST_RESULTS = 100;
 const MAX_SPATIAL_ATTACHMENT_BYTES = 1024 * 1024;
@@ -27,6 +28,8 @@ const OPERATION_STATES = [
 const SPATIAL_ATTACHMENT_PATH = /^animation\/attachments\/[^/]+\.attachment\.toml$/;
 const REVISION = /^(?:missing|sha256:[a-f0-9]{64})$/;
 const PRESENT_REVISION = /^sha256:[a-f0-9]{64}$/;
+const SPATIAL_REVIEW_ID = /^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const SPATIAL_RESOURCE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const PUBLIC_ERROR_FIELDS = [
   'code',
   'diagnostic',
@@ -540,7 +543,7 @@ function registerSurface(server, state) {
     }
     return payload.operation;
   };
-  const requireGrantedWriteLease = async (leaseId, requiredResources = []) => {
+  const requireGrantedLease = async (leaseId, mode, requiredResources = []) => {
     if (!state.leaseIds.has(leaseId)) {
       throw boundaryError(403, 'lease_not_owned', `Lease is not owned by this sf-mcp process: ${leaseId}`);
     }
@@ -556,8 +559,8 @@ function registerSurface(server, state) {
     if (lease.status !== 'granted') {
       throw boundaryError(409, 'lease_not_granted', `Lease ${leaseId} is ${lease.status}, not granted.`, { lease });
     }
-    if (lease.mode !== 'write') {
-      throw boundaryError(409, 'lease_write_required', 'A granted write lease is required.', { lease });
+    if (lease.mode !== mode) {
+      throw boundaryError(409, `lease_${mode}_required`, `A granted ${mode} lease is required.`, { lease });
     }
     const uncovered = requiredResources.filter((required) => (
       !lease.resources.some((held) => resourceKeyCovers(held, required))
@@ -572,6 +575,9 @@ function registerSurface(server, state) {
     }
     return lease;
   };
+  const requireGrantedWriteLease = (leaseId, requiredResources = []) => (
+    requireGrantedLease(leaseId, 'write', requiredResources)
+  );
   const safeOperationAction = (action, { requireSpatialLease = false } = {}) => (
     async ({ operationId, leaseId }) => {
       let operation;
@@ -628,6 +634,25 @@ function registerSurface(server, state) {
     'shaderforge://coordination',
     { title: 'Shader Forge Coordination', description: 'Live agents, granted leases, and queued work for this workspace.', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(await readCoordination(), null, 2) }] }),
+  );
+  server.registerResource(
+    'shader-forge-spatial-review',
+    new ResourceTemplate('shaderforge://spatial/review/{reviewId}', { list: undefined }),
+    {
+      title: 'Shader Forge Spatial Review',
+      description: 'One immutable revision- and lease-bound spatial review packet.',
+      mimeType: 'application/json',
+    },
+    async (uri, variables) => {
+      const reviewId = String(variables.reviewId || '');
+      const payload = await requestJson(
+        state.baseUrl,
+        `/api/spatial/reviews/${encodeURIComponent(reviewId)}?sessionId=${encodeURIComponent(state.session.id)}`,
+      );
+      return {
+        contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(payload.review, null, 2) }],
+      };
+    },
   );
 
   server.registerTool(
@@ -871,6 +896,127 @@ function registerSurface(server, state) {
             },
           },
         );
+        return toolResult(payload);
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
+    'spatial_review_reserve',
+    {
+      title: 'Reserve spatial review ID',
+      description: 'Reserve an immutable review ID for a validated spatial attachment operation before requesting its exact write lease.',
+      inputSchema: z.object({ operationId: z.string().trim().min(1).max(128) }).strict(),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ operationId }) => {
+      try {
+        await readOperation(operationId);
+        return toolResult(await requestJson(
+          state.baseUrl,
+          `/api/operations/${encodeURIComponent(operationId)}/review-reservations`,
+          {
+            method: 'POST',
+            credential: state.credential,
+            body: {
+              sessionId: state.session.id,
+              agentId: state.agent.id,
+            },
+          },
+        ));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
+    'spatial_review_read',
+    {
+      title: 'Read spatial review packet',
+      description: 'Read one immutable spatial review packet from the selected Shader Forge workspace.',
+      inputSchema: z.object({ reviewId: z.string().regex(SPATIAL_REVIEW_ID) }).strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    },
+    async ({ reviewId }) => {
+      try {
+        return toolResult(await requestJson(
+          state.baseUrl,
+          `/api/spatial/reviews/${encodeURIComponent(reviewId)}?sessionId=${encodeURIComponent(state.session.id)}`,
+        ));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
+    'spatial_review_recapture',
+    {
+      title: 'Recapture spatial review packet',
+      description: 'Publish a new immutable spatial review packet under explicit source, capture, and review leases.',
+      inputSchema: z.object({
+        operationId: z.string().trim().min(1).max(128),
+        reviewId: z.string().regex(SPATIAL_REVIEW_ID),
+        sourceLeaseId: z.string().trim().min(1).max(128),
+        captureLeaseId: z.string().trim().min(1).max(128),
+        reviewLeaseId: z.string().trim().min(1).max(128),
+        phases: z.array(z.string().regex(SPATIAL_RESOURCE_ID)).min(1).max(16),
+        cameras: z.union([
+          z.tuple([
+            z.literal('close_front'),
+            z.literal('close_side'),
+            z.literal('close_top'),
+            z.literal('close_three_quarter'),
+          ]),
+          z.tuple([
+            z.literal('close_front'),
+            z.literal('close_side'),
+            z.literal('close_top'),
+            z.literal('close_three_quarter'),
+            z.literal('player_camera'),
+          ]),
+        ]),
+        widthPx: z.number().int().min(64).max(1024),
+        heightPx: z.number().int().min(64).max(1024),
+        playerCameraScene: z.string().regex(SPATIAL_RESOURCE_ID).optional(),
+        playerCameraPrefab: z.string().regex(SPATIAL_RESOURCE_ID).optional(),
+      }).strict(),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => {
+      try {
+        await readOperation(input.operationId);
+        await Promise.all([
+          requireGrantedLease(input.sourceLeaseId, 'read'),
+          requireGrantedWriteLease(input.captureLeaseId, ['spatial/runtime-capture']),
+          requireGrantedWriteLease(input.reviewLeaseId, [`spatial/review/${input.reviewId}`]),
+        ]);
+        const payload = await requestJson(
+          state.baseUrl,
+          `/api/operations/${encodeURIComponent(input.operationId)}/recapture`,
+          {
+            method: 'POST',
+            credential: state.credential,
+            timeoutMs: SPATIAL_CAPTURE_TIMEOUT_MS,
+            body: {
+              actor: operationActor(),
+              agentId: state.agent.id,
+              reviewId: input.reviewId,
+              sourceLeaseId: input.sourceLeaseId,
+              captureLeaseId: input.captureLeaseId,
+              reviewLeaseId: input.reviewLeaseId,
+              phases: input.phases,
+              cameras: input.cameras,
+              widthPx: input.widthPx,
+              heightPx: input.heightPx,
+              ...(input.playerCameraScene ? { playerCameraScene: input.playerCameraScene } : {}),
+              ...(input.playerCameraPrefab ? { playerCameraPrefab: input.playerCameraPrefab } : {}),
+            },
+          },
+        );
+        state.leaseIds.delete(input.sourceLeaseId);
+        state.leaseIds.delete(input.captureLeaseId);
+        state.leaseIds.delete(input.reviewLeaseId);
         return toolResult(payload);
       } catch (error) {
         return toolFailure(error);
