@@ -54,6 +54,7 @@ Current implemented behavior:
 - scene and prefab documents retain their authoritative SHA-256 revision, while new targets use the explicit `missing` revision
 - save, create, duplicate, and reusable-object save use one semantic scene-asset operation path with exact `scene/world/<id>` or `scene/prefab/<id>` write leases, native `DataFoundation` validation, approve/apply, and an authoritative reread
 - duplicate binds both the target and source identity/revision; queued leases, conflicts, workspace changes, or uncertain apply preserve the draft and never trigger a blind retry
+- `sf-mcp` exposes the same whole scene/prefab save, create, and duplicate operation as strict `scene_asset_preview` plus separate review/apply/undo tools; session, actor, agent, and credential remain process-owned
 - changing the active project/session either confirms discard or leaves dirty World drafts visibly detached and read-only until their original workspace returns
 
 Current boundary:
@@ -61,6 +62,7 @@ Current boundary:
 - viewport gizmos, in-viewport manipulation, deeper scene/component payload editing, and procedural bake-back are still ahead
 - this slice is intentionally honest about being shell-side authoring over current text assets, not a fake full visual editor
 - multi-file scene/prefab rename remains ahead because referer updates cannot fit the current single-file semantic operation
+- structured entity/component patch tools remain ahead; MCP currently accepts one complete validated scene or prefab candidate rather than inventing a second partial-update path
 
 ## Core Surfaces
 

@@ -14,6 +14,7 @@ const SPATIAL_CAPTURE_TIMEOUT_MS = 12 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 const MAX_OPERATION_LIST_RESULTS = 100;
 const MAX_SPATIAL_ATTACHMENT_BYTES = 1024 * 1024;
+const MAX_SCENE_ASSET_BYTES = 1024 * 1024;
 const OPERATION_STATES = [
   'all',
   'previewed',
@@ -30,6 +31,7 @@ const REVISION = /^(?:missing|sha256:[a-f0-9]{64})$/;
 const PRESENT_REVISION = /^sha256:[a-f0-9]{64}$/;
 const SPATIAL_REVIEW_ID = /^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SPATIAL_RESOURCE_ID = /^[a-z0-9][a-z0-9._-]*$/;
+const SCENE_ASSET_ID = /^[a-z0-9][a-z0-9_]*$/;
 const PUBLIC_ERROR_FIELDS = [
   'code',
   'diagnostic',
@@ -342,6 +344,36 @@ const spatialReadInputSchema = z.discriminatedUnion('view', [
     normalizedTime: finiteNumber.min(0).max(1).refine((value) => !Object.is(value, -0)),
   }).strict(),
 ]);
+const sceneAssetKindSchema = z.enum(['scene', 'prefab']);
+const sceneAssetCommonSchema = {
+  assetKind: sceneAssetKindSchema,
+  subjectId: z.string().regex(SCENE_ASSET_ID),
+  content: z.string().refine(
+    (value) => Buffer.byteLength(value, 'utf8') <= MAX_SCENE_ASSET_BYTES,
+    `content must be at most ${MAX_SCENE_ASSET_BYTES} UTF-8 bytes`,
+  ),
+  label: z.string().trim().min(1).max(200),
+  leaseId: z.string().trim().min(1).max(128),
+};
+const sceneAssetPreviewInputSchema = z.discriminatedUnion('intent', [
+  z.object({
+    ...sceneAssetCommonSchema,
+    intent: z.literal('save'),
+    baseRevision: z.string().regex(PRESENT_REVISION),
+  }).strict(),
+  z.object({
+    ...sceneAssetCommonSchema,
+    intent: z.literal('create'),
+    baseRevision: z.literal('missing'),
+  }).strict(),
+  z.object({
+    ...sceneAssetCommonSchema,
+    intent: z.literal('duplicate'),
+    baseRevision: z.literal('missing'),
+    sourceSubjectId: z.string().regex(SCENE_ASSET_ID),
+    sourceRevision: z.string().regex(PRESENT_REVISION),
+  }).strict(),
+]);
 
 class SessiondRequestError extends Error {
   constructor(message, status, details = {}) {
@@ -578,17 +610,17 @@ function registerSurface(server, state) {
   const requireGrantedWriteLease = (leaseId, requiredResources = []) => (
     requireGrantedLease(leaseId, 'write', requiredResources)
   );
-  const safeOperationAction = (action, { requireSpatialLease = false } = {}) => (
+  const safeOperationAction = (action, { requireSemanticLease = false } = {}) => (
     async ({ operationId, leaseId }) => {
       let operation;
       try {
         operation = await readOperation(operationId);
-        if (requireSpatialLease) {
-          if (operation.context?.type !== 'spatial_attachment') {
+        if (requireSemanticLease) {
+          if (!['spatial_attachment', 'scene_asset'].includes(operation.context?.type)) {
             throw boundaryError(
               409,
-              'operation_not_spatial_attachment',
-              'sf-mcp apply and undo are limited to lease-gated spatial attachment operations.',
+              'operation_not_mcp_mutable',
+              'sf-mcp apply and undo are limited to lease-gated semantic operations.',
               { operation },
             );
           }
@@ -599,10 +631,10 @@ function registerSurface(server, state) {
           `/api/operations/${encodeURIComponent(operationId)}/${action}`,
           {
             method: 'POST',
-            ...(requireSpatialLease ? { credential: state.credential } : {}),
+            ...(requireSemanticLease ? { credential: state.credential } : {}),
             body: {
               actor: operationActor(),
-              ...(requireSpatialLease
+              ...(requireSemanticLease
                 ? { agentId: state.agent.id, leaseId }
                 : {}),
             },
@@ -841,6 +873,37 @@ function registerSurface(server, state) {
     },
   );
   server.registerTool(
+    'scene_asset_preview',
+    {
+      title: 'Preview scene asset change',
+      description: 'Validate and preview one authored scene or prefab save, create, or duplicate under an owned covering write lease. This does not apply file bytes.',
+      inputSchema: sceneAssetPreviewInputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => {
+      try {
+        const resourcePrefix = input.assetKind === 'scene' ? 'scene/world' : 'scene/prefab';
+        const resourceKeys = [...new Set([
+          `${resourcePrefix}/${input.subjectId}`,
+          ...(input.intent === 'duplicate' ? [`${resourcePrefix}/${input.sourceSubjectId}`] : []),
+        ])].sort();
+        await requireGrantedWriteLease(input.leaseId, resourceKeys);
+        return toolResult(await requestJson(state.baseUrl, '/api/operations/scene-asset/preview', {
+          method: 'POST',
+          credential: state.credential,
+          body: {
+            ...input,
+            sessionId: state.session.id,
+            actor: operationActor(),
+            agentId: state.agent.id,
+          },
+        }));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
     'spatial_attachment_preview',
     {
       title: 'Preview spatial attachment change',
@@ -1059,28 +1122,28 @@ function registerSurface(server, state) {
   server.registerTool(
     'operation_apply',
     {
-      title: 'Apply spatial attachment operation',
-      description: 'Apply one approved spatial attachment operation under an owned covering write lease.',
+      title: 'Apply semantic operation',
+      description: 'Apply one approved spatial attachment or scene asset operation under an owned covering write lease.',
       inputSchema: z.object({
         operationId: z.string().trim().min(1).max(128),
         leaseId: z.string().trim().min(1).max(128),
       }).strict(),
       annotations: { destructiveHint: true, idempotentHint: false },
     },
-    safeOperationAction('apply', { requireSpatialLease: true }),
+    safeOperationAction('apply', { requireSemanticLease: true }),
   );
   server.registerTool(
     'operation_undo',
     {
-      title: 'Undo spatial attachment operation',
-      description: 'Undo one applied spatial attachment operation under an owned covering write lease.',
+      title: 'Undo semantic operation',
+      description: 'Undo one applied spatial attachment or scene asset operation under an owned covering write lease.',
       inputSchema: z.object({
         operationId: z.string().trim().min(1).max(128),
         leaseId: z.string().trim().min(1).max(128),
       }).strict(),
       annotations: { destructiveHint: true, idempotentHint: false },
     },
-    safeOperationAction('undo', { requireSpatialLease: true }),
+    safeOperationAction('undo', { requireSemanticLease: true }),
   );
 }
 

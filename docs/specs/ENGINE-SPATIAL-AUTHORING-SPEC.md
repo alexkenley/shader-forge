@@ -700,8 +700,8 @@ Implemented tools:
 - `spatial_review_recapture`
 - generic `operation_approve`
 - generic `operation_reject`
-- spatial-only `operation_apply`
-- spatial-only `operation_undo`
+- semantic `operation_apply` (accepts spatial attachment operations)
+- semantic `operation_undo` (accepts spatial attachment operations)
 
 `spatial_attachment_read` accepts the strict union `{view:"rest", path, baseRevision}` or `{view:"sample", path, baseRevision, phase, normalizedTime}`. `spatial_attachment_validate` accepts `{operationId, samples?}` with at most 64 exact `{phase,normalizedTime}` objects, verifies the operation belongs to the selected MCP session, and calls the sessiond route without a lease or credential. Neither tool exposes caller-controlled session or credential input. Validation returns only the public operation and bounded summary; it never auto-applies or exposes proposed bytes/raw native stderr. Review reservation is operation/session/agent-bound; recapture requires three explicit process-owned leases and canonical cameras, while read and the review resource use the process-selected session without caller-supplied authority. Mutation tools send the private coordinator credential and hold the resource keys in this spec. They do not wrap `/api/files/write`, auto-acquire, auto-approve, retry, or apply. Structured conflicts direct the caller to reread and create a new preview.
 

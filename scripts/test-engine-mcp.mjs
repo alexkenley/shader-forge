@@ -194,6 +194,32 @@ async function evaluateRestAttachment(_animationRoot, _contentRoot, _foundationP
   return restEvaluation(attachmentId);
 }
 
+async function validateDataFoundation({ target, expectAbsent }) {
+  return {
+    schema: 'shader_forge.data_foundation_validation',
+    schemaVersion: 1,
+    assetKind: target.assetKind,
+    assetId: target.subjectId,
+    expectedPath: target.stagedPath,
+    valid: true,
+    assetCount: expectAbsent ? 0 : 1,
+    invalidAssetCount: 0,
+    diagnostic: 'passed',
+  };
+}
+
+function sceneAssetSource(id, label = id) {
+  return [
+    'schema = "shader_forge.scene"',
+    'schema_version = 1',
+    `name = "${id}"`,
+    'owner_system = "scene_system"',
+    'runtime_format = "flatbuffer"',
+    `label = "${label}"`,
+    '',
+  ].join('\n');
+}
+
 async function evaluateSampledAttachment(
   _animationRoot,
   _contentRoot,
@@ -322,6 +348,7 @@ async function main() {
     path.join(workspaceRoot, 'data', 'foundation', 'engine-data-layout.toml'),
   );
   await fs.writeFile(path.join(workspaceRoot, 'src', 'fixture.txt'), 'shader forge mcp fixture\n', 'utf8');
+  await fs.writeFile(path.join(workspaceRoot, 'content', 'scenes', 'mcp_base.scene.toml'), sceneAssetSource('mcp_base'), 'utf8');
   await fs.writeFile(path.join(workspaceRoot, attachmentPath), originalAttachment, 'utf8');
   await fs.writeFile(path.join(workspaceRoot, 'animation', 'skeletons', 'test.skeleton.toml'), 'name = "test"\n', 'utf8');
   await fs.writeFile(path.join(workspaceRoot, 'animation', 'clips', 'test.anim.toml'), 'name = "test"\n', 'utf8');
@@ -343,6 +370,7 @@ async function main() {
     evaluateRestAttachment,
     evaluateSampledAttachment,
     captureSampleAttachment,
+    validateDataFoundation,
   });
   const otherSession = await sessionStore.createSession({ name: 'other', rootPath: otherWorkspaceRoot });
   let child;
@@ -405,6 +433,7 @@ async function main() {
         'project_file_read',
         'project_files_list',
         'project_status',
+        'scene_asset_preview',
         'spatial_attachment_preview',
         'spatial_attachment_read',
         'spatial_attachment_validate',
@@ -423,6 +452,13 @@ async function main() {
       idempotentHint: true,
     });
     assert.equal(projectDiagnosticsTool.inputSchema.additionalProperties, false);
+    const sceneAssetPreviewTool = tools.tools.find((tool) => tool.name === 'scene_asset_preview');
+    assert.equal(sceneAssetPreviewTool.inputSchema.oneOf.length, 3);
+    assert.equal(sceneAssetPreviewTool.inputSchema.oneOf.every((branch) => branch.additionalProperties === false), true);
+    const advertisedScenePreview = JSON.stringify(sceneAssetPreviewTool.inputSchema);
+    assert.equal(advertisedScenePreview.includes('sessionId'), false);
+    assert.equal(advertisedScenePreview.includes('agentId'), false);
+    assert.equal(advertisedScenePreview.includes('credential'), false);
     const spatialReadTool = tools.tools.find((tool) => tool.name === 'spatial_attachment_read');
     assert.ok(spatialReadTool);
     assert.deepEqual(spatialReadTool.annotations, {
@@ -489,6 +525,76 @@ async function main() {
     assert.equal(diagnostics.structuredContent.workspace.ai.providerCount > 0, true);
     const injectedDiagnosticsAuthority = await call('project_diagnostics', { sessionId: otherSession.id });
     assert.equal(injectedDiagnosticsAuthority.isError, true);
+
+    const sceneLease = await call('work_lease_request', {
+      resources: ['scene/world/mcp_created'],
+      mode: 'write',
+    });
+    const scenePreview = await call('scene_asset_preview', {
+      assetKind: 'scene',
+      intent: 'create',
+      subjectId: 'mcp_created',
+      content: sceneAssetSource('mcp_created', 'Created through MCP'),
+      baseRevision: 'missing',
+      label: 'create MCP scene fixture',
+      leaseId: sceneLease.structuredContent.lease.id,
+    });
+    assert.equal(scenePreview.isError, undefined, JSON.stringify(scenePreview.structuredContent));
+    assert.deepEqual(scenePreview.structuredContent.operation.context.resourceKeys, ['scene/world/mcp_created']);
+    await assert.rejects(fs.stat(path.join(workspaceRoot, 'content', 'scenes', 'mcp_created.scene.toml')), { code: 'ENOENT' });
+    const sceneApproval = await call('operation_approve', { operationId: scenePreview.structuredContent.operation.id });
+    assert.equal(sceneApproval.structuredContent.operation.state, 'approved');
+    const sceneApplied = await call('operation_apply', {
+      operationId: scenePreview.structuredContent.operation.id,
+      leaseId: sceneLease.structuredContent.lease.id,
+    });
+    assert.equal(sceneApplied.structuredContent.operation.state, 'applied');
+    assert.equal(
+      await fs.readFile(path.join(workspaceRoot, 'content', 'scenes', 'mcp_created.scene.toml'), 'utf8'),
+      sceneAssetSource('mcp_created', 'Created through MCP'),
+    );
+    const sceneUndone = await call('operation_undo', {
+      operationId: scenePreview.structuredContent.operation.id,
+      leaseId: sceneLease.structuredContent.lease.id,
+    });
+    assert.equal(sceneUndone.structuredContent.operation.state, 'undone');
+    await assert.rejects(fs.stat(path.join(workspaceRoot, 'content', 'scenes', 'mcp_created.scene.toml')), { code: 'ENOENT' });
+    await call('work_lease_release', { leaseId: sceneLease.structuredContent.lease.id });
+
+    const baseScene = await call('project_file_read', { path: 'content/scenes/mcp_base.scene.toml' });
+    const incompleteDuplicateLease = await call('work_lease_request', {
+      resources: ['scene/world/mcp_copy'],
+      mode: 'write',
+    });
+    const incompleteDuplicate = await call('scene_asset_preview', {
+      assetKind: 'scene', intent: 'duplicate', subjectId: 'mcp_copy',
+      sourceSubjectId: 'mcp_base', sourceRevision: baseScene.structuredContent.revision,
+      content: sceneAssetSource('mcp_copy'), baseRevision: 'missing',
+      label: 'duplicate MCP scene fixture', leaseId: incompleteDuplicateLease.structuredContent.lease.id,
+    });
+    assert.equal(incompleteDuplicate.isError, true);
+    assert.equal(incompleteDuplicate.structuredContent.code, 'lease_resource_mismatch');
+    await call('work_lease_release', { leaseId: incompleteDuplicateLease.structuredContent.lease.id });
+    const duplicateLease = await call('work_lease_request', {
+      resources: ['scene/world/mcp_base', 'scene/world/mcp_copy'],
+      mode: 'write',
+    });
+    const duplicatePreview = await call('scene_asset_preview', {
+      assetKind: 'scene', intent: 'duplicate', subjectId: 'mcp_copy',
+      sourceSubjectId: 'mcp_base', sourceRevision: baseScene.structuredContent.revision,
+      content: sceneAssetSource('mcp_copy'), baseRevision: 'missing',
+      label: 'duplicate MCP scene fixture', leaseId: duplicateLease.structuredContent.lease.id,
+    });
+    assert.equal(duplicatePreview.isError, undefined, JSON.stringify(duplicatePreview.structuredContent));
+    assert.deepEqual(duplicatePreview.structuredContent.operation.context.resourceKeys, [
+      'scene/world/mcp_base', 'scene/world/mcp_copy',
+    ]);
+    const duplicateRejected = await call('operation_reject', {
+      operationId: duplicatePreview.structuredContent.operation.id,
+    });
+    assert.equal(duplicateRejected.structuredContent.operation.state, 'rejected');
+    await assert.rejects(fs.stat(path.join(workspaceRoot, 'content', 'scenes', 'mcp_copy.scene.toml')), { code: 'ENOENT' });
+    await call('work_lease_release', { leaseId: duplicateLease.structuredContent.lease.id });
 
     const listed = await call('project_files_list', { path: 'src' });
     assert.deepEqual(listed.structuredContent.entries.map((entry) => entry.name), ['fixture.txt']);
@@ -907,7 +1013,7 @@ async function main() {
       leaseId: spatialLeaseId,
     });
     assert.equal(genericApply.isError, true);
-    assert.equal(genericApply.structuredContent.code, 'operation_not_spatial_attachment');
+    assert.equal(genericApply.structuredContent.code, 'operation_not_mcp_mutable');
     await assert.rejects(fs.stat(path.join(workspaceRoot, 'src', 'generic.txt')), { code: 'ENOENT' });
 
     const genericApplied = await sessiond.operationStore.apply(genericOperation.id, {
@@ -919,7 +1025,7 @@ async function main() {
       leaseId: spatialLeaseId,
     });
     assert.equal(genericUndo.isError, true);
-    assert.equal(genericUndo.structuredContent.code, 'operation_not_spatial_attachment');
+    assert.equal(genericUndo.structuredContent.code, 'operation_not_mcp_mutable');
     assert.equal(await fs.readFile(path.join(workspaceRoot, 'src', 'generic.txt'), 'utf8'), 'generic\n');
 
     const approved = await call('operation_approve', { operationId });

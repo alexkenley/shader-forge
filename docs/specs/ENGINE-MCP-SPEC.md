@@ -2,7 +2,7 @@
 
 Status: project/coordination/diagnostic reads, typed spatial rest/sample read, and lease-gated spatial mutation slice
 
-Date: 2026-08-30
+Date: 2026-08-31
 
 ## Purpose
 
@@ -72,9 +72,10 @@ Operation tools:
 
 - `operation_list` returns a bounded recent operation view for the selected workspace
 - `operation_read` returns one selected-workspace operation without staged file contents
+- `scene_asset_preview` validates and previews one full authored scene/prefab save, create, or duplicate under an owned exact write lease
 - `spatial_attachment_preview` validates a full attachment candidate and records a no-write preview under an owned granted write lease
 - `operation_approve` and `operation_reject` perform separate review transitions; neither applies file bytes
-- `operation_apply` and `operation_undo` accept only spatial attachment operations and require an owned granted write lease covering every persisted resource key
+- `operation_apply` and `operation_undo` accept only semantic spatial attachment or scene asset operations and require an owned granted write lease covering every persisted resource key
 
 The MCP actor is fixed from the process coordinator registration as `kind: mcp`. Tool callers cannot provide an actor, agent id, or credential. Preview, apply, and undo heartbeat first, verify the process-owned lease view, then send the private credential to `engine_sessiond`, which repeats the authoritative lease, resource, revision, workspace, state, and policy checks.
 
@@ -103,17 +104,17 @@ This is the engine-native equivalent of the buddy-system orchestrator: agents re
 
 ## Current Safety Boundary
 
-The current mutation boundary is deliberately limited to the implemented semantic spatial attachment operation.
+The current mutation boundary is deliberately limited to the implemented semantic spatial attachment and whole scene/prefab asset operations.
 
 It does not expose:
 
-- generic file, scene, entity, asset, or code mutations
+- generic file, entity/component patch, non-scene asset, or code mutations
 - build, cook, package, or runtime mutation
 - shell, PTY, or arbitrary command execution
 - an HTTP MCP endpoint
 - built-in model execution, assistant chat, prompts, or provider selection
 
-`sf-mcp` never calls `POST /api/files/write`. Its first mutation tools adapt the same spatial preview/review/apply/undo workflow already used by the CLI and Assets tuner. Generic operations have no persisted lease context, so MCP apply/undo rejects them even if the caller supplies a lease id. A lease grants coordination ownership; it is not authority to bypass the operation journal, revision checks, native validation, approval state, or code-trust policy.
+`sf-mcp` never calls `POST /api/files/write`. Its mutation tools adapt the same spatial workflow used by the CLI/Assets tuner and the same whole scene/prefab save/create/duplicate workflow used by World. `scene_asset_preview` uses strict intent-specific input, injects process session/actor/agent authority, and requires exact target plus duplicate-source resource coverage before sessiond repeats revision, staged-manifest, native `DataFoundation`, lease, and policy checks. Generic operations have no persisted lease context, so MCP apply/undo rejects them even if the caller supplies a lease id. A lease grants coordination ownership; it is not authority to bypass the operation journal, revision checks, native validation, approval state, or code-trust policy.
 
 ## Verification
 
@@ -129,6 +130,7 @@ The deterministic MCP harness must:
 - verify coordinator registration, lease use, and disconnect cleanup
 - verify queued, foreign, released, and resource-mismatched lease refusal
 - verify no-write spatial preview, MCP actor provenance, explicit approve/apply/undo/reject, and exact restored bytes
+- verify no-write scene-asset preview, exact target/source lease coverage, explicit approve/apply/undo, and exact restored bytes
 - verify selected-session operation boundaries and rejection of generic apply/undo
 - verify structured revision and transition conflict recovery without credential leakage
 - verify stdout contains protocol messages only
@@ -139,7 +141,7 @@ Run it with `npm run test:mcp`.
 
 ## Next Widening Gate
 
-The next MCP widening requires an engine-owned coordinated context for each additional operation family. Do not expose generic file apply/undo while context-free file operations lack persisted resource keys and authoritative lease checks. Further scene, asset, build, and runtime tools land only after their matching sessiond operations define those keys and policies. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` remains loopback-only. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
+The next MCP widening requires an engine-owned coordinated context for each additional operation family. Do not expose generic file apply/undo while context-free file operations lack persisted resource keys and authoritative lease checks. Entity/component patch, non-scene asset, build, and runtime tools land only after their matching sessiond operations define those keys and policies. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` remains loopback-only. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
 
 ## Spatial Authoring Adapter
 
