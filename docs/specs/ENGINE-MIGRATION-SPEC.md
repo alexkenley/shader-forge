@@ -45,7 +45,7 @@ Implemented now:
 - a declared startup scene that cannot be resolved is fail-closed: no plausible-looking bootstrap is emitted, the setting is marked `skipped`, and the report carries a manual task
 - when no startup scene is declared, the first source-relative converted scene is selected deterministically and the setting is marked `approximated`
 - manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
-- Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; valid perspective `Camera` optics and valid `BoxCollider` center/size geometry map into the existing strict prefab components
+- Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; enabled valid perspective `Camera` optics and enabled valid `BoxCollider` center/size geometry map into the existing strict prefab components
 - Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, preserve source paths/types as generated comments, and map valid explicit perspective `Camera3D` optics plus `CollisionShape3D`-referenced `BoxShape3D` geometry into strict prefab components
 - migration manifests and reports include `mapped_scene_entities`, `mapped_prefab_components`, and `mapped_script_bindings`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
@@ -64,7 +64,7 @@ Current boundaries:
 - project-setting support is currently limited to startup-scene selection; other engine settings remain manual even when detection finds them
 - `asset_conversion` remains `Manual`: placeholder asset directories are not payload import, conversion, or runtime fidelity
 - the Unreal lane is currently explicit about its fallback status: Blueprint package outputs are low-confidence manifests derived from package names rather than parsed graphs
-- art assets, materials, animation, audio, Unity prefab instances/other components/camera and collider enabled state/orthographic cameras/trigger-layer-material collider semantics/coordinate-system remediation, Unreal hierarchy extraction, Godot transform matrices/resource instances/other component payloads/camera enabled-current semantics/physics-body-disabled-layer-material semantics, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
+- art assets, materials, animation, audio, Unity prefab instances/other components/disabled camera and collider preservation/orthographic cameras/trigger-layer-material collider semantics/coordinate-system remediation, Unreal hierarchy extraction, Godot transform matrices/resource instances/other component payloads/camera enabled-current semantics/physics-body-disabled-layer-material semantics, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
 
 ## Primary Targets
 
@@ -154,10 +154,10 @@ Current implemented slice:
 - parse text-YAML `GameObject`, `Transform`, and `RectTransform` documents from `.unity` scenes
 - preserve source file IDs, parent hierarchy, and local position/rotation/scale in generated scene entities and scene-owned placeholder prefabs
 - normalize source quaternions into deterministic Euler-degree output for reviewable generated records
-- map valid perspective `Camera` field-of-view and near/far clip values into `[component.camera]` while retaining the source component ID
-- map valid `BoxCollider` center and size into `[component.collision]` box geometry with identity collider-local rotation while retaining the source component ID
+- map enabled valid perspective `Camera` field-of-view and near/far clip values into `[component.camera]` while retaining the source component ID
+- map enabled valid `BoxCollider` center and size into `[component.collision]` box geometry with identity collider-local rotation while retaining the source component ID
 - resolve `MonoBehaviour` script GUIDs through `.cs.meta` files and emit binding-specific script-porting provenance without claiming behavior conversion
-- leave prefab instances, other serialized component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, source assets, runtime physics consumption, and coordinate-system remediation explicit manual work
+- leave prefab instances, other serialized component payloads, disabled camera/collider preservation, orthographic cameras, trigger/layer/material collider semantics, source assets, runtime physics consumption, and coordinate-system remediation explicit manual work
 
 ### Unreal Engine
 
@@ -287,7 +287,7 @@ The migration subsystem needs deterministic fixture-based coverage.
 
 Required harnesses:
 
-- Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, perspective Camera optics, BoxCollider geometry, MonoBehaviour-to-`.cs.meta` GUID binding provenance, and production-bakeable generated prefabs
+- Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, enabled perspective Camera optics, enabled BoxCollider geometry, disabled-component rejection, MonoBehaviour-to-`.cs.meta` GUID binding provenance, and production-bakeable generated prefabs
 - Unreal offline fallback migration smoke, including `GameDefaultMap` binding for both C++ and package-only fixtures
 - Godot text-scene migration smoke, including exact startup and node-script `res://` binding, explicit perspective Camera3D optics, CollisionShape3D/BoxShape3D geometry, explicit-unresolved fail-closed behavior, and no-declaration approximation
 - migration manifest/report provenance and project-setting count validation

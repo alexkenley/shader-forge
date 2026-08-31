@@ -164,6 +164,10 @@ assert.match(
   fs.readFileSync(unityCameraPrefabPath, 'utf8'),
   /# migration_source_camera_component_id = "7"[\s\S]*spawn_tag = "unity_camera"[\s\S]*\[component\.camera\][\s\S]*vertical_fov_degrees = 60[\s\S]*near_meters = 0\.3[\s\S]*far_meters = 500/,
 );
+assert.doesNotMatch(fs.readFileSync(unityPlayerPrefabPath, 'utf8'), /migration_source_camera_component_id = "10"/);
+assert.doesNotMatch(fs.readFileSync(unityCameraPrefabPath, 'utf8'), /migration_source_box_collider_component_id = "11"/);
+assert.doesNotMatch(fs.readFileSync(unityPlayerPrefabPath, 'utf8'), /\[component\.camera\]/);
+assert.doesNotMatch(fs.readFileSync(unityCameraPrefabPath, 'utf8'), /\[component\.collision\]/);
 assert.match(fs.readFileSync(unityDataPath, 'utf8'), /default_scene = "sandbox"/);
 assert.ok(
   fs.readdirSync(path.join(unityConvertRoot, 'script-porting')).some((name) => name.endsWith('.port.toml')),

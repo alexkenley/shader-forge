@@ -531,7 +531,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
       engine === 'godot'
         ? `Review mapped Godot text-scene hierarchy, explicit transforms, perspective Camera3D optics, and CollisionShape3D BoxShape3D geometry under ${targetRoots.content_scenes}; transform matrices, instanced resources, other components, and physics semantics remain manual.`
         : engine === 'unity'
-          ? `Review mapped Unity text-YAML hierarchy, local transforms, perspective Camera optics, and BoxCollider geometry under ${targetRoots.content_scenes}; prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
+          ? `Review mapped Unity text-YAML hierarchy, local transforms, enabled perspective Camera optics, and enabled BoxCollider geometry under ${targetRoots.content_scenes}; disabled component preservation, prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
       `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
       `Populate real imported art and cooked assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; this slice only emits structure placeholders.`,
@@ -570,7 +570,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
     if (detection.engine === 'unity') {
-      warnings.push('Unity conversion maps text-YAML hierarchy, valid perspective Camera optics, valid BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
+      warnings.push('Unity conversion maps text-YAML hierarchy, enabled perspective Camera optics, enabled BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, disabled camera/collider preservation, orthographic cameras, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
       warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, valid CollisionShape3D BoxShape3D geometry, and node script ExtResource bindings; transform matrices, resource instances, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled/layer/material semantics are still ahead.');
     }
@@ -852,9 +852,11 @@ function parseUnitySceneNodes(source) {
       const verticalFovDegrees = parseUnityNumber(document.lines, 'field of view');
       const nearMeters = parseUnityNumber(document.lines, 'near clip plane');
       const farMeters = parseUnityNumber(document.lines, 'far clip plane');
+      const enabled = parseUnityNumber(document.lines, 'm_Enabled', 0) === 1;
       const perspective = parseUnityNumber(document.lines, 'orthographic', 1) === 0;
       const valid = [verticalFovDegrees, nearMeters, farMeters]
         .every((value) => Number.isFinite(value) && Number.isFinite(Math.fround(value)))
+        && enabled
         && perspective
         && verticalFovDegrees > 0
         && verticalFovDegrees < 180
@@ -874,7 +876,9 @@ function parseUnitySceneNodes(source) {
       const gameObjectId = parseUnityFileId(document.lines, 'm_GameObject');
       const center = parseUnityInlineNumbers(document.lines, 'm_Center', ['x', 'y', 'z'], null);
       const dimensions = parseUnityInlineNumbers(document.lines, 'm_Size', ['x', 'y', 'z'], null);
-      const valid = center?.every((value) => Number.isFinite(Math.fround(value)))
+      const enabled = parseUnityNumber(document.lines, 'm_Enabled', 0) === 1;
+      const valid = enabled
+        && center?.every((value) => Number.isFinite(Math.fround(value)))
         && dimensions?.every((value) => Number.isFinite(Math.fround(value)) && value > 0);
       return [gameObjectId, valid ? {
         sourceComponentId: document.fileId,
