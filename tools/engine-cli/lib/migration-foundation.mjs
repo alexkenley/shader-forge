@@ -529,7 +529,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     return [
       engine === 'godot'
-        ? `Review mapped Godot text-scene hierarchy, explicit transforms, perspective Camera3D optics, and enabled CollisionShape3D BoxShape3D geometry under ${targetRoots.content_scenes}; disabled collider preservation, transform matrices, instanced resources, other components, and physics semantics remain manual.`
+        ? `Review mapped Godot text-scene hierarchy, explicit transforms, perspective Camera3D optics, and enabled non-Area3D CollisionShape3D BoxShape3D geometry under ${targetRoots.content_scenes}; disabled/Area3D trigger collider preservation, transform matrices, instanced resources, other components, and physics semantics remain manual.`
         : engine === 'unity'
           ? `Review mapped Unity text-YAML hierarchy, local transforms, enabled perspective Camera optics, and enabled non-trigger BoxCollider geometry under ${targetRoots.content_scenes}; disabled/trigger collider preservation, prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
@@ -572,7 +572,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
     if (detection.engine === 'unity') {
       warnings.push('Unity conversion maps text-YAML hierarchy, enabled perspective Camera optics, enabled non-trigger BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, disabled camera/collider preservation, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
-      warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, enabled valid CollisionShape3D BoxShape3D geometry, and node script ExtResource bindings; transform matrices, resource instances, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled-collider/layer/material semantics are still ahead.');
+      warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, enabled valid non-Area3D CollisionShape3D BoxShape3D geometry, and node script ExtResource bindings; transform matrices, resource instances, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled-or-trigger-collider/layer/material semantics are still ahead.');
     }
   }
   return warnings;
@@ -730,6 +730,15 @@ function parseGodotSceneNodes(source) {
   }
 
   const rootName = nodes.find((node) => !node.parent)?.name || nodes[0]?.name || 'Root';
+  const sourceNodePath = (node) => !node.parent
+    ? node.name
+    : node.parent === '.'
+      ? `${rootName}/${node.name}`
+      : `${rootName}/${node.parent}/${node.name}`;
+  const sourceParentPath = (node) => !node.parent
+    ? ''
+    : node.parent === '.' ? rootName : `${rootName}/${node.parent}`;
+  const sourceTypeByPath = new Map(nodes.map((node) => [sourceNodePath(node), node.type]));
   return nodes.map((node) => ({
     ...node,
     camera: node.camera
@@ -742,23 +751,17 @@ function parseGodotSceneNodes(source) {
       && node.camera.farMeters > node.camera.nearMeters
       ? node.camera
       : null,
-    collision: node.collisionDisabled ? null : boxShapes.get(node.collisionShapeId) || null,
+    collision: (node.collisionDisabled || sourceTypeByPath.get(sourceParentPath(node)) === 'Area3D')
+      ? null
+      : boxShapes.get(node.collisionShapeId) || null,
     scriptBindings: scriptResources.has(node.scriptResourceId)
       ? [{
           sourceResourceId: node.scriptResourceId,
           sourceResourcePath: scriptResources.get(node.scriptResourceId),
         }]
       : [],
-    sourceNodePath: !node.parent
-      ? node.name
-      : node.parent === '.'
-        ? `${rootName}/${node.name}`
-        : `${rootName}/${node.parent}/${node.name}`,
-    sourceParentPath: !node.parent
-      ? ''
-      : node.parent === '.'
-        ? rootName
-        : `${rootName}/${node.parent}`,
+    sourceNodePath: sourceNodePath(node),
+    sourceParentPath: sourceParentPath(node),
   }));
 }
 

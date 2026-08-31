@@ -413,6 +413,35 @@ assert.doesNotMatch(
   /\[component\.collision\]/,
 );
 
+const areaGodotCollisionFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-area-collision');
+fs.cpSync(godotFixtureRoot, areaGodotCollisionFixtureRoot, { recursive: true });
+const areaGodotCollisionScenePath = path.join(areaGodotCollisionFixtureRoot, 'scenes', 'main.tscn');
+fs.writeFileSync(
+  areaGodotCollisionScenePath,
+  fs.readFileSync(areaGodotCollisionScenePath, 'utf8').replace(
+    '[node name="Player" type="CharacterBody3D" parent="."]',
+    '[node name="Player" type="Area3D" parent="."]',
+  ),
+  'utf8',
+);
+const areaGodotCollisionRun = runCli([
+  'migrate',
+  'godot',
+  areaGodotCollisionFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'godot-area-collision',
+]);
+assert.match(areaGodotCollisionRun.stdout, /Mapped prefab components: 1/);
+assert.doesNotMatch(
+  fs.readFileSync(
+    path.join(tempRoot, 'godot-area-collision', 'shader-forge-project', 'content', 'prefabs', 'migrated', 'godot', 'main_main_player_collider.prefab.toml'),
+    'utf8',
+  ),
+  /\[component\.collision\]/,
+);
+
 const unsafeGodotScriptFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-unsafe-script-path');
 fs.cpSync(godotFixtureRoot, unsafeGodotScriptFixtureRoot, { recursive: true });
 const unsafeGodotScenePath = path.join(unsafeGodotScriptFixtureRoot, 'scenes', 'main.tscn');

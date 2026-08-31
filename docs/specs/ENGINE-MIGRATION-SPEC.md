@@ -46,7 +46,7 @@ Implemented now:
 - when no startup scene is declared, the first source-relative converted scene is selected deterministically and the setting is marked `approximated`
 - manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
 - Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; enabled valid perspective `Camera` optics and enabled valid non-trigger `BoxCollider` center/size geometry map into the existing strict prefab components
-- Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, preserve source paths/types as generated comments, and map valid explicit perspective `Camera3D` optics plus enabled `CollisionShape3D`-referenced `BoxShape3D` geometry into strict prefab components; explicitly disabled collision shapes fail closed
+- Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, preserve source paths/types as generated comments, and map valid explicit perspective `Camera3D` optics plus enabled non-`Area3D` `CollisionShape3D`-referenced `BoxShape3D` geometry into strict prefab components; explicitly disabled and `Area3D` trigger collision shapes fail closed
 - migration manifests and reports include `mapped_scene_entities`, `mapped_prefab_components`, and `mapped_script_bindings`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
 - Unity `MonoBehaviour` records now resolve script GUIDs through `.cs.meta` files and emit per-component binding manifests with source scene, node path, GameObject file ID, component file ID, and resolution confidence; C# behavior and serialized fields remain manual
@@ -194,11 +194,11 @@ Current implemented pass:
 - `.tscn` node headers map to stable scene entities and generated prefabs with parent links
 - explicit `Vector3` position, rotation, and scale fields map to Shader Forge transforms; rotation is converted from radians to degrees
 - valid explicit perspective `Camera3D` `fov`, `near`, and `far` values map into `[component.camera]`
-- enabled `CollisionShape3D` nodes that reference valid `BoxShape3D` subresources map size into `[component.collision]`; the node transform preserves the collider offset/orientation, while `disabled = true` fails closed
+- enabled `CollisionShape3D` nodes outside `Area3D` that reference valid `BoxShape3D` subresources map size into `[component.collision]`; the node transform preserves the collider offset/orientation, while `disabled = true` and direct `Area3D` trigger shapes fail closed
 - node script `ExtResource` references resolve safe `res://` paths into binding-specific script-porting provenance
 - generated scene and prefab comments retain source node paths and node types for review
 - binary `.scn` files retain the existing placeholder path; their serialized contents are not parsed
-- matrices, instanced resources, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled-collider-preservation/layer/material semantics remain manual and are reported as such
+- matrices, instanced resources, other component payloads, script behavior/fields, camera enabled/current semantics, and physics-body/disabled-or-trigger-collider-preservation/layer/material semantics remain manual and are reported as such
 
 ## Shader Forge Output
 
@@ -289,7 +289,7 @@ Required harnesses:
 
 - Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, enabled perspective Camera optics, enabled non-trigger BoxCollider geometry, disabled/trigger component rejection, MonoBehaviour-to-`.cs.meta` GUID binding provenance, and production-bakeable generated prefabs
 - Unreal offline fallback migration smoke, including `GameDefaultMap` binding for both C++ and package-only fixtures
-- Godot text-scene migration smoke, including exact startup and node-script `res://` binding, explicit perspective Camera3D optics, enabled CollisionShape3D/BoxShape3D geometry, disabled-collision rejection, explicit-unresolved fail-closed behavior, and no-declaration approximation
+- Godot text-scene migration smoke, including exact startup and node-script `res://` binding, explicit perspective Camera3D optics, enabled non-Area3D CollisionShape3D/BoxShape3D geometry, disabled/Area3D-trigger collision rejection, explicit-unresolved fail-closed behavior, and no-declaration approximation
 - migration manifest/report provenance and project-setting count validation
 - production asset-pipeline bake validation for the generated scene, prefab, and optional runtime-bootstrap records
 
