@@ -486,6 +486,7 @@ export function SceneEditorView({
   const prefabDraftPathRef = useRef('');
   const sceneDirtyRef = useRef(false);
   const prefabDirtyRef = useRef(false);
+  const worldRequestRef = useRef(0);
   const activeWorkspaceAuthorityRef = useRef(worldWorkspaceAuthority(activeSession));
   const draftWorkspaceAuthorityRef = useRef('');
   const [mode, setMode] = useState<EditorMode>('edit');
@@ -613,9 +614,10 @@ export function SceneEditorView({
     setDraftWorkspaceAuthority(authority);
   }
 
-  function worldResponseIsCurrent(authority: string) {
+  function worldResponseIsCurrent(authority: string, requestId: number) {
     return Boolean(
       authority
+      && worldRequestRef.current === requestId
       && activeWorkspaceAuthorityRef.current === authority
       && draftWorkspaceAuthorityRef.current === authority,
     );
@@ -703,6 +705,7 @@ export function SceneEditorView({
     if (!confirmDiscardChanges('Open another world and discard the unsaved changes in this one?')) {
       return;
     }
+    worldRequestRef.current += 1;
     openSceneDocument(document, prefabDocuments, mode);
   }
 
@@ -726,6 +729,7 @@ export function SceneEditorView({
 
   useEffect(() => {
     let cancelled = false;
+    const requestId = ++worldRequestRef.current;
     const requestedSession = activeSession;
     const requestedAuthority = worldWorkspaceAuthority(requestedSession);
 
@@ -769,7 +773,11 @@ export function SceneEditorView({
           loadPrefabDocuments(requestedSession.id),
         ]);
 
-        if (cancelled || activeWorkspaceAuthorityRef.current !== requestedAuthority) {
+        if (
+          cancelled
+          || worldRequestRef.current !== requestId
+          || activeWorkspaceAuthorityRef.current !== requestedAuthority
+        ) {
           return;
         }
 
@@ -797,14 +805,18 @@ export function SceneEditorView({
           nextScenes[0];
         openSceneDocument(preferredScene, nextPrefabs);
       } catch (error) {
-        if (cancelled || activeWorkspaceAuthorityRef.current !== requestedAuthority) {
+        if (
+          cancelled
+          || worldRequestRef.current !== requestId
+          || activeWorkspaceAuthorityRef.current !== requestedAuthority
+        ) {
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
         setStatusMessage(message);
         onBackendStatus('offline', message);
       } finally {
-        if (!cancelled) {
+        if (!cancelled && worldRequestRef.current === requestId) {
           setBusy(false);
         }
       }
@@ -837,13 +849,17 @@ export function SceneEditorView({
 
     const targetAuthority = worldWorkspaceAuthority(activeSession);
     const targetSessionId = activeSession.id;
+    const requestId = ++worldRequestRef.current;
     setBusy(true);
     try {
       const [nextScenes, nextPrefabs] = await Promise.all([
         loadSceneDocuments(targetSessionId),
         loadPrefabDocuments(targetSessionId),
       ]);
-      if (activeWorkspaceAuthorityRef.current !== targetAuthority) {
+      if (
+        worldRequestRef.current !== requestId
+        || activeWorkspaceAuthorityRef.current !== targetAuthority
+      ) {
         return;
       }
       bindDraftWorkspace(targetAuthority);
@@ -875,14 +891,20 @@ export function SceneEditorView({
       onLaunchSceneChange(preferredScene.name);
       onBackendStatus('connected', `Reloaded ${preferredScene.title || preferredScene.name}.`);
     } catch (error) {
-      if (activeWorkspaceAuthorityRef.current !== targetAuthority) {
+      if (
+        worldRequestRef.current !== requestId
+        || activeWorkspaceAuthorityRef.current !== targetAuthority
+      ) {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
     } finally {
-      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+      if (
+        worldRequestRef.current === requestId
+        && activeWorkspaceAuthorityRef.current === targetAuthority
+      ) {
         setBusy(false);
       }
     }
@@ -942,6 +964,7 @@ export function SceneEditorView({
       scene: cloneSceneDocument(sceneDraft),
       prefab: clonePrefabDocument(document),
     });
+    worldRequestRef.current += 1;
     setPrefabSaved(document);
     setSelectedNode('prefab');
     setActiveSidebarTab('inspector');
@@ -1038,6 +1061,7 @@ export function SceneEditorView({
     const targetSessionId = activeSession.id;
     const targetAuthority = worldWorkspaceAuthority(activeSession);
     const targetPath = sceneDraft.path;
+    const requestId = ++worldRequestRef.current;
     setBusy(true);
     try {
       const savedPayload = await mutateSceneAsset({
@@ -1053,7 +1077,7 @@ export function SceneEditorView({
       if (
         activeSessionIdRef.current !== targetSessionId
         || sceneDraftPathRef.current !== targetPath
-        || !worldResponseIsCurrent(targetAuthority)
+        || !worldResponseIsCurrent(targetAuthority, requestId)
       ) {
         return false;
       }
@@ -1076,7 +1100,7 @@ export function SceneEditorView({
       primaryActionRef.current?.focus();
       return true;
     } catch (error) {
-      if (!worldResponseIsCurrent(targetAuthority)) {
+      if (!worldResponseIsCurrent(targetAuthority, requestId)) {
         return false;
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -1084,7 +1108,7 @@ export function SceneEditorView({
       onBackendStatus('offline', message);
       return false;
     } finally {
-      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+      if (worldResponseIsCurrent(targetAuthority, requestId)) {
         setBusy(false);
       }
     }
@@ -1098,6 +1122,7 @@ export function SceneEditorView({
     const targetSessionId = activeSession.id;
     const targetAuthority = worldWorkspaceAuthority(activeSession);
     const targetPath = prefabDraft.path;
+    const requestId = ++worldRequestRef.current;
     setBusy(true);
     try {
       const savedPayload = await mutateSceneAsset({
@@ -1113,7 +1138,7 @@ export function SceneEditorView({
       if (
         activeSessionIdRef.current !== targetSessionId
         || prefabDraftPathRef.current !== targetPath
-        || !worldResponseIsCurrent(targetAuthority)
+        || !worldResponseIsCurrent(targetAuthority, requestId)
       ) {
         return false;
       }
@@ -1131,7 +1156,7 @@ export function SceneEditorView({
       primaryActionRef.current?.focus();
       return true;
     } catch (error) {
-      if (!worldResponseIsCurrent(targetAuthority)) {
+      if (!worldResponseIsCurrent(targetAuthority, requestId)) {
         return false;
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -1139,7 +1164,7 @@ export function SceneEditorView({
       onBackendStatus('offline', message);
       return false;
     } finally {
-      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+      if (worldResponseIsCurrent(targetAuthority, requestId)) {
         setBusy(false);
       }
     }
@@ -1184,6 +1209,7 @@ export function SceneEditorView({
     const primaryPrefab = scenePrimaryPrefab?.name || prefabDocuments[0]?.name || '';
     const nextScene = createSceneAssetDocument(newSceneName, primaryPrefab);
 
+    const requestId = ++worldRequestRef.current;
     setBusy(true);
     try {
       const savedPayload = await mutateSceneAsset({
@@ -1196,7 +1222,7 @@ export function SceneEditorView({
         subjectId: nextScene.name,
         label: `create scene ${nextScene.name}`,
       });
-      if (!worldResponseIsCurrent(targetAuthority)) {
+      if (!worldResponseIsCurrent(targetAuthority, requestId)) {
         return;
       }
       const createdScene = parseSceneAssetDocument(savedPayload);
@@ -1207,14 +1233,14 @@ export function SceneEditorView({
       setStatusMessage(`Created ${createdScene.title || createdScene.name}.`);
       onBackendStatus('connected', `Created ${createdScene.title || createdScene.name}.`);
     } catch (error) {
-      if (!worldResponseIsCurrent(targetAuthority)) {
+      if (!worldResponseIsCurrent(targetAuthority, requestId)) {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
     } finally {
-      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+      if (worldResponseIsCurrent(targetAuthority, requestId)) {
         setBusy(false);
       }
     }
@@ -1246,6 +1272,7 @@ export function SceneEditorView({
       return;
     }
 
+    const requestId = ++worldRequestRef.current;
     setBusy(true);
     try {
       const savedPayload = await mutateSceneAsset({
@@ -1260,7 +1287,7 @@ export function SceneEditorView({
         sourceRevision: sceneDraft.revision,
         label: `duplicate scene ${duplicateDocument.name}`,
       });
-      if (!worldResponseIsCurrent(targetAuthority)) {
+      if (!worldResponseIsCurrent(targetAuthority, requestId)) {
         return;
       }
       const nextScene = parseSceneAssetDocument(savedPayload);
@@ -1269,14 +1296,14 @@ export function SceneEditorView({
       setStatusMessage(`Duplicated ${sceneDraft.title || sceneDraft.name} into ${nextScene.title || nextScene.name}.`);
       onBackendStatus('connected', `Duplicated ${sceneDraft.title || sceneDraft.name} into ${nextScene.title || nextScene.name}.`);
     } catch (error) {
-      if (!worldResponseIsCurrent(targetAuthority)) {
+      if (!worldResponseIsCurrent(targetAuthority, requestId)) {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
     } finally {
-      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+      if (worldResponseIsCurrent(targetAuthority, requestId)) {
         setBusy(false);
       }
     }

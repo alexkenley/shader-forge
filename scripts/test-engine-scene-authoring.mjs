@@ -56,6 +56,13 @@ try {
   assert.match(sceneEditorView, /const canEdit = mode === 'edit' && worldMutationsEnabled/);
   assert.match(sceneEditorView, /function worldResponseIsCurrent/);
   assert.match(sceneEditorView, /activeWorkspaceAuthorityRef\.current === targetAuthority/);
+  assert.match(sceneEditorView, /const worldRequestRef = useRef\(0\)/);
+  assert.match(sceneEditorView, /worldRequestRef\.current === requestId/);
+  assert.match(sceneEditorView, /cancelled\s*\|\| worldRequestRef\.current !== requestId/);
+  assert.ok(
+    (sceneEditorView.match(/worldResponseIsCurrent\(targetAuthority, requestId\)/g) || []).length >= 10,
+    'World mutation responses must retain request generation as well as workspace and path authority',
+  );
   assert.match(sceneEditorView, /Apply and restart/);
   assert.match(sceneEditorView, /primaryActionRef\.current\?\.focus\(\)/);
   assert.match(sceneEditorView, /Run existing build/);
@@ -192,7 +199,7 @@ try {
   console.log('Engine scene authoring smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log('- Verified the World workspace exposes draft-safe Edit/Verify, one-click Play, guarded navigation, plain-language object tools, and collapsed advanced settings');
-  console.log('- Verified dirty World drafts keep stable workspace authority and detach from incompatible session or root changes');
+  console.log('- Verified dirty World drafts keep stable workspace authority and stale load/mutation generations cannot revive old state');
   console.log('- Verified World mutations use revision-bound semantic operations, exact coordination leases, and authoritative apply reconciliation');
   console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component fixture assets inside a session root');
 } finally {
