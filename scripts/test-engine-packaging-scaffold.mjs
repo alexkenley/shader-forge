@@ -96,6 +96,16 @@ const inspectAfterBake = await runCli(['export', 'inspect', '--root', tempProjec
 assert.equal(inspectAfterBake.ready, true);
 assert.equal(inspectAfterBake.needsAssetBake, false);
 
+const releaseInspect = await runCli(['export', 'inspect', '--root', tempProjectRoot, '--preset', 'release']);
+assert.equal(releaseInspect.ready, true);
+assert.equal(releaseInspect.presetId, 'release');
+assert.equal(releaseInspect.runtimeConfig, 'Release');
+assert.equal(releaseInspect.packageRootPath, 'build/package/release');
+const releaseReport = await runCli(['package', '--root', tempProjectRoot, '--preset', 'release']);
+assert.equal(releaseReport.runtimeConfig, 'Release');
+assert.equal(releaseReport.hookResults.find((hook) => hook.id === 'archive_zip').outputPath, 'build/package/release.zip');
+await fs.access(path.join(tempProjectRoot, 'build', 'package', 'release.zip'));
+
 const service = await startEngineSessiond({
   host: '127.0.0.1',
   port: 0,
@@ -137,7 +147,7 @@ try {
   await fs.access(path.join(tempProjectRoot, 'build', 'package', 'default.zip'));
 
   console.log('Engine packaging scaffold passed.');
-  console.log('- Verified default export-preset inspection exposes missing cooked-output prep state through the engine CLI and engine_sessiond');
+  console.log('- Verified default and release export presets plus missing cooked-output prep state through the engine CLI and engine_sessiond');
   console.log('- Verified packaging auto-bakes cooked outputs when needed, records prerequisite actions, emits the release layout, and executes the default ZIP archive hook');
 } finally {
   await service.close();
