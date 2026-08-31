@@ -5,9 +5,16 @@ const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 const jobStatuses = new Set(['queued', 'running', ...terminalStatuses]);
 
 export class AiRequestQueue {
-  constructor({ execute = testAiProvider, recordUsage = async () => {}, emitEvent = () => {}, maxJobs = 128 } = {}) {
+  constructor({
+    execute = testAiProvider,
+    recordUsage = null,
+    recordHistory = null,
+    emitEvent = () => {},
+    maxJobs = 128,
+  } = {}) {
     this.execute = execute;
     this.recordUsage = recordUsage;
+    this.recordHistory = recordHistory;
     this.emitEvent = emitEvent;
     this.maxJobs = maxJobs;
     this.jobs = new Map();
@@ -42,6 +49,8 @@ export class AiRequestQueue {
       error: null,
       usageRecorded: null,
       usageError: null,
+      historyRecorded: null,
+      historyError: null,
       controller: null,
     };
     this.jobs.set(job.id, job);
@@ -121,7 +130,12 @@ export class AiRequestQueue {
   async drain() {
     while (this.pendingIds.length) {
       const job = this.jobs.get(this.pendingIds.shift());
-      if (!job || job.status !== 'queued') {
+      if (!job) {
+        continue;
+      }
+      if (job.status !== 'queued') {
+        await this.persistHistory(job);
+        this.emit(job);
         continue;
       }
 
@@ -140,7 +154,7 @@ export class AiRequestQueue {
           job.status = 'completed';
           job.providerId = result.providerId;
           job.result = result;
-          if (result.usage) {
+          if (result.usage && this.recordUsage) {
             try {
               await this.recordUsage(job.rootPath, result);
               job.usageRecorded = true;
@@ -160,6 +174,7 @@ export class AiRequestQueue {
           job.finishedAt = new Date().toISOString();
         }
         job.controller = null;
+        await this.persistHistory(job);
         this.emit(job);
       }
     }
@@ -177,11 +192,35 @@ export class AiRequestQueue {
       error: job.error,
       usageRecorded: job.usageRecorded,
       usageError: job.usageError,
+      historyRecorded: job.historyRecorded,
+      historyError: job.historyError,
     };
     if (includeResult) {
       snapshot.result = job.result;
     }
     return snapshot;
+  }
+
+  async persistHistory(job) {
+    if (!this.recordHistory || job.historyRecorded !== null || !terminalStatuses.has(job.status)) {
+      return;
+    }
+    try {
+      await this.recordHistory(job.rootPath, {
+        id: job.id,
+        sessionId: job.sessionId,
+        providerId: job.providerId || null,
+        status: job.status,
+        createdAt: job.createdAt,
+        startedAt: job.startedAt,
+        finishedAt: job.finishedAt,
+        usage: job.result?.usage || null,
+      });
+      job.historyRecorded = true;
+    } catch (error) {
+      job.historyRecorded = false;
+      job.historyError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   emit(job) {
@@ -195,6 +234,7 @@ export class AiRequestQueue {
       startedAt: snapshot.startedAt,
       finishedAt: snapshot.finishedAt,
       error: snapshot.error,
+      historyRecorded: snapshot.historyRecorded,
     });
   }
 }

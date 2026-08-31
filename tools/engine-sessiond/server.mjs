@@ -2,6 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { URL, pathToFileURL } from 'node:url';
 import { AiRequestQueue } from './lib/ai-request-queue.mjs';
+import { AiHistoryStore } from './lib/ai-history-store.mjs';
 import { AiUsageStore } from './lib/ai-usage-store.mjs';
 import { BuildStore } from './lib/build-store.mjs';
 import { CodeTrustApprovalStore } from './lib/code-trust-approval-store.mjs';
@@ -714,6 +715,7 @@ function createRouter({
   eventHub,
   diagnosticsRecorder,
   aiRequestQueue,
+  aiHistoryStore,
   aiUsageStore,
 }) {
   return async function route(request, response) {
@@ -760,6 +762,7 @@ function createRouter({
           'ai:providers',
           'ai:test',
           'ai:jobs',
+          'ai:history',
           'ai:usage',
           'package:inspect',
           'package:run',
@@ -820,6 +823,21 @@ function createRouter({
           resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
         );
         writeJson(response, 200, summary);
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/ai/history') {
+        const sessionId = searchParams.get('sessionId') || '';
+        const limitText = searchParams.get('limit') || '50';
+        const limit = /^\d+$/.test(limitText) ? Number.parseInt(limitText, 10) : Number.NaN;
+        const history = await aiHistoryStore.list(
+          resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot),
+          {
+            status: searchParams.get('status') || 'all',
+            limit,
+          },
+        );
+        writeJson(response, 200, history);
         return;
       }
 
@@ -1779,6 +1797,7 @@ export async function startEngineSessiond({
   coordinationStore,
   operationStore,
   aiRequestQueue,
+  aiHistoryStore,
   aiUsageStore,
   spatialAttachmentService,
   sceneAssetService,
@@ -1839,8 +1858,10 @@ export async function startEngineSessiond({
     captureSampleAttachment,
   });
   const resolvedAiUsageStore = aiUsageStore || new AiUsageStore();
+  const resolvedAiHistoryStore = aiHistoryStore || new AiHistoryStore();
   const resolvedAiRequestQueue = aiRequestQueue || new AiRequestQueue({
     recordUsage: (rootPath, result) => resolvedAiUsageStore.record(rootPath, result),
+    recordHistory: (rootPath, job) => resolvedAiHistoryStore.record(rootPath, job),
     emitEvent: (type, data) => {
       diagnosticsRecorder.emit(type, data);
     },
@@ -1870,6 +1891,7 @@ export async function startEngineSessiond({
     eventHub,
     diagnosticsRecorder,
     aiRequestQueue: resolvedAiRequestQueue,
+    aiHistoryStore: resolvedAiHistoryStore,
     aiUsageStore: resolvedAiUsageStore,
   }));
 
@@ -1895,6 +1917,7 @@ export async function startEngineSessiond({
     coordinationStore: resolvedCoordinationStore,
     operationStore: resolvedOperationStore,
     aiRequestQueue: resolvedAiRequestQueue,
+    aiHistoryStore: resolvedAiHistoryStore,
     aiUsageStore: resolvedAiUsageStore,
     close: async () => {
       await resolvedAiRequestQueue.close();

@@ -158,10 +158,10 @@ function runCli(args, cwd = repoRoot) {
   });
 }
 
-async function waitForAiJob(baseUrl, jobId, expectedStatuses) {
+async function waitForAiJob(baseUrl, jobId, expectedStatuses, predicate = () => true) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const payload = await requestJsonNoAuth(`${baseUrl}/api/ai/jobs/${encodeURIComponent(jobId)}`);
-    if (expectedStatuses.includes(payload.job?.status)) {
+    if (expectedStatuses.includes(payload.job?.status) && predicate(payload.job)) {
       return payload.job;
     }
     await delay(10);
@@ -186,6 +186,7 @@ try {
   assert.ok(health.capabilities.includes('ai:providers'));
   assert.ok(health.capabilities.includes('ai:test'));
   assert.ok(health.capabilities.includes('ai:jobs'));
+  assert.ok(health.capabilities.includes('ai:history'));
   assert.ok(health.capabilities.includes('ai:usage'));
 
   const createSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
@@ -303,7 +304,12 @@ try {
     providerId: 'openrouter_kimi',
     prompt: 'Record usage.',
   });
-  const usageJob = await waitForAiJob(service.baseUrl, usageJobPayload.job.id, ['completed']);
+  const usageJob = await waitForAiJob(
+    service.baseUrl,
+    usageJobPayload.job.id,
+    ['completed'],
+    (job) => job.usageRecorded === true && job.historyRecorded === true,
+  );
   assert.equal(usageJob.usageRecorded, true);
   assert.equal(usageJob.usageError, null);
 
@@ -316,6 +322,7 @@ try {
     service.baseUrl,
     cumulativeUsageJobPayload.job.id,
     ['completed'],
+    (job) => job.usageRecorded === true && job.historyRecorded === true,
   );
   assert.equal(cumulativeUsageJob.usageRecorded, true);
 
@@ -345,7 +352,12 @@ try {
     '--provider', 'local_fake',
     '--base-url', service.baseUrl,
   ]);
-  const cliCompletedJob = await waitForAiJob(service.baseUrl, cliQueuedJob.id, ['completed']);
+  const cliCompletedJob = await waitForAiJob(
+    service.baseUrl,
+    cliQueuedJob.id,
+    ['completed'],
+    (job) => job.historyRecorded === true,
+  );
   const cliJobStatus = await runCli(['ai', 'status', cliQueuedJob.id, '--base-url', service.baseUrl]);
   assert.equal(cliJobStatus.status, 'completed');
   assert.equal(cliJobStatus.result?.content, cliCompletedJob.result.content);
@@ -357,6 +369,34 @@ try {
   const cliUsage = await runCli(['ai', 'usage', '--session', sessionId, '--base-url', service.baseUrl]);
   assert.equal(cliUsage.requestCount, 2);
   assert.equal(cliUsage.totalTokens, 24);
+  const historySummary = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/history?sessionId=${encodeURIComponent(sessionId)}&limit=20`,
+  );
+  assert.equal(historySummary.jobs.length, 6);
+  assert.equal(historySummary.jobs.find((job) => job.id === usageJob.id)?.usage?.totalTokens, 12);
+  assert.ok(historySummary.jobs.some((job) => job.id === cancelledQueuedJob.job.id && job.status === 'cancelled'));
+  assert.ok(historySummary.jobs.some((job) => job.id === cancelledRunningJob.job.id && job.status === 'cancelled'));
+  for (const job of historySummary.jobs) {
+    assert.equal(Object.hasOwn(job, 'prompt'), false);
+    assert.equal(Object.hasOwn(job, 'systemPrompt'), false);
+    assert.equal(Object.hasOwn(job, 'result'), false);
+    assert.equal(Object.hasOwn(job, 'error'), false);
+  }
+  assert.doesNotMatch(JSON.stringify(historySummary), /Record usage|ready|test-openrouter-key/);
+  const durableHistory = JSON.parse(await fs.readFile(
+    path.join(tempProjectRoot, '.shader-forge', 'ai-history.json'),
+    'utf8',
+  ));
+  assert.equal(durableHistory.jobs.length, 6);
+  const cliCancelledHistory = await runCli([
+    'ai', 'history', '--session', sessionId, '--status', 'cancelled', '--limit', '2', '--base-url', service.baseUrl,
+  ]);
+  assert.equal(cliCancelledHistory.jobs.length, 2);
+  assert.ok(cliCancelledHistory.jobs.every((job) => job.status === 'cancelled'));
+  const invalidHistoryLimit = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/history?sessionId=${encodeURIComponent(sessionId)}&limit=129`,
+  );
+  assert.match(invalidHistoryLimit.error || '', /limit must be from 1 through 128/);
   const cliCancelCompleted = await runCli(['ai', 'cancel', cliQueuedJob.id, '--base-url', service.baseUrl]);
   assert.equal(cliCancelCompleted.status, 'completed');
 
@@ -403,6 +443,7 @@ try {
   console.log('- Verified AI provider inspection through engine_sessiond and the engine CLI');
   console.log('- Verified deterministic fake, Ollama-compatible, and authenticated OpenRouter Kimi/GLM request paths without exposing credentials');
   console.log('- Verified bounded queued AI jobs, list/status/cancel APIs and CLI adapters, pending/running cancellation, and queue recovery');
+  console.log('- Verified bounded durable metadata-only AI history through the API and CLI without prompt, response, error, or credential content');
   console.log('- Verified atomic per-workspace provider token usage persistence and API/CLI summaries for successful queued calls');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
