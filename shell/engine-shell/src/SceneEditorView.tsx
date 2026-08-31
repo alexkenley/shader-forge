@@ -58,6 +58,13 @@ const emptySnapshot: EditorSnapshot = {
   scene: null,
   prefab: null,
 };
+const DETACHED_WORLD_STATUS =
+  'This world belongs to another workspace. Reopen that workspace to save it, or Reload to discard it and load the current workspace.';
+
+function worldWorkspaceAuthority(session: EngineSession | null) {
+  return session ? `${session.id}\0${session.rootPath}` : '';
+}
+
 const DEFAULT_SCENE_SIDEBAR_WIDTH = 380;
 const MIN_SCENE_SIDEBAR_WIDTH = 300;
 const MAX_SCENE_SIDEBAR_WIDTH = 540;
@@ -278,6 +285,10 @@ export function SceneEditorView({
   const activeSessionIdRef = useRef(activeSession?.id || '');
   const sceneDraftPathRef = useRef('');
   const prefabDraftPathRef = useRef('');
+  const sceneDirtyRef = useRef(false);
+  const prefabDirtyRef = useRef(false);
+  const activeWorkspaceAuthorityRef = useRef(worldWorkspaceAuthority(activeSession));
+  const draftWorkspaceAuthorityRef = useRef('');
   const [mode, setMode] = useState<EditorMode>('edit');
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Select a workspace to open a world.');
@@ -295,11 +306,14 @@ export function SceneEditorView({
   const [activeSidebarTab, setActiveSidebarTab] = useState<SceneSidebarTab>(preferredSidebarTab ?? 'outliner');
   const [sceneSidebarWidth, setSceneSidebarWidth] = useState(DEFAULT_SCENE_SIDEBAR_WIDTH);
   const [sceneSidebarResizing, setSceneSidebarResizing] = useState(false);
+  const [draftWorkspaceAuthority, setDraftWorkspaceAuthority] = useState('');
 
   const currentSnapshot = history[historyIndex] || emptySnapshot;
   const sceneDraft = currentSnapshot.scene;
   const prefabDraft = currentSnapshot.prefab;
+  const activeWorkspaceAuthority = worldWorkspaceAuthority(activeSession);
   activeSessionIdRef.current = activeSession?.id || '';
+  activeWorkspaceAuthorityRef.current = activeWorkspaceAuthority;
   sceneDraftPathRef.current = sceneDraft?.path || '';
   prefabDraftPathRef.current = prefabDraft?.path || '';
   const selectedEntity =
@@ -329,7 +343,15 @@ export function SceneEditorView({
     return formatPrefabAssetDocument(prefabSaved) !== formatPrefabAssetDocument(prefabDraft);
   }, [prefabSaved, prefabDraft]);
 
-  const canEdit = mode === 'edit';
+  sceneDirtyRef.current = sceneDirty;
+  prefabDirtyRef.current = prefabDirty;
+  const worldMutationsEnabled = Boolean(
+    activeWorkspaceAuthority && activeWorkspaceAuthority === draftWorkspaceAuthority,
+  );
+  const draftDetached = Boolean(
+    draftWorkspaceAuthority && draftWorkspaceAuthority !== activeWorkspaceAuthority,
+  );
+  const canEdit = mode === 'edit' && worldMutationsEnabled;
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex + 1 < history.length;
 
@@ -385,6 +407,24 @@ export function SceneEditorView({
       },
     ]);
     setHistoryIndex(0);
+  }
+
+  function bindDraftWorkspace(authority: string) {
+    draftWorkspaceAuthorityRef.current = authority;
+    setDraftWorkspaceAuthority(authority);
+  }
+
+  function worldResponseIsCurrent(authority: string) {
+    return Boolean(
+      authority
+      && activeWorkspaceAuthorityRef.current === authority
+      && draftWorkspaceAuthorityRef.current === authority,
+    );
+  }
+
+  function markWorldDraftDetached() {
+    setStatusMessage(DETACHED_WORLD_STATUS);
+    onBackendStatus('connected', DETACHED_WORLD_STATUS);
   }
 
   function overwriteCurrentSnapshot(nextSnapshot: EditorSnapshot) {
@@ -453,12 +493,12 @@ export function SceneEditorView({
   }
 
   function confirmDiscardChanges(message: string, includeScene = true, includePrefab = true) {
-    const hasChanges = (includeScene && sceneDirty) || (includePrefab && prefabDirty);
+    const hasChanges = (includeScene && sceneDirtyRef.current) || (includePrefab && prefabDirtyRef.current);
     return !hasChanges || typeof window === 'undefined' || window.confirm(message);
   }
 
   function handleSelectScene(document: SceneAssetDocument) {
-    if (document.path === selectedScenePath) {
+    if (!worldMutationsEnabled || document.path === selectedScenePath) {
       return;
     }
     if (!confirmDiscardChanges('Open another world and discard the unsaved changes in this one?')) {
@@ -487,9 +527,30 @@ export function SceneEditorView({
 
   useEffect(() => {
     let cancelled = false;
+    const requestedSession = activeSession;
+    const requestedAuthority = worldWorkspaceAuthority(requestedSession);
 
     async function loadAuthoringAssets() {
-      if (!activeSession) {
+      if (requestedAuthority === draftWorkspaceAuthorityRef.current) {
+        if (requestedAuthority && (sceneDirtyRef.current || prefabDirtyRef.current)) {
+          const message = 'Reopened the draft workspace. Save authority is restored.';
+          setStatusMessage(message);
+          onBackendStatus('connected', message);
+        }
+        return;
+      }
+
+      if (
+        draftWorkspaceAuthorityRef.current
+        && (sceneDirtyRef.current || prefabDirtyRef.current)
+        && !confirmDiscardChanges('Switch workspace and discard the unsaved World changes?')
+      ) {
+        markWorldDraftDetached();
+        return;
+      }
+
+      if (!requestedSession) {
+        bindDraftWorkspace('');
         setSceneDocuments([]);
         setPrefabDocuments([]);
         setSelectedScenePath('');
@@ -505,14 +566,15 @@ export function SceneEditorView({
       setBusy(true);
       try {
         const [nextScenes, nextPrefabs] = await Promise.all([
-          loadSceneDocuments(activeSession.id),
-          loadPrefabDocuments(activeSession.id),
+          loadSceneDocuments(requestedSession.id),
+          loadPrefabDocuments(requestedSession.id),
         ]);
 
-        if (cancelled) {
+        if (cancelled || activeWorkspaceAuthorityRef.current !== requestedAuthority) {
           return;
         }
 
+        bindDraftWorkspace(requestedAuthority);
         setSceneDocuments(nextScenes);
         setPrefabDocuments(nextPrefabs);
 
@@ -525,7 +587,7 @@ export function SceneEditorView({
           setStatusMessage('No worlds found yet. Create one to start.');
           onBackendStatus(
             'connected',
-            `Loaded workspace ${activeSession.name}, but no worlds were found.`,
+            `Loaded workspace ${requestedSession.name}, but no worlds were found.`,
           );
           return;
         }
@@ -536,7 +598,7 @@ export function SceneEditorView({
           nextScenes[0];
         openSceneDocument(preferredScene, nextPrefabs);
       } catch (error) {
-        if (cancelled) {
+        if (cancelled || activeWorkspaceAuthorityRef.current !== requestedAuthority) {
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
@@ -553,22 +615,39 @@ export function SceneEditorView({
     return () => {
       cancelled = true;
     };
-  }, [activeSession]);
+  }, [activeSession?.id, activeSession?.rootPath]);
 
   async function reloadFromDisk() {
     if (!activeSession) {
+      if (!draftDetached || !confirmDiscardChanges('Discard the detached World changes?')) {
+        return;
+      }
+      bindDraftWorkspace('');
+      setSceneDocuments([]);
+      setPrefabDocuments([]);
+      setSelectedScenePath('');
+      setSceneSaved(null);
+      setPrefabSaved(null);
+      resetDrafts(null, null);
+      setStatusMessage('Select a workspace to open a world.');
       return;
     }
     if (!confirmDiscardChanges('Reload from disk and discard your unsaved changes?')) {
       return;
     }
 
+    const targetAuthority = worldWorkspaceAuthority(activeSession);
+    const targetSessionId = activeSession.id;
     setBusy(true);
     try {
       const [nextScenes, nextPrefabs] = await Promise.all([
-        loadSceneDocuments(activeSession.id),
-        loadPrefabDocuments(activeSession.id),
+        loadSceneDocuments(targetSessionId),
+        loadPrefabDocuments(targetSessionId),
       ]);
+      if (activeWorkspaceAuthorityRef.current !== targetAuthority) {
+        return;
+      }
+      bindDraftWorkspace(targetAuthority);
       setSceneDocuments(nextScenes);
       setPrefabDocuments(nextPrefabs);
 
@@ -597,11 +676,16 @@ export function SceneEditorView({
       onLaunchSceneChange(preferredScene.name);
       onBackendStatus('connected', `Reloaded ${preferredScene.title || preferredScene.name}.`);
     } catch (error) {
+      if (activeWorkspaceAuthorityRef.current !== targetAuthority) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
     } finally {
-      setBusy(false);
+      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+        setBusy(false);
+      }
     }
   }
 
@@ -640,6 +724,9 @@ export function SceneEditorView({
   }
 
   function inspectPrefab(document: PrefabAssetDocument) {
+    if (!worldMutationsEnabled) {
+      return;
+    }
     if (document.path === prefabDraft?.path) {
       setSelectedNode('prefab');
       setActiveSidebarTab('inspector');
@@ -745,11 +832,12 @@ export function SceneEditorView({
   }
 
   async function handleSaveScene() {
-    if (!activeSession || !sceneDraft) {
+    if (!activeSession || !sceneDraft || !worldMutationsEnabled) {
       return false;
     }
 
     const targetSessionId = activeSession.id;
+    const targetAuthority = worldWorkspaceAuthority(activeSession);
     const targetPath = sceneDraft.path;
     setBusy(true);
     try {
@@ -758,7 +846,11 @@ export function SceneEditorView({
         targetPath,
         formatSceneAssetDocument(sceneDraft),
       );
-      if (activeSessionIdRef.current !== targetSessionId || sceneDraftPathRef.current !== targetPath) {
+      if (
+        activeSessionIdRef.current !== targetSessionId
+        || sceneDraftPathRef.current !== targetPath
+        || !worldResponseIsCurrent(targetAuthority)
+      ) {
         return false;
       }
       const nextScene = parseSceneAssetDocument(savedPayload);
@@ -780,21 +872,27 @@ export function SceneEditorView({
       primaryActionRef.current?.focus();
       return true;
     } catch (error) {
+      if (!worldResponseIsCurrent(targetAuthority)) {
+        return false;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
       return false;
     } finally {
-      setBusy(false);
+      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+        setBusy(false);
+      }
     }
   }
 
   async function handleSavePrefab() {
-    if (!activeSession || !prefabDraft) {
+    if (!activeSession || !prefabDraft || !worldMutationsEnabled) {
       return false;
     }
 
     const targetSessionId = activeSession.id;
+    const targetAuthority = worldWorkspaceAuthority(activeSession);
     const targetPath = prefabDraft.path;
     setBusy(true);
     try {
@@ -803,7 +901,11 @@ export function SceneEditorView({
         targetPath,
         formatPrefabAssetDocument(prefabDraft),
       );
-      if (activeSessionIdRef.current !== targetSessionId || prefabDraftPathRef.current !== targetPath) {
+      if (
+        activeSessionIdRef.current !== targetSessionId
+        || prefabDraftPathRef.current !== targetPath
+        || !worldResponseIsCurrent(targetAuthority)
+      ) {
         return false;
       }
       const nextPrefab = parsePrefabAssetDocument(savedPayload);
@@ -820,17 +922,22 @@ export function SceneEditorView({
       primaryActionRef.current?.focus();
       return true;
     } catch (error) {
+      if (!worldResponseIsCurrent(targetAuthority)) {
+        return false;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
       return false;
     } finally {
-      setBusy(false);
+      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+        setBusy(false);
+      }
     }
   }
 
   async function handlePlay() {
-    if (!sceneDraft || busy) {
+    if (!sceneDraft || busy || !worldMutationsEnabled) {
       return;
     }
 
@@ -848,6 +955,8 @@ export function SceneEditorView({
       return;
     }
 
+    const targetAuthority = worldWorkspaceAuthority(activeSession);
+    const targetSessionId = activeSession.id;
     const sanitizedName = sanitizeAssetName(newSceneName);
     if (!sanitizedName) {
       setStatusMessage('Enter a world name before creating a new world.');
@@ -869,10 +978,13 @@ export function SceneEditorView({
     setBusy(true);
     try {
       const savedPayload = await writeFile(
-        activeSession.id,
+        targetSessionId,
         nextScene.path,
         formatSceneAssetDocument(nextScene),
       );
+      if (!worldResponseIsCurrent(targetAuthority)) {
+        return;
+      }
       const createdScene = parseSceneAssetDocument(savedPayload);
       const nextScenes = sortScenes([...sceneDocuments, createdScene]);
       setSceneDocuments(nextScenes);
@@ -881,11 +993,16 @@ export function SceneEditorView({
       setStatusMessage(`Created ${createdScene.title || createdScene.name}.`);
       onBackendStatus('connected', `Created ${createdScene.title || createdScene.name}.`);
     } catch (error) {
+      if (!worldResponseIsCurrent(targetAuthority)) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
     } finally {
-      setBusy(false);
+      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+        setBusy(false);
+      }
     }
   }
 
@@ -894,6 +1011,8 @@ export function SceneEditorView({
       return;
     }
 
+    const targetAuthority = worldWorkspaceAuthority(activeSession);
+    const targetSessionId = activeSession.id;
     const sanitizedName = sanitizeAssetName(duplicateSceneName);
     if (!sanitizedName) {
       setStatusMessage('Enter a name before duplicating this world.');
@@ -916,21 +1035,29 @@ export function SceneEditorView({
     setBusy(true);
     try {
       const savedPayload = await writeFile(
-        activeSession.id,
+        targetSessionId,
         duplicateDocument.path,
         formatSceneAssetDocument(duplicateDocument),
       );
+      if (!worldResponseIsCurrent(targetAuthority)) {
+        return;
+      }
       const nextScene = parseSceneAssetDocument(savedPayload);
       setSceneDocuments((current) => sortScenes([...current, nextScene]));
       openSceneDocument(nextScene);
       setStatusMessage(`Duplicated ${sceneDraft.title || sceneDraft.name} into ${nextScene.title || nextScene.name}.`);
       onBackendStatus('connected', `Duplicated ${sceneDraft.title || sceneDraft.name} into ${nextScene.title || nextScene.name}.`);
     } catch (error) {
+      if (!worldResponseIsCurrent(targetAuthority)) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(message);
       onBackendStatus('offline', message);
     } finally {
-      setBusy(false);
+      if (activeWorkspaceAuthorityRef.current === targetAuthority) {
+        setBusy(false);
+      }
     }
   }
 
@@ -974,7 +1101,7 @@ export function SceneEditorView({
         ? 'Object'
         : 'Reusable object';
   const worldTitle = sceneDraft?.title || sceneDraft?.name || 'No world open';
-  const canPlay = Boolean(sceneDraft) && !busy && buildStatus.state !== 'running';
+  const canPlay = Boolean(sceneDraft) && !busy && buildStatus.state !== 'running' && worldMutationsEnabled;
   const canApplyAndRestart = canPlay && runtimeStatus.state !== 'stopped' && (sceneDirty || prefabDirty);
   const canRestartRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
   const canStopRuntime = buildStatus.state !== 'running' && runtimeStatus.state !== 'stopped';
@@ -987,7 +1114,7 @@ export function SceneEditorView({
       ? 'The game could not open because native runtime files are missing. Open More for setup details.'
       : '';
 
-  if (!activeSession) {
+  if (!activeSession && !draftDetached) {
     return (
       <div className="workspace-layout workspace-layout--scene-editor">
         <section className="surface scene-workspace">
@@ -1141,7 +1268,7 @@ export function SceneEditorView({
               </button>
               <button
                 className="ghost-button ghost-button--sm"
-                disabled={!sceneDraft || buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'}
+                disabled={!sceneDraft || draftDetached || buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'}
                 onClick={onRunScene}
                 type="button"
               >
@@ -1176,7 +1303,7 @@ export function SceneEditorView({
             <dl className="fact-list">
               <div>
                 <dt>Workspace</dt>
-                <dd>{activeSession.name}</dd>
+                <dd>{activeSession?.name || 'none selected'}</dd>
               </div>
               <div>
                 <dt>World</dt>
@@ -1338,7 +1465,7 @@ export function SceneEditorView({
                       sceneDocuments.map((document) => (
                         <button
                           className={`scene-list__item${selectedScenePath === document.path ? ' is-active' : ''}`}
-                          disabled={busy}
+                          disabled={busy || draftDetached}
                           key={document.path}
                           onClick={() => handleSelectScene(document)}
                           type="button"
@@ -1807,7 +1934,7 @@ export function SceneEditorView({
                         <div className="scene-asset" key={document.path}>
                           <button
                             className={`scene-asset__main${prefabDraft?.path === document.path ? ' is-active' : ''}`}
-                            disabled={busy}
+                            disabled={busy || draftDetached}
                             onClick={() => inspectPrefab(document)}
                             type="button"
                           >

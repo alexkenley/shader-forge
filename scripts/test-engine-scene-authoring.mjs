@@ -46,6 +46,16 @@ try {
   assert.match(sceneEditorView, /activeSessionIdRef\.current !== targetSessionId/);
   assert.match(sceneEditorView, /sceneDraftPathRef\.current !== targetPath/);
   assert.match(sceneEditorView, /prefabDraftPathRef\.current !== targetPath/);
+  assert.match(sceneEditorView, /function worldWorkspaceAuthority/);
+  assert.match(sceneEditorView, /\[activeSession\?\.id, activeSession\?\.rootPath\]/);
+  assert.doesNotMatch(sceneEditorView, /\}, \[activeSession\]\);/);
+  assert.match(sceneEditorView, /draftWorkspaceAuthorityRef/);
+  assert.match(sceneEditorView, /Switch workspace and discard the unsaved World changes\?/);
+  assert.match(sceneEditorView, /This world belongs to another workspace/);
+  assert.match(sceneEditorView, /const draftDetached = Boolean/);
+  assert.match(sceneEditorView, /const canEdit = mode === 'edit' && worldMutationsEnabled/);
+  assert.match(sceneEditorView, /function worldResponseIsCurrent/);
+  assert.match(sceneEditorView, /activeWorkspaceAuthorityRef\.current === targetAuthority/);
   assert.match(sceneEditorView, /Apply and restart/);
   assert.match(sceneEditorView, /primaryActionRef\.current\?\.focus\(\)/);
   assert.match(sceneEditorView, /Run existing build/);
@@ -166,6 +176,7 @@ try {
   console.log('Engine scene authoring smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
   console.log('- Verified the World workspace exposes draft-safe Edit/Verify, one-click Play, guarded navigation, plain-language object tools, and collapsed advanced settings');
+  console.log('- Verified dirty World drafts keep stable workspace authority and detach from incompatible session or root changes');
   console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component assets can be written through engine_sessiond inside a session root');
 } finally {
   await service.close();
