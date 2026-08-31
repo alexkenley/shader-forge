@@ -177,7 +177,7 @@ Assistant entry points:
 - `engine file list` and `engine file read` expose safe file inspection.
 - `engine ai providers [--root <path>]` now prints the workspace AI provider manifest, default provider, readiness state, and diagnostics.
 - `engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]` runs the shared deterministic fake, optional Ollama, or enabled OpenRouter smoke-test lane.
-- `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` reuses that path for freeform prompts; `openrouter_kimi` is disabled by default and uses `OPENROUTER_API_KEY` with `moonshotai/kimi-k3` when enabled.
+- `engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]` reuses that path for freeform prompts; `openrouter_kimi` is disabled by default and uses `OPENROUTER_API_KEY`, `moonshotai/kimi-k3`, and a validated `max_output_tokens` ceiling when enabled.
 - `engine export inspect [--root <path>] [--preset <id>] [--package-root <path>]` now prints the resolved export preset, path readiness, cooked-asset counts, and last-package summary for a workspace.
 - `engine package [--root <path>] [--preset <id>] [--package-root <path>] [--skip-bake] [--force-bake]` now emits a reproducible release-layout scaffold under `build/package/<preset>/`, bundling the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, and a package report; missing cooked outputs are auto-baked unless that step is explicitly skipped.
 - `engine profile live [--root <path>]` now prints the first diagnostics snapshot lane, and `--session` plus `--base-url` can switch that to a live `engine_sessiond` snapshot.
@@ -203,7 +203,7 @@ Assistant entry points:
 - `engine migrate unreal <path>` now reports the explicit `unreal_offline_fallback` lane, lower conversion confidence, and low-confidence Blueprint package manifests when exporter-assisted Unreal data is unavailable in the current slice.
 - `engine migrate report <path>` summarizes a generated migration report from the terminal.
 - `engine import` is still a later phase.
-- `ai/providers.toml` is the source-controlled provider manifest, with deterministic `fake`, optional Ollama, and disabled-by-default OpenRouter/Kimi K3 lanes. OpenRouter pins the official API root/key name, rejects remote redirects, caps responses at 1 MiB, never returns credentials, and fails closed on unknown provider types or explicit IDs.
+- `ai/providers.toml` is the source-controlled provider manifest, with deterministic `fake`, optional Ollama, and disabled-by-default OpenRouter/Kimi K3 lanes. Real requests default to a 256-token output ceiling; OpenRouter validates 1–4096, pins the official API root/key name, rejects remote redirects, caps responses at 1 MiB, never returns credentials, and fails closed on unknown provider types or explicit IDs.
 - `npm run test:ai-scaffold` is the deterministic harness for the first AI provider/status/test slice.
 - The CLI bake lane is now real, but it still emits staged cooked payloads and generated-mesh previews rather than the final FlatBuffers writer.
 - The CLI packaging lane is now real, but it still packages authored runtime roots plus bundled cooked outputs rather than a final cooked-runtime shipping layout.

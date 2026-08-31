@@ -765,7 +765,7 @@ Exit criteria:
 Current checkpoint now implemented:
 - `ai/providers.toml` now defines deterministic `fake`, optional `ollama`, a disabled-by-default OpenRouter/Kimi K3 BYOK provider, and reserved hosted-provider entries for later adapters
 - `tools/shared/engine-ai-service.mjs` now provides shared manifest loading, provider inspection, and smoke-test execution so the shell, CLI, and session backend do not invent separate AI clients
-- OpenRouter execution pins the official API root plus `OPENROUTER_API_KEY`, rejects arbitrary remote endpoint redirection, bounds responses to 1 MiB, keeps credentials out of public results, and fails closed on unknown provider types/explicit IDs
+- OpenRouter execution pins the official API root plus `OPENROUTER_API_KEY`, rejects arbitrary remote endpoint redirection, bounds responses to 1 MiB, keeps credentials out of public results, fails closed on unknown provider types/explicit IDs, and validates a 1–4096 `max_output_tokens` ceiling (default 256)
 - `engine_sessiond` now exposes `GET /api/ai/providers` plus `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
 - `engine ai providers`, `engine ai test`, and `engine ai request` now expose the same first AI slice directly from the terminal
 - the shell `Workspace` panel now surfaces AI manifest source, ready-provider counts, provider diagnostics, and an inline smoke-test action
@@ -773,7 +773,7 @@ Current checkpoint now implemented:
 
 Still ahead inside this phase:
 - queued request submit/cancel/event-stream behavior beyond direct smoke-test execution
-- additional hosted-provider execution, budgets, and secure key storage beyond environment-backed OpenRouter BYOK
+- additional hosted-provider execution, cumulative budgets/spend accounting, and secure key storage beyond environment-backed OpenRouter BYOK plus its current per-request output ceiling
 - shared tool and skill registries plus structured action-schema enforcement
 - typed external-agent MCP coverage and gameplay-facing AI integration
 

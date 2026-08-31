@@ -83,6 +83,7 @@ await fs.writeFile(
     `base_url = "${openRouterBaseUrl}"`,
     'model = "moonshotai/kimi-k3"',
     'api_key_env = "OPENROUTER_API_KEY"',
+    'max_output_tokens = 128',
     '',
     '[provider.openrouter_redirect]',
     'type = "openrouter"',
@@ -92,6 +93,16 @@ await fs.writeFile(
     'base_url = "https://example.invalid/api/v1"',
     'model = "moonshotai/kimi-k3"',
     'api_key_env = "OPENROUTER_API_KEY"',
+    '',
+    '[provider.openrouter_bad_limit]',
+    'type = "openrouter"',
+    'label = "Invalid OpenRouter Output Limit"',
+    'enabled = true',
+    'mode = "BringYourOwnKey"',
+    `base_url = "${openRouterBaseUrl}"`,
+    'model = "moonshotai/kimi-k3"',
+    'api_key_env = "OPENROUTER_API_KEY"',
+    'max_output_tokens = 0',
     '',
     '[provider.provider_type_typo]',
     'type = "opnrouter"',
@@ -147,7 +158,7 @@ try {
     `${service.baseUrl}/api/ai/providers?sessionId=${encodeURIComponent(sessionId)}`,
   );
   assert.equal(providerSummary.defaultProviderId, 'local_fake');
-  assert.equal(providerSummary.providerCount, 5);
+  assert.equal(providerSummary.providerCount, 6);
   assert.equal(providerSummary.readyProviderCount, 3);
   assert.equal(providerSummary.providers[0].id, 'local_fake');
   assert.equal(providerSummary.providers[0].status, 'ready');
@@ -155,7 +166,9 @@ try {
   assert.equal(openRouterProvider?.supportedInSlice, true);
   assert.equal(openRouterProvider?.status, 'ready');
   assert.equal(openRouterProvider?.selectedModel, 'moonshotai/kimi-k3');
+  assert.equal(openRouterProvider?.maxOutputTokens, 128);
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'openrouter_redirect')?.status, 'invalid');
+  assert.equal(providerSummary.providers.find((provider) => provider.id === 'openrouter_bad_limit')?.status, 'invalid');
   assert.equal(providerSummary.providers.find((provider) => provider.id === 'provider_type_typo')?.status, 'invalid');
   assert.doesNotMatch(JSON.stringify(providerSummary), /test-openrouter-key/);
 
@@ -172,7 +185,9 @@ try {
   assert.equal(ollamaSmoke.providerId, 'local_ollama');
   assert.equal(ollamaSmoke.model, 'test-local');
   assert.equal(ollamaSmoke.content, 'ready');
-  assert.equal(providerRequests.find((request) => request.path === '/v1/chat/completions')?.authorization, '');
+  const ollamaRequest = providerRequests.find((request) => request.path === '/v1/chat/completions');
+  assert.equal(ollamaRequest?.authorization, '');
+  assert.equal(ollamaRequest?.body?.max_tokens, 256);
 
   const openRouterSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
@@ -185,6 +200,7 @@ try {
   const openRouterRequest = providerRequests.find((request) => request.path === '/api/v1/chat/completions');
   assert.equal(openRouterRequest?.authorization, 'Bearer test-openrouter-key');
   assert.equal(openRouterRequest?.body?.model, 'moonshotai/kimi-k3');
+  assert.equal(openRouterRequest?.body?.max_tokens, 128);
   assert.doesNotMatch(JSON.stringify(openRouterSmoke), /test-openrouter-key/);
 
   const oversizedResponse = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
@@ -202,7 +218,7 @@ try {
 
   const cliProviders = await runCli(['ai', 'providers', '--root', tempProjectRoot]);
   assert.equal(cliProviders.defaultProviderId, 'local_fake');
-  assert.equal(cliProviders.providerCount, 5);
+  assert.equal(cliProviders.providerCount, 6);
   assert.equal(cliProviders.readyProviderCount, 3);
 
   const cliSmoke = await runCli([

@@ -10,6 +10,7 @@ const bundledAiProvidersPath = path.join(repoRoot, 'ai', 'providers.toml');
 const openRouterApiBaseUrl = 'https://openrouter.ai/api/v1/';
 const openRouterApiKeyEnv = 'OPENROUTER_API_KEY';
 const maxAiResponseBytes = 1024 * 1024;
+const defaultMaxOutputTokens = 256;
 
 export const aiProviderTypes = [
   'fake',
@@ -126,6 +127,10 @@ function normalizeProvider(id, source) {
   const model = trim(provider.model) || '';
   const baseUrl = trim(provider.base_url || provider.baseUrl) || '';
   const apiKeyEnv = trim(provider.api_key_env || provider.apiKeyEnv) || '';
+  const configuredMaxOutputTokens = provider.max_output_tokens ?? provider.maxOutputTokens;
+  const maxOutputTokens = configuredMaxOutputTokens === undefined
+    ? defaultMaxOutputTokens
+    : Number(configuredMaxOutputTokens);
 
   return {
     id,
@@ -136,6 +141,7 @@ function normalizeProvider(id, source) {
     model,
     baseUrl,
     apiKeyEnv,
+    maxOutputTokens,
   };
 }
 
@@ -203,6 +209,7 @@ function baseProviderStatus(provider) {
     model: provider.model || null,
     endpoint: provider.baseUrl || null,
     apiKeyEnv: provider.apiKeyEnv || null,
+    maxOutputTokens: Number.isInteger(provider.maxOutputTokens) ? provider.maxOutputTokens : null,
     supportedInSlice: provider.type === 'fake' || provider.type === 'ollama' || provider.type === 'openrouter',
     available: false,
     status: provider.enabled ? 'configured' : 'disabled',
@@ -363,6 +370,9 @@ async function inspectOpenRouterProvider(provider) {
     const endpoint = resolveOpenRouterEndpoint(provider);
     if (provider.apiKeyEnv && provider.apiKeyEnv !== openRouterApiKeyEnv) {
       throw new Error(`OpenRouter api_key_env must be ${openRouterApiKeyEnv}.`);
+    }
+    if (!Number.isInteger(provider.maxOutputTokens) || provider.maxOutputTokens < 1 || provider.maxOutputTokens > 4096) {
+      throw new Error('OpenRouter max_output_tokens must be an integer from 1 to 4096.');
     }
     if (!provider.model) {
       return {
@@ -537,6 +547,7 @@ export async function testAiProvider(
     body: {
       model: provider.selectedModel,
       temperature: 0,
+      max_tokens: provider.maxOutputTokens,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },

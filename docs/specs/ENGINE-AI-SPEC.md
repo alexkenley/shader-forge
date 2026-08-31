@@ -259,6 +259,7 @@ Current implemented behavior:
 - the optional Ollama lane now probes `/api/tags`, selects an installed model when possible, and can issue a basic `/v1/chat/completions` smoke test against a reachable local endpoint
 - the disabled-by-default `openrouter_kimi` entry targets the current `moonshotai/kimi-k3` route and uses only `OPENROUTER_API_KEY`
 - OpenRouter requests use its fixed official HTTPS API root, bearer authentication, the existing chat-completions payload, and a 1 MiB response limit; only the deterministic harness can opt into a loopback endpoint
+- real chat requests carry a manifest-backed `max_output_tokens` ceiling (default 256); OpenRouter requires an integer from 1 through 4096 before becoming ready
 - unknown manifest provider types report `invalid`, and an explicit unknown `--provider` selection fails instead of falling back
 - other hosted-provider types remain inspection-only, with deployment mode plus required `api_key_env` diagnostics
 - `engine_sessiond` now exposes `GET /api/ai/providers` and `POST /api/ai/test` for workspace-backed provider inspection and smoke testing
@@ -269,7 +270,7 @@ Current implemented behavior:
 Still ahead in Phase 5.9:
 
 - queued request lifecycle, cancellation, timeout, retry, and fallback control beyond direct smoke-test execution
-- usage budgets, spend limits, and request logging
+- cumulative usage budgets, spend limits, and request logging beyond the current per-request output ceiling
 - additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
 - game-facing tool registry, skill registry, and structured action schemas
 - gameplay-facing AI integrations
