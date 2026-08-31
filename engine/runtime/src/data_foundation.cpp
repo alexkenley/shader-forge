@@ -87,9 +87,21 @@ std::string parseStringValue(const std::string& rawValue) {
   return rawValue;
 }
 
+bool parseCompleteFiniteFloat(std::string_view token, float* result);
+
 bool parseIntValue(const std::string& rawValue, int* result) {
+  const std::string text = trim(rawValue);
+  if (text.empty()) {
+    return false;
+  }
+
+  std::size_t consumed = 0;
   try {
-    *result = std::stoi(parseStringValue(rawValue));
+    const int parsed = std::stoi(text, &consumed, 10);
+    if (consumed != text.size()) {
+      return false;
+    }
+    *result = parsed;
     return true;
   } catch (...) {
     return false;
@@ -97,15 +109,8 @@ bool parseIntValue(const std::string& rawValue, int* result) {
 }
 
 bool parseFloatValue(const std::string& rawValue, float* result) {
-  try {
-    *result = std::stof(parseStringValue(rawValue));
-    return true;
-  } catch (...) {
-    return false;
-  }
+  return parseCompleteFiniteFloat(rawValue, result);
 }
-
-bool parseCompleteFiniteFloat(std::string_view token, float* result);
 
 bool parseVector3Value(const std::string& rawValue, std::array<float, 3>* result) {
   const std::string value = trim(rawValue);

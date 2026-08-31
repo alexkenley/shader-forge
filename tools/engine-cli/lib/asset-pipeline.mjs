@@ -99,6 +99,15 @@ function parseIntegerValue(rawValue) {
   return Number.isInteger(value) ? value : null;
 }
 
+function parseStrictIntegerValue(rawValue) {
+  const value = trim(rawValue);
+  if (!/^[+-]?\d+$/.test(value)) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 function parseBooleanValue(rawValue) {
   const normalized = normalizeToken(parseStringValue(rawValue));
   if (normalized === 'true') {
@@ -540,11 +549,11 @@ function loadProcgeoAsset(repoRoot, outputRoot, filePath, fields, config, manife
   const generator = normalizeToken(parseStringValue(fields.generator || ''));
   const bakeOutput = normalizeToken(parseStringValue(fields.bake_output || ''));
   const materialHint = normalizeToken(parseStringValue(fields.material_hint || ''));
-  const width = parseNumberValue(fields.width || '') ?? 1;
-  const height = parseNumberValue(fields.height || '') ?? 1;
-  const depth = parseNumberValue(fields.depth || '') ?? 1;
-  const rows = parseIntegerValue(fields.rows || '') ?? 1;
-  const columns = parseIntegerValue(fields.columns || '') ?? 1;
+  const width = fields.width === undefined ? 1 : finiteFloat32Value(parseStrictFiniteNumberValue(fields.width));
+  const height = fields.height === undefined ? 1 : finiteFloat32Value(parseStrictFiniteNumberValue(fields.height));
+  const depth = fields.depth === undefined ? 1 : finiteFloat32Value(parseStrictFiniteNumberValue(fields.depth));
+  const rows = fields.rows === undefined ? 1 : parseStrictIntegerValue(fields.rows);
+  const columns = fields.columns === undefined ? 1 : parseStrictIntegerValue(fields.columns);
   const problems = validateCommonAsset(asset, config, manifest);
 
   if (!['box', 'plane_grid'].includes(generator)) {
@@ -553,7 +562,7 @@ function loadProcgeoAsset(repoRoot, outputRoot, filePath, fields, config, manife
   if (bakeOutput !== 'generated_mesh') {
     problems.push('bake_output must be "generated_mesh"');
   }
-  if (width <= 0 || height <= 0 || depth <= 0) {
+  if (width === null || height === null || depth === null || width <= 0 || height <= 0 || depth <= 0) {
     problems.push('width, height, and depth must be positive numbers');
   }
   if (generator === 'plane_grid' && (!Number.isInteger(rows) || rows < 1 || !Number.isInteger(columns) || columns < 1)) {

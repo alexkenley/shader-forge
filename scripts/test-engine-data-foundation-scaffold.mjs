@@ -291,6 +291,27 @@ int main(int argc, char** argv) {
     if (rejectedCamera.loadFromDisk(config, &error) || error.empty()) return 17;
   }
   writeFile(cameraPath, originalCamera);
+
+  const std::filesystem::path rifleProcgeoPath = std::filesystem::path(argv[1]) / "procgeo/weapon_rifle_mk1.procgeo.toml";
+  const std::string originalRifleProcgeo = readFile(rifleProcgeoPath);
+  std::string invalidRifleProcgeo = originalRifleProcgeo;
+  if (!replaceOnce(&invalidRifleProcgeo, "width = 0.125", "width = 0.125junk")) return 25;
+  writeFile(rifleProcgeoPath, invalidRifleProcgeo);
+  DataFoundation rejectedProcgeoFloat;
+  error.clear();
+  if (rejectedProcgeoFloat.loadFromDisk(config, &error) || error.empty()) return 26;
+  writeFile(rifleProcgeoPath, originalRifleProcgeo);
+
+  const std::filesystem::path pistolProcgeoPath = std::filesystem::path(argv[1]) / "procgeo/weapon_pistol_mk1.procgeo.toml";
+  const std::string originalPistolProcgeo = readFile(pistolProcgeoPath);
+  std::string invalidPistolProcgeo = originalPistolProcgeo;
+  if (!replaceOnce(&invalidPistolProcgeo, "rows = 1", "rows = 1junk")) return 27;
+  writeFile(pistolProcgeoPath, invalidPistolProcgeo);
+  DataFoundation rejectedProcgeoInteger;
+  error.clear();
+  if (rejectedProcgeoInteger.loadFromDisk(config, &error) || error.empty()) return 28;
+  writeFile(pistolProcgeoPath, originalPistolProcgeo);
+
   const std::filesystem::path cameraScenePath = std::filesystem::path(argv[1]) / "scenes/camera.scene.toml";
   const std::string originalCameraScene = readFile(cameraScenePath);
   const std::vector<std::pair<std::string, std::string>> sceneVectorMutations{

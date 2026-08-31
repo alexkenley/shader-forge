@@ -361,6 +361,50 @@ for (const [label, from, to] of [
   assert.equal(fs.existsSync(path.join(vectorOutputRoot, 'scenes', 'sandbox.bin')), false);
 }
 fs.writeFileSync(parentedScenePath, validSandboxScene);
+
+for (const { label, relativePath, source, from, to, assetName, expectedProblem } of [
+  {
+    label: 'procgeo-float-trailing-junk',
+    relativePath: path.join('procgeo', 'debug_crate.procgeo.toml'),
+    source: procgeoCrate,
+    from: 'width = 1.5',
+    to: 'width = 1.5junk',
+    assetName: 'debug_crate',
+    expectedProblem: /width, height, and depth must be positive numbers/,
+  },
+  {
+    label: 'procgeo-integer-trailing-junk',
+    relativePath: path.join('procgeo', 'sandbox_floor.procgeo.toml'),
+    source: procgeoFloor,
+    from: 'rows = 12',
+    to: 'rows = 12junk',
+    assetName: 'sandbox_floor',
+    expectedProblem: /plane_grid requires rows and columns >= 1/,
+  },
+]) {
+  const procgeoPath = path.join(invalidContentRoot, relativePath);
+  fs.writeFileSync(procgeoPath, source.replace(from, to));
+  const procgeoOutputRoot = path.join(tempRoot, `invalid-${label}-output`);
+  const procgeoReportPath = path.join(tempRoot, `invalid-${label}-report.json`);
+  const procgeoRun = spawnSync(process.execPath, [
+    cliPath,
+    'bake',
+    '--content-root', invalidContentRoot,
+    '--audio-root', 'audio',
+    '--animation-root', 'animation',
+    '--physics-root', 'physics',
+    '--data-foundation', 'data/foundation/engine-data-layout.toml',
+    '--output-root', procgeoOutputRoot,
+    '--report', procgeoReportPath,
+  ], { cwd: repoRoot, encoding: 'utf8' });
+  assert.equal(procgeoRun.status, 1, procgeoRun.stderr || procgeoRun.stdout);
+  const procgeoReport = JSON.parse(fs.readFileSync(procgeoReportPath, 'utf8'));
+  const invalidProcgeo = procgeoReport.invalidAssets.find((asset) => asset.kind === 'procgeo' && asset.name === assetName);
+  assert.match(invalidProcgeo?.problems.join('\n') || '', expectedProblem);
+  assert.equal(fs.existsSync(path.join(procgeoOutputRoot, 'procgeo', `${assetName}.bin`)), false);
+  fs.writeFileSync(procgeoPath, source);
+}
+
 fs.writeFileSync(parentedScenePath, fs.readFileSync(parentedScenePath, 'utf8').replace(
   'parent = ""',
   'parent = "crate_focus"',

@@ -540,7 +540,7 @@
                 "`content/prefabs/*.prefab.toml` is the initial authored prefab lane.",
                 "`content/data/*.data.toml` is the initial authored engine/bootstrap data lane.",
                 "`content/effects/*.effect.toml` is the initial authored effect-descriptor lane.",
-                "`content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane.",
+                "`content/procgeo/*.procgeo.toml` is the initial authored procedural-geometry lane; dimensions require complete unquoted finite positive float32 numbers, and plane-grid row/column counts require complete decimal integers.",
                 "`audio/buses.toml`, `audio/sounds/*.sound.toml`, and `audio/events/*.audio-event.toml` are the initial authored audio lanes.",
                 "`animation/skeletons/*.skeleton.toml`, `animation/clips/*.anim.toml`, and `animation/graphs/*.animgraph.toml` are the initial authored animation lanes.",
                 "`AnimationSystem` supports an optional `animation/attachments/*.attachment.toml` project lane; current attachment profiles remain isolated validation fixtures under `animation/fixtures/spatial/attachments/`.",
