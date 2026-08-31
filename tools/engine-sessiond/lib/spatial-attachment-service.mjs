@@ -412,10 +412,10 @@ function requireBoolean(value) {
   return value;
 }
 
-function requireJointLimits(value, skeletonBoneCount) {
+function requireJointLimits(value, skeletonBones) {
   const diagnostic = requireExactObject(value, jointLimitKeys);
   if (diagnostic.policy !== jointLimitPolicy) evaluationProtocolError();
-  if (!Array.isArray(diagnostic.bones) || diagnostic.bones.length > skeletonBoneCount) {
+  if (!Array.isArray(diagnostic.bones) || diagnostic.bones.length > skeletonBones.length) {
     evaluationProtocolError();
   }
   const evaluatedBoneCount = requireNonnegativeInteger(diagnostic.evaluatedBoneCount);
@@ -428,10 +428,25 @@ function requireJointLimits(value, skeletonBoneCount) {
 
   let computedViolations = 0;
   let computedMax = 0;
+  const skeletonBoneById = new Map();
+  for (let index = 0; index < skeletonBones.length; index += 1) {
+    const bone = skeletonBones[index];
+    if (skeletonBoneById.has(bone.id)) evaluationProtocolError();
+    skeletonBoneById.set(bone.id, { index, role: bone.role });
+  }
+  let previousSkeletonIndex = -1;
   for (const entry of diagnostic.bones) {
     const bone = requireExactObject(entry, jointLimitBoneKeys);
-    requireString(bone.boneId);
-    requireString(bone.role, { allowEmpty: true });
+    const boneId = requireString(bone.boneId);
+    const skeletonBone = skeletonBoneById.get(boneId);
+    if (
+      !skeletonBone
+      || skeletonBone.index <= previousSkeletonIndex
+      || bone.role !== skeletonBone.role
+    ) {
+      evaluationProtocolError();
+    }
+    previousSkeletonIndex = skeletonBone.index;
     const swingViolationDegrees = requireFiniteNumber(bone.swingViolationDegrees, {
       min: 0,
       max: jointLimitDegreeBound,
@@ -440,38 +455,50 @@ function requireJointLimits(value, skeletonBoneCount) {
       min: 0,
       max: jointLimitDegreeBound * 2,
     });
-    requireFiniteNumber(bone.swingDegrees, { min: 0, max: jointLimitDegreeBound });
-    requireFiniteNumber(bone.swingLimitDegrees, { min: 0, max: jointLimitDegreeBound });
-    requireFiniteNumber(bone.twistDegrees, {
+    const swingDegrees = requireFiniteNumber(bone.swingDegrees, { min: 0, max: jointLimitDegreeBound });
+    const swingLimitDegrees = requireFiniteNumber(bone.swingLimitDegrees, { min: 0, max: jointLimitDegreeBound });
+    const twistDegrees = requireFiniteNumber(bone.twistDegrees, {
       min: -jointLimitDegreeBound,
       max: jointLimitDegreeBound,
     });
-    requireFiniteNumber(bone.twistMinDegrees, {
+    const twistMinDegrees = requireFiniteNumber(bone.twistMinDegrees, {
       min: -jointLimitDegreeBound,
       max: jointLimitDegreeBound,
     });
-    requireFiniteNumber(bone.twistMaxDegrees, {
+    const twistMaxDegrees = requireFiniteNumber(bone.twistMaxDegrees, {
       min: -jointLimitDegreeBound,
       max: jointLimitDegreeBound,
     });
-    const withinLimits = requireBoolean(bone.withinLimits);
-    if (withinLimits !== (swingViolationDegrees === 0 && twistViolationDegrees === 0)) {
+    if (twistMinDegrees > twistMaxDegrees) evaluationProtocolError();
+    const expectedSwingViolation = Math.max(0, swingDegrees - swingLimitDegrees);
+    const expectedTwistViolation = twistDegrees < twistMinDegrees
+      ? twistMinDegrees - twistDegrees
+      : (twistDegrees > twistMaxDegrees ? twistDegrees - twistMaxDegrees : 0);
+    if (
+      Math.abs(swingViolationDegrees - expectedSwingViolation) > unitTolerance
+      || Math.abs(twistViolationDegrees - expectedTwistViolation) > unitTolerance
+    ) {
       evaluationProtocolError();
     }
-    if (!withinLimits) computedViolations += 1;
-    computedMax = Math.max(computedMax, swingViolationDegrees, twistViolationDegrees);
+    const withinLimits = requireBoolean(bone.withinLimits);
+    const expectedWithinLimits = expectedSwingViolation === 0 && expectedTwistViolation === 0;
+    if (withinLimits !== expectedWithinLimits) {
+      evaluationProtocolError();
+    }
+    if (!expectedWithinLimits) computedViolations += 1;
+    computedMax = Math.max(computedMax, expectedSwingViolation, expectedTwistViolation);
   }
   if (violationCount !== computedViolations) evaluationProtocolError();
   if (Math.abs(maxViolationDegrees - computedMax) > unitTolerance) evaluationProtocolError();
 
   if (diagnostic.status === 'available') {
-    if (diagnostic.reason !== null) evaluationProtocolError();
+    if (diagnostic.reason !== null || diagnostic.bones.length === 0) evaluationProtocolError();
     const withinLimits = requireBoolean(diagnostic.withinLimits);
     if (withinLimits !== (violationCount === 0)) evaluationProtocolError();
     return;
   }
   if (diagnostic.status !== 'unavailable') evaluationProtocolError();
-  requireString(diagnostic.reason, { maxLength: 8000 });
+  if (diagnostic.reason !== 'no_joint_limits_authored') evaluationProtocolError();
   if (
     diagnostic.withinLimits !== null
     || evaluatedBoneCount !== 0
@@ -681,7 +708,7 @@ function requireEvaluationGeometry(evaluation, expectedProfile) {
     evaluation.diagnostics,
     ['secondaryIk', 'jointLimits', 'clipping'],
   );
-  requireJointLimits(diagnostics.jointLimits, evaluation.bones.length);
+  requireJointLimits(diagnostics.jointLimits, evaluation.bones);
   requireStatusReason(
     diagnostics.clipping,
     'unavailable',

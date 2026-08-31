@@ -951,6 +951,19 @@ try {
         reason: '',
       },
     )],
+    ['jointLimits unknown unavailable reason', (id) => withJointLimits(
+      restEvaluation(id),
+      unavailableJointLimits('joint_limit_evaluation_not_integrated'),
+    )],
+    ['jointLimits empty available bones', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...unavailableJointLimits(),
+        status: 'available',
+        reason: null,
+        withinLimits: true,
+      },
+    )],
     ['jointLimits contradictory violationCount', (id) => withJointLimits(
       restEvaluation(id),
       {
@@ -1020,6 +1033,66 @@ try {
         withinLimits: true,
       })]),
     )],
+    ['jointLimits sub-tolerance label flip', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', {
+        swingViolationDegrees: 0.0000005,
+        withinLimits: false,
+      })]),
+    )],
+    ['jointLimits bone violation does not match angles', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', {
+        swingDegrees: 90,
+        swingViolationDegrees: 0,
+      })]),
+    )],
+    ['jointLimits twist violation does not match angles', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', {
+        twistDegrees: 100,
+        twistViolationDegrees: 0,
+      })]),
+    )],
+    ['jointLimits reversed twist range', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', {
+        twistMinDegrees: 80,
+        twistMaxDegrees: -80,
+      })]),
+    )],
+    ['jointLimits unknown bone', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('missing')]),
+    )],
+    ['jointLimits bone role mismatch', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', { role: 'hand_l' })]),
+    )],
+    ['jointLimits duplicate bone', (id) => {
+      const evaluation = restEvaluation(id);
+      evaluation.bones.push({ ...structuredClone(evaluation.bones[0]), id: 'hand_l', role: 'hand_l' });
+      return withJointLimits(evaluation, availableJointLimits([
+        jointLimitBone('hand_r'),
+        jointLimitBone('hand_r'),
+      ]));
+    }],
+    ['jointLimits duplicate evaluation bone id', (id) => {
+      const evaluation = restEvaluation(id);
+      evaluation.bones.push(structuredClone(evaluation.bones[0]));
+      return withJointLimits(evaluation, availableJointLimits([
+        jointLimitBone('hand_r'),
+        jointLimitBone('hand_r'),
+      ]));
+    }],
+    ['jointLimits reversed bone order', (id) => {
+      const evaluation = restEvaluation(id);
+      evaluation.bones.push({ ...structuredClone(evaluation.bones[0]), id: 'hand_l', role: 'hand_l' });
+      return withJointLimits(evaluation, availableJointLimits([
+        jointLimitBone('hand_l'),
+        jointLimitBone('hand_r'),
+      ]));
+    }],
     ['jointLimits swingDegrees out of bounds', (id) => withJointLimits(
       restEvaluation(id),
       availableJointLimits([jointLimitBone('hand_r', { swingDegrees: 181 })]),
