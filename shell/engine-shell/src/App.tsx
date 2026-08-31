@@ -1721,18 +1721,21 @@ function renderCenterContent(
   launchScene: string,
   onLaunchSceneChange: (value: string) => void,
   buildConfig: BuildConfig,
+  onBuildConfigChange: (value: BuildConfig) => void,
   buildDir: string,
+  onBuildDirChange: (value: string) => void,
   runtimeLog: string,
   buildLog: string,
   viewerBridgeEvents: ViewerBridgeEvent[],
   pendingRunAfterBuild: boolean,
-  onBackendStatus: (state: 'connected' | 'offline', message: string) => void,
   onBuildAndPlay: () => void,
   onStartRuntime: () => void,
   onStopRuntime: () => void,
   onRestartRuntime: () => void,
   onPauseRuntime: () => void,
   onResumeRuntime: () => void,
+  onStartRuntimeBuild: () => void,
+  onStopBuild: () => void,
 ) {
   if (activeTab === 'Assets') {
     return (
@@ -1743,27 +1746,20 @@ function renderCenterContent(
     );
   }
 
-  if (activeTab === 'World') {
-    return (
-      <SceneEditorView
-        activeSession={activeSession}
-        buildStatus={buildStatus}
-        launchScene={launchScene}
-        nativeRuntimeHint={nativeRuntimeSetupHint(buildLog, runtimeLog)}
-        onBackendStatus={onBackendStatus}
-        onBuildAndRun={onBuildAndPlay}
-        onLaunchSceneChange={onLaunchSceneChange}
-        onRestartRuntime={onRestartRuntime}
-        onRunScene={onStartRuntime}
-        onStopRuntime={onStopRuntime}
-        preferredSidebarTab="outliner"
-        runtimeStatus={runtimeStatus}
-      />
-    );
-  }
-
   const runtimeLogTail = takeLastLogLines(runtimeLog, 8);
   const buildLogTail = takeLastLogLines(buildLog, 8);
+  const currentWorld = runtimeStatus.scene || launchScene;
+  const runtimeLabel = runtimeStateLabel(runtimeStatus.state);
+  const buildBusy = buildStatus.state === 'running';
+  const runtimeStopped = runtimeStatus.state === 'stopped';
+  const runtimePaused = runtimeStatus.state === 'paused';
+  const canPlay = !buildBusy && runtimeStopped;
+  const canStopOrRestart = !buildBusy && !runtimeStopped;
+  const canResume = !buildBusy && runtimePaused && runtimeStatus.supportsPause;
+  const canPause = !buildBusy && runtimeStatus.supportsPause && runtimeStatus.state === 'running';
+  const playtestStatus = buildBusy ? 'Building' : runtimeLabel;
+  const buildHint = buildSetupHint(buildStatus.error);
+  const runtimeHint = nativeRuntimeSetupHint(buildLog, runtimeLog);
 
   return (
     <div className="workspace-layout workspace-layout--playtest">
@@ -1771,112 +1767,137 @@ function renderCenterContent(
         <div className="surface-header">
           <div>
             <div className="surface-eyebrow">Playtest</div>
-            <h2>External Native Runtime</h2>
-            <p>
-              The native runtime stays in its own window. This workspace shows the real build and run
-              state from engine_sessiond; it does not embed a renderer.
+            <div className="bridge-card__title">
+              <span
+                aria-label={runtimeLabel}
+                className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`}
+                role="img"
+              />
+              <h2>{currentWorld}</h2>
+            </div>
+            <p aria-live="polite" role="status">
+              {playtestStatus}. The game opens in a separate window.
             </p>
           </div>
           <div className="inline-actions">
-            <button
-              className="ghost-button"
-              disabled={buildStatus.state === 'running'}
-              onClick={onBuildAndPlay}
-              type="button"
-            >
-              Build + Run
-            </button>
-            <button
-              className="ghost-button"
-              disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'}
-              onClick={onStartRuntime}
-              type="button"
-            >
-              Run
-            </button>
-            <button
-              className="ghost-button"
-              disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
-              onClick={onStopRuntime}
-              type="button"
-            >
-              Stop
-            </button>
-            <button
-              className="ghost-button"
-              disabled={!runtimeStatus.supportsPause || runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
-              onClick={runtimeStatus.state === 'paused' ? onResumeRuntime : onPauseRuntime}
-              type="button"
-            >
-              {runtimeStatus.state === 'paused' ? 'Resume' : 'Pause'}
-            </button>
-            <button
-              className="ghost-button"
-              disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
-              onClick={onRestartRuntime}
-              type="button"
-            >
-              Restart
-            </button>
+            {buildBusy ? (
+              <button className="ghost-button ghost-button--sm" onClick={onStopBuild} type="button">
+                Stop build
+              </button>
+            ) : runtimeStopped ? (
+              <button
+                className="ghost-button ghost-button--sm ghost-button--primary"
+                disabled={!canPlay}
+                onClick={onBuildAndPlay}
+                type="button"
+              >
+                Play
+              </button>
+            ) : (
+              <>
+                {runtimePaused ? (
+                  <button
+                    className="ghost-button ghost-button--sm ghost-button--primary"
+                    disabled={!canResume}
+                    onClick={onResumeRuntime}
+                    type="button"
+                  >
+                    Resume
+                  </button>
+                ) : null}
+                {canPause ? (
+                  <button className="ghost-button ghost-button--sm" onClick={onPauseRuntime} type="button">
+                    Pause
+                  </button>
+                ) : null}
+                <button className="ghost-button ghost-button--sm" onClick={onStopRuntime} type="button">
+                  Stop
+                </button>
+                <button className="ghost-button ghost-button--sm" onClick={onRestartRuntime} type="button">
+                  Restart
+                </button>
+              </>
+            )}
           </div>
         </div>
-        <div className="preview-grid preview-grid--bridge">
-          <article className="preview-card">
-            <span>Runtime</span>
-            <strong>{runtimeStateLabel(runtimeStatus.state)}</strong>
-            <p>{runtimeStatus.scene || launchScene}</p>
-          </article>
-          <article className="preview-card">
-            <span>Workspace</span>
-            <strong>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</strong>
-            <p>{runtimeStatus.sessionId || 'repo-default launch context'}</p>
-          </article>
-          <article className="preview-card">
-            <span>Build</span>
-            <strong>{buildStateLabel(buildStatus.state)}</strong>
-            <p>{buildStatus.config || buildConfig}</p>
-          </article>
-          <article className="preview-card">
-            <span>Window</span>
-            <strong>External native runtime</strong>
-            <p>Browser shell stays the control surface; the renderer is not embedded here.</p>
-          </article>
-          <article className="preview-card">
-            <span>Queue</span>
-            <strong>{pendingRunAfterBuild ? 'Build + Run armed' : 'Idle'}</strong>
-            <p>{pendingRunAfterBuild ? `scene ${launchScene}` : 'No pending run chain'}</p>
-          </article>
-        </div>
-      </section>
-      <section className="surface">
-        <div className="surface-header">
-          <div>
-            <div className="surface-eyebrow">Runtime Bridge</div>
-            <h2>External Runtime Window</h2>
-            <p>The shell owns orchestration while the SDL3/Vulkan process remains the real renderer.</p>
-          </div>
-        </div>
-        <div className="bridge-panel-grid">
-          <article className="bridge-card">
-            <div className="bridge-card__header">
-              <div className="bridge-card__title">
-                <span
-                  aria-label={`Runtime ${runtimeStateLabel(runtimeStatus.state)}`}
-                  className={`status-dot status-dot--${runtimeStateTone(runtimeStatus.state)}`}
-                  role="img"
-                />
-                <strong>Bridge State</strong>
-              </div>
-              <span>{runtimeStateLabel(runtimeStatus.state)}</span>
+        <details className="scene-disclosure">
+          <summary>Diagnostics</summary>
+          <div className="scene-disclosure__body">
+            <div className="form-grid">
+              <label className="form-field">
+                <span>World</span>
+                <input onChange={(event) => onLaunchSceneChange(event.target.value)} type="text" value={launchScene} />
+              </label>
+              <label className="form-field">
+                <span>Config</span>
+                <select onChange={(event) => onBuildConfigChange(event.target.value as BuildConfig)} value={buildConfig}>
+                  {buildConfigs.map((config) => (
+                    <option key={config} value={config}>
+                      {config}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-field">
+                <span>Build dir</span>
+                <input onChange={(event) => onBuildDirChange(event.target.value)} type="text" value={buildDir} />
+              </label>
             </div>
+            <div className="inline-actions">
+              <button className="ghost-button ghost-button--sm" disabled={buildBusy} onClick={onStartRuntimeBuild} type="button">
+                Build
+              </button>
+              <button className="ghost-button ghost-button--sm" disabled={buildBusy} onClick={onBuildAndPlay} type="button">
+                Build + Run
+              </button>
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={buildBusy || !runtimeStopped}
+                onClick={onStartRuntime}
+                type="button"
+              >
+                Run existing build
+              </button>
+              <button className="ghost-button ghost-button--sm" disabled={!buildBusy} onClick={onStopBuild} type="button">
+                Stop build
+              </button>
+              <button
+                className="ghost-button ghost-button--sm"
+                disabled={!canPause}
+                onClick={onPauseRuntime}
+                type="button"
+              >
+                Pause
+              </button>
+            </div>
+            {buildHint ? (
+              <div className="setup-hint">
+                <strong>Build Setup Required</strong>
+                <span>{buildHint}</span>
+              </div>
+            ) : null}
+            {!buildHint && runtimeHint ? (
+              <div className="setup-hint">
+                <strong>Native Runtime Setup Required</strong>
+                <span>{runtimeHint}</span>
+              </div>
+            ) : null}
             <dl className="fact-list">
               <div>
-                <dt>Scene</dt>
-                <dd>{runtimeStatus.scene || launchScene}</dd>
+                <dt>State</dt>
+                <dd>{runtimeLabel}</dd>
+              </div>
+              <div>
+                <dt>World</dt>
+                <dd>{currentWorld}</dd>
               </div>
               <div>
                 <dt>Workspace</dt>
                 <dd>{runtimeStatus.workspaceRoot || activeSession?.rootPath || 'repo default'}</dd>
+              </div>
+              <div>
+                <dt>Session</dt>
+                <dd>{runtimeStatus.sessionId || 'repo-default launch context'}</dd>
               </div>
               <div>
                 <dt>Executable</dt>
@@ -1898,71 +1919,82 @@ function renderCenterContent(
                 <dt>Paused at</dt>
                 <dd>{runtimeStatus.pausedAt ? formatSessionTimestamp(runtimeStatus.pausedAt) : 'not paused'}</dd>
               </div>
+              <div>
+                <dt>Build</dt>
+                <dd>{buildStateLabel(buildStatus.state)}</dd>
+              </div>
+              <div>
+                <dt>Build target</dt>
+                <dd>{buildStatus.target || 'runtime'}</dd>
+              </div>
+              <div>
+                <dt>Build config</dt>
+                <dd>{buildStatus.config || buildConfig}</dd>
+              </div>
+              <div>
+                <dt>Build dir</dt>
+                <dd>{buildStatus.buildDir || buildDir}</dd>
+              </div>
+              <div>
+                <dt>Command</dt>
+                <dd>{buildStatus.command || 'waiting'}</dd>
+              </div>
+              <div>
+                <dt>Queue</dt>
+                <dd>{pendingRunAfterBuild ? `Build + Run armed for ${launchScene}` : 'Idle'}</dd>
+              </div>
+              {buildStatus.error ? (
+                <div>
+                  <dt>Error</dt>
+                  <dd>{buildStatus.error}</dd>
+                </div>
+              ) : null}
             </dl>
-          </article>
-          <article className="bridge-card">
-            <div className="bridge-card__header">
-              <div className="bridge-card__title">
-                <span aria-hidden="true" className="status-dot status-dot--active" />
-                <strong>Recent Bridge Activity</strong>
-              </div>
-              <span>{viewerBridgeEvents.length ? `${viewerBridgeEvents.length} entries` : 'waiting'}</span>
+            <div className="bridge-log-grid">
+              <article className="bridge-log-card">
+                <span>Runtime log</span>
+                <pre>{runtimeLogTail}</pre>
+              </article>
+              <article className="bridge-log-card">
+                <span>Build log</span>
+                <pre>{buildLogTail}</pre>
+              </article>
             </div>
-            {viewerBridgeEvents.length ? (
-              <ul className="bridge-event-list">
-                {viewerBridgeEvents.map((event) => (
-                  <li className="bridge-event" key={event.id}>
-                    <div className="bridge-event__header">
-                      <div className="bridge-card__title">
-                        <span
-                          aria-label={event.tone}
-                          className={`status-dot status-dot--${event.tone}`}
-                          role="img"
-                        />
-                        <strong>{event.title}</strong>
-                      </div>
-                      <span>{formatSessionTimestamp(event.at)}</span>
-                    </div>
-                    <p>{event.detail}</p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="bridge-empty">
-                Runtime and build transitions will accumulate here as the shell drives the native window.
+            <article className="bridge-card">
+              <div className="bridge-card__header">
+                <div className="bridge-card__title">
+                  <span aria-hidden="true" className="status-dot status-dot--active" />
+                  <strong>Recent activity</strong>
+                </div>
+                <span>{viewerBridgeEvents.length ? `${viewerBridgeEvents.length} entries` : 'waiting'}</span>
               </div>
-            )}
-          </article>
-        </div>
-      </section>
-      <section className="surface">
-        <div className="surface-header">
-          <div>
-            <div className="surface-eyebrow">Log Tail</div>
-            <h2>Bridge Diagnostics</h2>
-            <p>Inspect the real runtime and build logs from the shell without pretending there is an embedded frame stream.</p>
+              {viewerBridgeEvents.length ? (
+                <ul className="bridge-event-list">
+                  {viewerBridgeEvents.map((event) => (
+                    <li className="bridge-event" key={event.id}>
+                      <div className="bridge-event__header">
+                        <div className="bridge-card__title">
+                          <span
+                            aria-label={event.tone}
+                            className={`status-dot status-dot--${event.tone}`}
+                            role="img"
+                          />
+                          <strong>{event.title}</strong>
+                        </div>
+                        <span>{formatSessionTimestamp(event.at)}</span>
+                      </div>
+                      <p>{event.detail}</p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="bridge-empty">
+                  Runtime and build transitions will accumulate here as the shell drives the native window.
+                </div>
+              )}
+            </article>
           </div>
-        </div>
-        <div className="bridge-log-grid">
-          <article className="bridge-log-card">
-            <span>Runtime log</span>
-            <pre>{runtimeLogTail}</pre>
-          </article>
-          <article className="bridge-log-card">
-            <span>Build log</span>
-            <pre>{buildLogTail}</pre>
-          </article>
-          <article className="bridge-log-card">
-            <span>Build target</span>
-            <strong>{buildStatus.target || 'runtime'}</strong>
-            <p>{buildStatus.buildDir || buildDir}</p>
-          </article>
-          <article className="bridge-log-card">
-            <span>Bridge mode</span>
-            <strong>External window pairing</strong>
-            <p>Screenshot capture and embedded viewer transport stay deferred until the runtime side is ready.</p>
-          </article>
-        </div>
+        </details>
       </section>
     </div>
   );
@@ -3689,28 +3721,7 @@ export default function App() {
           </button>
         </div>
         <div className="chrome-title">Shader Forge</div>
-        <div className="toolbar-cluster toolbar-cluster--center">
-          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleStartRuntimeBuild} type="button">
-            Build
-          </button>
-          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running'} onClick={handleBuildAndPlay} type="button">
-            Build + Run
-          </button>
-          <button className="ghost-button ghost-button--sm" disabled={buildStatus.state === 'running' || runtimeStatus.state !== 'stopped'} onClick={handleStartRuntime} type="button">
-            Run
-          </button>
-          <button className="ghost-button ghost-button--sm" disabled={runtimeStatus.state === 'stopped' || buildStatus.state === 'running'} onClick={handleStopRuntime} type="button">
-            Stop
-          </button>
-          <button
-            className="ghost-button ghost-button--sm"
-            disabled={!runtimeStatus.supportsPause || runtimeStatus.state === 'stopped' || buildStatus.state === 'running'}
-            onClick={runtimeStatus.state === 'paused' ? handleResumeRuntime : handlePauseRuntime}
-            type="button"
-          >
-            {runtimeStatus.state === 'paused' ? 'Resume' : 'Pause'}
-          </button>
-        </div>
+        <span className="chrome-meta-chip">{activeWorkspace}</span>
         <div className="chrome-strip-meta">
           <div aria-label="Layout controls" className="layout-controls" role="group">
             <button
@@ -4223,7 +4234,7 @@ export default function App() {
               <ReferenceGuideView guide={engineReferenceGuide} />
             ) : activeCenterTab === 'Code' ? (
               showLegacyBridge ? renderLegacyCodeBridge() : null
-            ) : (
+            ) : activeCenterTab === 'World' ? null : (
               renderCenterContent(
                 activeCenterTab,
                 activeSession,
@@ -4233,24 +4244,43 @@ export default function App() {
                 launchScene,
                 setLaunchScene,
                 buildConfig,
+                setBuildConfig,
                 buildDir,
+                setBuildDir,
                 runtimeLog,
                 buildLog,
                 viewerBridgeEvents,
                 pendingRunAfterBuild,
-                reportBackendStatus,
                 handleBuildAndPlay,
                 handleStartRuntime,
                 handleStopRuntime,
                 handleRestartRuntime,
                 handlePauseRuntime,
                 handleResumeRuntime,
+                handleStartRuntimeBuild,
+                handleStopBuild,
               )
             )}
             <div className="code-workspace-host" hidden={showGuide || activeCenterTab !== 'Code' || showLegacyBridge}>
               <CodeWorkspaceView
                 activeSession={activeSession}
                 operationEventEpoch={operationEventEpoch}
+              />
+            </div>
+            <div className="scene-editor-host" hidden={showGuide || activeCenterTab !== 'World'}>
+              <SceneEditorView
+                activeSession={activeSession}
+                buildStatus={buildStatus}
+                launchScene={launchScene}
+                nativeRuntimeHint={nativeRuntimeSetupHint(buildLog, runtimeLog)}
+                onBackendStatus={reportBackendStatus}
+                onBuildAndRun={handleBuildAndPlay}
+                onLaunchSceneChange={setLaunchScene}
+                onRestartRuntime={handleRestartRuntime}
+                onRunScene={handleStartRuntime}
+                onStopRuntime={handleStopRuntime}
+                preferredSidebarTab="outliner"
+                runtimeStatus={runtimeStatus}
               />
             </div>
           </div>

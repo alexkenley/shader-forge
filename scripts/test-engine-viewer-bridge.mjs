@@ -115,12 +115,22 @@ try {
   assert.equal(health.capabilities.includes('runtime:lifecycle:pause'), !isWindows);
   assert.equal(health.capabilities.includes('runtime:lifecycle:resume'), !isWindows);
 
-  assert.match(shellApp, /Viewer Workflow/);
-  assert.match(shellApp, /External Runtime Window/);
-  assert.match(shellApp, /Recent Bridge Activity/);
+  assert.match(shellApp, /scene-editor-host/);
+  assert.match(shellApp, /hidden=\{showGuide \|\| activeCenterTab !== 'World'\}/);
+  assert.match(shellApp, /The game opens in a separate window/);
+  assert.match(shellApp, /<summary>Diagnostics<\/summary>/);
+  assert.match(shellApp, /Run existing build/);
   assert.match(shellApp, /Build \+ Run/);
   assert.match(shellApp, /Pause/);
-  assert.match(shellApp, /Bridge Diagnostics/);
+  assert.match(shellApp, />[\s]*Play[\s]*</);
+  assert.match(shellApp, /onClick=\{onBuildAndPlay\}/);
+  assert.match(shellApp, /onClick=\{onResumeRuntime\}/);
+  assert.match(shellApp, /onClick=\{onRestartRuntime\}/);
+  assert.match(shellApp, /buildBusy \? 'Building' : runtimeLabel/);
+  assert.match(shellApp, /aria-live="polite"/);
+  assert.doesNotMatch(shellApp, /toolbar-cluster toolbar-cluster--center/);
+  assert.doesNotMatch(shellApp, /Bridge Diagnostics/);
+  assert.doesNotMatch(shellApp, /External Runtime Window/);
   assert.match(sessiondClient, /EventSource/);
   assert.match(sessiondClient, /pauseRuntime/);
   assert.match(sessiondClient, /resumeRuntime/);
@@ -187,7 +197,7 @@ try {
 
   console.log('Engine viewer bridge smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
-  console.log('- Verified shell viewer workflow surfaces and sessiond bridge contracts are present');
+  console.log('- Verified shell Playtest surfaces and sessiond bridge contracts are present');
   console.log(`- Verified runtime start/${isWindows ? 'stop' : 'pause/resume/stop'} bridge flow across API, status, and event surfaces`);
   console.log('- Verified build completion events reach the viewer bridge lane');
 } finally {

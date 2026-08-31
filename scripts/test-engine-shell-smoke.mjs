@@ -59,6 +59,12 @@ try {
   assert.match(shellApp, /ReferenceGuideView/);
   assert.match(shellApp, /aria-label="Primary workspaces"/);
   assert.match(shellApp, /Playtest shows and controls the external native runtime/);
+  assert.match(shellApp, /scene-editor-host/);
+  assert.match(shellApp, /hidden=\{showGuide \|\| activeCenterTab !== 'World'\}/);
+  assert.match(shellApp, /The game opens in a separate window/);
+  assert.match(shellApp, /<summary>Diagnostics<\/summary>/);
+  assert.match(shellApp, /Run existing build/);
+  assert.doesNotMatch(shellApp, /toolbar-cluster toolbar-cluster--center/);
   assert.doesNotMatch(shellApp, /fetchAiProviders/);
   assert.doesNotMatch(shellApp, /runAiSmokeTest/);
   assert.doesNotMatch(shellApp, /<h3>AI<\/h3>/);

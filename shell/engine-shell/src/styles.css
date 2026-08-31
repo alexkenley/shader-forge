@@ -1126,8 +1126,21 @@ pre {
 .workspace-layout--code-focus,
 .workspace-layout--game,
 .workspace-layout--preview,
-.workspace-layout--scene-editor {
+.workspace-layout--scene-editor,
+.workspace-layout--playtest {
   grid-template-columns: 1fr;
+}
+
+.workspace-layout--playtest {
+  overflow: auto;
+}
+
+.workspace-layout--playtest .surface {
+  overflow: auto;
+}
+
+.workspace-layout--playtest .scene-disclosure {
+  padding: 0 8px 8px;
 }
 
 .workspace-layout--code-game,
@@ -2704,7 +2717,8 @@ pre {
 .spatial-rest-schematic__diagnostic-note { margin: 0; padding: 0 8px 8px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 /* Native Code workspace */
-.code-workspace-host {
+.code-workspace-host,
+.scene-editor-host {
   display: flex;
   flex: 1;
   width: 100%;
@@ -2713,7 +2727,8 @@ pre {
   overflow: hidden;
 }
 
-.code-workspace-host[hidden] {
+.code-workspace-host[hidden],
+.scene-editor-host[hidden] {
   display: none;
 }
 
