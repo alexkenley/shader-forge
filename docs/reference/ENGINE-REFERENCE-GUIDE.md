@@ -78,12 +78,13 @@ Assistant entry points:
 - The left rail currently exposes `Workspaces`, `Explorer`, and `Source Control`.
 - The primary workspace navigation exposes `World`, `Code`, `Playtest`, and `Assets`.
 - The right panel currently exposes `Runtime`, `Build`, and `Workspace` in `Code` and `Playtest`, while `World` and `Assets` use the center area directly.
-- The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.
+- The bottom dock currently exposes `Terminal`, `Logs`, `Output`, and `Activity`.
 - The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.
 - The `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, visible prep state, and last-package summary for the selected workspace.
 - The `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the selected workspace, including runtime/build state, packaging readiness, stored capture history, and first profiling recommendations.
 - The `Workspace` right-panel tab now also exposes the active code-trust policy summary, supported authored hot-reload roots, tracked artifact hashes and verification state, explicit promote/quarantine controls, and pending code-trust approvals for the selected workspace plus the shared engine lane.
-- Use `Code` for the preserved Monaco bridge and repo workspace context.
+- Use `Code` for bounded workspace-file browsing, revision-bound Monaco tabs, inline search beside `Inspect`, source/draft diffing, and explicit Preview/Approve/Reject/Apply/Undo. Unsaved drafts survive shell navigation; a changed draft stales its prior preview, and revision conflicts preserve the draft for Reload and Re-preview.
+- The preserved `web/` editor remains available only through `Load legacy bridge` or `Open standalone`; it is not the default Code workflow.
 - Use `Playtest` to drive the external native runtime window from the shell, with runtime/build/workspace tools grouped beside that runtime-facing surface.
 - Use `World` for repo-backed scene/prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.
 - Use `Assets` for the constrained attachment-profile tuner and native-evaluated rest/sampled rig schematics. Browsing and authored sample evaluation are lease-free; editing starts only after `Begin tuning` acquires the exact attachment lease.

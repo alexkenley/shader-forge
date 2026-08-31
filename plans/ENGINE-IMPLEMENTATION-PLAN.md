@@ -120,7 +120,7 @@ Current implementation status:
 What is already done:
 
 - `shell/engine-shell` exists as a React + TypeScript + Vite shell scaffold.
-- The preserved code workspace remains bridged under `shell/engine-shell/web/`, including the extracted Monaco inline search toolbar and related behavior.
+- The default Code workspace is now shell-native: bounded file browsing, revision-bound Monaco source/diff tabs, inline search beside `Inspect`, dirty-draft retention, typed conflicts, and explicit operation preview/review/apply/undo are implemented. The preserved `web/` editor remains an optional compatibility bridge.
 - The shell layout has moved toward an engine-style workspace with large docked panels rather than a generic web-app layout.
 - A real multi-tab PTY terminal dock is wired through `engine_sessiond` and the shell.
 - Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
@@ -249,7 +249,7 @@ Scope:
 - right tabs for `Details`, `Assets`, `Inspector`, `Build`, `Run`, and `Profiler`
 - bottom tabs for `Terminal`, `Logs`, `Output`, and `Console`
 - preserve the inline file search toolbar beside `Inspect`
-- keep the preserved editor implementation under `shell/engine-shell/web/` as the compatibility baseline while the new shell frame is built around it
+- retain the preserved editor under `shell/engine-shell/web/` only as an optional compatibility baseline while the shell-native Code workspace reaches remaining diagnostics/source-control parity
 - add a Windows PowerShell clean-start script that removes generated outputs, reruns the smoke harness, and launches the WSL-backed shell flow
 
 Reference inputs:
@@ -259,7 +259,7 @@ Exit criteria:
 - shell serves locally
 - shell presents the intended layout for the engine workflow
 - inline file search still provides match count, `Prev`, `Next`, `Clear`, and revealed active matches
-- the React shell scaffold exists without replacing the preserved editor internals
+- the React shell owns the default Code workflow while the preserved editor remains explicitly accessible for compatibility comparison
 - the Windows clean-start path is documented and available in `scripts/start-dev-clean.ps1`
 
 ## Phase 2: Session Backend And CLI

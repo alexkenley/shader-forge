@@ -128,10 +128,12 @@
         {
           "id": "shell-workspace",
           "title": "Shell Workspace Overview",
-          "summary": "The React shell is the current operator workspace for sessions, file browsing, source control, runtime control, release packaging, diagnostics capture, world authoring, assets, and the preserved code bridge, with a clearer separation between authoring, runtime, and utility surfaces.",
+          "summary": "The React shell is the current operator workspace for sessions, bounded native code editing, source control, runtime control, release packaging, diagnostics capture, world authoring, and assets, with a clearer separation between authoring, runtime, and utility surfaces.",
           "keywords": ["shell", "workspace", "tabs", "rails", "layout", "world", "playtest", "assets", "package", "profile"],
           "references": [
             "shell/engine-shell/src/App.tsx",
+            "shell/engine-shell/src/CodeWorkspaceView.tsx",
+            "shell/engine-shell/src/MonacoCodeEditor.tsx",
             "shell/engine-shell/src/SceneEditorView.tsx",
             "shell/engine-shell/src/scene-authoring.ts",
             "shell/engine-shell/src/ReferenceGuideView.tsx",
@@ -146,7 +148,7 @@
                 "The left rail currently exposes `Workspaces`, `Explorer`, and `Source Control`.",
                 "The primary workspace navigation exposes `World`, `Code`, `Playtest`, and `Assets`.",
                 "The right panel currently exposes `Runtime`, `Build`, and `Workspace` in `Code` and `Playtest`, while `World` and `Assets` use the center area directly.",
-                "The bottom dock currently exposes `Terminal`, `Logs`, and `Output`.",
+                "The bottom dock currently exposes `Terminal`, `Logs`, `Output`, and `Activity`.",
                 "The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.",
                 "The `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, visible prep state, and last-package summary for the selected workspace.",
                 "The `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the selected workspace, including runtime/build state, packaging readiness, stored capture history, and first profiling recommendations.",
@@ -157,7 +159,8 @@
               "title": "Current Workflow Shape",
               "keywords": ["monaco", "preview", "scene", "guide"],
               "items": [
-                "Use `Code` when you need the preserved Monaco bridge and repo workspace context.",
+                "Use `Code` for bounded workspace-file browsing, revision-bound Monaco tabs, inline search beside `Inspect`, source/draft diffing, and explicit Preview/Approve/Reject/Apply/Undo. Unsaved drafts survive shell navigation; a changed draft stales its prior preview, and revision conflicts preserve the draft for Reload and Re-preview.",
+                "The preserved `web/` editor remains available only through `Load legacy bridge` or `Open standalone`; it is not the default Code workflow.",
                 "Use `Playtest` when you are driving the external native runtime window from the shell, with runtime/build/workspace tools grouped beside that runtime-facing surface.",
                 "Use `World` for repo-backed scene and prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.",
                 "Use `Assets` for the constrained attachment-profile tuner and native-evaluated rest/sampled rig schematics. Browsing and authored sample evaluation are lease-free; editing starts only after `Begin tuning` acquires the exact attachment lease.",

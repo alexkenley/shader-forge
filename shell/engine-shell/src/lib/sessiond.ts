@@ -125,6 +125,16 @@ export type EngineOperation = {
     subjectId: string;
     resourceKeys: string[];
     leaseId: string;
+  } | {
+    type: 'scene_asset';
+    assetKind: 'scene' | 'prefab';
+    intent: 'save' | 'create' | 'duplicate';
+    label: string;
+    subjectId: string;
+    sourceSubjectId?: string;
+    sourceRevision?: string;
+    resourceKeys: string[];
+    leaseId: string;
   };
   state: EngineOperationState;
   baseRevision: string;

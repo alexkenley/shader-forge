@@ -102,11 +102,12 @@ Current implemented bridge surfaces:
 - a real `World` workspace that loads `content/scenes/*.scene.toml` plus `content/prefabs/*.prefab.toml`, exposes shell-side authoring/review separation, surfaces explicit `Run Scene` plus `Build + Run` actions directly inside the editor, placed-entity hierarchy plus transform editing, first prefab component payload editing, writes deterministic save/reload/duplicate flows back through `engine_sessiond`, and uses a viewport-first level-editor layout with an adjacent resizable `Scenes`/`Outliner`/`Inspector`/`Assets` tool stack plus a compact bottom status bar
 - an `Assets` workspace with a constrained primary-grip tuner and native-evaluated rest/sampled rig schematics for `animation/attachments/*.attachment.toml`; selection plus rest/sample evaluation are read-only until the operator chooses `Begin tuning`, then an exact attachment lease gates numeric translation/Euler-degree edits and explicit preview, approve, apply, reject, and undo transitions
 - a global `Activity` bottom-dock surface that lists durable operation history for the active workspace, refetches selected public operation detail, follows operation SSE events, and exposes lease-free Approve/Reject review actions without adding an Activity primary workspace
+- a native `Code` workspace that lists and reads bounded session files, keeps revision-bound Monaco tabs and unsaved drafts across shell navigation, exposes current-file search immediately beside `Inspect`, and routes Preview/Approve/Reject/Apply/Undo through the durable file-write operation contract instead of direct writes
 - temporary harness sessions are not the intended user workflow and should be clearly separated from real repo-root workspaces in the `Workspaces` rail
 - the global right panel is currently reserved for runtime/build/workspace tools in `Code` and `Playtest` so World and Assets can use the center area directly
 - an in-app `Guide` opened from `Help`, backed by repo-native markdown and structured guide content so shell users and external assistants can resolve the same operator wiki without treating Guide as a primary workspace
 
-The preserved Monaco workspace is still hosted through the compatibility bridge under `web/`.
+The preserved `web/` editor remains available only through an explicit legacy bridge or standalone link. The default `Code` workspace is shell-native and reuses the vendored Monaco runtime without adding a second editor dependency.
 
 ## Spatial Authoring Surface
 
@@ -142,21 +143,15 @@ Activity shows the public actor provenance, path, spatial context, resource keys
 
 This slice may approve `previewed` operations and reject `previewed` or `approved` operations with the fixed shell actor. It deliberately has no Apply, Undo, lease, agent registration, credential, or automatic navigation flow. Spatial apply/undo remain in a client that explicitly acquires and rechecks a covering coordination lease.
 
-## Preservation Rule
+## Code Workspace And Compatibility Baseline
 
-The preserved code-editor implementation under `shell/engine-shell/web/` is the compatibility baseline.
+The default shell-native Code surface owns bounded file browsing, revision-bound tabs, Monaco source/diff models, dirty-draft preservation, current-file search, inspect metadata, typed conflicts, and operation review/apply/undo. A preview is bound to the exact draft and revision that were reviewed; editing afterward makes the candidate stale, and late reads/actions cannot cross session or tab authority. Apply and Undo refresh the authoritative baseline without erasing a newer dirty draft.
 
-Phase 1 should:
-
-- keep the preserved Monaco/editor behavior intact
-- keep the inline file-search behavior intact
-- build the new shell frame around it
-
-Phase 1 should not start by rewriting the editor internals.
+The preserved implementation under `shell/engine-shell/web/` remains an optional compatibility baseline while parity work continues. It is not the default Code screen and must not regain separate assistant, provider, or prompt UI.
 
 ## Phase 1 Requirement
 
-The shell scaffold must preserve the inline file search control beside `Inspect`.
+The shell-native Code workspace must preserve the inline file search control beside `Inspect`.
 
 Required behavior:
 

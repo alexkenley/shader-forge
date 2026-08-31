@@ -298,6 +298,8 @@ Do not build bespoke controls for systems without runtime support. Generic schem
 
 Purpose: provide a credible code-first workflow instead of explanatory cards.
 
+Implemented foundation: the default shell surface now owns bounded file browsing, revision-bound Monaco tabs, inline current-file search beside `Inspect`, baseline/draft diffing, dirty-draft retention across navigation and session detachment, typed conflict recovery, and explicit file-operation Preview/Approve/Reject/Apply/Undo. The legacy editor is now optional. Diagnostics/Problems navigation, tighter source-control integration, and final legacy retirement remain open.
+
 Reuse the proven legacy behaviors where useful, then retire the legacy entry point:
 
 - Monaco editor
@@ -713,6 +715,8 @@ Actions:
 - remove explanatory placeholder cards
 - connect file revisions and external-change conflict handling
 - retire the equivalent legacy Code entry point after parity checks
+
+Current status: the native open/edit/search/diff/review/apply/undo path is implemented and rendered at desktop plus compact breakpoints. Remaining Gate 3 work is diagnostics/Problems, source-control context, project switching, and removing the optional legacy bridge after parity evidence.
 
 Exit criteria:
 

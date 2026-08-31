@@ -206,7 +206,7 @@ function OperationDetail({
         <div><dt>State</dt><dd>{operation.state}</dd></div>
         <div><dt>Actor provenance</dt><dd>{actorLabel(operation.actor)}</dd></div>
         <div><dt>Operation</dt><dd className="activity-identifier">{operation.id}</dd></div>
-        <div><dt>Spatial subject</dt><dd className="activity-identifier">{operation.context?.subjectId || 'none'}</dd></div>
+        <div><dt>Subject</dt><dd className="activity-identifier">{operation.context?.subjectId || 'none'}</dd></div>
         <div><dt>Resources</dt><dd className="activity-identifier">{operation.context?.resourceKeys.join(', ') || 'none'}</dd></div>
         <div><dt>Base revision</dt><dd className="activity-identifier">{operation.baseRevision}</dd></div>
         <div><dt>Proposed revision</dt><dd className="activity-identifier">{operation.proposedRevision}</dd></div>

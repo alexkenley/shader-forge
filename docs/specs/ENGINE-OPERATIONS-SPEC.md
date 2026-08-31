@@ -205,6 +205,12 @@ The `Assets` workspace now adapts the same semantic spatial preview and generic 
 
 Candidate values are labelled `NOT APPLIED`. Approve and Apply are separate buttons, Reject is available before apply, and editing locks after preview. Apply releases the lease and disconnects instead of holding coordination indefinitely. Undo explicitly reacquires a fresh lease covering the operation resource keys. The opaque credential exists only in memory and the credential header; client errors preserve status/code/diagnostic/conflict while redacting it.
 
+## Code Shell Adapter
+
+The native `Code` workspace uses bounded session file list/read routes and the generic file-write preview plus approve/reject/apply/undo transitions. It never calls `POST /api/files/write`. Each tab retains its session, path, baseline revision, baseline bytes, and dirty draft. Preview binds an operation to the exact candidate bytes and proposed revision; a later edit visibly stales that operation and disables Approve/Apply until a new preview. Apply and Undo update the authoritative baseline only when doing so cannot erase a newer dirty draft.
+
+Session, tab, read, action, and operation-id guards reject late responses after navigation or workspace changes. Clean tabs close on session change; dirty tabs remain explicitly detached and read-only until closed or their original session becomes active again. Structured revision conflicts remain tab-bound, preserve the draft, and require Reload then Re-preview. The optional legacy bridge does not own another event subscription or mutation path.
+
 ## Spatial MCP Adapter
 
 The process-scoped `sf-mcp` server exposes `operation_list`, `operation_read`, `spatial_attachment_preview`, `operation_approve`, `operation_reject`, `operation_apply`, and `operation_undo` over this same contract. Session id, MCP actor, coordinator agent id, and credential come from process state rather than model-provided arguments.
