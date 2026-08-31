@@ -43,10 +43,11 @@ const EVENT_TYPES = new Set([
   'apply_failed',
   'undo_failed',
   'recovered',
+  'validated',
 ]);
 const EVENT_TRANSITIONS = {
-  previewed: new Set(['approved', 'rejected']),
-  approved: new Set(['applying', 'rejected']),
+  previewed: new Set(['approved', 'rejected', 'validated']),
+  approved: new Set(['applying', 'rejected', 'validated']),
   applying: new Set(['applied', 'conflicted', 'apply_failed', 'recovered']),
   applied: new Set(['undoing']),
   undoing: new Set(['undone', 'conflicted', 'undo_failed', 'recovered']),
@@ -54,6 +55,32 @@ const EVENT_TRANSITIONS = {
   undone: new Set(),
   conflicted: new Set(),
 };
+const VALIDATABLE_STATES = new Set(['previewed', 'approved']);
+const VALIDATION_SCHEMA_VERSION = 1;
+const VALIDATION_MAX_SAMPLES = 64;
+const VALIDATION_MAX_EVENTS = 8;
+const VALIDATION_MAX_PHASE_LENGTH = 128;
+const VALIDATION_MAX_COUNT = 1_000_000;
+const VALIDATION_MAX_ERROR_CODE_LENGTH = 128;
+const VALIDATION_MAX_ERROR_MESSAGE_LENGTH = 512;
+const VALIDATION_SAFE_TOKEN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
+const VALIDATION_COUNT_KEYS = Object.freeze([
+  'jointLimitViolationCount',
+  'overlapCount',
+  'toleranceFailureCount',
+]);
+const VALIDATION_FINDINGS_KEYS = new Set(VALIDATION_COUNT_KEYS);
+const VALIDATION_SAMPLE_KEYS = new Set(['phase', 'normalizedTime', ...VALIDATION_COUNT_KEYS]);
+const VALIDATION_COMPLETED_KEYS = new Set([
+  'schemaVersion',
+  'status',
+  'proposedRevision',
+  'sampleCount',
+  'findings',
+  'samples',
+]);
+const VALIDATION_FAILED_KEYS = new Set([...VALIDATION_COMPLETED_KEYS, 'error']);
+const VALIDATION_ERROR_KEYS = new Set(['code', 'message']);
 const EVENT_RESULT_STATE = {
   previewed: 'previewed',
   approved: 'approved',
@@ -122,8 +149,194 @@ function isSha256Revision(value) {
   return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
 }
 
+function requireExactObjectKeys(value, allowedKeys, fieldName) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw createStoreError(400, `${fieldName} must be an object.`);
+  }
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      throw createStoreError(400, `Unsupported ${fieldName} field: ${key}`);
+    }
+  }
+  for (const key of allowedKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      throw createStoreError(400, `${fieldName}.${key} is required.`);
+    }
+  }
+  return value;
+}
+
+function requireBoundedCount(value, fieldName) {
+  if (
+    typeof value !== 'number'
+    || !Number.isSafeInteger(value)
+    || Object.is(value, -0)
+    || value < 0
+    || value > VALIDATION_MAX_COUNT
+  ) {
+    throw createStoreError(
+      400,
+      `${fieldName} must be a safe nonnegative integer at most ${VALIDATION_MAX_COUNT}.`,
+    );
+  }
+  return value;
+}
+
+function normalizeValidationFindings(value, fieldName) {
+  requireExactObjectKeys(value, VALIDATION_FINDINGS_KEYS, fieldName);
+  return {
+    jointLimitViolationCount: requireBoundedCount(
+      value.jointLimitViolationCount,
+      `${fieldName}.jointLimitViolationCount`,
+    ),
+    overlapCount: requireBoundedCount(value.overlapCount, `${fieldName}.overlapCount`),
+    toleranceFailureCount: requireBoundedCount(
+      value.toleranceFailureCount,
+      `${fieldName}.toleranceFailureCount`,
+    ),
+  };
+}
+
+function normalizeValidationSample(value, index) {
+  const fieldName = `validation.samples[${index}]`;
+  requireExactObjectKeys(value, VALIDATION_SAMPLE_KEYS, fieldName);
+  const phase = typeof value.phase === 'string' ? value.phase.trim() : '';
+  if (!phase || phase.length > VALIDATION_MAX_PHASE_LENGTH) {
+    throw createStoreError(400, `${fieldName}.phase is invalid.`);
+  }
+  if (
+    typeof value.normalizedTime !== 'number'
+    || !Number.isFinite(value.normalizedTime)
+    || Object.is(value.normalizedTime, -0)
+    || value.normalizedTime < 0
+    || value.normalizedTime > 1
+  ) {
+    throw createStoreError(400, `${fieldName}.normalizedTime is invalid.`);
+  }
+  return {
+    phase,
+    normalizedTime: value.normalizedTime,
+    jointLimitViolationCount: requireBoundedCount(
+      value.jointLimitViolationCount,
+      `${fieldName}.jointLimitViolationCount`,
+    ),
+    overlapCount: requireBoundedCount(value.overlapCount, `${fieldName}.overlapCount`),
+    toleranceFailureCount: requireBoundedCount(
+      value.toleranceFailureCount,
+      `${fieldName}.toleranceFailureCount`,
+    ),
+  };
+}
+
+function normalizeValidationError(value) {
+  requireExactObjectKeys(value, VALIDATION_ERROR_KEYS, 'validation.error');
+  const code = typeof value.code === 'string' ? value.code.trim() : '';
+  if (
+    !code
+    || code.length > VALIDATION_MAX_ERROR_CODE_LENGTH
+    || !VALIDATION_SAFE_TOKEN.test(code)
+  ) {
+    throw createStoreError(400, 'validation.error.code is invalid.');
+  }
+  const message = typeof value.message === 'string' ? value.message.trim() : '';
+  if (!message || message.length > VALIDATION_MAX_ERROR_MESSAGE_LENGTH) {
+    throw createStoreError(400, 'validation.error.message is invalid.');
+  }
+  return { code, message };
+}
+
+function normalizeValidationSummary(value) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw createStoreError(400, 'validation must be an object.');
+  }
+  if (value.status !== 'completed' && value.status !== 'failed') {
+    throw createStoreError(400, 'validation.status must be completed or failed.');
+  }
+  requireExactObjectKeys(
+    value,
+    value.status === 'failed' ? VALIDATION_FAILED_KEYS : VALIDATION_COMPLETED_KEYS,
+    'validation',
+  );
+  if (!Number.isInteger(value.schemaVersion) || value.schemaVersion !== VALIDATION_SCHEMA_VERSION) {
+    throw createStoreError(400, 'validation.schemaVersion must be 1.');
+  }
+  if (!isSha256Revision(value.proposedRevision)) {
+    throw createStoreError(400, 'validation.proposedRevision must be a sha256 content hash.');
+  }
+  if (!Array.isArray(value.samples) || value.samples.length > VALIDATION_MAX_SAMPLES) {
+    throw createStoreError(
+      400,
+      `validation.samples must be an array of at most ${VALIDATION_MAX_SAMPLES} samples.`,
+    );
+  }
+  const sampleCount = requireBoundedCount(value.sampleCount, 'validation.sampleCount');
+  if (sampleCount !== value.samples.length) {
+    throw createStoreError(400, 'validation.sampleCount must equal samples.length.');
+  }
+  const samples = value.samples.map((sample, index) => normalizeValidationSample(sample, index));
+  const findings = normalizeValidationFindings(value.findings, 'validation.findings');
+  for (const key of VALIDATION_COUNT_KEYS) {
+    const sampleTotal = samples.reduce((total, sample) => total + sample[key], 0);
+    if (findings[key] !== sampleTotal) {
+      throw createStoreError(400, `validation.findings.${key} must equal the sample total.`);
+    }
+  }
+  const normalized = {
+    schemaVersion: VALIDATION_SCHEMA_VERSION,
+    status: value.status,
+    proposedRevision: value.proposedRevision,
+    sampleCount,
+    findings,
+    samples,
+  };
+  if (value.status === 'failed') {
+    normalized.error = normalizeValidationError(value.error);
+  }
+  return normalized;
+}
+
+function normalizePersistedValidation(record) {
+  if (!Object.prototype.hasOwnProperty.call(record, 'validation') || record.validation == null) {
+    return { ok: true, value: null };
+  }
+  try {
+    const validation = normalizeValidationSummary(record.validation);
+    return validation.proposedRevision === record.proposedRevision
+      ? { ok: true, value: validation }
+      : { ok: false, value: null };
+  } catch {
+    return { ok: false, value: null };
+  }
+}
+
+function assertSpatialValidationCandidate(record) {
+  if (record.context?.type !== 'spatial_attachment') {
+    throw createStoreError(
+      409,
+      `Operation ${record.id} is not a spatial attachment validation candidate.`,
+      { code: 'operation_validation_unavailable' },
+    );
+  }
+  if (!VALIDATABLE_STATES.has(record.state)) {
+    throw createStoreError(
+      409,
+      `Operation ${record.id} cannot be validated from state ${record.state}.`,
+      { code: 'operation_validation_unavailable' },
+    );
+  }
+}
+
 function isIsoTimestamp(value) {
   return typeof value === 'string' && ISO_TIMESTAMP.test(value) && Number.isFinite(Date.parse(value));
+}
+
+function nextOperationTimestamp(...previousTimestamps) {
+  const now = Date.now();
+  const previous = Math.max(
+    Number.NEGATIVE_INFINITY,
+    ...previousTimestamps.map((timestamp) => Date.parse(timestamp)).filter(Number.isFinite),
+  );
+  return new Date(Math.max(now, previous + 1)).toISOString();
 }
 
 function normalizeRevision(value, fieldName) {
@@ -320,7 +533,11 @@ function normalizePersistedEffect(effect) {
   if (effect.error != null && typeof effect.error !== 'string') {
     return null;
   }
-  if (effect.updatedAt != null && effect.updatedAt !== '' && !isIsoTimestamp(effect.updatedAt)) {
+  const updatedAt = effect.updatedAt || null;
+  if (
+    (status === 'idle' && updatedAt !== null)
+    || (status !== 'idle' && !isIsoTimestamp(updatedAt))
+  ) {
     return null;
   }
   if (effect.priorArtifact != null && typeof effect.priorArtifact !== 'object') {
@@ -334,7 +551,7 @@ function normalizePersistedEffect(effect) {
     evaluation: effect.evaluation ? structuredClone(effect.evaluation) : null,
     artifact: effect.artifact ? structuredClone(effect.artifact) : null,
     error: typeof effect.error === 'string' && effect.error.trim() ? effect.error.trim() : null,
-    updatedAt: effect.updatedAt || null,
+    updatedAt,
   };
   if (Object.prototype.hasOwnProperty.call(effect, 'priorArtifact')) {
     normalized.priorArtifact = effect.priorArtifact ? structuredClone(effect.priorArtifact) : null;
@@ -614,10 +831,17 @@ function isValidEventSequence(events) {
   }
 
   let currentState = null;
+  let validationCount = 0;
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
   for (const event of events) {
     if (!event || !EVENT_TYPES.has(event.type) || !SUPPORTED_STATES.has(event.state)) {
       return false;
     }
+    const timestamp = Date.parse(event.at);
+    if (timestamp < previousTimestamp) {
+      return false;
+    }
+    previousTimestamp = timestamp;
     if (currentState == null) {
       if (event.type !== 'previewed' || event.state !== 'previewed') {
         return false;
@@ -629,7 +853,15 @@ function isValidEventSequence(events) {
     if (!allowed || !allowed.has(event.type)) {
       return false;
     }
-    if (event.type === 'recovered') {
+    if (event.type === 'validated') {
+      validationCount += 1;
+      if (validationCount > VALIDATION_MAX_EVENTS) {
+        return false;
+      }
+      if (event.state !== currentState) {
+        return false;
+      }
+    } else if (event.type === 'recovered') {
       if (event.state !== expectedRecoveredState(currentState)) {
         return false;
       }
@@ -980,6 +1212,7 @@ function operationView(record) {
     resultingRevision: record.resultingRevision,
     preview: structuredClone(record.preview),
     codeTrustEffect: publicCodeTrustEffect(record.codeTrustEffect),
+    validation: record.validation ? structuredClone(record.validation) : null,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     events: structuredClone(record.events),
@@ -1007,6 +1240,7 @@ function persistableRecord(record) {
     resultingRevision: record.resultingRevision,
     preview: structuredClone(record.preview),
     codeTrustEffect: persistableCodeTrustEffect(record.codeTrustEffect),
+    validation: record.validation ? structuredClone(record.validation) : null,
     beforeContent: record.beforeContent,
     proposedContent: record.proposedContent,
     createdAt: record.createdAt,
@@ -1043,6 +1277,8 @@ function normalizePersistedEvent(event, fallbackActor, fallbackState, fallbackTi
     if (!actor) {
       return null;
     }
+  } else if (event.type === 'validated') {
+    return null;
   } else {
     actor = structuredClone(fallbackActor);
   }
@@ -1148,6 +1384,7 @@ function normalizePersistedOperation(record) {
     || !SUPPORTED_STATES.has(state)
     || !isIsoTimestamp(createdAt)
     || !isIsoTimestamp(updatedAt)
+    || Date.parse(createdAt) > Date.parse(updatedAt)
   ) {
     return null;
   }
@@ -1225,7 +1462,12 @@ function normalizePersistedOperation(record) {
     return null;
   }
   const finalEvent = normalizedEvents[normalizedEvents.length - 1];
-  if (!finalEvent || finalEvent.state !== state) {
+  if (
+    !finalEvent
+    || finalEvent.state !== state
+    || Date.parse(createdAt) > Date.parse(normalizedEvents[0].at)
+    || Date.parse(updatedAt) < Date.parse(finalEvent.at)
+  ) {
     return null;
   }
 
@@ -1238,6 +1480,9 @@ function normalizePersistedOperation(record) {
   }
 
   const normalizedEffect = normalizePersistedEffect(codeTrustEffect);
+  const effectTimestamp = normalizedEffect?.updatedAt
+    ? Date.parse(normalizedEffect.updatedAt)
+    : null;
   if (
     !normalizedEffect
     || !effectCompatibleWithState(state, normalizedEffect)
@@ -1245,12 +1490,28 @@ function normalizePersistedOperation(record) {
       path: filePath.trim(),
       proposedRevision,
     })
+    || (effectTimestamp !== null && (
+      effectTimestamp < Date.parse(createdAt)
+      || effectTimestamp > Date.parse(updatedAt)
+    ))
   ) {
     return null;
   }
 
   const normalizedIdentity = normalizeWorkspaceIdentity(workspaceIdentity);
   if (!normalizedIdentity) {
+    return null;
+  }
+
+  const persistedValidation = normalizePersistedValidation(record);
+  if (!persistedValidation.ok) {
+    return null;
+  }
+  const hasValidatedEvent = normalizedEvents.some((event) => event.type === 'validated');
+  if ((persistedValidation.value !== null) !== hasValidatedEvent) {
+    return null;
+  }
+  if (hasValidatedEvent && normalizedContext?.type !== 'spatial_attachment') {
     return null;
   }
 
@@ -1270,6 +1531,7 @@ function normalizePersistedOperation(record) {
     resultingRevision: typeof resultingRevision === 'string' ? resultingRevision : null,
     preview: normalizedPreview,
     codeTrustEffect: normalizedEffect,
+    validation: persistedValidation.value,
     beforeContent: typeof beforeContent === 'string' ? beforeContent : null,
     proposedContent,
     createdAt,
@@ -1398,6 +1660,65 @@ export class OperationStore {
     return structuredClone(operationDiff(this.#requireOperation(operationId)));
   }
 
+  async getSpatialValidationCandidate(operationId) {
+    const record = this.#requireOperation(operationId);
+    assertSpatialValidationCandidate(record);
+    await this.#assertWorkspaceIdentity(record);
+    return structuredClone({
+      id: record.id,
+      sessionId: record.sessionId,
+      path: record.path,
+      state: record.state,
+      baseRevision: record.baseRevision,
+      proposedRevision: record.proposedRevision,
+      proposedContent: record.proposedContent,
+      context: record.context,
+      updatedAt: record.updatedAt,
+    });
+  }
+
+  async recordSpatialValidation(
+    operationId,
+    { actor, expectedProposedRevision, expectedUpdatedAt, validation } = {},
+  ) {
+    return this.#serializeMutation(async () => {
+      const resolvedActor = normalizeActor(actor);
+      const record = this.#requireOperation(operationId);
+      assertSpatialValidationCandidate(record);
+      await this.#assertWorkspaceIdentity(record);
+      if (
+        record.proposedRevision !== expectedProposedRevision
+        || record.updatedAt !== expectedUpdatedAt
+      ) {
+        throw createStoreError(409, 'Operation validation snapshot is stale.', {
+          code: 'operation_validation_stale',
+        });
+      }
+      if (record.events.filter((event) => event.type === 'validated').length >= VALIDATION_MAX_EVENTS) {
+        throw createStoreError(409, 'Operation validation history is full.', {
+          code: 'operation_validation_limit_reached',
+        });
+      }
+      const normalizedValidation = normalizeValidationSummary(validation);
+      if (normalizedValidation.proposedRevision !== record.proposedRevision) {
+        throw createStoreError(
+          400,
+          'validation.proposedRevision must match the operation proposed revision.',
+        );
+      }
+      const next = structuredClone(record);
+      next.validation = normalizedValidation;
+      next.updatedAt = nextOperationTimestamp(record.updatedAt);
+      appendEvent(next, 'validated', resolvedActor);
+      await this.#commit(() => {
+        this.#operations.set(record.id, next);
+      });
+      const view = operationView(next);
+      this.#emitEvent('operation.validated', view);
+      return structuredClone(view);
+    });
+  }
+
   async previewFileWrite({
     sessionId,
     path: relativePath,
@@ -1455,6 +1776,7 @@ export class OperationStore {
           created: !inspection.exists,
         }),
         codeTrustEffect: idleCodeTrustEffect(),
+        validation: null,
         beforeContent: inspection.exists ? inspection.content : null,
         proposedContent,
         createdAt: timestamp,
@@ -1523,7 +1845,7 @@ export class OperationStore {
 
       const applying = structuredClone(record);
       applying.state = 'applying';
-      applying.updatedAt = new Date().toISOString();
+      applying.updatedAt = nextOperationTimestamp(record.updatedAt);
       applying.codeTrustEffect = incomingTrust?.evaluation
         ? pendingCodeTrustEffect({
           phase: 'apply',
@@ -1578,7 +1900,10 @@ export class OperationStore {
           });
         }
         if (applying.codeTrustEffect?.status === 'failed') {
-          applying.updatedAt = new Date().toISOString();
+          applying.updatedAt = nextOperationTimestamp(
+            applying.updatedAt,
+            applying.codeTrustEffect.updatedAt,
+          );
           this.#operations.set(applying.id, applying);
           try {
             await this.#persistOperations();
@@ -1607,7 +1932,7 @@ export class OperationStore {
       const applied = structuredClone(applying);
       applied.state = 'applied';
       applied.appliedRevision = written.revision;
-      applied.updatedAt = new Date().toISOString();
+      applied.updatedAt = nextOperationTimestamp(applying.updatedAt);
       appendEvent(applied, 'applied', resolvedActor);
       try {
         await this.#replaceRecord(applying, applied, { rollbackOnFailure: false });
@@ -1650,7 +1975,7 @@ export class OperationStore {
 
       const undoing = structuredClone(record);
       undoing.state = 'undoing';
-      undoing.updatedAt = new Date().toISOString();
+      undoing.updatedAt = nextOperationTimestamp(record.updatedAt);
       const previousEffect = record.codeTrustEffect || idleCodeTrustEffect();
       undoing.codeTrustEffect = previousEffect.status === 'skipped' || previousEffect.status === 'idle'
         ? {
@@ -1738,7 +2063,10 @@ export class OperationStore {
           });
         }
         if (undoing.codeTrustEffect?.status === 'failed') {
-          undoing.updatedAt = new Date().toISOString();
+          undoing.updatedAt = nextOperationTimestamp(
+            undoing.updatedAt,
+            undoing.codeTrustEffect.updatedAt,
+          );
           this.#operations.set(undoing.id, undoing);
           try {
             await this.#persistOperations();
@@ -1767,7 +2095,7 @@ export class OperationStore {
       const undone = structuredClone(undoing);
       undone.state = 'undone';
       undone.resultingRevision = resultingRevision;
-      undone.updatedAt = new Date().toISOString();
+      undone.updatedAt = nextOperationTimestamp(undoing.updatedAt);
       appendEvent(undone, 'undone', resolvedActor);
       try {
         await this.#replaceRecord(undoing, undone, { rollbackOnFailure: false });
@@ -1810,7 +2138,7 @@ export class OperationStore {
       }
 
       const resolvedActor = normalizeActor(actor);
-      const timestamp = new Date().toISOString();
+      const timestamp = nextOperationTimestamp(record.updatedAt);
       const next = structuredClone(record);
       next.state = nextState;
       next.updatedAt = timestamp;
@@ -1837,7 +2165,7 @@ export class OperationStore {
     if (resolvedConflict.code === 'revision_conflict' && !resolvedConflict.operationId && record.id) {
       resolvedConflict.operationId = record.id;
     }
-    const timestamp = new Date().toISOString();
+    const timestamp = nextOperationTimestamp(record.updatedAt, record.codeTrustEffect?.updatedAt);
     const next = structuredClone(record);
     next.state = 'conflicted';
     next.updatedAt = timestamp;
@@ -1892,7 +2220,7 @@ export class OperationStore {
   async #failInFlight(intermediate, { eventType, restoredState, actor }) {
     const next = structuredClone(intermediate);
     next.state = restoredState;
-    next.updatedAt = new Date().toISOString();
+    next.updatedAt = nextOperationTimestamp(intermediate.updatedAt);
     appendEvent(next, eventType, actor);
     try {
       await this.#replaceRecord(intermediate, next, { rollbackOnFailure: false });
@@ -1904,20 +2232,24 @@ export class OperationStore {
 
   async #persistPriorArtifactSnapshot(record) {
     const effect = record.codeTrustEffect || idleCodeTrustEffect();
+    const timestamp = nextOperationTimestamp(record.updatedAt, effect.updatedAt);
     record.codeTrustEffect = {
       ...effect,
       priorArtifact: effect.evaluation
         ? await snapshotCodeTrustArtifact(record.workspaceRoot, record.path)
         : null,
-      updatedAt: new Date().toISOString(),
+      updatedAt: timestamp,
     };
-    record.updatedAt = record.codeTrustEffect.updatedAt;
+    record.updatedAt = timestamp;
     this.#operations.set(record.id, record);
     await this.#persistOperations();
   }
 
   async #persistInFlightEffect(record) {
-    record.updatedAt = record.codeTrustEffect?.updatedAt || new Date().toISOString();
+    record.updatedAt = nextOperationTimestamp(
+      record.updatedAt,
+      record.codeTrustEffect?.updatedAt,
+    );
     this.#operations.set(record.id, record);
     await this.#persistOperations();
   }
@@ -1953,7 +2285,7 @@ export class OperationStore {
         status: 'skipped',
         phase,
         error: null,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextOperationTimestamp(record.updatedAt, current.updatedAt),
       };
       return record;
     }
@@ -1985,7 +2317,7 @@ export class OperationStore {
         phase,
         artifact: result?.artifact ? structuredClone(result.artifact) : (phase === 'undo' ? null : current.artifact),
         error: null,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextOperationTimestamp(record.updatedAt, current.updatedAt),
       };
       return record;
     } catch (error) {
@@ -1994,7 +2326,7 @@ export class OperationStore {
         status: 'failed',
         phase,
         error: error instanceof Error ? error.message : String(error),
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextOperationTimestamp(record.updatedAt, current.updatedAt),
       };
       throw error;
     }
@@ -2030,8 +2362,12 @@ export class OperationStore {
       return record;
     }
 
-    const timestamp = new Date().toISOString();
     const next = structuredClone(record);
+    const transitionTimestamp = () => nextOperationTimestamp(
+      record.updatedAt,
+      next.updatedAt,
+      next.codeTrustEffect?.updatedAt,
+    );
     const recoveryActor = lastEventActor(
       record,
       record.state === 'applying' ? 'applying' : 'undoing',
@@ -2047,11 +2383,12 @@ export class OperationStore {
           if (isArtifactConflictError(error)) {
             const conflict = artifactConflict(record, error);
             next.state = 'conflicted';
-            next.updatedAt = timestamp;
+            next.updatedAt = transitionTimestamp();
             appendEvent(next, 'conflicted', recoveryActor, { conflict });
             sseEvent = 'operation.conflicted';
             finalizeCompleted = false;
           } else {
+            next.updatedAt = transitionTimestamp();
             this.#operations.set(record.id, next);
             if (persist) {
               try {
@@ -2066,13 +2403,13 @@ export class OperationStore {
         if (finalizeCompleted) {
           next.state = 'applied';
           next.appliedRevision = record.proposedRevision;
-          next.updatedAt = timestamp;
+          next.updatedAt = transitionTimestamp();
           appendEvent(next, 'applied', recoveryActor);
           sseEvent = 'operation.applied';
         }
       } else if (inspection.revision === record.baseRevision) {
         next.state = 'approved';
-        next.updatedAt = timestamp;
+        next.updatedAt = transitionTimestamp();
         appendEvent(next, 'recovered', recoveryActor);
       } else {
         const conflict = revisionConflict({
@@ -2082,7 +2419,7 @@ export class OperationStore {
           operationId: record.id,
         });
         next.state = 'conflicted';
-        next.updatedAt = timestamp;
+        next.updatedAt = transitionTimestamp();
         appendEvent(next, 'conflicted', recoveryActor, { conflict });
         sseEvent = 'operation.conflicted';
       }
@@ -2096,11 +2433,12 @@ export class OperationStore {
           if (isArtifactConflictError(error)) {
             const conflict = artifactConflict(record, error);
             next.state = 'conflicted';
-            next.updatedAt = timestamp;
+            next.updatedAt = transitionTimestamp();
             appendEvent(next, 'conflicted', recoveryActor, { conflict });
             sseEvent = 'operation.conflicted';
             finalizeCompleted = false;
           } else {
+            next.updatedAt = transitionTimestamp();
             this.#operations.set(record.id, next);
             if (persist) {
               try {
@@ -2115,13 +2453,13 @@ export class OperationStore {
         if (finalizeCompleted) {
           next.state = 'undone';
           next.resultingRevision = expectedRestored;
-          next.updatedAt = timestamp;
+          next.updatedAt = transitionTimestamp();
           appendEvent(next, 'undone', recoveryActor);
           sseEvent = 'operation.undone';
         }
       } else if (inspection.revision === record.appliedRevision) {
         next.state = 'applied';
-        next.updatedAt = timestamp;
+        next.updatedAt = transitionTimestamp();
         appendEvent(next, 'recovered', recoveryActor);
       } else {
         const conflict = revisionConflict({
@@ -2131,7 +2469,7 @@ export class OperationStore {
           operationId: record.id,
         });
         next.state = 'conflicted';
-        next.updatedAt = timestamp;
+        next.updatedAt = transitionTimestamp();
         appendEvent(next, 'conflicted', recoveryActor, { conflict });
         sseEvent = 'operation.conflicted';
       }

@@ -1096,6 +1096,8 @@ try {
   assert.ok(previewed.workspaceIdentity.ino);
   assert.equal(previewed.state, 'previewed');
   assert.equal(previewed.codeTrustEffect.status, 'idle');
+  assert.equal(previewed.validation, null);
+  assert.equal('proposedContent' in previewed, false);
   assert.equal(previewed.baseRevision, existingRevision);
   assert.equal(previewed.proposedRevision, proposedRevision);
   assert.equal(previewed.appliedRevision, null);
@@ -1542,6 +1544,7 @@ try {
   const fetched = await requestOperation(`/api/operations/${encodeURIComponent(applyOperationId)}`);
   assert.equal(fetched.status, 200);
   assert.equal(fetched.payload.operation.state, 'undone');
+  assert.equal(fetched.payload.operation.validation, null);
   assert.equal('beforeContent' in fetched.payload.operation, false);
   assert.equal('proposedContent' in fetched.payload.operation, false);
   const persistedOperations = JSON.parse(
@@ -1865,6 +1868,22 @@ try {
     },
     {
       ...validTemplate,
+      id: 'op_missing_effect_timestamp',
+      codeTrustEffect: {
+        ...validTemplate.codeTrustEffect,
+        updatedAt: null,
+      },
+    },
+    {
+      ...validTemplate,
+      id: 'op_future_effect_timestamp',
+      codeTrustEffect: {
+        ...validTemplate.codeTrustEffect,
+        updatedAt: '2999-01-01T00:00:00.000Z',
+      },
+    },
+    {
+      ...validTemplate,
       id: 'op_fabricated_recorded',
       state: 'applying',
       appliedRevision: null,
@@ -2004,6 +2023,28 @@ try {
       id: 'op_missing_workspace_root',
       workspaceRoot: '',
     },
+    {
+      ...validTemplate,
+      id: 'op_legacy_missing_validation',
+      validation: undefined,
+    },
+    {
+      ...validTemplate,
+      id: 'op_malformed_validation',
+      validation: {
+        schemaVersion: 1,
+        status: 'completed',
+        proposedRevision: validTemplate.proposedRevision,
+        sampleCount: 0,
+        findings: {
+          jointLimitViolationCount: 0,
+          overlapCount: 0,
+          toleranceFailureCount: 0,
+        },
+        samples: [],
+        diagnostic: 'raw-evaluator-output',
+      },
+    },
   );
   await fs.writeFile(operationsPath, `${JSON.stringify(persistedForValidation, null, 2)}\n`, 'utf8');
   await service.close();
@@ -2020,6 +2061,8 @@ try {
   assert.equal(loadedIds.has('op_bad_preview'), false);
   assert.equal(loadedIds.has('op_fabricated_preview'), false);
   assert.equal(loadedIds.has('op_impossible_effect'), false);
+  assert.equal(loadedIds.has('op_missing_effect_timestamp'), false);
+  assert.equal(loadedIds.has('op_future_effect_timestamp'), false);
   assert.equal(loadedIds.has('op_fabricated_recorded'), false);
   assert.equal(loadedIds.has('op_malformed_effect_artifact'), false);
   assert.equal(loadedIds.has('op_wrong_operation_artifact'), false);
@@ -2027,7 +2070,13 @@ try {
   assert.equal(loadedIds.has('op_bad_sequence'), false);
   assert.equal(loadedIds.has('op_state_event_mismatch'), false);
   assert.equal(loadedIds.has('op_missing_workspace_root'), false);
+  assert.equal(loadedIds.has('op_malformed_validation'), false);
   assert.equal(loadedIds.has(applyOperationId), true);
+  const legacyMissingValidation = afterMalformed.payload.operations.find(
+    (operation) => operation.id === 'op_legacy_missing_validation',
+  );
+  assert.ok(legacyMissingValidation);
+  assert.equal(legacyMissingValidation.validation, null);
 
   const journalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-journal-'));
   const journalWorkspace = path.join(journalDir, 'workspace');
@@ -2187,6 +2236,10 @@ try {
   await recoveredOps.approve(recoveredPreview.id, { actor: humanActor });
   const recoveredPayload = JSON.parse(await fs.readFile(recoveredOpsPath, 'utf8'));
   recoveredPayload.operations[0].state = 'applying';
+  const recoveredCrashTimestamp = new Date(
+    Date.parse(recoveredPayload.operations[0].updatedAt) + 1,
+  ).toISOString();
+  recoveredPayload.operations[0].updatedAt = recoveredCrashTimestamp;
   recoveredPayload.operations[0].codeTrustEffect = {
     status: 'skipped',
     phase: 'apply',
@@ -2195,11 +2248,11 @@ try {
     evaluation: null,
     artifact: null,
     error: null,
-    updatedAt: new Date().toISOString(),
+    updatedAt: recoveredCrashTimestamp,
   };
   recoveredPayload.operations[0].events.push({
     type: 'applying',
-    at: new Date().toISOString(),
+    at: recoveredCrashTimestamp,
     state: 'applying',
     actor: { kind: 'cli', id: 'crash-apply', name: 'Crash Apply' },
   });
@@ -2831,16 +2884,20 @@ try {
   });
   const recoveryPayload = JSON.parse(await fs.readFile(recoveryOpsPath, 'utf8'));
   recoveryPayload.operations[0].state = 'undoing';
+  const recoveryCrashTimestamp = new Date(
+    Date.parse(recoveryPayload.operations[0].updatedAt) + 1,
+  ).toISOString();
+  recoveryPayload.operations[0].updatedAt = recoveryCrashTimestamp;
   recoveryPayload.operations[0].codeTrustEffect = {
     ...recoveryPayload.operations[0].codeTrustEffect,
     status: 'pending',
     phase: 'undo',
     error: null,
-    updatedAt: new Date().toISOString(),
+    updatedAt: recoveryCrashTimestamp,
   };
   recoveryPayload.operations[0].events.push({
     type: 'undoing',
-    at: new Date().toISOString(),
+    at: recoveryCrashTimestamp,
     state: 'undoing',
     actor: humanActor,
   });
@@ -2861,6 +2918,601 @@ try {
   ).artifacts.find((artifact) => artifact.path === 'race.txt');
   assert.equal(recoveryStillPromoted.promotionStatus, 'promoted');
   await fs.rm(recoveryConflictDir, { recursive: true, force: true });
+
+  const validationDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-op-validation-'));
+  const validationWorkspace = path.join(validationDir, 'workspace');
+  await fs.mkdir(path.join(validationWorkspace, 'animation', 'attachments'), { recursive: true });
+  const validationAttachmentPath = 'animation/attachments/rifle.attachment.toml';
+  const validationBefore = 'id = "weapon.rifle"\n';
+  const validationProposed = 'id = "weapon.rifle.tuned"\n';
+  await fs.writeFile(path.join(validationWorkspace, validationAttachmentPath), validationBefore, 'utf8');
+  const validationSessions = new SessionStore({
+    storageFilePath: path.join(validationDir, 'sessions.json'),
+  });
+  await validationSessions.loadSessions();
+  const validationSession = await validationSessions.createSession({
+    name: 'validation-journal',
+    rootPath: validationWorkspace,
+  });
+  const validationOpsPath = path.join(validationDir, 'operations.json');
+  const validationEvents = [];
+  const validationOps = new OperationStore({
+    sessionStore: validationSessions,
+    storageFilePath: validationOpsPath,
+    emitEvent: (type, data) => {
+      validationEvents.push({ type, data: structuredClone(data) });
+    },
+  });
+  await validationOps.loadOperations();
+  const spatialContext = {
+    type: 'spatial_attachment',
+    label: 'Rifle tune',
+    subjectId: 'weapon.rifle',
+    resourceKeys: [validationAttachmentPath],
+    leaseId: 'lease_validation',
+  };
+  const spatialPreview = await validationOps.previewFileWrite({
+    sessionId: validationSession.id,
+    path: validationAttachmentPath,
+    content: validationProposed,
+    baseRevision: sha256Revision(validationBefore),
+    actor: humanActor,
+    context: spatialContext,
+  });
+  assert.equal(spatialPreview.state, 'previewed');
+  assert.equal(spatialPreview.validation, null);
+  assert.equal('proposedContent' in spatialPreview, false);
+  const genericPreview = await validationOps.previewFileWrite({
+    sessionId: validationSession.id,
+    path: 'notes/generic.txt',
+    content: 'generic\n',
+    baseRevision: 'missing',
+    actor: humanActor,
+  });
+  assert.equal(genericPreview.validation, null);
+
+  const candidate = await validationOps.getSpatialValidationCandidate(spatialPreview.id);
+  assert.deepEqual(Object.keys(candidate).sort(), [
+    'baseRevision',
+    'context',
+    'id',
+    'path',
+    'proposedContent',
+    'proposedRevision',
+    'sessionId',
+    'state',
+    'updatedAt',
+  ]);
+  assert.equal(candidate.id, spatialPreview.id);
+  assert.equal(candidate.sessionId, validationSession.id);
+  assert.equal(candidate.path, validationAttachmentPath);
+  assert.equal(candidate.state, 'previewed');
+  assert.equal(candidate.baseRevision, spatialPreview.baseRevision);
+  assert.equal(candidate.proposedRevision, spatialPreview.proposedRevision);
+  assert.equal(candidate.proposedContent, validationProposed);
+  assert.equal(candidate.updatedAt, spatialPreview.updatedAt);
+  assert.equal(candidate.context.type, 'spatial_attachment');
+  const publicSpatialView = validationOps.getOperation(spatialPreview.id);
+  assert.equal(publicSpatialView.validation, null);
+  assert.equal('proposedContent' in publicSpatialView, false);
+  assert.equal(JSON.stringify(publicSpatialView).includes('proposedContent'), false);
+
+  function completedValidationSummary(proposedRevision, samples) {
+    return {
+      schemaVersion: 1,
+      status: 'completed',
+      proposedRevision,
+      sampleCount: samples.length,
+      findings: {
+        jointLimitViolationCount: 1,
+        overlapCount: 2,
+        toleranceFailureCount: 3,
+      },
+      samples,
+    };
+  }
+
+  const completedSamples = [
+    {
+      phase: 'walk',
+      normalizedTime: 0.25,
+      jointLimitViolationCount: 1,
+      overlapCount: 0,
+      toleranceFailureCount: 1,
+    },
+    {
+      phase: 'aim',
+      normalizedTime: 1,
+      jointLimitViolationCount: 0,
+      overlapCount: 2,
+      toleranceFailureCount: 2,
+    },
+  ];
+  const completedSummary = completedValidationSummary(spatialPreview.proposedRevision, completedSamples);
+
+  const originalValidationWorkspace = `${validationWorkspace}-original`;
+  await fs.rename(validationWorkspace, originalValidationWorkspace);
+  await fs.mkdir(path.join(validationWorkspace, 'animation', 'attachments'), { recursive: true });
+  await fs.writeFile(path.join(validationWorkspace, validationAttachmentPath), validationBefore, 'utf8');
+  try {
+    await assert.rejects(
+      () => validationOps.getSpatialValidationCandidate(spatialPreview.id),
+      (error) => error.statusCode === 409 && error.code === 'workspace_identity_mismatch',
+    );
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: spatialPreview.proposedRevision,
+        expectedUpdatedAt: spatialPreview.updatedAt,
+        validation: completedSummary,
+      }),
+      (error) => error.statusCode === 409 && error.code === 'workspace_identity_mismatch',
+    );
+  } finally {
+    await fs.rm(validationWorkspace, { recursive: true, force: true });
+    await fs.rename(originalValidationWorkspace, validationWorkspace);
+  }
+
+  const concurrentPreview = await validationOps.previewFileWrite({
+    sessionId: validationSession.id,
+    path: validationAttachmentPath,
+    content: 'id = "weapon.rifle.concurrent"\n',
+    baseRevision: sha256Revision(validationBefore),
+    actor: humanActor,
+    context: { ...spatialContext, subjectId: 'weapon.rifle.concurrent' },
+  });
+  const concurrentSummary = completedValidationSummary(
+    concurrentPreview.proposedRevision,
+    completedSamples,
+  );
+  const realDateNow = Date.now;
+  Date.now = () => Date.parse(concurrentPreview.updatedAt);
+  let concurrentResults;
+  try {
+    concurrentResults = await Promise.allSettled([
+      validationOps.recordSpatialValidation(concurrentPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: concurrentPreview.proposedRevision,
+        expectedUpdatedAt: concurrentPreview.updatedAt,
+        validation: concurrentSummary,
+      }),
+      validationOps.recordSpatialValidation(concurrentPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: concurrentPreview.proposedRevision,
+        expectedUpdatedAt: concurrentPreview.updatedAt,
+        validation: concurrentSummary,
+      }),
+    ]);
+    const fulfilled = concurrentResults.find((result) => result.status === 'fulfilled');
+    const approvedAfterValidation = await validationOps.approve(concurrentPreview.id, {
+      actor: humanActor,
+    });
+    assert.ok(fulfilled);
+    assert.ok(approvedAfterValidation.updatedAt > fulfilled.value.updatedAt);
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(concurrentPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: concurrentPreview.proposedRevision,
+        expectedUpdatedAt: concurrentPreview.updatedAt,
+        validation: concurrentSummary,
+      }),
+      (error) => error.statusCode === 409 && error.code === 'operation_validation_stale',
+    );
+  } finally {
+    Date.now = realDateNow;
+  }
+  assert.equal(concurrentResults.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(concurrentResults.filter(
+    (result) => result.status === 'rejected'
+      && result.reason?.code === 'operation_validation_stale',
+  ).length, 1);
+
+  const firstValidated = await validationOps.recordSpatialValidation(spatialPreview.id, {
+    actor: humanActor,
+    expectedProposedRevision: spatialPreview.proposedRevision,
+    expectedUpdatedAt: spatialPreview.updatedAt,
+    validation: completedSummary,
+  });
+  assert.equal(firstValidated.state, 'previewed');
+  assert.notEqual(firstValidated.updatedAt, spatialPreview.updatedAt);
+  assert.deepEqual(firstValidated.validation, completedSummary);
+  assert.equal('error' in firstValidated.validation, false);
+  assert.equal('proposedContent' in firstValidated, false);
+  assert.equal(firstValidated.events.filter((event) => event.type === 'validated').length, 1);
+  assert.equal(firstValidated.events.at(-1).type, 'validated');
+  assert.equal(firstValidated.events.at(-1).state, 'previewed');
+  assert.equal('validation' in firstValidated.events.at(-1), false);
+  const emittedValidated = validationEvents.filter(
+    (event) => event.type === 'operation.validated' && event.data.id === spatialPreview.id,
+  );
+  assert.equal(emittedValidated.length, 1);
+  assert.equal(emittedValidated[0].data.id, spatialPreview.id);
+  assert.deepEqual(emittedValidated[0].data.validation, completedSummary);
+  assert.equal(emittedValidated[0].data.state, 'previewed');
+  assert.equal('proposedContent' in emittedValidated[0].data, false);
+
+  const persistedCompleted = JSON.parse(await fs.readFile(validationOpsPath, 'utf8'));
+  const persistedCompletedRecord = persistedCompleted.operations.find(
+    (operation) => operation.id === spatialPreview.id,
+  );
+  assert.deepEqual(persistedCompletedRecord.validation, completedSummary);
+  assert.equal(persistedCompletedRecord.events.some((event) => 'validation' in event), false);
+  const validationOpsReloaded = new OperationStore({
+    sessionStore: validationSessions,
+    storageFilePath: validationOpsPath,
+  });
+  await validationOpsReloaded.loadOperations();
+  const reloadedCompleted = validationOpsReloaded.getOperation(spatialPreview.id);
+  assert.deepEqual(reloadedCompleted.validation, completedSummary);
+  assert.equal(reloadedCompleted.state, 'previewed');
+  assert.equal('proposedContent' in reloadedCompleted, false);
+
+  const failedSummary = {
+    schemaVersion: 1,
+    status: 'failed',
+    proposedRevision: spatialPreview.proposedRevision,
+    sampleCount: 1,
+    findings: {
+      jointLimitViolationCount: 0,
+      overlapCount: 0,
+      toleranceFailureCount: 0,
+    },
+    samples: [
+      {
+        phase: 'idle',
+        normalizedTime: 0,
+        jointLimitViolationCount: 0,
+        overlapCount: 0,
+        toleranceFailureCount: 0,
+      },
+    ],
+    error: {
+      code: 'evaluator_failed',
+      message: 'Native evaluator failed.',
+    },
+  };
+  const secondValidated = await validationOps.recordSpatialValidation(spatialPreview.id, {
+    actor: humanActor,
+    expectedProposedRevision: firstValidated.proposedRevision,
+    expectedUpdatedAt: firstValidated.updatedAt,
+    validation: failedSummary,
+  });
+  assert.equal(secondValidated.state, 'previewed');
+  assert.notEqual(secondValidated.updatedAt, firstValidated.updatedAt);
+  assert.deepEqual(secondValidated.validation, failedSummary);
+  assert.equal(secondValidated.events.filter((event) => event.type === 'validated').length, 2);
+  assert.equal(secondValidated.events.at(-1).type, 'validated');
+  assert.equal(secondValidated.events.at(-1).state, 'previewed');
+  assert.equal(emittedValidated.length + 1, validationEvents.filter(
+    (event) => event.type === 'operation.validated' && event.data.id === spatialPreview.id,
+  ).length);
+
+  const failedReloadStore = new OperationStore({
+    sessionStore: validationSessions,
+    storageFilePath: validationOpsPath,
+  });
+  await failedReloadStore.loadOperations();
+  const reloadedFailed = failedReloadStore.getOperation(spatialPreview.id);
+  assert.deepEqual(reloadedFailed.validation, failedSummary);
+  assert.equal(reloadedFailed.state, 'previewed');
+  assert.equal(reloadedFailed.events.filter((event) => event.type === 'validated').length, 2);
+
+  const approvedSpatial = await validationOps.approve(spatialPreview.id, { actor: humanActor });
+  assert.equal(approvedSpatial.state, 'approved');
+  assert.deepEqual(approvedSpatial.validation, failedSummary);
+  const approvedValidated = await validationOps.recordSpatialValidation(spatialPreview.id, {
+    actor: humanActor,
+    expectedProposedRevision: approvedSpatial.proposedRevision,
+    expectedUpdatedAt: approvedSpatial.updatedAt,
+    validation: completedSummary,
+  });
+  assert.equal(approvedValidated.state, 'approved');
+  assert.deepEqual(approvedValidated.validation, completedSummary);
+  assert.equal(approvedValidated.events.filter((event) => event.type === 'validated').length, 3);
+  assert.equal(approvedValidated.events.at(-1).type, 'validated');
+  assert.equal(approvedValidated.events.at(-1).state, 'approved');
+
+  async function assertJournalUnchanged(operationId, mutate) {
+    const beforeDisk = await fs.readFile(validationOpsPath, 'utf8');
+    const beforeView = validationOps.getOperation(operationId);
+    await mutate();
+    assert.equal(await fs.readFile(validationOpsPath, 'utf8'), beforeDisk);
+    assert.deepEqual(validationOps.getOperation(operationId), beforeView);
+  }
+
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: approvedValidated.proposedRevision,
+        expectedUpdatedAt: '2000-01-01T00:00:00.000Z',
+        validation: completedSummary,
+      }),
+      (error) => error.statusCode === 409 && error.code === 'operation_validation_stale',
+    );
+  });
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: sha256Revision('not-the-proposed-bytes\n'),
+        expectedUpdatedAt: approvedValidated.updatedAt,
+        validation: completedSummary,
+      }),
+      (error) => error.statusCode === 409 && error.code === 'operation_validation_stale',
+    );
+  });
+  await assertJournalUnchanged(genericPreview.id, async () => {
+    await assert.rejects(
+      () => Promise.resolve().then(() => validationOps.getSpatialValidationCandidate(genericPreview.id)),
+      (error) => error.statusCode === 409 && error.code === 'operation_validation_unavailable',
+    );
+  });
+  await assertJournalUnchanged(genericPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(genericPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: genericPreview.proposedRevision,
+        expectedUpdatedAt: genericPreview.updatedAt,
+        validation: completedValidationSummary(genericPreview.proposedRevision, []),
+      }),
+      (error) => error.statusCode === 409 && error.code === 'operation_validation_unavailable',
+    );
+  });
+
+  const rejectedSpatialPreview = await validationOps.previewFileWrite({
+    sessionId: validationSession.id,
+    path: validationAttachmentPath,
+    content: 'id = "weapon.rifle.rejected"\n',
+    baseRevision: sha256Revision(validationBefore),
+    actor: humanActor,
+    context: {
+      ...spatialContext,
+      subjectId: 'weapon.rifle.rejected',
+      resourceKeys: [validationAttachmentPath],
+    },
+  });
+  const rejectedSpatial = await validationOps.reject(rejectedSpatialPreview.id, { actor: humanActor });
+  assert.equal(rejectedSpatial.state, 'rejected');
+  await assertJournalUnchanged(rejectedSpatialPreview.id, async () => {
+    await assert.rejects(
+      () => Promise.resolve().then(() => validationOps.getSpatialValidationCandidate(rejectedSpatialPreview.id)),
+      (error) => error.statusCode === 409 && error.code === 'operation_validation_unavailable',
+    );
+  });
+  await assertJournalUnchanged(rejectedSpatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(rejectedSpatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: rejectedSpatial.proposedRevision,
+        expectedUpdatedAt: rejectedSpatial.updatedAt,
+        validation: completedValidationSummary(rejectedSpatial.proposedRevision, []),
+      }),
+      (error) => error.statusCode === 409 && error.code === 'operation_validation_unavailable',
+    );
+  });
+
+  await assert.rejects(
+    () => Promise.resolve().then(() => validationOps.getSpatialValidationCandidate('op_missing')),
+    (error) => error.statusCode === 404,
+  );
+
+  const rawDiagnostic = {
+    ...completedSummary,
+    diagnostic: 'raw-evaluator-output',
+    bones: [{ id: 'arm', violation: 12 }],
+  };
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: approvedValidated.proposedRevision,
+        expectedUpdatedAt: approvedValidated.updatedAt,
+        validation: rawDiagnostic,
+      }),
+      (error) => error.statusCode === 400,
+    );
+  });
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: approvedValidated.proposedRevision,
+        expectedUpdatedAt: approvedValidated.updatedAt,
+        validation: {
+          ...completedSummary,
+          proposedRevision: sha256Revision('different-proposed-bytes\n'),
+        },
+      }),
+      (error) => error.statusCode === 400,
+    );
+  });
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: approvedValidated.proposedRevision,
+        expectedUpdatedAt: approvedValidated.updatedAt,
+        validation: {
+          ...completedSummary,
+          error: { code: 'unexpected', message: 'completed summaries cannot carry error' },
+        },
+      }),
+      (error) => error.statusCode === 400,
+    );
+  });
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: approvedValidated.proposedRevision,
+        expectedUpdatedAt: approvedValidated.updatedAt,
+        validation: {
+          schemaVersion: 1,
+          status: 'failed',
+          proposedRevision: spatialPreview.proposedRevision,
+          sampleCount: 0,
+          findings: {
+            jointLimitViolationCount: 0,
+            overlapCount: 0,
+            toleranceFailureCount: 0,
+          },
+          samples: [],
+        },
+      }),
+      (error) => error.statusCode === 400,
+    );
+  });
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: approvedValidated.proposedRevision,
+        expectedUpdatedAt: approvedValidated.updatedAt,
+        validation: {
+          ...completedSummary,
+          samples: [
+            {
+              ...completedSamples[0],
+              normalizedTime: -0,
+            },
+          ],
+          sampleCount: 1,
+        },
+      }),
+      (error) => error.statusCode === 400,
+    );
+  });
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: approvedValidated.proposedRevision,
+        expectedUpdatedAt: approvedValidated.updatedAt,
+        validation: {
+          ...completedSummary,
+          findings: { ...completedSummary.findings, overlapCount: 1 },
+        },
+      }),
+      (error) => error.statusCode === 400,
+    );
+  });
+
+  let latestValidated = approvedValidated;
+  while (latestValidated.events.filter((event) => event.type === 'validated').length < 8) {
+    latestValidated = await validationOps.recordSpatialValidation(spatialPreview.id, {
+      actor: humanActor,
+      expectedProposedRevision: latestValidated.proposedRevision,
+      expectedUpdatedAt: latestValidated.updatedAt,
+      validation: completedSummary,
+    });
+  }
+  await assertJournalUnchanged(spatialPreview.id, async () => {
+    await assert.rejects(
+      () => validationOps.recordSpatialValidation(spatialPreview.id, {
+        actor: humanActor,
+        expectedProposedRevision: latestValidated.proposedRevision,
+        expectedUpdatedAt: latestValidated.updatedAt,
+        validation: completedSummary,
+      }),
+      (error) => error.statusCode === 409
+        && error.code === 'operation_validation_limit_reached',
+    );
+  });
+
+  const publicHttpService = await startEngineSessiond({
+    host: '127.0.0.1',
+    port: 0,
+    sessionStore: validationSessions,
+    operationStore: validationOps,
+    runtimeLaunchFactory,
+    buildLaunchFactory,
+    now: () => coordinationClock.nowMs,
+    heartbeatTimeoutMs: coordinationHeartbeatTimeoutMs,
+  });
+  try {
+    const publicHttpView = await requestJsonNoAuth(
+      `${publicHttpService.baseUrl}/api/operations/${encodeURIComponent(spatialPreview.id)}`,
+    );
+    assert.equal(publicHttpView.operation.id, spatialPreview.id);
+    assert.deepEqual(publicHttpView.operation.validation, completedSummary);
+    assert.equal('proposedContent' in publicHttpView.operation, false);
+    assert.equal('beforeContent' in publicHttpView.operation, false);
+    assert.equal(JSON.stringify(publicHttpView).includes('proposedContent'), false);
+    const listedHttpView = await requestJsonNoAuth(
+      `${publicHttpService.baseUrl}/api/operations?sessionId=${encodeURIComponent(validationSession.id)}`,
+    );
+    const listedSpatial = listedHttpView.operations.find((operation) => operation.id === spatialPreview.id);
+    assert.ok(listedSpatial);
+    assert.equal('proposedContent' in listedSpatial, false);
+    assert.deepEqual(listedSpatial.validation, completedSummary);
+  } finally {
+    await publicHttpService.close();
+  }
+
+  const diskAfterHttp = JSON.parse(await fs.readFile(validationOpsPath, 'utf8'));
+  const diskSpatial = diskAfterHttp.operations.find((operation) => operation.id === spatialPreview.id);
+  const { validation: _ignoredValidation, ...legacyDiskRecord } = diskSpatial;
+  diskAfterHttp.operations.push({
+    ...legacyDiskRecord,
+    id: 'op_validation_missing_summary',
+  }, {
+    ...diskSpatial,
+    id: 'op_validation_missing_event',
+    events: diskSpatial.events.filter((event) => event.type !== 'validated'),
+  }, {
+    ...diskSpatial,
+    id: 'op_validation_wrong_revision',
+    validation: {
+      ...diskSpatial.validation,
+      proposedRevision: sha256Revision('different-persisted-candidate\n'),
+    },
+  }, {
+    ...diskSpatial,
+    id: 'op_validation_backward_event',
+    events: diskSpatial.events.map((event, index) => (
+      index === diskSpatial.events.length - 1
+        ? { ...event, at: '2000-01-01T00:00:00.000Z' }
+        : event
+    )),
+  }, {
+    ...diskSpatial,
+    id: 'op_validation_generic_context',
+    context: null,
+  }, {
+    ...diskSpatial,
+    id: 'op_validation_actorless_event',
+    events: diskSpatial.events.map((event, index) => (
+      index === diskSpatial.events.length - 1
+        ? { ...event, actor: null }
+        : event
+    )),
+  }, {
+    ...diskSpatial,
+    id: 'op_validation_invalid_timestamp_envelope',
+    createdAt: '2999-01-01T00:00:00.000Z',
+  });
+  await fs.writeFile(validationOpsPath, `${JSON.stringify(diskAfterHttp, null, 2)}\n`, 'utf8');
+  const legacyReloadStore = new OperationStore({
+    sessionStore: validationSessions,
+    storageFilePath: validationOpsPath,
+  });
+  await legacyReloadStore.loadOperations();
+  for (const id of [
+    'op_validation_missing_summary',
+    'op_validation_missing_event',
+    'op_validation_wrong_revision',
+    'op_validation_backward_event',
+    'op_validation_generic_context',
+    'op_validation_actorless_event',
+    'op_validation_invalid_timestamp_envelope',
+  ]) {
+    assert.throws(
+      () => legacyReloadStore.getOperation(id),
+      (error) => error.statusCode === 404,
+    );
+  }
+  await fs.rm(validationDir, { recursive: true, force: true });
 
   const cliSource = await fs.readFile(path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs'), 'utf8');
   assert.match(cliSource, /\/api\/code-trust\/artifacts\/transition/);
@@ -2930,6 +3582,7 @@ try {
   console.log('- Verified loopback-only bind, immutable session roots, journaled code-trust effects, append-only recovery provenance, and deterministic rename-barrier serialization');
   console.log('- Verified SessionStore beforeMutation snapshot/provenance, CLI/sessiond one mutation authority, applying/undoing effect-state validation, and persisted legacy rootIdentity migration');
   console.log('- Verified undo-vs-promote barrier never 409s after source restoration, and applying+recorded / undoing+reverted crash windows finalize without repeating the effect');
+  console.log('- Verified durable operation-validation journal summaries, repeated validated events, stale snapshot rejection, and public-view exclusion of proposedContent');
 } finally {
   await service.close();
   await fs.rm(sessionStateDir, { recursive: true, force: true });
