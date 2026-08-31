@@ -19,7 +19,7 @@ const cmakeSource = fs.readFileSync(path.join(repoRoot, 'engine', 'runtime', 'CM
 assert.match(cmakeSource, /add_executable\(\s*shader_forge_spatial/);
 assert.match(cmakeSource, /src\/spatial_authoring_tool\.cpp/);
 assert.match(cmakeSource, /add_executable\(\s*shader_forge_spatial[\s\S]*src\/data_foundation\.cpp/);
-assert.match(cliSource, /engine build \[runtime\|spatial\]/);
+assert.match(cliSource, /engine build \[runtime\|spatial\|data\]/);
 assert.match(cliSource, /engine spatial validate/);
 assert.match(cliSource, /engine spatial cook/);
 assert.match(cliSource, /engine spatial evaluate-rest --attachment/);
@@ -41,7 +41,7 @@ assert.match(toolSourceText, /procgeoSource/);
 
 const help = spawnSync(process.execPath, [cliPath, '--help'], { cwd: repoRoot, encoding: 'utf8' });
 assert.equal(help.status, 0, help.stderr || help.stdout);
-assert.match(help.stdout, /engine build \[runtime\|spatial\]/);
+assert.match(help.stdout, /engine build \[runtime\|spatial\|data\]/);
 assert.match(help.stdout, /engine spatial validate \[--animation-root animation\]/);
 assert.match(help.stdout, /engine spatial cook \[--animation-root animation\] \[--output-root build\/cooked\]/);
 assert.match(help.stdout, /engine spatial evaluate-rest --attachment <id>/);
