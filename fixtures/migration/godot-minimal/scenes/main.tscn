@@ -1,3 +1,11 @@
 [gd_scene load_steps=2 format=3]
 
 [node name="Main" type="Node3D"]
+
+[node name="Player" type="CharacterBody3D" parent="."]
+position = Vector3(1, 0.5, -2)
+rotation = Vector3(0, 1.5707963268, 0)
+scale = Vector3(1, 1, 1)
+
+[node name="Camera" type="Camera3D" parent="Player"]
+position = Vector3(0, 1.6, 3)

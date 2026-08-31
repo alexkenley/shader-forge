@@ -45,6 +45,8 @@ Implemented now:
 - a declared startup scene that cannot be resolved is fail-closed: no plausible-looking bootstrap is emitted, the setting is marked `skipped`, and the report carries a manual task
 - when no startup scene is declared, the first source-relative converted scene is selected deterministically and the setting is marked `approximated`
 - manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
+- Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, and preserve source paths/types as generated comments
+- migration manifests and reports include `mapped_scene_entities`; normalized Godot node-name collisions receive deterministic source-path-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
 - the Unreal offline fallback now derives scene/prefab/script outputs from `.uproject`, `.umap`, `.uasset` package names, and C++ class symbols when no exporter-assisted data is available
 - deterministic Unity, Unreal, Unreal offline fallback, and Godot fixture projects under `fixtures/migration/`
@@ -54,11 +56,12 @@ Current boundaries:
 - source-engine detection is real for the first supported lanes
 - target layout intent and provenance are captured in the emitted manifest/report files
 - engine-specific lanes now perform a real first conversion pass, but only to project skeleton depth rather than full parity
-- generated scenes, prefabs, and script manifests are first-pass approximations based on minimal fixture/source inspection rather than full source-engine graph extraction
+- generated scenes, prefabs, and script manifests are first-pass approximations based on minimal fixture/source inspection; Godot text-scene hierarchy and explicit vector transforms are mapped, but full source-engine graph extraction is not
+- binary Godot `.scn` files retain reviewable placeholder output but are not counted as mapped scene entities
 - project-setting support is currently limited to startup-scene selection; other engine settings remain manual even when detection finds them
 - `asset_conversion` remains `Manual`: placeholder asset directories are not payload import, conversion, or runtime fidelity
 - the Unreal lane is currently explicit about its fallback status: Blueprint package outputs are low-confidence manifests derived from package names rather than parsed graphs
-- art assets, materials, animation, audio, detailed hierarchy/component graphs, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
+- art assets, materials, animation, audio, Unity/Unreal hierarchy extraction, Godot transform matrices/resource instances/component payloads, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
 
 ## Primary Targets
 
@@ -172,6 +175,14 @@ Preferred approach:
 - parse text-backed project and scene files directly where practical
 - import art assets and scene trees
 - translate node/component patterns into Shader Forge entities/components
+
+Current implemented pass:
+
+- `.tscn` node headers map to stable scene entities and generated prefabs with parent links
+- explicit `Vector3` position, rotation, and scale fields map to Shader Forge transforms; rotation is converted from radians to degrees
+- generated scene and prefab comments retain source node paths and node types for review
+- binary `.scn` files retain the existing placeholder path; their serialized contents are not parsed
+- matrices, instanced resources, and component payloads remain manual and are reported as such
 
 ## Shader Forge Output
 

@@ -528,7 +528,9 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
   }
   if (slice.conversionMode === 'project_skeleton_conversion') {
     return [
-      `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
+      engine === 'godot'
+        ? `Review mapped Godot text-scene hierarchy and explicit position, rotation, and scale fields under ${targetRoots.content_scenes}; transform matrices, instanced resources, and component payloads remain manual.`
+        : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
       `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
       `Populate real imported art and cooked assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; this slice only emits structure placeholders.`,
       'Review script-porting manifests and implement gameplay behavior manually or with later AI-assisted porting passes.',
@@ -568,7 +570,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
     if (detection.engine === 'unity') {
       warnings.push('Unity conversion currently extracts scene, prefab, and script identifiers from minimal text assets rather than full serialized component graphs.');
     } else if (detection.engine === 'godot') {
-      warnings.push('Godot conversion currently maps root scene nodes and script placeholders only; full node/component translation is still ahead.');
+      warnings.push('Godot conversion maps text-scene node hierarchy plus explicit Vector3 position, rotation, and scale fields; transform matrices, resource instances, and component payload translation are still ahead.');
     }
   }
   return warnings;
@@ -601,6 +603,72 @@ function unquoteSourceValue(value) {
 
 function sourceProjectPath(projectRoot, filePath) {
   return path.relative(projectRoot, filePath).split(path.sep).join('/');
+}
+
+function formatSceneNumber(value) {
+  const rounded = Math.round(value * 1_000_000) / 1_000_000;
+  return String(Object.is(rounded, -0) ? 0 : rounded);
+}
+
+function parseGodotVector(line, key, fallback, scale = 1) {
+  const match = line.match(new RegExp(`^${key}\\s*=\\s*Vector3\\(([^)]+)\\)$`));
+  if (!match) {
+    return fallback;
+  }
+  const values = match[1].split(',').map((value) => Number(value.trim()) * scale);
+  return values.length === 3 && values.every(Number.isFinite)
+    ? values.map(formatSceneNumber).join(', ')
+    : fallback;
+}
+
+function parseGodotSceneNodes(source) {
+  const nodes = [];
+  let current = null;
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = trim(rawLine);
+    if (line.startsWith('[node ') && line.endsWith(']')) {
+      const attributes = Object.fromEntries(
+        [...line.matchAll(/([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"/g)]
+          .map((match) => [match[1], match[2]]),
+      );
+      if (!attributes.name) {
+        current = null;
+        continue;
+      }
+      current = {
+        name: attributes.name,
+        type: attributes.type || 'Node',
+        parent: attributes.parent || '',
+        position: '0, 0, 0',
+        rotation: '0, 0, 0',
+        scale: '1, 1, 1',
+      };
+      nodes.push(current);
+      continue;
+    }
+    if (!current || line.startsWith('[')) {
+      current = null;
+      continue;
+    }
+    current.position = parseGodotVector(line, 'position', current.position);
+    current.rotation = parseGodotVector(line, 'rotation', current.rotation, 180 / Math.PI);
+    current.scale = parseGodotVector(line, 'scale', current.scale);
+  }
+
+  const rootName = nodes.find((node) => !node.parent)?.name || nodes[0]?.name || 'Root';
+  return nodes.map((node) => ({
+    ...node,
+    sourceNodePath: !node.parent
+      ? node.name
+      : node.parent === '.'
+        ? `${rootName}/${node.name}`
+        : `${rootName}/${node.parent}/${node.name}`,
+    sourceParentPath: !node.parent
+      ? ''
+      : node.parent === '.'
+        ? rootName
+        : `${rootName}/${node.parent}`,
+  }));
 }
 
 function stableSceneNames(scenes) {
@@ -763,25 +831,45 @@ function uniqueBy(items, keySelector) {
 }
 
 function buildSceneToml(scene) {
-  return [
+  const entities = scene.entities?.length ? scene.entities : [{
+    id: scene.entityId,
+    displayName: scene.entityDisplayName,
+    sourcePrefab: scene.primaryPrefab,
+    parent: '',
+    position: '0, 0, 0',
+    rotation: '0, 0, 0',
+    scale: '1, 1, 1',
+    sourceNodePath: '',
+    sourceNodeType: '',
+  }];
+  const lines = [
     'schema = "shader_forge.scene"',
     'schema_version = 1',
     `name = ${quoteTomlString(scene.name)}`,
     'owner_system = "scene_system"',
     'runtime_format = "flatbuffer"',
+    ...(scene.sourcePath ? [`# migration_source_path = ${quoteTomlString(scene.sourcePath)}`] : []),
     '',
     `title = ${quoteTomlString(scene.title)}`,
     `primary_prefab = ${quoteTomlString(scene.primaryPrefab)}`,
-    '',
-    `[entity.${scene.entityId}]`,
-    `display_name = ${quoteTomlString(scene.entityDisplayName)}`,
-    `source_prefab = ${quoteTomlString(scene.primaryPrefab)}`,
-    'parent = ""',
-    'position = "0, 0, 0"',
-    'rotation = "0, 0, 0"',
-    'scale = "1, 1, 1"',
-    '',
-  ].join('\n');
+  ];
+
+  for (const entity of entities) {
+    lines.push('');
+    if (entity.sourceNodePath) lines.push(`# migration_source_node = ${quoteTomlString(entity.sourceNodePath)}`);
+    if (entity.sourceNodeType) lines.push(`# migration_source_type = ${quoteTomlString(entity.sourceNodeType)}`);
+    lines.push(
+      `[entity.${entity.id}]`,
+      `display_name = ${quoteTomlString(entity.displayName)}`,
+      `source_prefab = ${quoteTomlString(entity.sourcePrefab)}`,
+      `parent = ${quoteTomlString(entity.parent)}`,
+      `position = ${quoteTomlString(entity.position)}`,
+      `rotation = ${quoteTomlString(entity.rotation)}`,
+      `scale = ${quoteTomlString(entity.scale)}`,
+    );
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 function buildPrefabToml(prefab) {
@@ -791,6 +879,9 @@ function buildPrefabToml(prefab) {
     `name = ${quoteTomlString(prefab.name)}`,
     'owner_system = "scene_system"',
     'runtime_format = "flatbuffer"',
+    ...(prefab.sourcePath ? [`# migration_source_path = ${quoteTomlString(prefab.sourcePath)}`] : []),
+    ...(prefab.sourceNodePath ? [`# migration_source_node = ${quoteTomlString(prefab.sourceNodePath)}`] : []),
+    ...(prefab.sourceNodeType ? [`# migration_source_type = ${quoteTomlString(prefab.sourceNodeType)}`] : []),
     '',
     `category = ${quoteTomlString(prefab.category)}`,
     `spawn_tag = ${quoteTomlString(prefab.spawnTag)}`,
@@ -980,30 +1071,78 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
   const sceneFiles = files.filter((filePath) => filePath.endsWith('.tscn') || filePath.endsWith('.scn'));
   const scriptFiles = files.filter((filePath) => filePath.endsWith('.gd') || filePath.endsWith('.cs'));
 
-  const scenes = stableSceneNames(sceneFiles.map((filePath, index) => {
+  const sourceScenes = stableSceneNames(sceneFiles.map((filePath, index) => {
     const source = fs.readFileSync(filePath, 'utf8');
-    const rootName = firstRegexGroup(source, /\[node\s+name="([^"]+)"/, basenameWithoutExtension(filePath));
+    const parsedNodes = parseGodotSceneNodes(source);
+    const rootName = parsedNodes[0]?.name || basenameWithoutExtension(filePath);
+    const nodes = parsedNodes.length ? parsedNodes : [{
+      name: rootName,
+      type: 'Node',
+      parent: '',
+      position: '0, 0, 0',
+      rotation: '0, 0, 0',
+      scale: '1, 1, 1',
+      sourceNodePath: rootName,
+      sourceParentPath: '',
+    }];
     const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `godot_scene_${index + 1}`;
-    const prefabName = normalizeToken(`${sceneName}_root`) || `${sceneName}_root`;
     return {
       name: sceneName,
       title: rootName || displayNameFromToken(sceneName),
-      primaryPrefab: prefabName,
-      entityId: normalizeToken(`${prefabName}_instance`) || 'primary_instance',
-      entityDisplayName: rootName || displayNameFromToken(prefabName),
       sourcePath: relativePathFromRepo(repoRoot, filePath),
       sourceProjectPath: sourceProjectPath(projectRoot, filePath),
-      sourceNodeType: firstRegexGroup(source, /type="([^"]+)"/, 'Node'),
+      mappedNodeCount: parsedNodes.length,
+      nodes,
     };
   }));
 
-  const prefabs = uniqueBy(scenes.map((scene) => ({
-    name: scene.primaryPrefab,
-    displayName: `${scene.title} Root`,
+  const scenes = sourceScenes.map((scene) => {
+    const sourceNodeIds = new Map();
+    const sourcePrefabNames = new Map();
+    const allocatedPrefabNames = new Map();
+    for (const [index, node] of scene.nodes.entries()) {
+      const baseName = index === 0
+        ? `${scene.name}_root`
+        : `${scene.name}_${node.sourceNodePath.split('/').join('_')}`;
+      let prefabName = normalizeToken(baseName) || `${scene.name}_node_${index + 1}`;
+      if (allocatedPrefabNames.has(prefabName)) {
+        const suffix = createHash('sha256').update(node.sourceNodePath).digest('hex').slice(0, 8);
+        prefabName = `${prefabName}_${suffix}`;
+      }
+      allocatedPrefabNames.set(prefabName, node.sourceNodePath);
+      sourceNodeIds.set(node.sourceNodePath, `${prefabName}_instance`);
+      sourcePrefabNames.set(node.sourceNodePath, prefabName);
+    }
+    const entities = scene.nodes.map((node) => ({
+      id: sourceNodeIds.get(node.sourceNodePath),
+      displayName: node.name,
+      sourcePrefab: sourcePrefabNames.get(node.sourceNodePath),
+      parent: sourceNodeIds.get(node.sourceParentPath) || '',
+      position: node.position,
+      rotation: node.rotation,
+      scale: node.scale,
+      sourceNodePath: node.sourceNodePath,
+      sourceNodeType: node.type,
+    }));
+    const rootEntity = entities[0];
+    return {
+      ...scene,
+      primaryPrefab: rootEntity?.sourcePrefab || `${scene.name}_root`,
+      entityId: rootEntity?.id || `${scene.name}_root_instance`,
+      entityDisplayName: rootEntity?.displayName || scene.title,
+      entities,
+    };
+  });
+
+  const prefabs = uniqueBy(scenes.flatMap((scene) => scene.entities.map((entity) => ({
+    name: entity.sourcePrefab,
+    displayName: entity.displayName,
     category: 'migrated_godot',
-    spawnTag: normalizeToken(scene.sourceNodeType || 'godot_node') || 'godot_node',
+    spawnTag: normalizeToken(entity.sourceNodeType || 'godot_node') || 'godot_node',
     sourcePath: scene.sourcePath,
-  })), (item) => item.name);
+    sourceNodePath: entity.sourceNodePath,
+    sourceNodeType: entity.sourceNodeType,
+  }))), (item) => item.name);
 
   const scriptManifests = uniqueBy(scriptFiles.flatMap((filePath) =>
     extractScriptSymbols(filePath, 'godot').map((symbol) => ({
@@ -1218,6 +1357,10 @@ function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan
     outputs: conversionOutputs,
     convertedItems: conversionOutputs.sceneFiles.length + conversionOutputs.prefabFiles.length + conversionOutputs.dataFiles.length,
     approximatedItems: conversionOutputs.scriptManifestFiles.length + (plan.startupScene.status === 'approximated' ? 1 : 0),
+    mappedSceneEntities: plan.scenes.reduce(
+      (count, scene) => count + (scene.mappedNodeCount ?? scene.entities?.length ?? (scene.entityId ? 1 : 0)),
+      0,
+    ),
     startupScene: {
       source_file: plan.startupScene.sourceFile,
       source_key: plan.startupScene.sourceKey,
@@ -1298,6 +1441,7 @@ export async function createMigrationRun(options) {
         },
         convertedItems: 0,
         approximatedItems: 0,
+        mappedSceneEntities: 0,
         startupScene: {
           source_file: '',
           source_key: '',
@@ -1353,6 +1497,7 @@ export async function createMigrationRun(options) {
       prefab_files: conversion.outputs.prefabFiles.length,
       data_files: conversion.outputs.dataFiles.length,
       script_manifests: conversion.outputs.scriptManifestFiles.length,
+      mapped_scene_entities: conversion.mappedSceneEntities,
     },
     conversion_outputs: {
       scene_files: conversion.outputs.sceneFiles,
@@ -1396,6 +1541,7 @@ export async function createMigrationRun(options) {
     converted_project_settings: convertedProjectSettings,
     approximated_project_settings: approximatedProjectSettings,
     skipped_project_settings: skippedProjectSettings,
+    mapped_scene_entities: conversion.mappedSceneEntities,
     manual_items: manualTasks.length,
     warning_count: warnings.length,
     migration_lane: {
@@ -1490,6 +1636,7 @@ export async function createMigrationRun(options) {
     targetProjectRoot: conversion.targetProjectRoot,
     convertedItems: conversion.convertedItems,
     approximatedItems: conversion.approximatedItems,
+    mappedSceneEntities: conversion.mappedSceneEntities,
     skippedItems,
     startupScene: conversion.startupScene,
     conversionOutputs: conversion.outputs,

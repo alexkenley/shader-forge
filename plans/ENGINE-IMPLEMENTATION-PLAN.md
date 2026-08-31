@@ -682,10 +682,11 @@ Current checkpoint now implemented:
 - duplicate scene basenames receive deterministic source-path-derived target names; `[startup_scene]` records source/target provenance and separate converted, approximated, or skipped project-setting counts
 - explicit unresolved startup settings fail closed with no `runtime_bootstrap.data.toml` plus a warning/manual task; projects with no declared startup scene use the first source-relative converted scene and mark the choice `approximated`
 - emitted scene, prefab, and optional bootstrap records pass the production asset-pipeline baker; `asset_conversion` remains `Manual` until actual source payload import exists
+- Godot `.tscn` conversion now maps node hierarchy, explicit position/rotation/scale, node-type-derived prefab tags, source comments, and a `mapped_scene_entities` count; normalized node-name collisions are disambiguated deterministically
 
 Still ahead inside this phase:
 - high-fidelity, rerunnable whole-project migration from Unreal, Unity, and Godot, using source-editor exporters where required, stable source IDs and provenance, conflict-safe reimport, conversion of assets/scenes/gameplay metadata, and a clear validation/remediation report for anything that cannot be converted automatically
-- deeper scene hierarchy, transform, and component extraction from source-engine data
+- Unity/Unreal scene hierarchy and transform extraction, plus Godot transform matrices, resource instances, and component payloads
 - real asset/material/audio/animation conversion instead of project-structure placeholders
 - exporter-assisted Unreal actor and Blueprint extraction
 - shell-side side-by-side migration inspection and cleanup workflow

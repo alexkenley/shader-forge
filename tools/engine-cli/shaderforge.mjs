@@ -600,6 +600,7 @@ async function runMigration(commandName, positionals, flags) {
   if (result.targetProjectRoot) {
     console.log(`- Target project root: ${result.targetProjectRoot}`);
     console.log(`- Converted items: ${result.convertedItems}`);
+    console.log(`- Mapped scene entities: ${result.mappedSceneEntities}`);
     console.log(`- Approximated items: ${result.approximatedItems}`);
     console.log(`- Script manifests: ${result.conversionOutputs.scriptManifestFiles.length}`);
   }
