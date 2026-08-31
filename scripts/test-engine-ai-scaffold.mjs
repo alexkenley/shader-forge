@@ -215,7 +215,9 @@ try {
   assert.ok(health.capabilities.includes('ai:jobs'));
   assert.ok(health.capabilities.includes('ai:history'));
   assert.ok(health.capabilities.includes('ai:tools'));
+  assert.ok(health.capabilities.includes('ai:tools:invoke'));
   assert.ok(health.capabilities.includes('ai:skills'));
+  assert.ok(health.capabilities.includes('ai:skills:run'));
   assert.ok(health.capabilities.includes('ai:usage'));
 
   const createSessionPayload = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
@@ -272,6 +274,43 @@ try {
   assert.equal(cliTools.toolCount, 2);
   const cliSkills = await runCli(['ai', 'skills', '--root', tempProjectRoot]);
   assert.equal(cliSkills.skillCount, 1);
+  const providerToolInvocation = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/tools/engine.ai.providers.inspect/invoke`,
+    'POST',
+    { sessionId, client: 'cli', input: {} },
+  );
+  assert.equal(providerToolInvocation.toolId, 'engine.ai.providers.inspect');
+  assert.equal(providerToolInvocation.result.providerCount, 7);
+  const skillRun = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/skills/engine.ai.health.inspect/run`,
+    'POST',
+    { sessionId, client: 'shell', inputs: {} },
+  );
+  assert.equal(skillRun.steps.length, 2);
+  assert.deepEqual(skillRun.steps.map((step) => step.toolId), [
+    'engine.ai.providers.inspect',
+    'engine.ai.usage.inspect',
+  ]);
+  const cliToolInvocation = await runCli([
+    'ai', 'invoke', 'engine.ai.usage.inspect', '--session', sessionId, '--base-url', service.baseUrl,
+  ]);
+  assert.equal(cliToolInvocation.result.requestCount, 0);
+  const cliSkillRun = await runCli([
+    'ai', 'run-skill', 'engine.ai.health.inspect', '--session', sessionId, '--base-url', service.baseUrl,
+  ]);
+  assert.equal(cliSkillRun.steps.length, 2);
+  const invalidToolInput = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/tools/engine.ai.usage.inspect/invoke`,
+    'POST',
+    { sessionId, client: 'cli', input: { unexpected: true } },
+  );
+  assert.match(invalidToolInput.error || '', /contains unknown field unexpected/);
+  const disallowedToolClient = await requestJsonNoAuth(
+    `${service.baseUrl}/api/ai/tools/engine.ai.usage.inspect/invoke`,
+    'POST',
+    { sessionId, client: 'game_runtime', input: {} },
+  );
+  assert.match(disallowedToolClient.error || '', /is not allowed/);
 
   const aiSmoke = await requestJsonNoAuth(`${service.baseUrl}/api/ai/test`, 'POST', {
     sessionId,
@@ -562,6 +601,7 @@ try {
   console.log('- Verified bounded durable metadata-only AI history through the API and CLI without prompt, response, error, or credential content');
   console.log('- Verified atomic per-workspace provider token usage persistence and API/CLI summaries for successful queued calls');
   console.log('- Verified bounded read-only tool/skill registry discovery, schemas, client narrowing, and reference validation');
+  console.log('- Verified exact read-only tool invocation and ordered skill execution through schema-validated server and CLI adapters');
   console.log('- Verified OpenRouter endpoint pinning and bounded response handling');
   console.log('- Verified the first Phase 5.9 slice can load text-backed ai/providers.toml manifests from a workspace');
 } finally {

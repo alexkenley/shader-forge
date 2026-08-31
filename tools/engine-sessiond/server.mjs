@@ -29,7 +29,7 @@ import {
   inspectAiProviders,
   testAiProvider,
 } from '../shared/engine-ai-service.mjs';
-import { inspectAiRegistry } from '../shared/engine-ai-registry.mjs';
+import { inspectAiRegistry, validateAiRegistryValue } from '../shared/engine-ai-registry.mjs';
 import {
   inspectPackagingPreset,
   packageProjectRelease,
@@ -465,6 +465,46 @@ function assertSemanticMutationLease(coordinationStore, operation, body, request
   });
 }
 
+function requireAiRegistryClient(client, allowedClients, subjectId) {
+  if (typeof client !== 'string' || !client.trim()) {
+    throw createHttpError(400, 'AI registry client is required.');
+  }
+  const normalized = client.trim();
+  if (!allowedClients.includes(normalized)) {
+    throw createHttpError(403, `AI registry client ${normalized} is not allowed to run ${subjectId}.`);
+  }
+  return normalized;
+}
+
+async function invokeReadOnlyAiTool({ registry, toolId, client, input, rootPath, aiUsageStore }) {
+  const tool = registry.tools.find((candidate) => candidate.id === toolId);
+  if (!tool) {
+    throw createHttpError(404, `Unknown AI registry tool: ${toolId}`);
+  }
+  const normalizedClient = requireAiRegistryClient(client, tool.allowedClients, tool.id);
+  try {
+    validateAiRegistryValue(tool.inputSchema, input, `AI tool ${tool.id} input`);
+  } catch (error) {
+    throw createHttpError(400, error instanceof Error ? error.message : String(error));
+  }
+
+  let result;
+  if (tool.capability === 'ai:providers') {
+    result = await inspectAiProviders(rootPath);
+  } else if (tool.capability === 'ai:usage') {
+    result = await aiUsageStore.summary(rootPath);
+  } else {
+    throw createHttpError(501, `AI tool capability is not implemented: ${tool.capability}`);
+  }
+  validateAiRegistryValue(tool.outputSchema, result, `AI tool ${tool.id} output`);
+  return {
+    toolId: tool.id,
+    capability: tool.capability,
+    client: normalizedClient,
+    result,
+  };
+}
+
 function validateSemanticOperationMutation(
   sceneAssetService,
   spatialAttachmentService,
@@ -765,7 +805,9 @@ function createRouter({
           'ai:jobs',
           'ai:history',
           'ai:tools',
+          'ai:tools:invoke',
           'ai:skills',
+          'ai:skills:run',
           'ai:usage',
           'package:inspect',
           'package:run',
@@ -842,6 +884,56 @@ function createRouter({
             skills: registry.skills,
           });
         }
+        return;
+      }
+
+      const aiToolInvokeMatch = pathname.match(/^\/api\/ai\/tools\/([^/]+)\/invoke$/);
+      if (request.method === 'POST' && aiToolInvokeMatch) {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot);
+        const registry = await inspectAiRegistry(rootPath);
+        const invocation = await invokeReadOnlyAiTool({
+          registry,
+          toolId: decodeURIComponent(aiToolInvokeMatch[1]),
+          client: body.client,
+          input: body.input ?? {},
+          rootPath,
+          aiUsageStore,
+        });
+        writeJson(response, 200, invocation);
+        return;
+      }
+
+      const aiSkillRunMatch = pathname.match(/^\/api\/ai\/skills\/([^/]+)\/run$/);
+      if (request.method === 'POST' && aiSkillRunMatch) {
+        const body = await readJsonBody(request);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        const rootPath = resolveCodeTrustRoot(sessionStore, sessionId, codeTrustRepoRoot);
+        const registry = await inspectAiRegistry(rootPath);
+        const skillId = decodeURIComponent(aiSkillRunMatch[1]);
+        const skill = registry.skills.find((candidate) => candidate.id === skillId);
+        if (!skill) {
+          throw createHttpError(404, `Unknown AI registry skill: ${skillId}`);
+        }
+        const client = requireAiRegistryClient(body.client, skill.allowedClients, skill.id);
+        const inputs = body.inputs ?? {};
+        if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)
+            || Object.keys(inputs).some((toolId) => !skill.toolIds.includes(toolId))) {
+          throw createHttpError(400, `AI skill ${skill.id} inputs must be keyed only by its tool IDs.`);
+        }
+        const steps = [];
+        for (const toolId of skill.toolIds) {
+          steps.push(await invokeReadOnlyAiTool({
+            registry,
+            toolId,
+            client,
+            input: inputs[toolId] ?? {},
+            rootPath,
+            aiUsageStore,
+          }));
+        }
+        writeJson(response, 200, { skillId: skill.id, client, steps });
         return;
       }
 

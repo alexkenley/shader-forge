@@ -58,6 +58,8 @@ Usage:
   engine ai providers [--root <path>]
   engine ai tools [--root <path>]
   engine ai skills [--root <path>]
+  engine ai invoke <tool-id> [--session <id>] [--base-url <url>]
+  engine ai run-skill <skill-id> [--session <id>] [--base-url <url>]
   engine ai test [--root <path>] [--provider <id>] [--prompt <text>] [--system <text>]
   engine ai request <prompt> [--root <path>] [--provider <id>] [--system <text>]
   engine ai submit <prompt> [--session <id>] [--provider <id>] [--system <text>] [--base-url <url>]
@@ -762,6 +764,29 @@ async function inspectAiRegistryCollection(flags, collection) {
   }, null, 2));
 }
 
+async function runAiRegistrySubject(positionals, flags, kind) {
+  const subjectId = positionals[0]?.trim();
+  if (!subjectId || positionals.length !== 1) {
+    throw new Error(`engine ai ${kind === 'tool' ? 'invoke' : 'run-skill'} requires exactly one ID.`);
+  }
+  const baseUrl = resolvedBaseUrl(flags);
+  const payload = await requestJson(
+    baseUrl,
+    kind === 'tool'
+      ? `/api/ai/tools/${encodeURIComponent(subjectId)}/invoke`
+      : `/api/ai/skills/${encodeURIComponent(subjectId)}/run`,
+    {
+      method: 'POST',
+      body: {
+        sessionId: flags.session ? String(flags.session) : '',
+        client: 'cli',
+        ...(kind === 'tool' ? { input: {} } : { inputs: {} }),
+      },
+    },
+  );
+  console.log(JSON.stringify(payload, null, 2));
+}
+
 async function submitAiJob(positionals, flags) {
   const prompt = positionals.join(' ').trim();
   if (!prompt) {
@@ -1151,6 +1176,14 @@ export async function runCli(argv = process.argv.slice(2)) {
     }
     if (subcommand === 'tools' || subcommand === 'skills') {
       await inspectAiRegistryCollection(flags, subcommand);
+      return;
+    }
+    if (subcommand === 'invoke') {
+      await runAiRegistrySubject(positionals, flags, 'tool');
+      return;
+    }
+    if (subcommand === 'run-skill') {
+      await runAiRegistrySubject(positionals, flags, 'skill');
       return;
     }
     if (subcommand === 'test') {

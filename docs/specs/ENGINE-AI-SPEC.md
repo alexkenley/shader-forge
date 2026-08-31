@@ -275,7 +275,9 @@ Current implemented behavior:
 - `GET /api/ai/usage` and `engine ai usage` expose the read-only workspace summary without prompts, response bodies, or credentials
 - `ai/registry.json` now provides one bounded schema-v1 source for the first read-only tool and skill discovery slice; workspace files override the bundled registry as a whole
 - tool records require explicit capability IDs, allowed clients, `read_only` permission, a dry-run declaration, and bounded object input/output schemas; skill records contain ordered tool IDs and may not widen any referenced tool's allowed clients
-- `GET /api/ai/tools`, `GET /api/ai/skills`, and `engine ai tools|skills` expose discovery only; this slice does not add generic invocation or a second mutation/permission path
+- `GET /api/ai/tools`, `GET /api/ai/skills`, and `engine ai tools|skills` expose discovery; `POST /api/ai/tools/:id/invoke`, `POST /api/ai/skills/:id/run`, and `engine ai invoke|run-skill` execute the two exact built-in read-only capabilities through their declared schemas
+- read-only tool execution is an allowlisted server switch, not arbitrary URL dispatch; skills run their declared tools in order and validate per-tool inputs and outputs
+- declared clients narrow intended use but are not an authentication identity on the loopback backend; this slice grants no mutation authority, and later mutating tools must use the existing operation, lease, review, and code-trust controls
 - the main shell intentionally has no provider picker, prompt, chat, or smoke-test surface; live diagnostics may include a bounded game-AI readiness summary
 - the CLI now exposes direct `engine ai providers|test|request`, queued `submit|jobs|status|cancel`, and read-only `history|usage` commands
 - deterministic coverage now exists through `npm run test:ai-scaffold`
@@ -285,7 +287,7 @@ Still ahead in Phase 5.9:
 - resumable queued jobs beyond the current process-scoped queue, bounded retry/fallback, cancellation, timeout, status, event lifecycle, and terminal metadata history
 - budget enforcement, spend limits, pricing, and request logging beyond the current per-request output ceiling and durable token-usage evidence
 - additional hosted-provider adapters and secure key storage beyond the current environment-backed OpenRouter BYOK lane
-- tool/skill invocation, mutating permission enforcement through existing engine operations, broader action schemas, and game-runtime exposure beyond the current read-only discovery registry
+- mutating tool/skill permission enforcement through existing engine operations, broader action schemas, and game-runtime exposure beyond the current schema-validated read-only registry execution
 - gameplay-facing AI integrations
 
 External development agents use `sf-mcp` and the engine operation/code-trust boundary. They never receive implicit compile, hot-reload, plugin-install, apply, or filesystem authority from this subsystem.

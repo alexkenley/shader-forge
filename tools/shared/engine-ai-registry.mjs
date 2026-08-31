@@ -7,6 +7,7 @@ const bundledRegistryPath = path.join(repoRoot, 'ai', 'registry.json');
 const maxRegistryBytes = 256 * 1024;
 const validClients = new Set(['cli', 'game_runtime', 'shell']);
 const validSchemaTypes = new Set(['array', 'boolean', 'integer', 'number', 'object', 'string']);
+const supportedCapabilities = new Set(['ai:providers', 'ai:usage']);
 const idPattern = /^[a-z][a-z0-9_.-]{0,127}$/;
 const capabilityPattern = /^[a-z][a-z0-9_.:-]{0,127}$/;
 const propertyPattern = /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/;
@@ -30,6 +31,9 @@ function requireCapability(value) {
   const capability = requireString(value, 'tool capability');
   if (!capabilityPattern.test(capability)) {
     throw new Error('AI registry tool capability is invalid.');
+  }
+  if (!supportedCapabilities.has(capability)) {
+    throw new Error(`AI registry tool capability is not implemented: ${capability}`);
   }
   return capability;
 }
@@ -159,4 +163,36 @@ export async function inspectAiRegistry(rootPath) {
     skillCount: registry.skills.length,
     ...registry,
   };
+}
+
+function matchesSchemaType(value, type) {
+  if (type === 'array') return Array.isArray(value);
+  if (type === 'integer') return Number.isSafeInteger(value);
+  if (type === 'number') return typeof value === 'number' && Number.isFinite(value);
+  if (type === 'object') return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return typeof value === type;
+}
+
+export function validateAiRegistryValue(schema, value, fieldName) {
+  if (!matchesSchemaType(value, schema.type)) {
+    throw new Error(`${fieldName} must be an object.`);
+  }
+  for (const requiredName of schema.required) {
+    if (!Object.hasOwn(value, requiredName)) {
+      throw new Error(`${fieldName} is missing required field ${requiredName}.`);
+    }
+  }
+  for (const [name, propertyValue] of Object.entries(value)) {
+    const propertySchema = schema.properties[name];
+    if (!propertySchema) {
+      if (!schema.additionalProperties) {
+        throw new Error(`${fieldName} contains unknown field ${name}.`);
+      }
+      continue;
+    }
+    if (!matchesSchemaType(propertyValue, propertySchema.type)) {
+      throw new Error(`${fieldName}.${name} must be ${propertySchema.type}.`);
+    }
+  }
+  return value;
 }
