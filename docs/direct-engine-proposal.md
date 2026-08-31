@@ -63,12 +63,13 @@ OpenGL is useful for isolated prototypes or teaching, but not as a full producti
 
 ## Shell Experience
 
-The shell should feel like a developer IDE for a native engine:
+The shell should keep the human workflow focused on viewing, verifying, playing, and tuning:
 
-- left rail for sessions, explorer, source control, world, and search
-- center dock for `Code`, `Game`, `Scene`, and `Preview`
-- right panel for `Details`, `Assets`, `Inspector`, `Build`, `Run`, and `Profiler`
-- bottom panel for `Terminal`, `Logs`, `Output`, and `Console`
+- simple workspace navigation for `World`, `Code`, `Assets`, and `Playtest`
+- plain `World`, `Object`, `Selection`, and `Library` language in the authoring UI
+- one state-aware play control instead of a permanent wall of build and runtime controls
+- technical build, runtime, bridge, and profiling information collapsed under diagnostics
+- optional terminal, logs, source control, and inspection surfaces when deeper intervention is needed
 
 The shell is not the runtime. The runtime remains a separate native process.
 
@@ -82,11 +83,11 @@ Phase 1 rule:
 Normal loop:
 
 1. Open the project in the shell.
-2. Edit C++, shaders, assets, or procedural builders.
-3. Run engine commands from the shell terminal or the `Run` panel.
-4. Launch the native runtime window.
-5. Inspect logs, assets, scene state, and selection details.
-6. Iterate with hot reload for shaders, assets, and runtime-facing data.
+2. Edit a world, reusable object, C++ source, shader, asset, or procedural builder.
+3. Verify the result without losing the current draft.
+4. Use `Play` to save the current draft, build, and launch the native runtime window.
+5. Tune values and use `Apply and restart` while the game is running.
+6. Open diagnostics, logs, or the terminal only when deeper inspection is needed.
 
 On Windows, WSL2 should be the primary development shell. On Linux, the workflow should remain native.
 
@@ -173,7 +174,11 @@ Recommended model:
 - levels and prefabs are stored as editable text assets
 - the shell and runtime editor surfaces modify those same scene assets directly
 - procedural generators can preview content live and bake it into editable scenes or prefabs
-- `Authoring` persists changes; `Review` discards changes unless explicitly applied
+- `Edit` changes the current world or reusable object; `Verify` is read-only and preserves the draft
+- `Play` saves the current draft before building and running; `Apply and restart` supports tuning while the game is already running
+- the World workspace stays mounted during ordinary shell navigation so in-progress edits are not lost
+
+The current World slice still writes source assets through the raw file API. Revision-bound semantic save operations remain the next persistence migration.
 
 This gives the project three equal authoring paths:
 

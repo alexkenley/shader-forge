@@ -110,7 +110,7 @@
                 "On Windows, the recommended SDL3 path is `vcpkg`, not Visual Studio Installer.",
                 "Recommended one-step repo helper: `powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\install-windows-native-runtime-deps.ps1`.",
                 "That helper clones `vcpkg` if needed, bootstraps it, installs or rebuilds `sdl3[vulkan]:x64-windows` with `--recurse`, sets `VCPKG_ROOT` and `CMAKE_TOOLCHAIN_FILE` for the current process, and persists them to the user environment by default.",
-                "If `Build + Run` reaches SDL startup and then says Vulkan support is not configured in SDL, the installed SDL3 package is missing the `vulkan` feature; rerun `.\\scripts\\install-windows-native-runtime-deps.ps1` or run `C:\\src\\vcpkg\\vcpkg.exe install sdl3[vulkan]:x64-windows --recurse`.",
+                "If `Play` reaches SDL startup and then says Vulkan support is not configured in SDL, the installed SDL3 package is missing the `vulkan` feature; rerun `.\\scripts\\install-windows-native-runtime-deps.ps1` or run `C:\\src\\vcpkg\\vcpkg.exe install sdl3[vulkan]:x64-windows --recurse`.",
                 "Recommended environment variables for CMake-based Windows runs: `VCPKG_ROOT=C:\\src\\vcpkg` and `CMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\\scripts\\buildsystems\\vcpkg.cmake`."
               ]
             },
@@ -165,10 +165,10 @@
               "items": [
                 "Use `Code` for bounded workspace-file browsing, revision-bound Monaco tabs, inline search beside `Inspect`, source/draft diffing, and explicit Preview/Approve/Reject/Apply/Undo. Unsaved drafts survive shell navigation; changing the active project session keeps foreign dirty tabs read-only and detached until their original session returns. A changed draft stales its prior preview. Request/session/tab/path/operation guards reject late reads, events, and actions; apply/undo refresh the baseline only if the draft still equals the captured pre-action draft. Typed state, revision, and code-trust conflicts preserve the draft and adopt returned operation state only when id, session, and path match.",
                 "The preserved `web/` editor remains available only through `Load legacy bridge` or `Open standalone`; it is not the default Code workflow.",
-                "Use `Playtest` when you are driving the external native runtime window from the shell, with runtime/build/workspace tools grouped beside that runtime-facing surface.",
-                "Use `World` for repo-backed scene and prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.",
+                "Use `Playtest` for a compact human loop around the external native runtime window. It names the current world, states whether the game is stopped, building, running, or paused, and shows only state-valid `Play`, `Stop`, `Restart`, `Pause`, or `Resume` actions by default. Build controls, paths, bridge facts, and recent logs stay under collapsed `Diagnostics`, while build and runtime failures remain visible beside the primary surface.",
+                "Use `World` for the plain-language view, verify, play, and tune loop. Its sidebar tabs are `World`, `Objects`, `Selection`, and `Library`; `Edit` enables changes and `Verify` is a read-only view of the same in-memory drafts. `Play` saves dirty world and object drafts before building and launching; while changed content is already running, `Apply and restart` saves and relaunches it. World stays mounted during shell navigation, so drafts and selection survive a trip to Code, Playtest, Assets, or the Guide.",
                 "Use `Assets` for the constrained attachment-profile tuner and native-evaluated rest/sampled rig schematics. Browsing and authored sample evaluation are lease-free; editing starts only after `Begin tuning` acquires the exact attachment lease.",
-                "If `Build` or `Build + Run` fails because `cmake` is missing, the shell now surfaces that as setup guidance; the clean-start scripts also auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible, while plain `Run` still depends on an already-built runtime binary under `build/runtime/bin`.",
+                "If `Play` cannot build because `cmake` is missing, the shell surfaces setup guidance; the clean-start scripts also auto-detect common CMake installs and export `SHADER_FORGE_CMAKE` when possible. The low-level `Run existing build` action under `Diagnostics` still depends on a runtime binary under `build/runtime/bin`.",
                 "A successful native build can still be a stub runtime if SDL3 or Vulkan are missing; the shell now surfaces that separately as native dependency setup rather than another CMake problem.",
                 "Use `Help` to open the Guide as a secondary searchable reference surface.",
                 "External development agents connect through Shader Forge MCP (`sf-mcp`); the shell does not contain provider selection, prompts, or an assistant chat surface."
@@ -453,7 +453,7 @@
                 "The native runtime has Vulkan instance, surface, device, swapchain, render pass, framebuffer, submit, and present bring-up.",
                 "Resize-aware swapchain recreation is already implemented.",
                 "Runtime build, run, stop, restart, pause, and resume are already controlled from the shell, and shell-driven run/restart now follow the active session root.",
-                "The shell tracks runtime state, build state, bridge activity, and recent log tails in `Playtest`.",
+                "`Playtest` keeps the current world, runtime state, and valid primary actions visible. Build state, bridge activity, paths, and recent log tails are available under collapsed `Diagnostics`; build and runtime failures remain visible without opening it.",
                 "The native runtime now also composes the authored scene into a first runtime world snapshot, selects a preferred controlled entity from prefab spawn tags, and projects authored prefab render components into visible debug-proxy scene cards in the external Vulkan window.",
                 "The native runtime now also has a first authored-content iteration lane: `F7` forces reload of content/audio/animation/physics/data state, and the runtime also polls saved authored-file timestamps to pick up shell edits without a full restart.",
                 "The native runtime now resolves effect-capable interaction targets from the current view/crosshair, and `ui_accept` input such as Enter or left-click triggers first visible interaction feedback plus effect-descriptor-backed logs.",
@@ -468,7 +468,7 @@
                 "The native runtime still renders in an external window.",
                 "The browser shell remains the primary workspace.",
                 "Embedded viewer transport and screenshot capture are still deferred until the native/runtime side is worth the added complexity.",
-                "On Windows, Visual Studio can provide CMake without providing the SDL3 development package or Vulkan SDK that the real native runtime needs, so a successful `Build + Run` can still end in stub-mode runtime exit until those native dependencies are installed."
+                "On Windows, Visual Studio can provide CMake without providing the SDL3 development package or Vulkan SDK that the real native runtime needs, so a successful build and launch can still end in stub-mode runtime exit until those native dependencies are installed."
               ]
             }
           ]
@@ -552,12 +552,12 @@
                 "A valid root `player_camera` takes priority over `player_spawn` and drives projection from its composed world transform plus authored camera values. Ordinary scenes keep the legacy 70-degree, 0.15-meter near, and 1000-meter far defaults. Quickload rejects stale controlled authority instead of silently changing camera semantics.",
                 "Controlled-entity movement now respects a first authored-physics blocking lane against scene physics bodies, and the runtime surfaces the blocking body in logs plus window state during manual testing.",
                 "Authored `on_overlap` effect triggers can now activate automatically from query-only scene bodies during runtime movement, so the running scene has a first automatic trigger-volume lane alongside manual `ui_accept` interaction.",
-                "The shell `Scene` workspace now opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-prefab edits back to those files.",
+                "The shell `World` workspace opens scene and prefab assets directly from the active session root and round-trips deterministic save, reload, revert, duplicate, and primary-object edits back to those files.",
                 "Shell run/restart now forward the active session root into runtime launch so the external runtime reads the same authored scene files the shell edits.",
                 "The running runtime now follows those authored edits through a first polling/manual reload lane rather than requiring a full process restart for every save.",
                 "Effect-capable proxies in the running scene can now be aimed at with the crosshair and triggered through `ui_accept`, which surfaces first runtime feedback for authored `[component.effect]` data instead of leaving it as static catalog metadata.",
                 "`saved/runtime/quickslot_01.runtime-save.toml` through `quickslot_03.runtime-save.toml` are now the first inspectable runtime save payloads, and the current snapshot stores scene, controlled-entity, transform, animation-context, and triggered-overlap state for manual iteration.",
-                "`Review` in the current shell authoring slice is intentionally discard-only. Entering it drops unsaved drafts and disables persistent writes until `Authoring` is restored.",
+                "`Edit` and `Verify` share the same in-memory World drafts. `Verify` is read-only and never discards unsaved work; returning to `Edit` restores write controls without rebuilding the draft.",
                 "The runtime now loads authored audio buses, sounds, and named events through `AudioSystem`.",
                 "Runtime startup resolves a `runtime_boot` audio event, and `ui_accept` now flows through the same engine-owned audio event API.",
                 "The runtime now loads authored animation skeletons, clips, and graphs through `AnimationSystem`.",

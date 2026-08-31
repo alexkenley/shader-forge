@@ -29,38 +29,41 @@ All three paths must converge on the same saved scene/prefab formats.
 
 ## Editing Modes
 
-- `Authoring`: persistent authoring mode; changes save to scene or prefab assets
-- `Review`: non-persistent inspection mode inside the shell editor; changes are discarded unless explicitly applied
+- `Edit`: persistent authoring mode for changing a world or reusable object
+- `Verify`: read-only inspection mode; switching between Edit and Verify preserves the current draft
 - `Simulate In Editor`: future mode for testing without leaving the editing context
 
 ## Current Implemented Slice
 
-The first real level-authoring slice now lives in the shell `Scene` workspace.
+The first real level-authoring slice now lives in the shell `World` workspace.
 
 Current implemented behavior:
 
 - the shell loads `content/scenes/*.scene.toml` and `content/prefabs/*.prefab.toml` from the active session root
-- `Authoring` is the persistent authoring lane
-- `Review` is currently a discard-only stance that drops unsaved drafts before returning to a non-persistent preview state
+- `Edit` is the persistent authoring lane and `Verify` provides read-only inspection without discarding the current draft
 - authored scenes can now round-trip deterministic `[entity.<id>]` sections with `source_prefab`, `parent`, `position`, `rotation`, and `scale`
-- a world outliner now exposes the authored scene plus its placed-entity hierarchy
+- the visible workflow uses plain `World`, `Object`, `Selection`, and `Library` language while retaining scene, entity, and prefab terms in the source format
 - prefab assets can now round-trip first-pass `[component.render]` and `[component.effect]` sections for procgeo/effect-driven component payloads
 - a details surface can edit current scene metadata, placed-entity transform/source-prefab/parent data, prefab metadata, and the first prefab component payload fields
 - an asset browser can inspect prefabs, assign the scene primary prefab, and instantiate prefab-backed entities into the active scene
 - save, reload-from-disk, revert-draft, duplicate-scene, create-entity, duplicate-entity, delete-entity, and local undo/redo flows now exist for this first authoring slice
-- `Run Scene` and `Build + Run` are the explicit native-runtime launch path for the currently open scene and workspace
+- `Play` saves the current world or reusable-object draft before building and launching the native runtime
+- `Apply and restart` saves tuning changes and restarts the running game in one action
+- low-level build, runtime, and bridge information is collapsed under diagnostics instead of filling the default authoring surface
+- the World workspace remains mounted during ordinary shell navigation so local drafts survive moving between workspaces
 
 Current boundary:
 
 - viewport gizmos, in-viewport manipulation, deeper scene/component payload editing, and procedural bake-back are still ahead
 - this slice is intentionally honest about being shell-side authoring over current text assets, not a fake full visual editor
+- World saves still use raw file writes; migration to revision-bound semantic operations is pending
 
 ## Core Surfaces
 
-- scene viewport with translate/rotate/scale gizmos
-- `World` outliner for hierarchy and selection
-- `Details` inspector for component values
-- `Assets` and prefab browser
+- world viewport with translate/rotate/scale gizmos
+- `World` and `Objects` hierarchy surfaces
+- `Selection` inspector for tuning values
+- `Library` browser for reusable objects
 - placement controls for assets, prefabs, lights, volumes, and spawn points
 - save, reload, revert, and duplicate commands
 - undo and redo

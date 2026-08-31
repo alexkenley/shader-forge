@@ -94,10 +94,10 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 
 Current implementation status:
 
-- Phase 1 is substantially underway, with strict per-workspace browser-persisted layout, accessible pane controls, responsive right-drawer behavior, and the shell-native Code workspace implemented.
+- Phase 1 is substantially underway, with strict per-workspace browser-persisted layout, accessible pane controls, responsive right-drawer behavior, mounted draft-preserving Code/World workspaces, and streamlined World/Playtest surfaces implemented.
 - Phase 2 has a working first implementation and is the main active backend surface; its durable operation journal now includes the bounded restart-safe validation-summary/event storage boundary for spatial operations.
 - Phase 3 now has a first real native runtime slice in the repo, with native SDL3/Vulkan verification and follow-on renderer expansion still ahead.
-- Phase 4 now has shell-side runtime build/run/pause controls, bridge diagnostics, and dedicated viewer-workflow surfaces, but not a full embedded viewer yet.
+- Phase 4 now has workspace-scoped runtime build/run/pause controls and a compact plain-language `Playtest` surface with collapsed diagnostics, but not a full embedded viewer yet.
 - Phase 4.2 has now started through a first engine-owned input slice with text-backed actions/contexts and runtime-side named action queries.
 - Phase 4.4 has now started through a native tooling substrate slice with a panel registry, text-backed layout loading/saving, and runtime inspection hooks, but not a Dear ImGui frontend yet.
 - Phase 5 has now started through a first asset-pipeline slice with `engine bake`, staged cooked outputs, and a text-backed procedural-geometry lane.
@@ -108,7 +108,7 @@ Current implementation status:
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph plus named-state resolution, deterministic schema-v2 per-bone clip sampling, and staged cooked animation metadata.
 - Phase 5.73 has compatible v1 skeleton/clip/attachment loading, strict v2 skeleton/socket/attachment validation, deterministic clip sampling and v2 two-bone IK, generation-safe query handles, an explicit atomic cooker, strict native/CLI rest/sample queries, revision-safe sessiond evidence, semantic attachment operations, a constrained Assets tuner, lease-gated `sf-mcp` mutation tools, read-only revision-bound `spatial_attachment_read`, and the durable bounded validation-summary/event journal boundary. Rest/sample resolve independent render-procgeo visual evidence and authored prefab collision through `DataFoundation`, then emit diagnose-only rest-relative cone-twist and capsule-axis-to-oriented-box surface-clearance diagnostics without mutating or clamping the pose. `shader_forge_spatial` emits exact aggregate plus stable per-bone/per-capsule records; sessiond and Assets validate geometry, derived metrics, identities, order, and aggregate truth fail closed. Missing authored inputs remain exact unavailable evidence, tangency is clear, and the render box never substitutes for collision. The MCP read exposes exact rest or authored sampled evidence plus sorted source revisions without leases or operations. Generic bake/runtime consumption, runtime collision/physics integration, revision-bound rendered capture, immutable review packets, the validation HTTP/evaluator path, recapture, and typed MCP validation/review resources remain ahead.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, first projected physics debug visualization, and staged cooked physics metadata.
-- Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
+- Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, draft-preserving `Edit`/`Verify`, one-click save/build/play, outliner/details/assets surfaces, and sessiond-backed file writes.
 - Phase 5.9 has now started through source-controlled AI provider manifests, a shared provider inspection/smoke-test core, deterministic fake-provider coverage, an optional local Ollama inspection path, shell/sessiond/CLI AI inspection surfaces, and a dedicated deterministic scaffold harness.
 - Phase 5.95 has now started through source-controlled policy data, shared sessiond/CLI policy evaluation, tracked assistant/code-path artifact metadata, hash-backed artifact verification, explicit review queues for `review_required` assistant operations, explicit promote/quarantine transitions for reviewed artifacts, explicit assistant-triggered compile/load/apply gating, and deterministic approval/policy coverage.
 - Phase 6 has now started through a first scene-runtime composition slice with authored scene/prefab composition, hierarchy resolution, resolved prefab payloads, input-driven controlled-entity state, first projected debug-proxy rendering for authored render components in the native runtime, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, first projected physics-body debug visualization, active-session-root runtime handoff from the shell/session backend, a first authored-content reload lane for manual iteration, and first view-resolved interaction/effect feedback.
@@ -121,13 +121,13 @@ What is already done:
 
 - `shell/engine-shell` exists as a React + TypeScript + Vite shell scaffold.
 - The default Code workspace is now shell-native: bounded file browsing, revision-bound Monaco source/diff tabs, inline search beside `Inspect`, dirty-draft retention, typed state/revision/code-trust conflicts, and explicit operation preview/review/apply/undo are implemented. Async request/session/tab/path/operation authority rejects late work; detached dirty tabs survive active project-session changes; apply/undo baseline refresh cannot erase a newer draft. The preserved `web/` editor remains an optional compatibility bridge.
-- The shell has one strict v1 browser-persisted layout record with per-workspace left/right visibility, tabs and preferred widths, one shared bottom dock, header toggles, bounded pointer/keyboard resizing, reset, and a narrow right overlay drawer. `Playtest` side panes are off by default, and persisted layout contains no workspace/session/path/credential/draft/operation/terminal state.
+- The shell has one strict v1 browser-persisted layout record with per-workspace left/right visibility, tabs and preferred widths, one shared bottom dock, header toggles, bounded pointer/keyboard resizing, reset, and a narrow right overlay drawer. `Playtest` side panes are off by default, persisted layout contains no workspace/session/path/credential/draft/operation/terminal state, and ordinary shell navigation keeps the draft-owning `Code` and `World` surfaces mounted.
 - A real multi-tab PTY terminal dock is wired through `engine_sessiond` and the shell.
 - Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read/write, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
-- The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, runtime build/run/pause/log controls, external-window viewer workflow diagnostics, and text-backed scene/prefab authoring saves.
+- The shell already consumes those backend surfaces for session CRUD, workspace-root picking, explorer reads, source control status, terminal tabs, workspace-scoped runtime build/run/pause/log controls, compact external-window Playtest status, and text-backed scene/prefab authoring saves. Runtime controls are no longer duplicated in the top chrome.
 - The shell now has a first in-app reference guide foundation backed by repo-native markdown plus structured guide content so operators and external development agents can search the same current workflow/reference surface.
-- The shell `Scene` workspace now loads current scene and prefab assets from the active session, supports deterministic save/reload/duplicate flows, and exposes the first real outliner/details/assets authoring lane with placed-entity create/duplicate/delete, transform editing, prefab component payload editing, and discard-by-default play mode separation.
+- The shell `World` workspace now loads current scene and prefab assets from the active session, supports deterministic save/reload/duplicate flows, and exposes the first real outliner/details/assets authoring lane with placed-entity create/duplicate/delete, transform editing, and prefab component payload editing. `Verify` is read-only without discarding drafts; Play saves dirty world/object drafts before requesting Build + Run and leaves actionable failures visible.
 - Shell runtime play/restart now carry the active session root into the native runtime launch so authored scene files and external-window manual testing stay pointed at the same project data.
 - The native runtime scaffold now includes a first swapchain-backed clear-color render loop with resize-aware recreation and present-path synchronization when SDL3 and Vulkan are available locally.
 - The native runtime now loads `input/actions.toml` plus `input/contexts/*.input.toml` and routes SDL keyboard, mouse, and gamepad input through named engine actions.
@@ -168,7 +168,7 @@ Where the build is currently up to:
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs, deterministic schema-v2 bone-track sampling, runtime-side default-graph and named-state resolution, first movement-driven runtime state selection, and animation-event-to-audio-event hooks, but sampled graph playback, blending, graph-parameter control, root-motion application, and preview tooling remain open
 - Phase 5.73 now has native schema/query/cook/rest/sample foundations, strict authored cone-twist/capsule skeleton metadata, strict typed prefab box-collision source truth, deterministic v2 two-bone IK, native numeric joint-limit and capsule/item surface-clearance diagnostics, fail-closed sessiond/Assets validation, revision-safe transient evidence, exact baseline/candidate preview, CLI and `sf-mcp` mutation adapters, read-only revision-bound `spatial_attachment_read`, constrained shell tuning, responsive Assets schematics, and a strict restart-safe journal for the latest bounded spatial validation summary plus actor/timestamp events. The evaluator resolves render procgeo and collision independently through `DataFoundation`; Assets draws both the visual outline and diagnose-only collision OBB/capsule evidence without a runtime-collision or review claim. The MCP read returns exact rest or authored sampled evaluation with the sorted source-revision manifest and creates no lease or operation. Authored runtime cameras now exist, but there is still no rendered item mesh, runtime physics collision result, revision-bound capture evidence, immutable review packet, or public validation route. Generic bake/runtime consumption, rendered capture, review packets, validation evaluator orchestration, recapture, and typed MCP validation/review resources remain deferred.
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
-- Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
+- Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, draft-preserving `Edit`/`Verify`, guarded destructive navigation, and save-then-Build + Run Play, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
 - Phase 5.9 groundwork now exists through source-controlled provider manifests, shared provider inspection plus smoke-test execution, deterministic fake coverage, optional Ollama readiness checks, and shell/sessiond/CLI inspection surfaces, but queued request lifecycle, hosted-provider execution, budgets, tool/skill registries, and gameplay-facing/native-assistant integration still remain
 - Phase 5.95 groundwork now exists through source-controlled code-trust policy data, shared sessiond/CLI policy evaluation, explicit assistant-triggered compile/load/apply gating, queued review/approval handling, tracked artifact-origin metadata, hash-backed verification, and explicit promote/quarantine workflow, but there is still no signed-artifact verification, plugin-install verification, or real code hot reload yet
 - Phase 6 groundwork now exists through authored scene/prefab composition into a runtime world snapshot, hierarchy-derived world transforms, strict optional prefab perspective-camera source truth, unique root `player_camera` authority, authored runtime FOV/clip projection with legacy fallback, stale-authority quickload rejection, first input-driven controlled-entity state, first authored-physics movement blocking against scene bodies, first overlap-triggered scene effect activation from query-only bodies, scene-context physics query origins, projected debug-proxy scene rendering, a first active-session-root editor/runtime handoff, a first polling/manual authored-content reload lane, and first view-resolved interaction/effect feedback, but full mesh/material rendering, parented-camera TRS composition, broader component simulation, game UI, and deeper editor/runtime handoff still remain
@@ -245,9 +245,9 @@ Status:
 Scope:
 - scaffold `shell/engine-shell` as a React + TypeScript + Vite app
 - left navigation for sessions, explorer, source control, world, and search
-- center dock tabs for `Code`, `Game`, `Scene`, and `Preview`
-- right tabs for `Details`, `Assets`, `Inspector`, `Build`, `Run`, and `Profiler`
-- bottom tabs for `Terminal`, `Logs`, `Output`, and `Console`
+- primary workspaces for `World`, `Code`, `Playtest`, and `Assets`
+- right tabs for `Runtime`, `Build`, and `Workspace`
+- bottom tabs for `Terminal`, `Logs`, `Output`, and `Activity`
 - preserve the inline file search toolbar beside `Inspect`
 - persist only typed shell chrome state: per-workspace side panes, shared bottom dock, active workspace, accessible resizing, reset, and a narrow-screen right drawer
 - retain the preserved editor under `shell/engine-shell/web/` only as an optional compatibility baseline while the shell-native Code workspace reaches remaining diagnostics/source-control parity
@@ -331,11 +331,11 @@ Goal:
 - make the shell a useful engine workspace rather than only a code surface
 
 Status:
-- bridge work now includes build/run/pause/log control surfaces plus shell-side viewer workflow dashboards and dedicated harness coverage; embedded viewer transport is still deferred
+- bridge work now includes workspace-scoped build/run/pause/log controls plus a compact `Playtest` surface with plain external-window status, visible primary actions, collapsed diagnostics, and dedicated harness coverage; embedded viewer transport is still deferred
 
 Scope:
 - runtime status and control
-- `Game` and `Preview` tabs
+- one `Playtest` workspace for external-runtime status and control
 - play, stop, restart, pause, screenshot
 - logs in shell panels
 - browser-shell workflows that complement later native Dear ImGui tooling surfaces rather than replacing them
@@ -577,7 +577,7 @@ Current boundary this phase must not paper over:
 - `AnimationSystem` does not own prefab lookup; evaluator-side render-procgeo and collision resolution use `DataFoundation` independently. Optional schema-v2 joint limits and diagnostic capsules parse strictly and cook deterministically; optional prefab box collision parses strictly into separate source truth. Rest/sample reports non-mutating rest-relative cone-swing/signed-twist violations and exact capsule-axis-to-oriented-box surface clearance. `shader_forge_spatial` serializes exact typed aggregates plus stable per-bone/per-capsule records; sessiond and Assets recompute and validate geometry and derived truth fail closed. Missing inputs are exact unavailable states and tangency is clear
 - `AnimationSystem` samples schema-v2 clip poses deterministically and the sampled evaluator applies v2 two-bone IK before joint-limit and clipping evaluation. Assets displays exact authored samples, independent visual/collision boxes, capsule segments, diagnose-only joint-limit `PASS`/`FAIL`, and capsule/item `CLEAR`/`OVERLAP`. No current path renders attachments or promotes the diagnostics into runtime collision, rendered capture, or review evidence
 - the runtime still draws projected debug-proxy cards, which are not spatial-review captures
-- shell `Review` is still a discard-only scene stance, not a spatial review packet
+- shell `Verify` preserves drafts in a read-only World stance; it is not a spatial review packet
 - generic bake/runtime consumption, runtime collision/physics integration, operation-scoped validate/recapture/review packets, native camera/screenshot capture, rendered spatial tuning, and typed `sf-mcp` validation/review tools are still deferred; authored joint/capsule schema and cooking, native numeric joint-limit and capsule/item surface-clearance diagnostics through CLI/sessiond/Assets, strict prefab collision source truth, prefab-bound visual evidence, native clip sampling, v2 two-bone IK, transient sessiond evidence, read-only revision-bound `spatial_attachment_read`, attachment preview/review/apply/undo, and exact non-review Assets rest/sampled schematics are implemented
 
 Exit criteria:
@@ -633,7 +633,7 @@ Scope:
 - transform gizmos
 - save, reload, revert, duplicate, undo, and redo
 - bake procedural results into editable scenes or prefabs
-- edit mode and play mode separation
+- editable authoring and read-only verification separation
 - borrow the Hell2025 native editor save/reload/world-refresh workflow patterns as reference input for Shader Forge native tooling while keeping shell-driven workflow integration
 
 Current checkpoint now implemented:
@@ -643,7 +643,7 @@ Current checkpoint now implemented:
 - prefab assets can now declare first-pass `[component.render]` and `[component.effect]` sections for procgeo/effect-driven component payloads
 - the shell now has a first world outliner, details inspector, and asset browser for scene metadata, prefab metadata, placed-entity hierarchy, entity transform editing, and prefab component payload editing
 - entity create, duplicate, delete, parent reassignment, source-prefab reassignment, save/reload/revert/duplicate commands, and local undo/redo now exist for this level-authoring slice
-- edit mode and play mode separation is now honest in the shell: entering play mode discards unsaved drafts and disables persistent writes
+- `Edit` remains writable and `Verify` is read-only without discarding drafts; ordinary workspace navigation preserves those drafts, and Play saves dirty world/object state before requesting Build + Run
 - the shared data foundation and `engine bake` now validate and surface scene-entity plus prefab-component relationships instead of treating scenes and prefabs as metadata-only files
 - runtime startup logs now expose the authored scene-entity layout and referenced prefab component payloads for the active scene
 
@@ -658,7 +658,7 @@ Reference inputs:
 Exit criteria:
 - a user can open a scene, make visual edits, save to text assets, and reload those edits
 - AI and human edits converge on the same scene and prefab files
-- play mode changes do not silently overwrite authored source data
+- Verify does not discard or overwrite authored source data, and Play stops before launch when either required save fails
 
 ## Phase 5.8: Source Engine Conversion
 
