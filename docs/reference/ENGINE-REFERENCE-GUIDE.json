@@ -128,8 +128,8 @@
         {
           "id": "shell-workspace",
           "title": "Shell Workspace Overview",
-          "summary": "The React shell is the current operator workspace for sessions, bounded native code editing, source control, runtime control, release packaging, diagnostics capture, world authoring, and assets, with a clearer separation between authoring, runtime, and utility surfaces.",
-          "keywords": ["shell", "workspace", "tabs", "rails", "layout", "world", "playtest", "assets", "package", "profile"],
+          "summary": "The React shell is the current operator workspace for sessions, bounded native code editing, source control, runtime control, release packaging, diagnostics capture, world authoring, and assets, with strict per-workspace layout persistence and responsive pane controls.",
+          "keywords": ["shell", "workspace", "tabs", "rails", "layout", "persistence", "drawer", "world", "playtest", "assets", "package", "profile"],
           "references": [
             "shell/engine-shell/src/App.tsx",
             "shell/engine-shell/src/CodeWorkspaceView.tsx",
@@ -137,6 +137,7 @@
             "shell/engine-shell/src/SceneEditorView.tsx",
             "shell/engine-shell/src/scene-authoring.ts",
             "shell/engine-shell/src/ReferenceGuideView.tsx",
+            "shell/engine-shell/src/shell-layout.ts",
             "shell/engine-shell/src/styles.css",
             "docs/specs/ENGINE-SHELL-SPEC.md"
           ],
@@ -149,6 +150,9 @@
                 "The primary workspace navigation exposes `World`, `Code`, `Playtest`, and `Assets`.",
                 "The right panel currently exposes `Runtime`, `Build`, and `Workspace` in `Code` and `Playtest`, while `World` and `Assets` use the center area directly.",
                 "The bottom dock currently exposes `Terminal`, `Logs`, `Output`, and `Activity`.",
+                "One strict v1 browser record persists the active workspace, each workspace's left/right visibility, selected tabs and preferred widths, and the shared bottom-dock tab, collapsed state, and preferred height. It stores layout chrome only, never sessions, paths, credentials, drafts, operations, or terminal state.",
+                "Use the header `Left`, `Right`, and `Bottom` toggles plus `Reset` to manage layout. Visible panes support bounded pointer and keyboard resizing. At 800 pixels or narrower the right pane becomes an on-demand overlay drawer and its toggle remains reachable.",
+                "`Playtest`, `World`, and `Assets` start with both side panes hidden; `Code` starts with the left pane visible; the bottom dock starts collapsed. Malformed or unavailable browser storage falls back to those defaults.",
                 "The bottom dock can now be resized vertically from its top edge and explicitly `Collapse`d, `Restore`d, or `Maximize`d so terminal/log surfaces do not overlap the main workspace.",
                 "The `Workspace` right-panel tab now also exposes export-preset inspection, release-layout readiness, package generation, visible prep state, and last-package summary for the selected workspace.",
                 "The `Workspace` right-panel tab now also exposes a live diagnostics snapshot plus capture-report controls for the selected workspace, including runtime/build state, packaging readiness, stored capture history, and first profiling recommendations.",
@@ -159,7 +163,7 @@
               "title": "Current Workflow Shape",
               "keywords": ["monaco", "preview", "scene", "guide"],
               "items": [
-                "Use `Code` for bounded workspace-file browsing, revision-bound Monaco tabs, inline search beside `Inspect`, source/draft diffing, and explicit Preview/Approve/Reject/Apply/Undo. Unsaved drafts survive shell navigation; a changed draft stales its prior preview, and revision conflicts preserve the draft for Reload and Re-preview.",
+                "Use `Code` for bounded workspace-file browsing, revision-bound Monaco tabs, inline search beside `Inspect`, source/draft diffing, and explicit Preview/Approve/Reject/Apply/Undo. Unsaved drafts survive shell navigation; changing the active project session keeps foreign dirty tabs read-only and detached until their original session returns. A changed draft stales its prior preview. Request/session/tab/path/operation guards reject late reads, events, and actions; apply/undo refresh the baseline only if the draft still equals the captured pre-action draft. Typed state, revision, and code-trust conflicts preserve the draft and adopt returned operation state only when id, session, and path match.",
                 "The preserved `web/` editor remains available only through `Load legacy bridge` or `Open standalone`; it is not the default Code workflow.",
                 "Use `Playtest` when you are driving the external native runtime window from the shell, with runtime/build/workspace tools grouped beside that runtime-facing surface.",
                 "Use `World` for repo-backed scene and prefab authoring with a viewport-first layout, authoring/review separation, explicit `Run Scene` plus `Build + Run` controls in the editor, save/reload/duplicate commands, a resizable adjacent level-tools sidebar (`Scenes`, `Outliner`, `Inspector`, `Assets`), and a compact bottom status bar instead of oversized summary cards.",
@@ -184,8 +188,8 @@
         {
           "id": "sessiond-and-files",
           "title": "Workspaces, Files, And Source Control",
-          "summary": "Session creation, persistence, safe file reads/writes, revision-safe file-write operations and transient spatial evaluation, host-root picking, git status, AI inspection, release packaging, and diagnostics capture are already implemented in engine_sessiond.",
-          "keywords": ["sessions", "explorer", "source control", "workspace root", "ai", "package", "profile", "operations", "revision", "spatial evaluation"],
+          "summary": "Session creation, persistence, safe file reads/writes, revision-safe operations, durable bounded spatial-validation journal data, transient spatial evaluation, host-root picking, git status, AI inspection, release packaging, and diagnostics capture are already implemented in engine_sessiond.",
+          "keywords": ["sessions", "explorer", "source control", "workspace root", "ai", "package", "profile", "operations", "revision", "spatial evaluation", "validation journal"],
           "references": [
             "tools/engine-sessiond/server.mjs",
             "tools/engine-sessiond/lib/spatial-attachment-service.mjs",
@@ -205,6 +209,9 @@
                 "Safe file list, file read, and file write APIs are now available inside the active session root.",
                 "`engine_sessiond` now also owns a revision-safe text-file write operation workflow: preview, list/get, approve/reject, apply, undo, durable journal recovery, and restart-safe history.",
                 "File-write operations persist in the sessiond state directory so Activity/Changes history survives backend restart. Credentials are never stored. Invalid persisted records are skipped on load after preview-schema and event-sequence validation.",
+                "Previewed or approved spatial-attachment operations may persist one latest strict validation summary plus at most eight actor-attributed `validated` events. Each summary is bound to the proposed revision and contains at most 64 phase/time samples whose joint-limit, overlap, and tolerance totals must exactly match its findings.",
+                "Validation recording compare-and-swaps both proposed revision and `updatedAt`, preserves monotonic operation/event timestamps even under a frozen host clock, and rechecks canonical workspace identity. Reload rejects malformed summaries, invalid spatial context or revision binding, missing or actorless validation events, over-limit history, and backward or out-of-envelope timestamps.",
+                "Public operation list/detail/SSE views expose the bounded latest validation summary and event provenance but never private `beforeContent` or `proposedContent`. The HTTP/native evaluator orchestration that will produce these summaries is still deferred.",
                 "Each operation stores the canonical workspace-root identity captured at preview. Apply, undo, and recovery reject a mismatched live session root.",
                 "Revisions are SHA-256 content hashes plus an explicit `missing` sentinel. Stale preview/apply/undo calls return HTTP 409 with a structured conflict.",
                 "Direct `/api/files/write`, operation apply/undo, and code-trust promote/quarantine share one serialized `SessionStore` file-mutation queue. Compare-and-write/remove run optional `beforeMutation` after revision/identity inspection and before source mutation. Apply/undo persist `applying`/`undoing` before touching the project file and recover by revision comparison after a crash or persistence failure.",
@@ -222,7 +229,7 @@
                 "Assets binds authored evaluations to active session/path/revision and candidate evaluations to operation/base/proposed/state. Draft edits mark cached geometry stale instead of moving it. The complete report is bounded and deep-validated before rendering; malformed nested data or unsafe projection bounds make the schematic unavailable.",
                 "`App` retains one sessiond SSE subscription. Assets receives an active-session operation epoch and authoritatively refetches its current operation with session/selection/operation guards. Approval updates actions. Conflict rereads authored bytes, keeps the candidate visibly stale, and retains its captured connection only after successful parse and refreshed resource coverage. Reject/apply/undo clear and reread evidence while releasing/disconnecting only the connection captured by that event/action, never a newer one. Undo after apply requests a fresh lease.",
                 "The shell `Activity` bottom-dock tab lists durable operations for the active workspace, reads selected public detail and a selected-only bounded structured text diff, refreshes from operation SSE events, and supports fixed-shell-actor Approve/Reject. It has no Apply, Undo, lease, registration, or credential path.",
-                "Activity binds each diff to the selected operation id, path, and before/after revisions, then shows exact old/new line coordinates, line endings, three-line context, truncation, or a truthful binary/too-large/unavailable summary-only reason. Raw journal fields and validation/test evidence are not published.",
+                "Activity binds each diff to the selected operation id, path, and before/after revisions, then shows exact old/new line coordinates, line endings, three-line context, truncation, or a truthful binary/too-large/unavailable summary-only reason. Raw journal content bytes are not published. Public validation summaries now exist, but Activity does not render them yet.",
                 "See `docs/specs/ENGINE-OPERATIONS-SPEC.md` for the canonical contract.",
                 "Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.",
                 "Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.",
@@ -762,6 +769,8 @@
           "references": [
             "docs/guides/ENGINE-HARNESS-TESTING.md",
             "scripts/test-engine-shell-smoke.mjs",
+            "scripts/test-engine-shell-layout.mjs",
+            "scripts/test-engine-code-shell.mjs",
             "scripts/test-engine-viewer-bridge.mjs",
             "scripts/test-engine-packaging-scaffold.mjs",
             "scripts/test-engine-profiling-scaffold.mjs",
@@ -787,8 +796,10 @@
               "title": "Current Harnesses",
               "keywords": ["npm test", "sessiond", "viewer bridge", "runtime scaffold", "animation scaffold", "physics scaffold"],
               "items": [
-                "`npm test` runs the preserved shell smoke harness.",
-                "`npm run test:sessiond` validates local backend session/file flows, revision-safe file-write operations, bounded selected-operation exact diffs and summary-only degradation, journal recovery, writer serialization, loopback-only bind, immutable session roots, journaled code-trust effects, undo-vs-promote mutation-lane barriers, persisted `rootIdentity` migration, Origin/actor/code-trust gates, plus multi-agent leases, queue promotion, expiry, credential ownership, workspace cleanup, and isolation.",
+                "`npm test` runs the shell smoke harness, including the integrated shell layout and native Code workspace contracts.",
+                "`npm run test:shell-layout` validates strict v1 layout-only serialization, canonical fallback/reset, per-workspace independence, responsive side-pane geometry, narrow right-drawer reachability, and bounded short-viewport bottom-dock behavior.",
+                "`npm run test:code-shell` validates revision-bound Code tabs, detached dirty-draft retention, current-file search, typed conflict matching, async session/tab/operation authority, and compare-before-refresh draft preservation.",
+                "`npm run test:sessiond` validates local backend session/file flows, revision-safe file-write operations, bounded selected-operation exact diffs and summary-only degradation, durable bounded spatial-validation summaries/events with restart provenance and timestamp checks, journal recovery, writer serialization, loopback-only bind, immutable session roots, journaled code-trust effects, undo-vs-promote mutation-lane barriers, persisted `rootIdentity` migration, Origin/actor/code-trust gates, plus multi-agent leases, queue promotion, expiry, credential ownership, workspace cleanup, and isolation.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
                 "`npm run test:packaging-scaffold` validates export-preset inspection, visible prep state, auto-bake packaging, and release-layout generation through the CLI and `engine_sessiond`.",
                 "`npm run test:profiling-scaffold` validates live diagnostics snapshots, persisted capture reports, and capture-history listing through the CLI and `engine_sessiond`.",
@@ -828,7 +839,7 @@
               "title": "What Exists Now",
               "keywords": ["current state", "implemented"],
               "items": [
-                "A React/Vite shell workspace with persistent backend-owned sessions, file preview, source control, terminal tabs, and runtime control.",
+                "A React/Vite shell workspace with persistent backend-owned sessions, file preview, source control, terminal tabs, runtime control, and strict per-workspace browser-persisted layouts with accessible resizing/reset plus a narrow right drawer.",
                 "A real shell-side scene authoring workflow with repo-backed `.scene.toml` and `.prefab.toml` save/reload/duplicate flows plus placed-entity hierarchy, transform editing, first prefab component payload editing, and active-session-root runtime handoff.",
                 "A real native SDL3/Vulkan runtime slice with input, tooling, data-foundation, audio, animation, physics, first composed scene-runtime hooks, session-root launch alignment from the shell/session backend, and a first runtime save-system lane.",
                 "Text-backed scene, prefab, data, effect, procedural-geometry, audio, animation, and physics roots represented in the repo.",
@@ -837,7 +848,7 @@
                 "A first CLI and shell/sessiond profiling lane that captures workspace diagnostics plus live runtime/build log context into JSON reports under `build/profiling/captures/`.",
                 "A first CLI migration lane that detects supported source-engine project shapes, emits normalized migration manifests plus reports, converts the current fixtures into first-pass Shader Forge project skeletons, and preserves startup-scene intent through exact setting provenance or explicit fail-closed/approximated outcomes.",
                 "A first code-trust lane with source-controlled policy data, shared sessiond/CLI evaluation, tracked assistant/code-path artifacts, explicit review queues for `review_required` operations, and assistant-triggered compile/load/apply gating.",
-                "A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, and restart-safe history. `sf-mcp` now consumes its lease-gated spatial attachment family; other MCP operation families still require equivalent resource-key contracts. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.",
+                "A hardened `engine_sessiond` revision-safe text-file operation workflow with preview, approval, journaled apply/undo, journaled code-trust effects, serialized CLI provenance transitions, immutable workspace identity, append-only recovery provenance, structured conflicts, loopback-only bind, local Origin filtering, restart-safe history, and the durable bounded validation-summary/event storage boundary for spatial operations. `sf-mcp` now consumes its lease-gated spatial attachment family; the validation HTTP/evaluator orchestration and other MCP operation families still require their explicit contracts. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.",
                 "A native spatial schema/query/cook/rest and sampled attachment evaluation slice with v2 two-bone secondary-hand IK, explicit v1 pre-IK compatibility, and diagnose-only joint-limit aggregate/per-bone PASS/FAIL, plus a constrained Assets tuner and accessible native-evaluated three-projection rest/sampled rig schematics with resolved v2 pole projection, exact full-input evidence binding, guarded event reconciliation, and no rendered-review claim in the shell.",
                 "A searchable in-app guide and repo-native external-agent guide."
               ]

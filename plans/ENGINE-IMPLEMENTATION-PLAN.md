@@ -94,8 +94,8 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 
 Current implementation status:
 
-- Phase 1 is substantially underway.
-- Phase 2 has a working first implementation and is the main active backend surface.
+- Phase 1 is substantially underway, with strict per-workspace browser-persisted layout, accessible pane controls, responsive right-drawer behavior, and the shell-native Code workspace implemented.
+- Phase 2 has a working first implementation and is the main active backend surface; its durable operation journal now includes the bounded restart-safe validation-summary/event storage boundary for spatial operations.
 - Phase 3 now has a first real native runtime slice in the repo, with native SDL3/Vulkan verification and follow-on renderer expansion still ahead.
 - Phase 4 now has shell-side runtime build/run/pause controls, bridge diagnostics, and dedicated viewer-workflow surfaces, but not a full embedded viewer yet.
 - Phase 4.2 has now started through a first engine-owned input slice with text-backed actions/contexts and runtime-side named action queries.
@@ -106,7 +106,7 @@ Current implementation status:
 - Phase 5.85 has now started through an explicit Unreal offline fallback lane with raw-project detection, lower-confidence migration-lane reporting, Blueprint package-name manifests, and dedicated fixture coverage.
 - Phase 5.7 has now started through an audio-foundation slice with authored buses/sounds/events, runtime audio-event resolution, and staged cooked audio metadata.
 - Phase 5.72 has now started through an animation-foundation slice with authored skeletons/clips/graphs, runtime default-graph plus named-state resolution, deterministic schema-v2 per-bone clip sampling, and staged cooked animation metadata.
-- Phase 5.73 has compatible v1 skeleton/clip/attachment loading, strict v2 skeleton/socket/attachment validation, deterministic clip sampling and v2 two-bone IK, generation-safe query handles, an explicit atomic cooker, strict native/CLI rest/sample queries, revision-safe sessiond evidence, semantic attachment operations, a constrained Assets tuner, lease-gated `sf-mcp` mutation tools, and read-only revision-bound `spatial_attachment_read`. Rest/sample resolve independent render-procgeo visual evidence and authored prefab collision through `DataFoundation`, then emit diagnose-only rest-relative cone-twist and capsule-axis-to-oriented-box surface-clearance diagnostics without mutating or clamping the pose. `shader_forge_spatial` emits exact aggregate plus stable per-bone/per-capsule records; sessiond and Assets validate geometry, derived metrics, identities, order, and aggregate truth fail closed. Missing authored inputs remain exact unavailable evidence, tangency is clear, and the render box never substitutes for collision. The MCP read exposes exact rest or authored sampled evidence plus sorted source revisions without leases or operations. Generic bake/runtime consumption, runtime collision/physics integration, revision-bound rendered capture, immutable review packets, operation-scoped validation/recapture, and typed MCP validation/review resources remain ahead.
+- Phase 5.73 has compatible v1 skeleton/clip/attachment loading, strict v2 skeleton/socket/attachment validation, deterministic clip sampling and v2 two-bone IK, generation-safe query handles, an explicit atomic cooker, strict native/CLI rest/sample queries, revision-safe sessiond evidence, semantic attachment operations, a constrained Assets tuner, lease-gated `sf-mcp` mutation tools, read-only revision-bound `spatial_attachment_read`, and the durable bounded validation-summary/event journal boundary. Rest/sample resolve independent render-procgeo visual evidence and authored prefab collision through `DataFoundation`, then emit diagnose-only rest-relative cone-twist and capsule-axis-to-oriented-box surface-clearance diagnostics without mutating or clamping the pose. `shader_forge_spatial` emits exact aggregate plus stable per-bone/per-capsule records; sessiond and Assets validate geometry, derived metrics, identities, order, and aggregate truth fail closed. Missing authored inputs remain exact unavailable evidence, tangency is clear, and the render box never substitutes for collision. The MCP read exposes exact rest or authored sampled evidence plus sorted source revisions without leases or operations. Generic bake/runtime consumption, runtime collision/physics integration, revision-bound rendered capture, immutable review packets, the validation HTTP/evaluator path, recapture, and typed MCP validation/review resources remain ahead.
 - Phase 5.74 has now started through a physics-foundation slice with authored layers/materials/bodies, deterministic runtime raycast/overlap queries, first projected physics debug visualization, and staged cooked physics metadata.
 - Phase 5.75 has now started through a shell-side level-authoring slice with repo-backed scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, edit/play mode separation, outliner/details/assets surfaces, and sessiond-backed file writes.
 - Phase 5.9 has now started through source-controlled AI provider manifests, a shared provider inspection/smoke-test core, deterministic fake-provider coverage, an optional local Ollama inspection path, shell/sessiond/CLI AI inspection surfaces, and a dedicated deterministic scaffold harness.
@@ -120,8 +120,8 @@ Current implementation status:
 What is already done:
 
 - `shell/engine-shell` exists as a React + TypeScript + Vite shell scaffold.
-- The default Code workspace is now shell-native: bounded file browsing, revision-bound Monaco source/diff tabs, inline search beside `Inspect`, dirty-draft retention, typed conflicts, and explicit operation preview/review/apply/undo are implemented. The preserved `web/` editor remains an optional compatibility bridge.
-- The shell layout has moved toward an engine-style workspace with large docked panels rather than a generic web-app layout.
+- The default Code workspace is now shell-native: bounded file browsing, revision-bound Monaco source/diff tabs, inline search beside `Inspect`, dirty-draft retention, typed state/revision/code-trust conflicts, and explicit operation preview/review/apply/undo are implemented. Async request/session/tab/path/operation authority rejects late work; detached dirty tabs survive active project-session changes; apply/undo baseline refresh cannot erase a newer draft. The preserved `web/` editor remains an optional compatibility bridge.
+- The shell has one strict v1 browser-persisted layout record with per-workspace left/right visibility, tabs and preferred widths, one shared bottom dock, header toggles, bounded pointer/keyboard resizing, reset, and a narrow right overlay drawer. `Playtest` side panes are off by default, and persisted layout contains no workspace/session/path/credential/draft/operation/terminal state.
 - A real multi-tab PTY terminal dock is wired through `engine_sessiond` and the shell.
 - Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read/write, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.
@@ -166,7 +166,7 @@ Where the build is currently up to:
 - Phase 5.85 groundwork now exists through an explicit Unreal offline fallback lane with raw-project `.uproject`/`.umap` detection plus low-confidence Blueprint package manifests, but real `.uasset` graph parsing, exporter-manifest ingestion, and richer actor/component extraction still remain
 - Phase 5.7 groundwork now exists through authored audio buses, sounds, and events plus runtime-side event resolution, but no real playback backend, mixing, or preview tooling exists yet
 - Phase 5.72 groundwork now exists through authored animation skeletons, clips, and graphs, deterministic schema-v2 bone-track sampling, runtime-side default-graph and named-state resolution, first movement-driven runtime state selection, and animation-event-to-audio-event hooks, but sampled graph playback, blending, graph-parameter control, root-motion application, and preview tooling remain open
-- Phase 5.73 now has native schema/query/cook/rest/sample foundations, strict authored cone-twist/capsule skeleton metadata, strict typed prefab box-collision source truth, deterministic v2 two-bone IK, native numeric joint-limit and capsule/item surface-clearance diagnostics, fail-closed sessiond/Assets validation, revision-safe transient evidence, exact baseline/candidate preview, CLI and `sf-mcp` mutation adapters, read-only revision-bound `spatial_attachment_read`, constrained shell tuning, and responsive Assets schematics. The evaluator resolves render procgeo and collision independently through `DataFoundation`; Assets draws both the visual outline and diagnose-only collision OBB/capsule evidence without a runtime-collision or review claim. The MCP read returns exact rest or authored sampled evaluation with the sorted source-revision manifest and creates no lease or operation. Authored runtime cameras now exist, but there is still no rendered item mesh, runtime physics collision result, revision-bound capture evidence, or immutable review packet. Generic bake/runtime consumption, rendered capture, review packets, operation-scoped validation/recapture, and typed MCP validation/review resources remain deferred.
+- Phase 5.73 now has native schema/query/cook/rest/sample foundations, strict authored cone-twist/capsule skeleton metadata, strict typed prefab box-collision source truth, deterministic v2 two-bone IK, native numeric joint-limit and capsule/item surface-clearance diagnostics, fail-closed sessiond/Assets validation, revision-safe transient evidence, exact baseline/candidate preview, CLI and `sf-mcp` mutation adapters, read-only revision-bound `spatial_attachment_read`, constrained shell tuning, responsive Assets schematics, and a strict restart-safe journal for the latest bounded spatial validation summary plus actor/timestamp events. The evaluator resolves render procgeo and collision independently through `DataFoundation`; Assets draws both the visual outline and diagnose-only collision OBB/capsule evidence without a runtime-collision or review claim. The MCP read returns exact rest or authored sampled evaluation with the sorted source-revision manifest and creates no lease or operation. Authored runtime cameras now exist, but there is still no rendered item mesh, runtime physics collision result, revision-bound capture evidence, immutable review packet, or public validation route. Generic bake/runtime consumption, rendered capture, review packets, validation evaluator orchestration, recapture, and typed MCP validation/review resources remain deferred.
 - Phase 5.74 groundwork now exists through authored physics layers, materials, and primitive bodies plus deterministic runtime-side raycast/overlap queries, but no real backend integration, sweeps, joints, character support, or debug draw exists yet
 - Phase 5.75 groundwork now exists through shell-side scene/prefab round-trip, placed-entity hierarchy plus transform editing, first prefab component payload editing, local undo/redo, asset reassignment, and discard-by-default play mode separation, but transform gizmos, broader scene/component authoring, and procedural bake-back flows still remain
 - Phase 5.9 groundwork now exists through source-controlled provider manifests, shared provider inspection plus smoke-test execution, deterministic fake coverage, optional Ollama readiness checks, and shell/sessiond/CLI inspection surfaces, but queued request lifecycle, hosted-provider execution, budgets, tool/skill registries, and gameplay-facing/native-assistant integration still remain
@@ -240,7 +240,7 @@ Goal:
 - establish the browser shell as a standalone product surface
 
 Status:
-- core scaffold implemented, UX iteration ongoing
+- core scaffold plus persistent/responsive workspace layout implemented, UX iteration ongoing
 
 Scope:
 - scaffold `shell/engine-shell` as a React + TypeScript + Vite app
@@ -249,6 +249,7 @@ Scope:
 - right tabs for `Details`, `Assets`, `Inspector`, `Build`, `Run`, and `Profiler`
 - bottom tabs for `Terminal`, `Logs`, `Output`, and `Console`
 - preserve the inline file search toolbar beside `Inspect`
+- persist only typed shell chrome state: per-workspace side panes, shared bottom dock, active workspace, accessible resizing, reset, and a narrow-screen right drawer
 - retain the preserved editor under `shell/engine-shell/web/` only as an optional compatibility baseline while the shell-native Code workspace reaches remaining diagnostics/source-control parity
 - add a Windows PowerShell clean-start script that removes generated outputs, reruns the smoke harness, and launches the WSL-backed shell flow
 
@@ -260,6 +261,7 @@ Exit criteria:
 - shell presents the intended layout for the engine workflow
 - inline file search still provides match count, `Prev`, `Next`, `Clear`, and revealed active matches
 - the React shell owns the default Code workflow while the preserved editor remains explicitly accessible for compatibility comparison
+- workspace layout restores safely, keeps `Playtest` side panes off by default, and cannot persist session, path, credential, draft, operation, or terminal state
 - the Windows clean-start path is documented and available in `scripts/start-dev-clean.ps1`
 
 ## Phase 2: Session Backend And CLI
@@ -293,6 +295,7 @@ Implemented first slice:
 - safe file list/read APIs
 - initial `engine` CLI wrappers for backend bring-up and inspection
 - deterministic `test-engine-sessiond.mjs` harness
+- strict durable spatial-validation summary/event journal storage with proposed-revision and `updatedAt` compare-and-swap, monotonic actor-attributed timestamps, bounded history, restart provenance validation, and no public proposed content
 - Unix and Windows clean-start scripts for dev boot plus harness execution
 
 ## Phase 3: Native Runtime Bring-Up
@@ -1016,7 +1019,7 @@ Current build target:
 - Phase 5.6 start: extend migration detection into actual content mapping and provenance-backed conversion fixtures without claiming parity early
 - Phase 5.7 start: widen the authored-audio lane into real playback, bus control, and preview tooling without skipping the engine-owned event API
 - Phase 5.72 continuation: connect deterministic schema-v2 sampling to graph playback, then add graph-parameter control, blending, root motion, and preview tooling without discarding the text-backed graph/event contracts
-- Phase 5.73 continuation: build on implemented capsule/item surface-clearance diagnostics, authored runtime cameras, and revision-bound `spatial_attachment_read` by adding validation/recapture/review operations, revision-bound native frame capture, immutable review packets, and the corresponding typed MCP validation/review tools without introducing a second attachment path
+- Phase 5.73 continuation: build on implemented capsule/item surface-clearance diagnostics, authored runtime cameras, revision-bound `spatial_attachment_read`, and the durable validation journal boundary by adding native validation orchestration, recapture/review operations, revision-bound frame capture, immutable review packets, and the corresponding typed MCP validation/review tools without introducing a second attachment path
 - Phase 5.74 start: widen the authored-physics lane into a real backend, sweeps, debug draw, and gameplay-facing body control without discarding the text-backed layer/material/body contracts
 - Phase 5.9 start: widen the new provider/status/test foundation into queued requests, hosted-provider execution, budgets, and shared tool/skill registries while staying behind the Phase 5.95 trust boundary for risky assistant actions
 - Phase 5.95 continuation: widen the new code-trust lane from hash-backed verification and promote/quarantine controls into signed artifacts, stronger plugin verification, and explicit hotload contracts before Phase 5.9 assistant workflows expand
