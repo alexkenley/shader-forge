@@ -32,6 +32,7 @@ using shader_forge::runtime::DataAssetKind;
 using shader_forge::runtime::PrefabSourceSnapshot;
 using shader_forge::runtime::ProcgeoSourceSnapshot;
 using shader_forge::runtime::SpatialAttachmentEvaluationSnapshot;
+using shader_forge::runtime::SpatialJointLimitDiagnosticSnapshot;
 using shader_forge::runtime::SpatialSampledAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SkeletonDefinitionSnapshot;
 using shader_forge::runtime::SpatialQuaternionSnapshot;
@@ -230,6 +231,44 @@ bool resolveAuthoredVisualBox(
   evidence->height = height;
   evidence->depth = depth;
   return true;
+}
+
+void appendJointLimits(std::ostringstream& out, const SpatialJointLimitDiagnosticSnapshot& jointLimits) {
+  out << "{\"status\":" << jsonString(jointLimits.status)
+      << ",\"reason\":";
+  if (jointLimits.reason) out << jsonString(*jointLimits.reason);
+  else out << "null";
+  out << ",\"policy\":" << jsonString(jointLimits.policy)
+      << ",\"evaluatedBoneCount\":" << jointLimits.evaluatedBoneCount
+      << ",\"violationCount\":" << jointLimits.violationCount
+      << ",\"maxViolationDegrees\":";
+  appendNumber(out, jointLimits.maxViolationDegrees);
+  out << ",\"withinLimits\":";
+  if (jointLimits.withinLimits) out << (*jointLimits.withinLimits ? "true" : "false");
+  else out << "null";
+  out << ",\"bones\":[";
+  for (std::size_t index = 0; index < jointLimits.bones.size(); ++index) {
+    const auto& bone = jointLimits.bones[index];
+    if (index != 0) out << ',';
+    out << "{\"boneId\":" << jsonString(bone.boneId)
+        << ",\"role\":" << jsonString(bone.role)
+        << ",\"swingDegrees\":";
+    appendNumber(out, bone.swingDegrees);
+    out << ",\"swingLimitDegrees\":";
+    appendNumber(out, bone.swingLimitDegrees);
+    out << ",\"twistDegrees\":";
+    appendNumber(out, bone.twistDegrees);
+    out << ",\"twistMinDegrees\":";
+    appendNumber(out, bone.twistMinDegrees);
+    out << ",\"twistMaxDegrees\":";
+    appendNumber(out, bone.twistMaxDegrees);
+    out << ",\"swingViolationDegrees\":";
+    appendNumber(out, bone.swingViolationDegrees);
+    out << ",\"twistViolationDegrees\":";
+    appendNumber(out, bone.twistViolationDegrees);
+    out << ",\"withinLimits\":" << (bone.withinLimits ? "true" : "false") << '}';
+  }
+  out << "]}";
 }
 
 void appendItemGeometry(std::ostringstream& out, const ItemVisualBoxEvidence& geometry) {
@@ -680,8 +719,9 @@ void appendAttachmentEvaluationFields(
   }
   out << '}'
       << ','
-      << "\"jointLimits\":{\"status\":\"unavailable\",\"reason\":\"joint_limit_evaluation_not_integrated\"},"
-      << "\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}";
+      << "\"jointLimits\":";
+  appendJointLimits(out, evaluation.jointLimits);
+  out << ",\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}";
 }
 
 void appendEvaluationLimitations(

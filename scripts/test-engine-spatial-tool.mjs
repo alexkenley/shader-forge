@@ -362,6 +362,87 @@ try {
       assert.match(unsafeFoundationResult.stderr, /Content subdirectory must stay under content root/);
     }
     const findById = (entries, id) => entries.find((entry) => entry.id === id);
+    const jointLimitObjectKeys = [
+      'status', 'reason', 'policy', 'evaluatedBoneCount', 'violationCount',
+      'maxViolationDegrees', 'withinLimits', 'bones',
+    ];
+    const jointLimitBoneKeys = [
+      'boneId', 'role', 'swingDegrees', 'swingLimitDegrees', 'twistDegrees',
+      'twistMinDegrees', 'twistMaxDegrees', 'swingViolationDegrees', 'twistViolationDegrees', 'withinLimits',
+    ];
+    const restJointLimitBone = (boneId, swingLimitDegrees, twistMinDegrees, twistMaxDegrees) => ({
+      boneId,
+      role: boneId,
+      swingDegrees: 0,
+      swingLimitDegrees,
+      twistDegrees: 0,
+      twistMinDegrees,
+      twistMaxDegrees,
+      swingViolationDegrees: 0,
+      twistViolationDegrees: 0,
+      withinLimits: true,
+    });
+    const expectedRestJointLimits = {
+      status: 'available',
+      reason: null,
+      policy: 'diagnose',
+      evaluatedBoneCount: 6,
+      violationCount: 0,
+      maxViolationDegrees: 0,
+      withinLimits: true,
+      bones: [
+        restJointLimitBone('hand_l', 70, -80, 80),
+        restJointLimitBone('hand_r', 70, -80, 80),
+        restJointLimitBone('lower_arm_l', 145, -15, 15),
+        restJointLimitBone('lower_arm_r', 145, -15, 15),
+        restJointLimitBone('upper_arm_l', 120, -90, 90),
+        restJointLimitBone('upper_arm_r', 120, -90, 90),
+      ],
+    };
+    const assertJointLimitObjectShape = (jointLimits, message) => {
+      assert.deepEqual(Object.keys(jointLimits), jointLimitObjectKeys, message);
+      assert.equal(typeof jointLimits.status, 'string', message);
+      assert.ok(jointLimits.reason === null || typeof jointLimits.reason === 'string', message);
+      assert.equal(typeof jointLimits.policy, 'string', message);
+      assert.equal(jointLimits.evaluatedBoneCount, jointLimits.bones.length, message);
+      jointLimits.bones.forEach((bone, index) => {
+        assert.deepEqual(Object.keys(bone), jointLimitBoneKeys, `${message} bone ${index}`);
+      });
+    };
+    const assertJointLimitNumericConsistency = (jointLimits, message) => {
+      assert.equal(typeof jointLimits.evaluatedBoneCount, 'number', message);
+      assert.equal(typeof jointLimits.violationCount, 'number', message);
+      assert.ok(Number.isFinite(jointLimits.maxViolationDegrees), message);
+      const numbers = jointLimits.bones.flatMap((bone) => [
+        bone.swingDegrees, bone.swingLimitDegrees, bone.twistDegrees,
+        bone.twistMinDegrees, bone.twistMaxDegrees, bone.swingViolationDegrees, bone.twistViolationDegrees,
+      ]);
+      numbers.forEach((value) => {
+        assert.equal(typeof value, 'number', message);
+        assert.ok(Number.isFinite(value), message);
+      });
+      const violationCount = jointLimits.bones.filter((bone) => bone.withinLimits === false).length;
+      assert.equal(jointLimits.violationCount, violationCount, message);
+      const maxViolation = jointLimits.bones.reduce(
+        (current, bone) => Math.max(current, bone.swingViolationDegrees, bone.twistViolationDegrees),
+        0,
+      );
+      assert.ok(Math.abs(jointLimits.maxViolationDegrees - maxViolation) <= 1e-12, message);
+      if (jointLimits.status === 'available') {
+        assert.equal(jointLimits.reason, null, message);
+        assert.equal(typeof jointLimits.withinLimits, 'boolean', message);
+        assert.equal(jointLimits.withinLimits, jointLimits.violationCount === 0, message);
+      } else {
+        assert.equal(jointLimits.withinLimits, null, message);
+      }
+      jointLimits.bones.forEach((bone, index) => {
+        assert.equal(
+          bone.withinLimits,
+          bone.swingViolationDegrees === 0 && bone.twistViolationDegrees === 0,
+          `${message} bone ${index} withinLimits`,
+        );
+      });
+    };
     const assertVectorClose = (actual, expected, message = 'vector mismatch') => {
       assert.equal(actual.length, expected.length, message);
       actual.forEach((value, index) => {
@@ -405,6 +486,13 @@ try {
       status: 'unavailable',
       reason: 'item_and_capsule_geometry_not_integrated',
     });
+    assertJointLimitObjectShape(rest.diagnostics.jointLimits, 'rifle rest jointLimits shape');
+    assert.deepEqual(rest.diagnostics.jointLimits, expectedRestJointLimits);
+    assert.deepEqual(
+      JSON.parse(secondRest.stdout).diagnostics.jointLimits,
+      rest.diagnostics.jointLimits,
+      'rest jointLimits must be byte-stable',
+    );
     assertVectorClose(findById(rest.bones, 'hand_r').world.translation, [-0.78, 1.47, 0], 'hand_r world');
     assertVectorClose(findById(rest.sockets, 'socket.hand_r.primary').world.translation, [-0.78, 1.47, 0.08], 'primary socket world');
     assertVectorClose(rest.item.world.translation, [-0.78, 1.455, 0.1], 'item world');
@@ -441,6 +529,7 @@ try {
       status: 'unavailable',
       reason: 'item_and_capsule_geometry_not_integrated',
     });
+    assert.deepEqual(pistolRest.diagnostics.jointLimits, expectedRestJointLimits);
     const missingItemRoot = path.join(tempRoot, 'missing item animation');
     fs.cpSync(fixtureRoot, missingItemRoot, { recursive: true });
     const missingItemAttachment = path.join(
@@ -533,6 +622,20 @@ try {
       findById(sampled.sockets, 'socket.hand_r.primary').world.translation,
       findById(rest.sockets, 'socket.hand_r.primary').world.translation,
       'sampled primary socket must move at idle 0.5',
+    );
+    assertJointLimitObjectShape(sampled.diagnostics.jointLimits, 'rifle sampled jointLimits shape');
+    assert.equal(sampled.diagnostics.jointLimits.status, 'available');
+    assert.equal(sampled.diagnostics.jointLimits.policy, rest.diagnostics.jointLimits.policy);
+    assert.deepEqual(
+      sampled.diagnostics.jointLimits.bones.map((bone) => bone.boneId),
+      rest.diagnostics.jointLimits.bones.map((bone) => bone.boneId),
+      'sampled jointLimits must keep native bone order',
+    );
+    assertJointLimitNumericConsistency(sampled.diagnostics.jointLimits, 'rifle sampled jointLimits');
+    assert.deepEqual(
+      JSON.parse(secondSample.stdout).diagnostics.jointLimits,
+      sampled.diagnostics.jointLimits,
+      'sampled jointLimits must be byte-stable',
     );
     assert.equal(sampled.diagnostics.secondaryIk.status, 'applied');
     assert.equal(sampled.diagnostics.secondaryIk.solved, true);
@@ -834,6 +937,17 @@ try {
     assertVectorClose(rotated.item.geometry.worldCorners[6], [1.3, 1.3125, -0.625], 'rotated visual box corner 6');
     assert.equal(rotated.hands.secondary, null);
     assert.equal(rotated.diagnostics.secondaryIk.status, 'not_applicable');
+    assertJointLimitObjectShape(rotated.diagnostics.jointLimits, 'rotated rest jointLimits shape');
+    assert.deepEqual(rotated.diagnostics.jointLimits, {
+      status: 'unavailable',
+      reason: 'no_joint_limits_authored',
+      policy: 'diagnose',
+      evaluatedBoneCount: 0,
+      violationCount: 0,
+      maxViolationDegrees: 0,
+      withinLimits: null,
+      bones: [],
+    });
     assert.equal(rotated.limitations.includes('secondary_hand_ik_unavailable'), false);
 
     fs.writeFileSync(path.join(fixtureRoot, 'skeletons', 'large_coordinates.skeleton.toml'), [
