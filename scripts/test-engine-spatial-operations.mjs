@@ -82,6 +82,58 @@ function identityTransform() {
   };
 }
 
+function unavailableJointLimits(reason = 'no_joint_limits_authored') {
+  return {
+    status: 'unavailable',
+    reason,
+    policy: 'diagnose',
+    evaluatedBoneCount: 0,
+    violationCount: 0,
+    maxViolationDegrees: 0,
+    withinLimits: null,
+    bones: [],
+  };
+}
+
+function jointLimitBone(boneId, overrides = {}) {
+  return {
+    boneId,
+    role: boneId,
+    swingDegrees: 0,
+    swingLimitDegrees: 70,
+    twistDegrees: 0,
+    twistMinDegrees: -80,
+    twistMaxDegrees: 80,
+    swingViolationDegrees: 0,
+    twistViolationDegrees: 0,
+    withinLimits: true,
+    ...overrides,
+  };
+}
+
+function availableJointLimits(bones) {
+  const violationCount = bones.filter((bone) => bone.withinLimits === false).length;
+  const maxViolationDegrees = bones.reduce(
+    (current, bone) => Math.max(current, bone.swingViolationDegrees, bone.twistViolationDegrees),
+    0,
+  );
+  return {
+    status: 'available',
+    reason: null,
+    policy: 'diagnose',
+    evaluatedBoneCount: bones.length,
+    violationCount,
+    maxViolationDegrees,
+    withinLimits: violationCount === 0,
+    bones,
+  };
+}
+
+function withJointLimits(evaluation, jointLimits) {
+  evaluation.diagnostics.jointLimits = jointLimits;
+  return evaluation;
+}
+
 function restEvaluation(attachmentId) {
   return {
     schema: 'shader_forge.spatial_attachment_evaluation',
@@ -147,7 +199,7 @@ function restEvaluation(attachmentId) {
     },
     diagnostics: {
       secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
-      jointLimits: { status: 'unavailable', reason: 'joint_limit_evaluation_not_integrated' },
+      jointLimits: unavailableJointLimits(),
       clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
     },
     limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],
@@ -673,6 +725,16 @@ try {
   assert.equal(baselineEvaluate.payload.evaluation.attachment.id, 'weapon.rifle.old');
   assert.equal(baselineEvaluate.payload.evaluation.item.geometry.status, 'unavailable');
   assert.deepEqual(baselineEvaluate.payload.evaluation.item.handleAxisWorld.direction, [0, 0, 1]);
+  assert.deepEqual(baselineEvaluate.payload.evaluation.diagnostics.jointLimits, {
+    status: 'unavailable',
+    reason: 'no_joint_limits_authored',
+    policy: 'diagnose',
+    evaluatedBoneCount: 0,
+    violationCount: 0,
+    maxViolationDegrees: 0,
+    withinLimits: null,
+    bones: [],
+  });
   assert.deepEqual(baselineEvaluate.payload.evaluation.limitations, [
     'rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable',
   ]);
@@ -715,6 +777,42 @@ try {
   assert.equal(v2SourceV1Report.status, 500);
   assert.equal(v2SourceV1Report.payload.code, 'spatial_evaluator_protocol_error');
   await fs.writeFile(path.join(projectRoot, attachmentPath), originalContent, 'utf8');
+  evaluateImpl = normalEvaluate;
+
+  evaluateImpl = async (_animationRoot, attachmentId) => (
+    withJointLimits(restEvaluation(attachmentId), availableJointLimits([jointLimitBone('hand_r')]))
+  );
+  const availableJointLimitsEvaluate = await request(
+    service.baseUrl,
+    attachmentEvaluatePath(evaluateQuery),
+  );
+  assert.equal(availableJointLimitsEvaluate.status, 200);
+  assert.deepEqual(
+    availableJointLimitsEvaluate.payload.evaluation.diagnostics.jointLimits,
+    availableJointLimits([jointLimitBone('hand_r')]),
+  );
+
+  evaluateImpl = async (_animationRoot, attachmentId) => withJointLimits(
+    restEvaluation(attachmentId),
+    availableJointLimits([jointLimitBone('hand_r', {
+      swingDegrees: 90,
+      swingViolationDegrees: 20,
+      withinLimits: false,
+    })]),
+  );
+  const availableJointLimitViolationEvaluate = await request(
+    service.baseUrl,
+    attachmentEvaluatePath(evaluateQuery),
+  );
+  assert.equal(availableJointLimitViolationEvaluate.status, 200);
+  assert.equal(
+    availableJointLimitViolationEvaluate.payload.evaluation.diagnostics.jointLimits.withinLimits,
+    false,
+  );
+  assert.equal(
+    availableJointLimitViolationEvaluate.payload.evaluation.diagnostics.jointLimits.violationCount,
+    1,
+  );
   evaluateImpl = normalEvaluate;
 
   evaluateImpl = async () => restEvaluation('weapon.wrong');
@@ -799,6 +897,133 @@ try {
     ['wrong diagnostic contract', (id) => mutateRestEvaluation(id, (evaluation) => {
       evaluation.diagnostics.secondaryIk = { status: 'unavailable', reason: 'unknown' };
     })],
+    ['legacy two-key jointLimits', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.jointLimits = {
+        status: 'unavailable',
+        reason: 'joint_limit_evaluation_not_integrated',
+      };
+    })],
+    ['jointLimits extra key', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.jointLimits.clampApplied = false;
+    })],
+    ['jointLimits missing key', (id) => mutateRestEvaluation(id, (evaluation) => {
+      delete evaluation.diagnostics.jointLimits.policy;
+    })],
+    ['jointLimits non-diagnose policy', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.jointLimits.policy = 'clamp_and_diagnose';
+    })],
+    ['jointLimits unknown status', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.jointLimits.status = 'pending';
+    })],
+    ['jointLimits available with reason', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r')]),
+        reason: 'no_joint_limits_authored',
+      },
+    )],
+    ['jointLimits available with null withinLimits', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r')]),
+        withinLimits: null,
+      },
+    )],
+    ['jointLimits unavailable with withinLimits', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...unavailableJointLimits(),
+        withinLimits: true,
+      },
+    )],
+    ['jointLimits unavailable with bones', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...unavailableJointLimits(),
+        evaluatedBoneCount: 1,
+        bones: [jointLimitBone('hand_r')],
+      },
+    )],
+    ['jointLimits empty unavailable reason', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...unavailableJointLimits(),
+        reason: '',
+      },
+    )],
+    ['jointLimits contradictory violationCount', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r')]),
+        violationCount: 1,
+        withinLimits: false,
+      },
+    )],
+    ['jointLimits contradictory aggregate withinLimits', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r')]),
+        withinLimits: false,
+      },
+    )],
+    ['jointLimits contradictory maxViolationDegrees', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r')]),
+        maxViolationDegrees: 12,
+      },
+    )],
+    ['jointLimits evaluatedBoneCount mismatch', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r')]),
+        evaluatedBoneCount: 2,
+      },
+    )],
+    ['jointLimits non-integer count', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...unavailableJointLimits(),
+        evaluatedBoneCount: 0.5,
+      },
+    )],
+    ['jointLimits negative count', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...unavailableJointLimits(),
+        violationCount: -1,
+      },
+    )],
+    ['jointLimits nonfinite maxViolationDegrees', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.jointLimits.maxViolationDegrees = Number.POSITIVE_INFINITY;
+    })],
+    ['jointLimits nonfinite swingDegrees', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', { swingDegrees: Number.NaN })]),
+    )],
+    ['jointLimits oversized reason', (id) => withJointLimits(
+      restEvaluation(id),
+      unavailableJointLimits('r'.repeat(8001)),
+    )],
+    ['jointLimits oversized bones', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r'), jointLimitBone('hand_l')]),
+    )],
+    ['jointLimits bone extra key', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([{ ...jointLimitBone('hand_r'), hingeDegrees: 0 }]),
+    )],
+    ['jointLimits bone contradictory withinLimits', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', {
+        swingViolationDegrees: 8,
+        withinLimits: true,
+      })]),
+    )],
+    ['jointLimits swingDegrees out of bounds', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', { swingDegrees: 181 })]),
+    )],
     ['schema-v2 pole without world point', (id) => {
       const evaluation = restEvaluationV2(id);
       evaluation.hands.secondary.pole.world = null;

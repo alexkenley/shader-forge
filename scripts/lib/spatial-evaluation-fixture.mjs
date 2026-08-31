@@ -6,6 +6,53 @@ function identityTransform() {
   };
 }
 
+export function unavailableJointLimits(reason = 'no_joint_limits_authored') {
+  return {
+    status: 'unavailable',
+    reason,
+    policy: 'diagnose',
+    evaluatedBoneCount: 0,
+    violationCount: 0,
+    maxViolationDegrees: 0,
+    withinLimits: null,
+    bones: [],
+  };
+}
+
+export function jointLimitBone(boneId, overrides = {}) {
+  return {
+    boneId,
+    role: boneId,
+    swingDegrees: 0,
+    swingLimitDegrees: 70,
+    twistDegrees: 0,
+    twistMinDegrees: -80,
+    twistMaxDegrees: 80,
+    swingViolationDegrees: 0,
+    twistViolationDegrees: 0,
+    withinLimits: true,
+    ...overrides,
+  };
+}
+
+export function availableJointLimits(bones) {
+  const violationCount = bones.filter((bone) => bone.withinLimits === false).length;
+  const maxViolationDegrees = bones.reduce(
+    (current, bone) => Math.max(current, bone.swingViolationDegrees, bone.twistViolationDegrees),
+    0,
+  );
+  return {
+    status: 'available',
+    reason: null,
+    policy: 'diagnose',
+    evaluatedBoneCount: bones.length,
+    violationCount,
+    maxViolationDegrees,
+    withinLimits: violationCount === 0,
+    bones,
+  };
+}
+
 export function restEvaluation(attachmentId) {
   return {
     schema: 'shader_forge.spatial_attachment_evaluation',
@@ -50,7 +97,7 @@ export function restEvaluation(attachmentId) {
     },
     diagnostics: {
       secondaryIk: { status: 'not_applicable', reason: 'one_hand_attachment' },
-      jointLimits: { status: 'unavailable', reason: 'joint_limit_evaluation_not_integrated' },
+      jointLimits: unavailableJointLimits(),
       clipping: { status: 'unavailable', reason: 'item_and_capsule_geometry_not_integrated' },
     },
     limitations: ['rest_pose_only', 'not_review_evidence', 'item_mesh_unavailable'],
