@@ -85,6 +85,8 @@ Both must use the same sessiond route and exact sample schema; neither may dupli
 
 ### 4. Build real rendered spatial review evidence
 
+Status: in progress. The production native `capture-sample` primitive now evaluates one exact authored phase/time and emits four deterministic depth-tested clean PNGs from posed bone geometry and the authored procgeo item box, with explicit bounded camera/bounds/lighting metadata and fail-clean output. It is not a review packet. Authored `player_camera` capture, source/capture/review leases, multi-sample staging, final revision recheck, atomic immutable packet publication, and adapters remain.
+
 Implement revision-bound native capture from the authored root `player_camera` plus deterministic close cameras, then immutable `build/spatial-reviews/<review-id>/` packets. Capture uses a transient native staging world, read leases for every source revision, a short exclusive `spatial/runtime-capture` lease, temporary output, final revision recheck, and atomic publish. Recapture creates a new review ID; it never mutates an old packet.
 
 Do not promote Assets schematics, debug proxy cards, or browser screenshots as review evidence. Fail closed until real item/character rendering and clean frames exist. Packets must bind operation, leases, camera/framing, pose samples, transforms/bounds, diagnostics, source revisions, and clean/annotated capture paths.

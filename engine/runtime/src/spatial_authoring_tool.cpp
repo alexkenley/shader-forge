@@ -1,5 +1,6 @@
 #include "shader_forge/runtime/animation_system.hpp"
 #include "shader_forge/runtime/data_foundation.hpp"
+#include "shader_forge/runtime/spatial_capture.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,7 +39,14 @@ using shader_forge::runtime::SpatialSampledAttachmentEvaluationSnapshot;
 using shader_forge::runtime::SkeletonDefinitionSnapshot;
 using shader_forge::runtime::SpatialQuaternionSnapshot;
 using shader_forge::runtime::SpatialTransformSnapshot;
+using shader_forge::runtime::SpatialCaptureBoundsSnapshot;
+using shader_forge::runtime::SpatialCaptureCameraSnapshot;
+using shader_forge::runtime::SpatialCaptureItemBox;
+using shader_forge::runtime::SpatialCaptureResultSnapshot;
 using shader_forge::runtime::SpatialVector3Snapshot;
+using shader_forge::runtime::kSpatialCaptureMaxResolutionPx;
+using shader_forge::runtime::kSpatialCaptureMinResolutionPx;
+using shader_forge::runtime::writeSpatialCaptureSample;
 
 namespace {
 
@@ -1198,6 +1206,75 @@ void appendAttachmentEvaluationFields(
   out << '}';
 }
 
+void appendCaptureBounds(std::ostringstream& out, const SpatialCaptureBoundsSnapshot& bounds) {
+  out << "{\"min\":";
+  appendVector(out, bounds.min);
+  out << ",\"max\":";
+  appendVector(out, bounds.max);
+  out << ",\"center\":";
+  appendVector(out, bounds.center);
+  out << '}';
+}
+
+void appendCaptureCamera(std::ostringstream& out, const SpatialCaptureCameraSnapshot& camera) {
+  out << "{\"id\":" << jsonString(camera.id)
+      << ",\"position\":";
+  appendVector(out, camera.position);
+  out << ",\"target\":";
+  appendVector(out, camera.target);
+  out << ",\"up\":";
+  appendVector(out, camera.up);
+  out << ",\"fovDegrees\":";
+  appendNumber(out, camera.fovDegrees);
+  out << ",\"nearMeters\":";
+  appendNumber(out, camera.nearMeters);
+  out << ",\"farMeters\":";
+  appendNumber(out, camera.farMeters);
+  out << ",\"widthPx\":" << camera.widthPx
+      << ",\"heightPx\":" << camera.heightPx
+      << '}';
+}
+
+void appendCaptureResult(std::ostringstream& out, const SpatialCaptureResultSnapshot& capture) {
+  out << "{\"schema\":\"shader_forge.spatial_capture_sample\",\"schemaVersion\":1"
+      << ",\"attachment\":{\"id\":" << jsonString(capture.attachmentId) << '}'
+      << ",\"phase\":" << jsonString(capture.phase)
+      << ",\"normalizedTime\":";
+  appendNumber(out, capture.normalizedTime);
+  out << ",\"renderGeometryKinds\":";
+  appendStringArray(out, capture.renderGeometryKinds);
+  out << ",\"bounds\":{\"character\":";
+  appendCaptureBounds(out, capture.characterBounds);
+  out << ",\"item\":";
+  appendCaptureBounds(out, capture.itemBounds);
+  out << ",\"combined\":";
+  appendCaptureBounds(out, capture.combinedBounds);
+  out << "},\"lighting\":{\"keyDirection\":";
+  appendVector(out, capture.lighting.keyDirection);
+  out << ",\"keyIntensity\":";
+  appendNumber(out, capture.lighting.keyIntensity);
+  out << ",\"fillDirection\":";
+  appendVector(out, capture.lighting.fillDirection);
+  out << ",\"fillIntensity\":";
+  appendNumber(out, capture.lighting.fillIntensity);
+  out << ",\"ambientIntensity\":";
+  appendNumber(out, capture.lighting.ambientIntensity);
+  out << ",\"exposure\":";
+  appendNumber(out, capture.lighting.exposure);
+  out << "},\"cameras\":[";
+  for (std::size_t index = 0; index < capture.frames.size(); ++index) {
+    if (index != 0) out << ',';
+    appendCaptureCamera(out, capture.frames[index].camera);
+  }
+  out << "],\"captures\":{";
+  for (std::size_t index = 0; index < capture.frames.size(); ++index) {
+    if (index != 0) out << ',';
+    out << jsonString(capture.frames[index].camera.id) << ':'
+        << jsonString(capture.frames[index].relativePath);
+  }
+  out << "}}\n";
+}
+
 void appendEvaluationLimitations(
   std::ostringstream& out,
   const SpatialAttachmentEvaluationSnapshot& evaluation,
@@ -1264,12 +1341,26 @@ bool parseCliFiniteNumber(std::string_view raw, double* value) {
   return true;
 }
 
+bool parseCliBoundedInt(std::string_view raw, int minValue, int maxValue, int* value) {
+  if (raw.empty()) return false;
+  int parsed = 0;
+  for (const char character : raw) {
+    if (character < '0' || character > '9') return false;
+    if (parsed > (std::numeric_limits<int>::max() - (character - '0')) / 10) return false;
+    parsed = parsed * 10 + (character - '0');
+  }
+  if (parsed < minValue || parsed > maxValue) return false;
+  *value = parsed;
+  return true;
+}
+
 int usageError(std::string_view message) {
   std::cerr << "shader_forge_spatial: " << message << '\n'
             << "usage: shader_forge_spatial validate --animation-root <path>\n"
             << "       shader_forge_spatial cook --animation-root <path> --output-root <path>\n"
             << "       shader_forge_spatial evaluate-rest --animation-root <path> --attachment <attachment-id> --content-root <path> --data-foundation <path>\n"
-            << "       shader_forge_spatial evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path>\n";
+            << "       shader_forge_spatial evaluate-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path>\n"
+            << "       shader_forge_spatial capture-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path> --output-dir <path> --width <px> --height <px>\n";
   return 2;
 }
 
@@ -1296,15 +1387,18 @@ bool resolvePath(
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 2) return usageError("expected validate, cook, evaluate-rest, or evaluate-sample");
+  if (argc < 2) return usageError("expected validate, cook, evaluate-rest, evaluate-sample, or capture-sample");
   const std::string_view command = argv[1];
   std::filesystem::path requestedAnimationRoot;
   std::filesystem::path requestedOutputRoot;
   std::filesystem::path requestedContentRoot;
   std::filesystem::path requestedDataFoundation;
+  std::filesystem::path requestedOutputDir;
   std::string requestedAttachmentId;
   std::string requestedPhase;
   double requestedNormalizedTime = 0.0;
+  int requestedWidth = 0;
+  int requestedHeight = 0;
   if (command == "validate") {
     if (argc != 4 || std::string_view(argv[2]) != "--animation-root" || std::string_view(argv[3]).empty()) {
       return usageError("expected validate --animation-root <path>");
@@ -1403,8 +1497,80 @@ int main(int argc, char** argv) {
     if (!parseCliFiniteNumber(requestedNormalizedTimeRaw, &requestedNormalizedTime)) {
       return usageError("evaluate-sample --normalized-time must be a locale-independent finite number");
     }
+  } else if (command == "capture-sample") {
+    if (argc < 4 || (argc % 2) != 0) {
+      return usageError("expected capture-sample --animation-root <path> --attachment <attachment-id> --phase <phase> --normalized-time <value> --content-root <path> --data-foundation <path> --output-dir <path> --width <px> --height <px>");
+    }
+    bool hasAnimationRoot = false;
+    bool hasAttachment = false;
+    bool hasPhase = false;
+    bool hasNormalizedTime = false;
+    bool hasContentRoot = false;
+    bool hasDataFoundation = false;
+    bool hasOutputDir = false;
+    bool hasWidth = false;
+    bool hasHeight = false;
+    std::string requestedNormalizedTimeRaw;
+    std::string requestedWidthRaw;
+    std::string requestedHeightRaw;
+    for (int index = 2; index < argc; index += 2) {
+      const std::string_view flag = argv[index];
+      const std::string_view value = argv[index + 1];
+      if (value.empty()) return usageError("capture-sample flag values must not be empty");
+      if (flag == "--animation-root" && !hasAnimationRoot) {
+        requestedAnimationRoot = value;
+        hasAnimationRoot = true;
+      } else if (flag == "--attachment" && !hasAttachment) {
+        requestedAttachmentId = value;
+        hasAttachment = true;
+      } else if (flag == "--phase" && !hasPhase) {
+        requestedPhase = value;
+        hasPhase = true;
+      } else if (flag == "--normalized-time" && !hasNormalizedTime) {
+        requestedNormalizedTimeRaw = value;
+        hasNormalizedTime = true;
+      } else if (flag == "--content-root" && !hasContentRoot) {
+        requestedContentRoot = value;
+        hasContentRoot = true;
+      } else if (flag == "--data-foundation" && !hasDataFoundation) {
+        requestedDataFoundation = value;
+        hasDataFoundation = true;
+      } else if (flag == "--output-dir" && !hasOutputDir) {
+        requestedOutputDir = value;
+        hasOutputDir = true;
+      } else if (flag == "--width" && !hasWidth) {
+        requestedWidthRaw = value;
+        hasWidth = true;
+      } else if (flag == "--height" && !hasHeight) {
+        requestedHeightRaw = value;
+        hasHeight = true;
+      } else {
+        return usageError("unknown or duplicate capture-sample flag");
+      }
+    }
+    if (!hasAnimationRoot || !hasAttachment || !hasPhase || !hasNormalizedTime || !hasContentRoot
+        || !hasDataFoundation || !hasOutputDir || !hasWidth || !hasHeight) {
+      return usageError("capture-sample requires --animation-root, --attachment, --phase, --normalized-time, --content-root, --data-foundation, --output-dir, --width, and --height");
+    }
+    if (!parseCliFiniteNumber(requestedNormalizedTimeRaw, &requestedNormalizedTime)) {
+      return usageError("capture-sample --normalized-time must be a locale-independent finite number");
+    }
+    if (!parseCliBoundedInt(
+          requestedWidthRaw,
+          kSpatialCaptureMinResolutionPx,
+          kSpatialCaptureMaxResolutionPx,
+          &requestedWidth)) {
+      return usageError("capture-sample --width must be an integer in [64, 1024]");
+    }
+    if (!parseCliBoundedInt(
+          requestedHeightRaw,
+          kSpatialCaptureMinResolutionPx,
+          kSpatialCaptureMaxResolutionPx,
+          &requestedHeight)) {
+      return usageError("capture-sample --height must be an integer in [64, 1024]");
+    }
   } else {
-    return usageError("expected validate, cook, evaluate-rest, or evaluate-sample");
+    return usageError("expected validate, cook, evaluate-rest, evaluate-sample, or capture-sample");
   }
 
   std::filesystem::path animationRoot;
@@ -1420,7 +1586,7 @@ int main(int argc, char** argv) {
   const auto skeletons = animation.snapshotSkeletons();
   const auto profiles = animation.snapshotAttachmentProfiles();
   DataFoundation dataFoundation;
-  if (command == "evaluate-rest" || command == "evaluate-sample") {
+  if (command == "evaluate-rest" || command == "evaluate-sample" || command == "capture-sample") {
     std::filesystem::path contentRoot;
     std::filesystem::path dataFoundationPath;
     if (!resolvePath(requestedContentRoot, "content root", &contentRoot)) return 1;
@@ -1510,6 +1676,53 @@ int main(int argc, char** argv) {
       return 1;
     }
     appendSampledEvaluation(out, *evaluation, geometry, clipping);
+    std::cout << out.str();
+    return 0;
+  }
+  if (command == "capture-sample") {
+    std::filesystem::path outputDir;
+    if (!resolvePath(requestedOutputDir, "output dir", &outputDir)) return 1;
+    const auto attachmentId = animation.findAttachmentProfileId(requestedAttachmentId);
+    if (!attachmentId) {
+      std::cerr << "shader_forge_spatial: capture-sample failed: unknown attachment "
+                << jsonString(requestedAttachmentId) << "\n";
+      return 1;
+    }
+    const auto evaluation = animation.evaluateSampledAttachment(
+      *attachmentId, requestedPhase, requestedNormalizedTime, &error);
+    if (!evaluation) {
+      std::cerr << "shader_forge_spatial: capture-sample failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    ItemVisualBoxEvidence geometry;
+    if (!resolveAuthoredVisualBox(dataFoundation, evaluation->evaluation, &geometry, &error)) {
+      std::cerr << "shader_forge_spatial: capture-sample failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    if (!geometry.available) {
+      std::cerr << "shader_forge_spatial: capture-sample failed for "
+                << jsonString(requestedAttachmentId)
+                << ": item visual geometry is unavailable (" << geometry.unavailableReason << ")\n";
+      return 1;
+    }
+    SpatialCaptureItemBox itemBox;
+    itemBox.width = geometry.width;
+    itemBox.height = geometry.height;
+    itemBox.depth = geometry.depth;
+    itemBox.world = evaluation->evaluation.itemWorld;
+    SpatialCaptureResultSnapshot capture;
+    if (!writeSpatialCaptureSample(
+          *evaluation, itemBox, outputDir, requestedWidth, requestedHeight, &capture, &error)) {
+      std::cerr << "shader_forge_spatial: capture-sample failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
+    appendCaptureResult(out, capture);
     std::cout << out.str();
     return 0;
   }

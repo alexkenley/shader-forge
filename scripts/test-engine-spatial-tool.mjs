@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { inflateSync } from 'node:zlib';
 import { repoRootFromScript } from './lib/harness-utils.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
@@ -10,6 +11,7 @@ const includeRoot = path.join(repoRoot, 'engine', 'runtime', 'include');
 const animationSource = path.join(repoRoot, 'engine', 'runtime', 'src', 'animation_system.cpp');
 const dataFoundationSource = path.join(repoRoot, 'engine', 'runtime', 'src', 'data_foundation.cpp');
 const toolSource = path.join(repoRoot, 'engine', 'runtime', 'src', 'spatial_authoring_tool.cpp');
+const captureSource = path.join(repoRoot, 'engine', 'runtime', 'src', 'spatial_capture.cpp');
 const cliPath = path.join(repoRoot, 'tools', 'engine-cli', 'shaderforge.mjs');
 const animationRoot = path.join(repoRoot, 'animation');
 const cliSource = fs.readFileSync(cliPath, 'utf8');
@@ -18,6 +20,7 @@ const cmakeSource = fs.readFileSync(path.join(repoRoot, 'engine', 'runtime', 'CM
 
 assert.match(cmakeSource, /add_executable\(\s*shader_forge_spatial/);
 assert.match(cmakeSource, /src\/spatial_authoring_tool\.cpp/);
+assert.match(cmakeSource, /src\/spatial_capture\.cpp/);
 assert.match(cmakeSource, /add_executable\(\s*shader_forge_spatial[\s\S]*src\/data_foundation\.cpp/);
 assert.match(cliSource, /engine build \[runtime\|spatial\|data\]/);
 assert.match(cliSource, /engine spatial validate/);
@@ -30,6 +33,7 @@ assert.match(animationSourceText, /return utf8Path\(left\) < utf8Path\(right\)/)
 assert.match(animationSourceText, /evaluateSampledAttachment/);
 const toolSourceText = fs.readFileSync(toolSource, 'utf8');
 assert.match(toolSourceText, /evaluate-sample/);
+assert.match(toolSourceText, /capture-sample/);
 assert.match(toolSourceText, /clip_sample/);
 assert.match(toolSourceText, /pre_ik_only/);
 assert.match(toolSourceText, /DataFoundation/);
@@ -206,6 +210,68 @@ function run(command, args) {
   return result;
 }
 
+function readCapturePng(filePath) {
+  const bytes = fs.readFileSync(filePath);
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    `${filePath} PNG signature`,
+  );
+  let offset = 8;
+  let ihdr = null;
+  const idat = [];
+  let sawEnd = false;
+  while (offset < bytes.length) {
+    assert.ok(offset + 12 <= bytes.length, `${filePath} truncated chunk`);
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    assert.ok(dataEnd + 4 <= bytes.length, `${filePath} invalid ${type} length`);
+    const data = bytes.subarray(dataStart, dataEnd);
+    if (type === 'IHDR') ihdr = Buffer.from(data);
+    if (type === 'IDAT') idat.push(Buffer.from(data));
+    if (type === 'IEND') sawEnd = true;
+    offset = dataEnd + 4;
+  }
+  assert.equal(offset, bytes.length, `${filePath} trailing PNG bytes`);
+  assert.ok(ihdr, `${filePath} missing IHDR`);
+  assert.equal(ihdr.length, 13, `${filePath} IHDR length`);
+  assert.equal(ihdr[8], 8, `${filePath} bit depth`);
+  assert.equal(ihdr[9], 2, `${filePath} must be opaque RGB`);
+  assert.equal(ihdr[10], 0, `${filePath} compression`);
+  assert.equal(ihdr[11], 0, `${filePath} filter`);
+  assert.equal(ihdr[12], 0, `${filePath} interlace`);
+  assert.ok(idat.length > 0, `${filePath} missing IDAT`);
+  assert.equal(sawEnd, true, `${filePath} missing IEND`);
+  const width = ihdr.readUInt32BE(0);
+  const height = ihdr.readUInt32BE(4);
+  const inflated = inflateSync(Buffer.concat(idat));
+  const rowBytes = width * 3;
+  assert.equal(inflated.length, height * (rowBytes + 1), `${filePath} decoded size`);
+  const pixels = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * (rowBytes + 1);
+    assert.equal(inflated[rowStart], 0, `${filePath} row ${y} filter`);
+    inflated.copy(pixels, y * rowBytes, rowStart + 1, rowStart + 1 + rowBytes);
+  }
+  return { bytes, width, height, pixels };
+}
+
+function assertRenderedCapture(png, label) {
+  const background = '24,26,30';
+  const colors = new Set();
+  let foreground = 0;
+  for (let index = 0; index < png.pixels.length; index += 3) {
+    const color = `${png.pixels[index]},${png.pixels[index + 1]},${png.pixels[index + 2]}`;
+    colors.add(color);
+    if (color !== background) foreground += 1;
+  }
+  assert.ok(colors.size >= 4, `${label} must contain shaded geometry`);
+  assert.ok(foreground >= 100, `${label} must contain rendered character/item pixels`);
+  assert.ok(foreground < png.width * png.height, `${label} must retain a clean background`);
+}
+
 let nativeChecked = false;
 
 try {
@@ -219,7 +285,7 @@ try {
     if (compiler.status === 0) {
       compile = run('wsl.exe', [
         'g++', '-std=c++20', '-I', toWslPath(includeRoot),
-        toWslPath(toolSource), toWslPath(animationSource), toWslPath(dataFoundationSource),
+        toWslPath(toolSource), toWslPath(captureSource), toWslPath(animationSource), toWslPath(dataFoundationSource),
         '-o', toWslPath(executablePath),
       ]);
       invoke = (args) => run('wsl.exe', [
@@ -234,7 +300,7 @@ try {
     }
     if (compiler.status === 0) {
       compile = run('g++', [
-        '-std=c++20', '-I', includeRoot, toolSource, animationSource, dataFoundationSource, '-o', executablePath,
+        '-std=c++20', '-I', includeRoot, toolSource, captureSource, animationSource, dataFoundationSource, '-o', executablePath,
       ]);
       invoke = (args) => run(executablePath, args);
     }
@@ -874,6 +940,110 @@ try {
       'secondary_hand_ik_unavailable',
     ]);
 
+    const captureArgs = (outputDir) => withContent([
+      'capture-sample',
+      '--animation-root', fixtureRoot,
+      '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--phase', 'idle',
+      '--normalized-time', '0.5',
+      '--output-dir', outputDir,
+      '--width', '192',
+      '--height', '160',
+    ]);
+    const firstCaptureDir = path.join(tempRoot, 'capture first');
+    const secondCaptureDir = path.join(tempRoot, 'capture second');
+    const firstCaptureRun = invoke(captureArgs(firstCaptureDir));
+    const secondCaptureRun = invoke(captureArgs(secondCaptureDir));
+    assert.equal(firstCaptureRun.status, 0, firstCaptureRun.stderr || firstCaptureRun.stdout);
+    assert.equal(secondCaptureRun.status, 0, secondCaptureRun.stderr || secondCaptureRun.stdout);
+    assert.equal(secondCaptureRun.stdout, firstCaptureRun.stdout, 'capture metadata must be byte-stable');
+    const capture = JSON.parse(firstCaptureRun.stdout);
+    assert.equal(capture.schema, 'shader_forge.spatial_capture_sample');
+    assert.equal(capture.schemaVersion, 1);
+    assert.deepEqual(capture.attachment, { id: 'weapon.rifle.mk1.humanoid' });
+    assert.equal(capture.phase, 'idle');
+    assert.equal(capture.normalizedTime, 0.5);
+    assert.deepEqual(capture.renderGeometryKinds, ['authored_procgeo_box', 'posed_bone_prisms']);
+    assert.deepEqual(Object.keys(capture.bounds), ['character', 'item', 'combined']);
+    for (const [name, bounds] of Object.entries(capture.bounds)) {
+      assert.deepEqual(Object.keys(bounds), ['min', 'max', 'center'], `${name} bounds keys`);
+      assert.ok([...bounds.min, ...bounds.max, ...bounds.center].every(Number.isFinite), `${name} bounds finite`);
+      bounds.min.forEach((value, index) => {
+        assert.ok(value <= bounds.max[index], `${name} bounds ordered`);
+        assert.ok(Math.abs(bounds.center[index] - (value + bounds.max[index]) / 2) <= 1e-12, `${name} center`);
+      });
+    }
+    capture.bounds.combined.min.forEach((value, index) => {
+      assert.ok(value <= capture.bounds.character.min[index], `combined contains character min ${index}`);
+      assert.ok(value <= capture.bounds.item.min[index], `combined contains item min ${index}`);
+      assert.ok(capture.bounds.combined.max[index] >= capture.bounds.character.max[index], `combined contains character max ${index}`);
+      assert.ok(capture.bounds.combined.max[index] >= capture.bounds.item.max[index], `combined contains item max ${index}`);
+    });
+    assert.deepEqual(Object.keys(capture.lighting), [
+      'keyDirection', 'keyIntensity', 'fillDirection', 'fillIntensity', 'ambientIntensity', 'exposure',
+    ]);
+    assert.ok(Math.abs(Math.hypot(...capture.lighting.keyDirection) - 1) <= 1e-12);
+    assert.ok(Math.abs(Math.hypot(...capture.lighting.fillDirection) - 1) <= 1e-12);
+    assert.ok(capture.lighting.keyIntensity > 0);
+    assert.ok(capture.lighting.fillIntensity > 0);
+    assert.ok(capture.lighting.ambientIntensity > 0);
+    assert.equal(capture.lighting.exposure, 1);
+    const captureIds = ['close_front', 'close_side', 'close_top', 'close_three_quarter'];
+    assert.deepEqual(capture.cameras.map((camera) => camera.id), captureIds);
+    assert.deepEqual(Object.keys(capture.captures), captureIds);
+    const viewBytes = [];
+    for (const camera of capture.cameras) {
+      assert.deepEqual(Object.keys(camera), [
+        'id', 'position', 'target', 'up', 'fovDegrees', 'nearMeters', 'farMeters', 'widthPx', 'heightPx',
+      ]);
+      assert.ok([...camera.position, ...camera.target, ...camera.up].every(Number.isFinite), `${camera.id} finite`);
+      assert.ok(Math.abs(Math.hypot(...camera.up) - 1) <= 1e-12, `${camera.id} unit up`);
+      assert.equal(camera.fovDegrees, 35);
+      assert.ok(camera.nearMeters > 0);
+      assert.ok(camera.farMeters > camera.nearMeters);
+      assert.equal(camera.widthPx, 192);
+      assert.equal(camera.heightPx, 160);
+      assert.equal(capture.captures[camera.id], `${camera.id}.png`);
+      const firstPng = readCapturePng(path.join(firstCaptureDir, capture.captures[camera.id]));
+      const secondPng = readCapturePng(path.join(secondCaptureDir, capture.captures[camera.id]));
+      assert.equal(firstPng.width, 192);
+      assert.equal(firstPng.height, 160);
+      assert.deepEqual(secondPng.bytes, firstPng.bytes, `${camera.id} capture must be deterministic`);
+      assertRenderedCapture(firstPng, camera.id);
+      viewBytes.push(firstPng.bytes.toString('base64'));
+    }
+    assert.equal(new Set(viewBytes).size, 4, 'the four camera views must produce distinct frames');
+
+    const existingCaptureBytes = fs.readFileSync(path.join(firstCaptureDir, 'close_front.png'));
+    const existingCaptureRun = invoke(captureArgs(firstCaptureDir));
+    assert.notEqual(existingCaptureRun.status, 0, 'capture must not overwrite an existing output directory');
+    assert.equal(existingCaptureRun.stdout, '');
+    assert.match(existingCaptureRun.stderr, /must not already exist/);
+    assert.deepEqual(
+      fs.readFileSync(path.join(firstCaptureDir, 'close_front.png')),
+      existingCaptureBytes,
+      'failed capture must preserve existing output',
+    );
+
+    for (const [argumentsList, expectedError, outputDir] of [
+      [['capture-sample'], /capture-sample/, null],
+      [captureArgs(path.join(tempRoot, 'capture bad flag')).concat('--widht', '192'), /unknown or duplicate capture-sample flag/, path.join(tempRoot, 'capture bad flag')],
+      [captureArgs(path.join(tempRoot, 'capture duplicate')).concat('--width', '192'), /unknown or duplicate capture-sample flag/, path.join(tempRoot, 'capture duplicate')],
+      [captureArgs(path.join(tempRoot, 'capture low resolution')).map((value) => value === '192' ? '63' : value), /width must be an integer/, path.join(tempRoot, 'capture low resolution')],
+      [withContent([
+        'capture-sample', '--animation-root', fixtureRoot, '--attachment', 'weapon.rifle.mk1.humanoid',
+        '--phase', 'unknown', '--normalized-time', '0.5', '--output-dir', path.join(tempRoot, 'capture unknown phase'),
+        '--width', '192', '--height', '160',
+      ]), /Unknown motion-envelope phase/, path.join(tempRoot, 'capture unknown phase')],
+      [captureArgs(path.join(tempRoot, 'missing capture parent', 'capture')), /output parent must be an existing directory/, path.join(tempRoot, 'missing capture parent', 'capture')],
+    ]) {
+      const failedCapture = invoke(argumentsList);
+      assert.notEqual(failedCapture.status, 0, `capture must fail: ${argumentsList.join(' ')}`);
+      assert.equal(failedCapture.stdout, '');
+      assert.match(failedCapture.stderr, expectedError);
+      if (outputDir) assert.equal(fs.existsSync(outputDir), false, 'failed capture must not leave output');
+    }
+
     const reachableRoot = path.join(tempRoot, 'reachable IK animation');
     fs.cpSync(fixtureRoot, reachableRoot, { recursive: true });
     const reachableAttachmentPath = path.join(
@@ -1005,6 +1175,15 @@ try {
     assert.notEqual(zeroLength.status, 0);
     assert.equal(zeroLength.stdout, '');
     assert.match(zeroLength.stderr, /segment length is zero or non-finite/);
+    const zeroLengthCaptureDir = path.join(tempRoot, 'capture zero length');
+    const zeroLengthCapture = invoke(withContent([
+      'capture-sample', '--animation-root', zeroLengthRoot,
+      '--attachment', 'weapon.rifle.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5',
+      '--output-dir', zeroLengthCaptureDir, '--width', '128', '--height', '128',
+    ]));
+    assert.notEqual(zeroLengthCapture.status, 0, 'degenerate evaluated capture geometry must fail');
+    assert.equal(zeroLengthCapture.stdout, '');
+    assert.equal(fs.existsSync(zeroLengthCaptureDir), false, 'degenerate capture must not leave output');
 
     const oneHandRoot = path.join(tempRoot, 'one hand animation');
     fs.cpSync(fixtureRoot, oneHandRoot, { recursive: true });
@@ -1032,6 +1211,16 @@ try {
       'not_review_evidence',
       'item_mesh_unavailable',
     ]);
+    const unavailableItemCaptureDir = path.join(tempRoot, 'capture unavailable item');
+    const unavailableItemCapture = invoke(withContent([
+      'capture-sample', '--animation-root', oneHandRoot,
+      '--attachment', 'weapon.pistol.mk1.humanoid', '--phase', 'idle', '--normalized-time', '0.5',
+      '--output-dir', unavailableItemCaptureDir, '--width', '128', '--height', '128',
+    ]));
+    assert.notEqual(unavailableItemCapture.status, 0, 'capture requires authored render geometry');
+    assert.equal(unavailableItemCapture.stdout, '');
+    assert.match(unavailableItemCapture.stderr, /item visual geometry is unavailable/);
+    assert.equal(fs.existsSync(unavailableItemCaptureDir), false, 'unavailable item capture must not leave output');
 
     for (const [argumentsList, expectedError] of [
       [['evaluate-sample'], /evaluate-sample/],
@@ -1365,6 +1554,7 @@ console.log('- Verified byte-stable complete cooking and invalid-input output pr
 console.log('- Verified rest-pose geometry, fixture invariants, and parent-rotated composition');
 console.log('- Verified authored visual-box evidence from DataFoundation procgeo in rest and sample');
 console.log('- Verified v1 pre-IK compatibility and v2 sampled two-bone IK truth');
+console.log('- Verified deterministic depth-tested native capture PNGs and strict output failure behavior');
 console.log('- Verified CLI strict flags, help, and build-first behavior');
 assert.equal(nativeChecked, true, 'native spatial execution is required');
 console.log('- Compiled and ran shader_forge_spatial against isolated fixtures');

@@ -17,6 +17,7 @@ add_executable(
 add_executable(
   shader_forge_spatial
   src/spatial_authoring_tool.cpp
+  src/spatial_capture.cpp
   src/animation_system.cpp
   src/data_foundation.cpp
 )
