@@ -27,25 +27,36 @@ const service = await startEngineSessiond({
 
 try {
   assert.match(shellApp, /SceneEditorView/);
-  assert.match(sceneEditorView, /Authoring/);
-  assert.match(sceneEditorView, /Review/);
-  assert.match(sceneEditorView, /Save Scene/);
-  assert.match(sceneEditorView, /Save Prefab/);
+  assert.match(sceneEditorView, /handleModeChange\('play'\)/);
+  assert.match(sceneEditorView, /Verify/);
+  assert.match(sceneEditorView, /Verify mode is read-only\. Unsaved changes are still here\./);
+  assert.doesNotMatch(sceneEditorView, /Unsaved authoring edits were discarded/);
+  assert.match(sceneEditorView, /confirmDiscardChanges/);
+  assert.match(sceneEditorView, /window\.confirm/);
+  assert.match(sceneEditorView, /Save world/);
+  assert.match(sceneEditorView, /Save object/);
   assert.match(sceneEditorView, /Reload/);
-  assert.match(sceneEditorView, /Duplicate Scene/);
-  assert.match(sceneEditorView, /World Outliner/);
-  assert.match(sceneEditorView, /Run Scene/);
-  assert.match(sceneEditorView, /Build \+ Run/);
-  assert.match(sceneEditorView, /Use As Primary/);
-  assert.match(sceneEditorView, /Add Entity/);
+  assert.match(sceneEditorView, /Duplicate world/);
+  assert.match(sceneEditorView, /aria-label="Worlds"/);
+  assert.match(sceneEditorView, /async function handlePlay/);
+  assert.match(sceneEditorView, /sceneDirty && !\(await handleSaveScene\(\)\)/);
+  assert.match(sceneEditorView, /prefabDirty && !\(await handleSavePrefab\(\)\)/);
+  assert.match(sceneEditorView, /onClick=\{\(\) => void handlePlay\(\)\}/);
+  assert.match(sceneEditorView, /Run existing build/);
+  assert.match(sceneEditorView, /Use for world/);
+  assert.match(sceneEditorView, /Add object/);
   assert.match(sceneEditorView, /Duplicate/);
   assert.match(sceneEditorView, /Delete/);
-  assert.match(sceneEditorView, /Add To Scene/);
+  assert.match(sceneEditorView, /Add to world/);
   assert.match(sceneEditorView, /Position/);
   assert.match(sceneEditorView, /Rotation/);
   assert.match(sceneEditorView, /Scale/);
-  assert.match(sceneEditorView, /Render procgeo/);
-  assert.match(sceneEditorView, /Effect asset/);
+  assert.match(sceneEditorView, /Advanced settings/);
+  assert.match(sceneEditorView, /Geometry asset/);
+  assert.match(sceneEditorView, /Effect event/);
+  assert.match(sceneEditorView, /Object ID/);
+  assert.match(sceneEditorView, /role="separator"/);
+  assert.match(sceneEditorView, /role="tablist"/);
   assert.match(sceneAuthoringSource, /formatSceneAssetDocument/);
   assert.match(sceneAuthoringSource, /formatPrefabAssetDocument/);
   assert.match(sceneAuthoringSource, /\[entity\./);
@@ -143,7 +154,7 @@ try {
 
   console.log('Engine scene authoring smoke passed.');
   console.log(`- Started engine_sessiond at ${service.baseUrl}`);
-  console.log('- Verified the shell Scene workspace exposes authoring/review, explicit run controls, save/reload, outliner, inspector, prefab assignment, and prefab component editing surfaces');
+  console.log('- Verified the World workspace exposes draft-safe Edit/Verify, one-click Play, guarded navigation, plain-language object tools, and collapsed advanced settings');
   console.log('- Verified deterministic scene, prefab, entity, transform, and prefab-component assets can be written through engine_sessiond inside a session root');
 } finally {
   await service.close();

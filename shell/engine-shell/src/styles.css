@@ -1802,6 +1802,29 @@ pre {
   min-height: clamp(420px, 62vh, 760px);
 }
 
+.scene-disclosure {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.scene-disclosure > summary {
+  width: fit-content;
+  padding: 8px 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.scene-disclosure__body {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.scene-disclosure--nested {
+  border-top: 0;
+}
+
 .scene-card__header {
   display: flex;
   align-items: flex-start;
