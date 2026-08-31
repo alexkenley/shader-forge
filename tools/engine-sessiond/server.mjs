@@ -451,6 +451,21 @@ function assertSemanticMutationLease(coordinationStore, operation, body, request
   });
 }
 
+function validateSemanticOperationMutation(
+  sceneAssetService,
+  spatialAttachmentService,
+  mutation,
+  authentication,
+) {
+  if (mutation?.context?.type === 'scene_asset') {
+    return sceneAssetService.validateOperationMutation(mutation, authentication);
+  }
+  if (mutation?.context?.type === 'spatial_attachment') {
+    return spatialAttachmentService.validateOperationMutation(mutation, authentication);
+  }
+  return undefined;
+}
+
 function normalizeFileWriteRequest(body = {}) {
   return {
     sessionId: requireTrimmedString(body.sessionId, 'sessionId'),
@@ -1087,9 +1102,16 @@ function createRouter({
               authorizeMutation: (operation) => (
                 assertSemanticMutationLease(coordinationStore, operation, body, request)
               ),
-              validateMutation: (mutation) => sceneAssetService.validateOperationMutation(mutation, {
-                agentId: body.agentId, leaseId: body.leaseId, credential: readAgentCredential(request),
-              }),
+              validateMutation: (mutation) => validateSemanticOperationMutation(
+                sceneAssetService,
+                spatialAttachmentService,
+                mutation,
+                {
+                  agentId: body.agentId,
+                  leaseId: body.leaseId,
+                  credential: readAgentCredential(request),
+                },
+              ),
             },
           );
           const approval = approvalStore.resolveApproval(approvalId, {
@@ -1274,6 +1296,20 @@ function createRouter({
         return;
       }
 
+      const operationValidationMatch = request.method === 'POST'
+        ? pathname.match(/^\/api\/operations\/([^/]+)\/validate$/)
+        : null;
+      if (operationValidationMatch) {
+        const operationId = decodeURIComponent(operationValidationMatch[1]);
+        const body = await readJsonBody(request);
+        const operation = await spatialAttachmentService.validateOperation(operationId, {
+          actor: requireOperationActor(body?.actor),
+          samples: body?.samples,
+        });
+        writeJson(response, 200, { operation });
+        return;
+      }
+
       const operationActionMatch = request.method === 'POST'
         ? pathname.match(/^\/api\/operations\/([^/]+)\/(approve|reject|apply|undo)$/)
         : null;
@@ -1321,9 +1357,16 @@ function createRouter({
               authorize: (operationRecord) => (
                 assertSemanticMutationLease(coordinationStore, operationRecord, body, request)
               ),
-              validateMutation: (mutation) => sceneAssetService.validateOperationMutation(mutation, {
-                agentId: body.agentId, leaseId: body.leaseId, credential: readAgentCredential(request),
-              }),
+              validateMutation: (mutation) => validateSemanticOperationMutation(
+                sceneAssetService,
+                spatialAttachmentService,
+                mutation,
+                {
+                  agentId: body.agentId,
+                  leaseId: body.leaseId,
+                  credential: readAgentCredential(request),
+                },
+              ),
             });
             writeJson(response, 200, { operation, codeTrust });
             return;
@@ -1333,9 +1376,16 @@ function createRouter({
             authorize: (operationRecord) => (
               assertSemanticMutationLease(coordinationStore, operationRecord, body, request)
             ),
-            validateMutation: (mutation) => sceneAssetService.validateOperationMutation(mutation, {
-              agentId: body.agentId, leaseId: body.leaseId, credential: readAgentCredential(request),
-            }),
+            validateMutation: (mutation) => validateSemanticOperationMutation(
+              sceneAssetService,
+              spatialAttachmentService,
+              mutation,
+              {
+                agentId: body.agentId,
+                leaseId: body.leaseId,
+                credential: readAgentCredential(request),
+              },
+            ),
           });
         } else {
           const current = operationStore.getOperation(operationId);
@@ -1345,9 +1395,16 @@ function createRouter({
             authorize: (operationRecord) => (
               assertSemanticMutationLease(coordinationStore, operationRecord, body, request)
             ),
-            validateMutation: (mutation) => sceneAssetService.validateOperationMutation(mutation, {
-              agentId: body.agentId, leaseId: body.leaseId, credential: readAgentCredential(request),
-            }),
+            validateMutation: (mutation) => validateSemanticOperationMutation(
+              sceneAssetService,
+              spatialAttachmentService,
+              mutation,
+              {
+                agentId: body.agentId,
+                leaseId: body.leaseId,
+                credential: readAgentCredential(request),
+              },
+            ),
           });
         }
         writeJson(response, 200, { operation });

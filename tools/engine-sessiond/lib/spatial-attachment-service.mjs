@@ -24,6 +24,10 @@ const restEvaluationSchema = 'shader_forge.spatial_attachment_evaluation';
 const restEvaluationMaxBytes = 8 * 1024 * 1024;
 const sampledLayerMaxCount = 8;
 const sampledNormalizedTimePattern = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+const operationValidationMaxSamples = 64;
+const operationValidationMaxPhaseLength = 128;
+const operationValidationSampleKeys = new Set(['phase', 'normalizedTime']);
+const spatialCommandTimeoutMs = 10_000;
 const primaryAttachmentLayer = 'primary_attachment';
 const secondaryHandIkLayer = 'secondary_hand_ik';
 const dataFoundationRelativePath = 'data/foundation/engine-data-layout.toml';
@@ -253,6 +257,56 @@ function normalizeEvaluateSampleRequest(request = {}) {
   };
 }
 
+function normalizeOperationValidationSamples(value) {
+  const samples = value === undefined ? [] : value;
+  if (!Array.isArray(samples) || samples.length > operationValidationMaxSamples) {
+    throw serviceError(
+      400,
+      'spatial_request_invalid',
+      `samples must be an array of at most ${operationValidationMaxSamples} entries.`,
+    );
+  }
+  const seen = new Set();
+  return samples.map((sample, index) => {
+    if (
+      !isPlainObject(sample)
+      || Object.keys(sample).length !== operationValidationSampleKeys.size
+      || [...operationValidationSampleKeys].some(
+        (key) => !Object.prototype.hasOwnProperty.call(sample, key),
+      )
+    ) {
+      throw serviceError(
+        400,
+        'spatial_request_invalid',
+        `samples[${index}] must contain only phase and normalizedTime.`,
+      );
+    }
+    const phase = typeof sample.phase === 'string' ? sample.phase.trim() : '';
+    if (!phase || phase.length > operationValidationMaxPhaseLength) {
+      throw serviceError(400, 'spatial_request_invalid', `samples[${index}].phase is invalid.`);
+    }
+    if (
+      typeof sample.normalizedTime !== 'number'
+      || !Number.isFinite(sample.normalizedTime)
+      || Object.is(sample.normalizedTime, -0)
+      || sample.normalizedTime < 0
+      || sample.normalizedTime > 1
+    ) {
+      throw serviceError(
+        400,
+        'spatial_request_invalid',
+        `samples[${index}].normalizedTime is invalid.`,
+      );
+    }
+    const duplicateKey = `${phase}\u0000${sample.normalizedTime}`;
+    if (seen.has(duplicateKey)) {
+      throw serviceError(400, 'spatial_request_invalid', `samples[${index}] is duplicated.`);
+    }
+    seen.add(duplicateKey);
+    return { phase, normalizedTime: sample.normalizedTime };
+  });
+}
+
 function boundedDiagnostic(error) {
   const diagnostic = typeof error?.diagnostic === 'string' && error.diagnostic.trim()
     ? error.diagnostic.trim()
@@ -270,6 +324,82 @@ function validationFailure(code, message, error) {
 
 function evaluationFailure(code, message, error) {
   return serviceError(422, code, message, { diagnostic: boundedDiagnostic(error) });
+}
+
+function emptyValidationFindings() {
+  return {
+    jointLimitViolationCount: 0,
+    overlapCount: 0,
+    toleranceFailureCount: 0,
+  };
+}
+
+function summarizeValidationSample(evaluation, sample) {
+  return {
+    ...sample,
+    jointLimitViolationCount: evaluation.diagnostics.jointLimits.status === 'available'
+      ? evaluation.diagnostics.jointLimits.violationCount
+      : 0,
+    overlapCount: evaluation.diagnostics.clipping.status === 'available'
+      ? evaluation.diagnostics.clipping.overlapCount
+      : 0,
+    toleranceFailureCount: evaluation.diagnostics.secondaryIk.status === 'applied'
+      && evaluation.diagnostics.secondaryIk.withinTolerance === false
+      ? 1
+      : 0,
+  };
+}
+
+function validationFindings(samples) {
+  return samples.reduce((findings, sample) => ({
+    jointLimitViolationCount:
+      findings.jointLimitViolationCount + sample.jointLimitViolationCount,
+    overlapCount: findings.overlapCount + sample.overlapCount,
+    toleranceFailureCount: findings.toleranceFailureCount + sample.toleranceFailureCount,
+  }), emptyValidationFindings());
+}
+
+function isControlledOperationValidationFailure(error) {
+  return error?.statusCode === 422 && [
+    'spatial_candidate_invalid',
+    'spatial_candidate_source_missing',
+    'spatial_candidate_evaluation_invalid',
+    'spatial_sample_evaluation_invalid',
+  ].includes(error?.code);
+}
+
+function validationSummary(proposedRevision, samples, error = null) {
+  return {
+    schemaVersion: 1,
+    status: error ? 'failed' : 'completed',
+    proposedRevision,
+    sampleCount: samples.length,
+    findings: validationFindings(samples),
+    samples,
+    ...(error ? { error: { code: error.code, message: error.message } } : {}),
+  };
+}
+
+function expectedSpatialResourceKeys(...attachments) {
+  return [...new Set(attachments
+    .filter(Boolean)
+    .map((attachment) => `spatial/attachment/${attachment.id.toLowerCase()}`))].sort();
+}
+
+function assertSpatialOperationContext(context, subjectAttachment, resourceAttachments) {
+  const subjectId = subjectAttachment?.id?.toLowerCase() || '';
+  const resourceKeys = expectedSpatialResourceKeys(...resourceAttachments);
+  if (
+    context?.type !== 'spatial_attachment'
+    || context.subjectId !== subjectId
+    || JSON.stringify(context.resourceKeys) !== JSON.stringify(resourceKeys)
+  ) {
+    throw serviceError(
+      409,
+      'spatial_operation_context_mismatch',
+      'Spatial operation context does not match native attachment truth.',
+    );
+  }
 }
 
 function isPlainObject(value) {
@@ -1373,7 +1503,12 @@ async function runSpatialJsonCommand(args, unavailableCode, toolName) {
     const { stdout } = await execFileAsync(
       binaryPath,
       args,
-      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, windowsHide: true },
+      {
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: spatialCommandTimeoutMs,
+        windowsHide: true,
+      },
     );
     return JSON.parse(stdout);
   } catch (error) {
@@ -1389,11 +1524,22 @@ async function runSpatialJsonCommand(args, unavailableCode, toolName) {
 }
 
 async function defaultValidateAnimationRoot(animationRoot) {
-  return runSpatialJsonCommand(
-    ['validate', '--animation-root', animationRoot],
-    'spatial_validator_unavailable',
-    'validator',
-  );
+  try {
+    return await runSpatialJsonCommand(
+      ['validate', '--animation-root', animationRoot],
+      'spatial_validator_unavailable',
+      'validator',
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw serviceError(
+        500,
+        'spatial_validator_protocol_error',
+        'Spatial validator returned malformed JSON.',
+      );
+    }
+    throw error;
+  }
 }
 
 async function defaultEvaluateRestAttachment(
@@ -1630,6 +1776,210 @@ export class SpatialAttachmentService {
     }
   }
 
+  async validateOperation(operationId, { actor, samples } = {}) {
+    const resolvedActor = normalizeActor(actor);
+    const requestedSamples = normalizeOperationValidationSamples(samples);
+    const candidate = await this.#operationStore.getSpatialValidationCandidate(operationId);
+    const parsedPath = parseAttachmentPath(candidate.path);
+    if (textContentRevision(candidate.proposedContent) !== candidate.proposedRevision) {
+      throw serviceError(
+        409,
+        'spatial_operation_revision_mismatch',
+        'Spatial operation proposed content does not match its revision.',
+      );
+    }
+
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-validate-'));
+    try {
+      const staged = await this.#stageAuthoredSpatialInputs(candidate.sessionId, temporaryRoot);
+      const stagedAttachmentPath = path.join(staged.animationRoot, parsedPath.stagedSource);
+      const baselineContent = await readOptionalUtf8(stagedAttachmentPath);
+      const baselineRevision = baselineContent === null
+        ? MISSING_FILE_REVISION
+        : textContentRevision(baselineContent);
+      if (baselineRevision !== candidate.baseRevision) {
+        throw revisionConflict(candidate.path, candidate.baseRevision, baselineRevision);
+      }
+
+      const completedSamples = [];
+      let controlledFailure = null;
+      try {
+        const baseline = await this.#validateStagedAnimationRoot(staged.animationRoot, 'baseline');
+        const previousAttachment = baselineContent === null
+          ? null
+          : requiredProfileIdentity(
+            profileBySource(baseline, parsedPath.stagedSource),
+            'spatial_baseline_source_missing',
+            'Validator did not return the authored attachment source.',
+          );
+
+        await fs.writeFile(stagedAttachmentPath, candidate.proposedContent, 'utf8');
+        const proposed = await this.#validateStagedAnimationRoot(staged.animationRoot, 'candidate');
+        const proposedAttachment = requiredProfileIdentity(
+          profileBySource(proposed, parsedPath.stagedSource),
+          'spatial_candidate_source_missing',
+          'Validator did not return the proposed attachment source.',
+        );
+        assertSpatialOperationContext(
+          candidate.context,
+          proposedAttachment,
+          [previousAttachment, proposedAttachment],
+        );
+
+        await this.#evaluateStagedOperationAttachment(staged, proposedAttachment);
+        for (const sample of requestedSamples) {
+          const evaluation = await this.#evaluateStagedOperationSample(
+            staged,
+            proposedAttachment,
+            sample.phase,
+            sample.normalizedTime,
+          );
+          completedSamples.push(summarizeValidationSample(evaluation, sample));
+        }
+      } catch (error) {
+        if (!isControlledOperationValidationFailure(error)) throw error;
+        controlledFailure = error;
+      }
+
+      await this.#assertSpatialSourcesUnchanged(
+        candidate.sessionId,
+        staged.sourceRevisions,
+        candidate.path,
+      );
+      return await this.#operationStore.recordSpatialValidation(candidate.id, {
+        actor: resolvedActor,
+        expectedProposedRevision: candidate.proposedRevision,
+        expectedUpdatedAt: candidate.updatedAt,
+        validation: validationSummary(
+          candidate.proposedRevision,
+          completedSamples,
+          controlledFailure,
+        ),
+      });
+    } finally {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
+  async validateOperationMutation(mutation, { agentId, credential, leaseId } = {}) {
+    if (mutation?.context?.type !== 'spatial_attachment') return;
+    const parsedPath = parseAttachmentPath(mutation.path);
+    if (!['apply', 'undo'].includes(mutation.phase)) {
+      throw serviceError(
+        409,
+        'spatial_operation_context_mismatch',
+        'Spatial operation mutation phase is invalid.',
+      );
+    }
+    const resolvedAgentId = requiredString(agentId, 'agentId');
+    const resolvedCredential = requiredString(credential, 'Agent credential');
+    const resolvedLeaseId = requiredString(leaseId, 'leaseId');
+    const leaseRequest = {
+      sessionId: requiredString(mutation.sessionId, 'sessionId'),
+      agentId: resolvedAgentId,
+      credential: resolvedCredential,
+      leaseId: resolvedLeaseId,
+      resources: mutation.context.resourceKeys,
+    };
+    this.#coordinationStore.assertGrantedWriteLease(leaseRequest);
+
+    const isUndo = mutation.phase === 'undo';
+    const expectedCurrentRevision = isUndo ? mutation.appliedRevision : mutation.baseRevision;
+    if (
+      !expectedCurrentRevision
+      || (expectedCurrentRevision !== MISSING_FILE_REVISION
+        && !revisionPattern.test(expectedCurrentRevision))
+    ) {
+      throw serviceError(
+        409,
+        'spatial_operation_revision_mismatch',
+        'Spatial operation is missing its expected current revision.',
+      );
+    }
+    if (
+      !revisionPattern.test(mutation.proposedRevision)
+      || (isUndo && mutation.appliedRevision !== mutation.proposedRevision)
+      || (!isUndo && (
+        typeof mutation.content !== 'string'
+        || textContentRevision(mutation.content) !== mutation.proposedRevision
+      ))
+      || (isUndo && (
+        (mutation.baseRevision === MISSING_FILE_REVISION && mutation.content !== null)
+        || (mutation.baseRevision !== MISSING_FILE_REVISION && (
+          typeof mutation.content !== 'string'
+          || textContentRevision(mutation.content) !== mutation.baseRevision
+        ))
+      ))
+    ) {
+      throw serviceError(
+        409,
+        'spatial_operation_revision_mismatch',
+        'Spatial operation mutation content does not match its revisions.',
+      );
+    }
+
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-spatial-mutation-'));
+    try {
+      const staged = await this.#stageAuthoredSpatialInputs(mutation.sessionId, temporaryRoot);
+      const stagedAttachmentPath = path.join(staged.animationRoot, parsedPath.stagedSource);
+      const currentContent = await readOptionalUtf8(stagedAttachmentPath);
+      const currentRevision = currentContent === null
+        ? MISSING_FILE_REVISION
+        : textContentRevision(currentContent);
+      if (currentRevision !== expectedCurrentRevision) {
+        throw revisionConflict(mutation.path, expectedCurrentRevision, currentRevision);
+      }
+
+      const current = await this.#validateStagedAnimationRoot(staged.animationRoot, 'baseline');
+      const currentAttachment = currentContent === null
+        ? null
+        : requiredProfileIdentity(
+          profileBySource(current, parsedPath.stagedSource),
+          'spatial_baseline_source_missing',
+          'Validator did not return the current attachment source.',
+        );
+      if (mutation.content === null) {
+        await fs.rm(stagedAttachmentPath, { force: true });
+      } else {
+        await fs.writeFile(stagedAttachmentPath, mutation.content, 'utf8');
+      }
+
+      const resulting = await this.#validateStagedAnimationRoot(staged.animationRoot, 'candidate');
+      const resultingProfile = profileBySource(resulting, parsedPath.stagedSource);
+      if (mutation.content === null && resultingProfile) {
+        throw serviceError(
+          500,
+          'spatial_validator_protocol_error',
+          'Spatial validator returned a removed attachment source.',
+        );
+      }
+      const resultingAttachment = mutation.content === null
+        ? null
+        : requiredProfileIdentity(
+          resultingProfile,
+          'spatial_candidate_source_missing',
+          'Validator did not return the mutation attachment source.',
+        );
+      assertSpatialOperationContext(
+        mutation.context,
+        isUndo ? currentAttachment : resultingAttachment,
+        [currentAttachment, resultingAttachment],
+      );
+      if (resultingAttachment) {
+        await this.#evaluateStagedOperationAttachment(staged, resultingAttachment);
+      }
+
+      await this.#assertSpatialSourcesMatchSnapshot(
+        mutation.sessionId,
+        staged.sourceRevisions,
+        mutation.path,
+      );
+      this.#coordinationStore.assertGrantedWriteLease(leaseRequest);
+    } finally {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
   async evaluateAttachment(request = {}) {
     const normalized = normalizeEvaluateRequest(request);
     let initial;
@@ -1776,6 +2126,70 @@ export class SpatialAttachmentService {
       };
     } finally {
       await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
+  async #validateStagedAnimationRoot(animationRoot, role) {
+    try {
+      return publicValidation(await this.#validateAnimationRoot(animationRoot));
+    } catch (error) {
+      if (
+        error?.code === 'spatial_validator_unavailable'
+        || error?.code === 'spatial_validator_protocol_error'
+      ) {
+        throw error;
+      }
+      if (isEvaluatorInfrastructureError(error)) {
+        throw serviceError(
+          500,
+          'spatial_validator_infrastructure_error',
+          'Spatial validator could not complete.',
+        );
+      }
+      throw serviceError(
+        422,
+        role === 'candidate' ? 'spatial_candidate_invalid' : 'spatial_baseline_invalid',
+        role === 'candidate'
+          ? 'Proposed spatial attachment is invalid.'
+          : 'Authored spatial baseline is invalid.',
+      );
+    }
+  }
+
+  async #evaluateStagedOperationAttachment(staged, attachment) {
+    try {
+      return await this.#evaluateStagedAttachment(staged, attachment, 'candidate');
+    } catch (error) {
+      if (error?.code === 'spatial_evaluator_unavailable') {
+        throw serviceError(503, error.code, 'Spatial evaluator is unavailable.');
+      }
+      if (!error?.diagnostic) throw error;
+      throw serviceError(
+        Number.isInteger(error.statusCode) ? error.statusCode : 500,
+        typeof error.code === 'string' ? error.code : 'spatial_evaluator_infrastructure_error',
+        error instanceof Error ? error.message : 'Spatial evaluator could not complete.',
+      );
+    }
+  }
+
+  async #evaluateStagedOperationSample(staged, attachment, phase, normalizedTime) {
+    try {
+      return await this.#evaluateStagedSampledAttachment(
+        staged,
+        attachment,
+        phase,
+        normalizedTime,
+      );
+    } catch (error) {
+      if (error?.code === 'spatial_evaluator_unavailable') {
+        throw serviceError(503, error.code, 'Spatial evaluator is unavailable.');
+      }
+      if (!error?.diagnostic) throw error;
+      throw serviceError(
+        Number.isInteger(error.statusCode) ? error.statusCode : 500,
+        typeof error.code === 'string' ? error.code : 'spatial_evaluator_infrastructure_error',
+        error instanceof Error ? error.message : 'Spatial evaluator could not complete.',
+      );
     }
   }
 
@@ -2035,17 +2449,21 @@ export class SpatialAttachmentService {
 
   async #assertSpatialSourcesUnchanged(sessionId, expected, selectedPath) {
     await this.#sessionStore.runSerializedFileMutation(async () => {
-      const actual = publicSourceRevisions((await this.#readSpatialSources(sessionId)).sources);
-      const difference = firstSourceRevisionDifference(expected, actual);
-      if (!difference) return;
-      if (difference.path === selectedPath) {
-        throw revisionConflict(
-          difference.path,
-          difference.expectedRevision,
-          difference.actualRevision,
-        );
-      }
-      throw evaluationInputsChanged(difference);
+      await this.#assertSpatialSourcesMatchSnapshot(sessionId, expected, selectedPath);
     }, { sessionId });
+  }
+
+  async #assertSpatialSourcesMatchSnapshot(sessionId, expected, selectedPath) {
+    const actual = publicSourceRevisions((await this.#readSpatialSources(sessionId)).sources);
+    const difference = firstSourceRevisionDifference(expected, actual);
+    if (!difference) return;
+    if (difference.path === selectedPath) {
+      throw revisionConflict(
+        difference.path,
+        difference.expectedRevision,
+        difference.actualRevision,
+      );
+    }
+    throw evaluationInputsChanged(difference);
   }
 }

@@ -138,7 +138,7 @@ The next MCP widening requires an engine-owned coordinated context for each addi
 
 ## Planned Spatial Authoring Adapter
 
-Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). Exact typed rest/sample attachment reads and the first preview/review/apply/undo operation are implemented through `sf-mcp`; rendered validation, capture, immutable review packets, and their typed resources remain deferred. `sf-mcp` remains adapter-only.
+Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). Exact typed rest/sample attachment reads and preview/review/apply/undo are implemented through `sf-mcp`; the sessiond operation-validation route now exists, while its thin MCP adapter, capture, immutable review packets, and their typed resources remain deferred. `sf-mcp` remains adapter-only.
 
 Planned resources after that gate:
 

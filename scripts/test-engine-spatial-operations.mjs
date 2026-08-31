@@ -521,6 +521,15 @@ async function request(baseUrl, pathname, { method = 'GET', body, credential } =
   return { status: response.status, payload, headers: response.headers };
 }
 
+async function requestRawJson(baseUrl, pathname, body) {
+  const response = await fetch(new URL(pathname, baseUrl), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+  return { status: response.status, payload: await response.json() };
+}
+
 function assertStoreError(action, { statusCode, code }) {
   assert.throws(action, (error) => {
     assert.equal(error.statusCode, statusCode);
@@ -2276,6 +2285,158 @@ try {
   assert.equal('evaluation' in journal.operations[0], false);
   assert.equal('evaluation' in journal.operations[0].context, false);
 
+  const operationId = preview.payload.operation.id;
+  for (const [label, samples] of [
+    ['extra sample field', [{ phase: 'idle', normalizedTime: 0.5, extra: true }]],
+    ['duplicate sample', [
+      { phase: 'idle', normalizedTime: 0.5 },
+      { phase: 'idle', normalizedTime: 0.5 },
+    ]],
+    ['too many samples', Array.from({ length: 65 }, (_, index) => ({
+      phase: 'idle', normalizedTime: index / 64,
+    }))],
+    ['empty phase', [{ phase: '', normalizedTime: 0.5 }]],
+    ['string time', [{ phase: 'idle', normalizedTime: '0.5' }]],
+    ['out of range time', [{ phase: 'idle', normalizedTime: 2 }]],
+  ]) {
+    const invalidValidation = await request(
+      service.baseUrl,
+      `/api/operations/${operationId}/validate`,
+      { method: 'POST', body: { actor, samples } },
+    );
+    assert.equal(invalidValidation.status, 400, label);
+    assert.equal(invalidValidation.payload.code, 'spatial_request_invalid', label);
+  }
+  for (const [label, normalizedTime] of [['negative zero', '-0'], ['non-finite', '1e400']]) {
+    const invalidValidation = await requestRawJson(
+      service.baseUrl,
+      `/api/operations/${operationId}/validate`,
+      `{"actor":${JSON.stringify(actor)},"samples":[{"phase":"idle","normalizedTime":${normalizedTime}}]}`,
+    );
+    assert.equal(invalidValidation.status, 400, label);
+    assert.equal(invalidValidation.payload.code, 'spatial_request_invalid', label);
+  }
+
+  evaluateImpl = async () => {
+    const error = new Error('private evaluator path');
+    error.code = 'spatial_evaluator_unavailable';
+    error.stderr = 'private unavailable diagnostic';
+    throw error;
+  };
+  const unavailableValidation = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/validate`,
+    { method: 'POST', body: { actor } },
+  );
+  assert.equal(unavailableValidation.status, 503);
+  assert.equal(unavailableValidation.payload.code, 'spatial_evaluator_unavailable');
+  assert.equal(unavailableValidation.payload.error, 'Spatial evaluator is unavailable.');
+  assert.equal(JSON.stringify(unavailableValidation.payload).includes('private'), false);
+  evaluateImpl = normalEvaluate;
+
+  sampleEvaluateImpl = async () => {
+    const error = new Error('Unknown motion-envelope phase.');
+    error.stderr = 'private native sample diagnostic';
+    throw error;
+  };
+  const failedValidation = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/validate`,
+    { method: 'POST', body: { actor, samples: [{ phase: 'unknown', normalizedTime: 0.5 }] } },
+  );
+  assert.equal(failedValidation.status, 200);
+  assert.deepEqual(failedValidation.payload.operation.validation, {
+    schemaVersion: 1,
+    status: 'failed',
+    proposedRevision: textContentRevision(candidateContent),
+    sampleCount: 0,
+    findings: {
+      jointLimitViolationCount: 0,
+      overlapCount: 0,
+      toleranceFailureCount: 0,
+    },
+    samples: [],
+    error: {
+      code: 'spatial_sample_evaluation_invalid',
+      message: 'Authored spatial sample evaluation is invalid.',
+    },
+  });
+  assert.equal(JSON.stringify(failedValidation.payload).includes('private native'), false);
+  assert.equal('proposedContent' in failedValidation.payload.operation, false);
+
+  sampleEvaluateImpl = normalSampleEvaluate;
+  const validationRestCalls = evaluatedCalls.length;
+  const validationSampleCalls = sampledCalls.length;
+  const completedValidation = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/validate`,
+    {
+      method: 'POST',
+      body: {
+        actor,
+        samples: [
+          { phase: 'idle', normalizedTime: 0.25 },
+          { phase: 'aim', normalizedTime: 0.75 },
+        ],
+      },
+    },
+  );
+  assert.equal(completedValidation.status, 200);
+  assert.equal(evaluatedCalls.length, validationRestCalls + 1);
+  assert.equal(sampledCalls.length, validationSampleCalls + 2);
+  assert.deepEqual(completedValidation.payload.operation.validation, {
+    schemaVersion: 1,
+    status: 'completed',
+    proposedRevision: textContentRevision(candidateContent),
+    sampleCount: 2,
+    findings: {
+      jointLimitViolationCount: 0,
+      overlapCount: 0,
+      toleranceFailureCount: 0,
+    },
+    samples: [
+      {
+        phase: 'idle', normalizedTime: 0.25,
+        jointLimitViolationCount: 0, overlapCount: 0, toleranceFailureCount: 0,
+      },
+      {
+        phase: 'aim', normalizedTime: 0.75,
+        jointLimitViolationCount: 0, overlapCount: 0, toleranceFailureCount: 0,
+      },
+    ],
+  });
+  assert.equal('proposedContent' in completedValidation.payload.operation, false);
+  assert.equal(JSON.stringify(completedValidation.payload).includes(credential), false);
+
+  const validationBeforeDrift = completedValidation.payload.operation.validation;
+  const validatedEventsBeforeDrift = completedValidation.payload.operation.events
+    .filter((event) => event.type === 'validated').length;
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    await fs.writeFile(clipPath, 'name = "validation drift"\n', 'utf8');
+    return evaluation;
+  };
+  const driftedValidation = await request(
+    service.baseUrl,
+    `/api/operations/${operationId}/validate`,
+    { method: 'POST', body: { actor, samples: [{ phase: 'idle', normalizedTime: 0.5 }] } },
+  );
+  assert.equal(driftedValidation.status, 409);
+  assert.equal(driftedValidation.payload.code, 'spatial_evaluation_inputs_changed');
+  await fs.writeFile(clipPath, originalClipContent, 'utf8');
+  sampleEvaluateImpl = normalSampleEvaluate;
+  const operationAfterDrift = service.operationStore.getOperation(operationId);
+  assert.deepEqual(operationAfterDrift.validation, validationBeforeDrift);
+  assert.equal(
+    operationAfterDrift.events.filter((event) => event.type === 'validated').length,
+    validatedEventsBeforeDrift,
+  );
+
   const v2CandidateContent = attachmentContent('weapon.rifle.new', 2, 'two_hand');
   evaluateImpl = async (animationRoot, attachmentId) => (
     attachmentId === 'weapon.rifle.new'
@@ -2297,6 +2458,26 @@ try {
   assert.equal(mixedVersionPreview.status, 201);
   assert.equal(mixedVersionPreview.payload.evaluation.baseline.schemaVersion, 1);
   assert.equal(mixedVersionPreview.payload.evaluation.candidate.schemaVersion, 2);
+
+  sampleEvaluateImpl = async (_animationRoot, attachmentId, phase, normalizedTime) => (
+    sampledEvaluation(attachmentId, {
+      schemaVersion: 2,
+      mode: 'two_hand',
+      phase,
+      normalizedTime,
+      reachable: false,
+    })
+  );
+  const toleranceValidation = await request(
+    service.baseUrl,
+    `/api/operations/${mixedVersionPreview.payload.operation.id}/validate`,
+    { method: 'POST', body: { actor, samples: [{ phase: 'idle', normalizedTime: 0.5 }] } },
+  );
+  assert.equal(toleranceValidation.status, 200);
+  assert.equal(toleranceValidation.payload.operation.validation.status, 'completed');
+  assert.equal(toleranceValidation.payload.operation.validation.findings.toleranceFailureCount, 1);
+  assert.equal(toleranceValidation.payload.operation.validation.samples[0].toleranceFailureCount, 1);
+  sampleEvaluateImpl = normalSampleEvaluate;
 
   evaluateImpl = normalEvaluate;
   const mismatchedV2CandidatePreview = await request(
@@ -2341,6 +2522,33 @@ try {
   assert.equal(evaluatedCalls.length, evalsBeforeNewFile + 1);
   assert.equal(evaluatedCalls.at(-1).contents['pistol.attachment.toml'], pistolContent);
   await assert.rejects(fs.stat(path.join(projectRoot, pistolPath)), { code: 'ENOENT' });
+
+  let approveDuringSample = true;
+  sampleEvaluateImpl = async (animationRoot, attachmentId, phase, normalizedTime) => {
+    const evaluation = await normalSampleEvaluate(
+      animationRoot,
+      attachmentId,
+      phase,
+      normalizedTime,
+    );
+    if (approveDuringSample) {
+      approveDuringSample = false;
+      await service.operationStore.approve(newFilePreview.payload.operation.id, { actor });
+    }
+    return evaluation;
+  };
+  const staleValidation = await request(
+    service.baseUrl,
+    `/api/operations/${newFilePreview.payload.operation.id}/validate`,
+    { method: 'POST', body: { actor, samples: [{ phase: 'idle', normalizedTime: 0.5 }] } },
+  );
+  assert.equal(staleValidation.status, 409);
+  assert.equal(staleValidation.payload.code, 'operation_validation_stale');
+  assert.equal(
+    service.operationStore.getOperation(newFilePreview.payload.operation.id).state,
+    'approved',
+  );
+  sampleEvaluateImpl = normalSampleEvaluate;
   await request(service.baseUrl, `/api/coordination/leases/${pistolLease.payload.lease.id}/release`, {
     method: 'POST', credential, body: { agentId: agent.id },
   });
@@ -2357,7 +2565,6 @@ try {
     await assert.rejects(fs.stat(path.dirname(evaluated.animationRoot)), { code: 'ENOENT' });
   }
 
-  const operationId = preview.payload.operation.id;
   const approved = await request(service.baseUrl, `/api/operations/${operationId}/approve`, {
     method: 'POST', body: { actor },
   });
@@ -2392,6 +2599,22 @@ try {
     },
   });
   assert.equal(renewed.payload.lease.status, 'granted');
+  evaluateImpl = async () => {
+    const error = new Error('candidate mutation evaluation rejected');
+    error.stderr = 'private apply diagnostic';
+    throw error;
+  };
+  const rejectedApply = await request(service.baseUrl, `/api/operations/${operationId}/apply`, {
+    method: 'POST', credential,
+    body: { actor, agentId: agent.id, leaseId: renewed.payload.lease.id },
+  });
+  assert.equal(rejectedApply.status, 422);
+  assert.equal(rejectedApply.payload.code, 'spatial_candidate_evaluation_invalid');
+  assert.equal('diagnostic' in rejectedApply.payload, false);
+  assert.equal(await fs.readFile(path.join(projectRoot, attachmentPath), 'utf8'), originalContent);
+  assert.equal(service.operationStore.getOperation(operationId).state, 'approved');
+
+  evaluateImpl = normalEvaluate;
   const applied = await request(service.baseUrl, `/api/operations/${operationId}/apply`, {
     method: 'POST', credential,
     body: { actor, agentId: agent.id, leaseId: renewed.payload.lease.id },
@@ -2417,6 +2640,22 @@ try {
       resources: ['spatial/attachment/weapon.rifle.old', 'spatial/attachment/weapon.rifle.new'],
     },
   });
+  evaluateImpl = async () => {
+    const error = new Error('undo mutation evaluation rejected');
+    error.stderr = 'private undo diagnostic';
+    throw error;
+  };
+  const rejectedUndo = await request(service.baseUrl, `/api/operations/${operationId}/undo`, {
+    method: 'POST', credential,
+    body: { actor, agentId: agent.id, leaseId: undoLease.payload.lease.id },
+  });
+  assert.equal(rejectedUndo.status, 422);
+  assert.equal(rejectedUndo.payload.code, 'spatial_candidate_evaluation_invalid');
+  assert.equal('diagnostic' in rejectedUndo.payload, false);
+  assert.equal(await fs.readFile(path.join(projectRoot, attachmentPath), 'utf8'), candidateContent);
+  assert.equal(service.operationStore.getOperation(operationId).state, 'applied');
+
+  evaluateImpl = normalEvaluate;
   const undone = await request(service.baseUrl, `/api/operations/${operationId}/undo`, {
     method: 'POST', credential,
     body: { actor, agentId: agent.id, leaseId: undoLease.payload.lease.id },
@@ -2454,3 +2693,4 @@ console.log('Engine spatial attachment operations passed.');
 console.log('- Verified native-backed no-write preview, durable context, revision safety, and temp cleanup');
 console.log('- Verified exact profile leases, rename coverage, contention, renewal, apply, and undo gates');
 console.log('- Verified read-only rest/sample evaluation, full-input revisions, exact staged truth, and journal exclusion');
+console.log('- Verified strict operation samples, controlled summaries, manifest/CAS drift, and mutation revalidation');

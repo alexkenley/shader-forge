@@ -57,6 +57,8 @@ Minimum checks: `test:scene-authoring`, `test:scene-operations`, `test:sessiond`
 
 ### 2. Add native spatial operation validation and the apply dispatcher
 
+Status: completed. Previewed/approved spatial operations now validate lease-free through native staged rest/sample evaluation and CAS only a bounded summary; strict samples, source drift, stale snapshots, private diagnostics, and native timeouts fail closed. One dispatcher routes every scene/spatial apply and undo to its semantic mutation validator, with spatial truth and lease rechecked inside the existing mutation lane without recursive locking.
+
 Add `SpatialAttachmentService.validateOperation`, its mutation validator, and `POST /api/operations/:id/validate` before the generic action matcher. Route every apply/undo through one dispatcher: scene operations to `SceneAssetService`, spatial operations to the spatial service. Spatial apply/undo must independently validate current truth while the write lease is held.
 
 Critical rules:

@@ -1,6 +1,6 @@
 # Engine Operations Spec
 
-Status: hardened text-file write slice plus bounded selected-operation diff, transient spatial evaluation, attachment preview context, semantic scene/prefab backend and World-shell operations, and CLI adapter implemented
+Status: hardened text-file write slice plus bounded selected-operation diff, transient and operation-scoped spatial validation, semantic scene/prefab backend and World-shell operations, and CLI adapter implemented
 
 Date: 2026-08-31
 
@@ -30,6 +30,8 @@ This spec is the canonical contract for engine-owned operations. The implemented
 Spatial attachment previews remain `kind: "file_write"` and add only this normalized public context: `type: "spatial_attachment"`, non-empty `label`, authoritative candidate `subjectId`, sorted `resourceKeys`, and the preview `leaseId`. The context survives restart. Credentials and staged validation paths do not enter the journal.
 
 The immediate spatial preview response also contains transient `evaluation.baseline` and `evaluation.candidate` rest-pose schematics. Baseline is `null` for a new file. These reports are not operation fields: they do not enter `operations.json`, public operation views, SSE, restart state, or later apply/undo responses.
+
+Previewed or approved spatial operations may be validated without a lease through `POST /api/operations/:id/validate`. Sessiond stages the complete current animation/content/foundation snapshot, verifies the private proposed bytes against their revision, replaces only the staged target, native-validates, evaluates rest plus up to 64 exact requested phase/time samples, and rechecks the sorted live manifest before compare-and-swap recording the bounded public summary. Unknown native phases and other controlled candidate/sample failures record a failed summary without raw diagnostics. Apply and undo use the same native truth through the semantic mutation dispatcher while their exact write lease and the serialized mutation lane are held; failure restores the stable operation state and writes no authored bytes.
 
 Approve, reject, apply, and undo require an explicit valid actor object. The backend never defaults a missing actor to anonymous `human`. Credentials are stripped and are never stored, returned, or streamed.
 
@@ -73,6 +75,7 @@ A stale base revision returns HTTP 409 with a structured conflict:
 - `GET /api/operations`
 - `GET /api/operations/:id`
 - `GET /api/operations/:id/diff`
+- `POST /api/operations/:id/validate`
 - `POST /api/operations/:id/approve`
 - `POST /api/operations/:id/reject`
 - `POST /api/operations/:id/apply`
@@ -98,13 +101,15 @@ Semantic scene assets use `scene/world/<id>` and prefabs use `scene/prefab/<id>`
 
 Scene/prefab `rename` is rejected with stable code `multi_file_operation_required`: changing an asset ID can require bootstrap, scene, prefab, and other referer edits that the single-file journal cannot represent atomically. Duplicate content is not arbitrary cloning under a label; native validation requires its authored `name` and canonical staged path to bind to the target ID.
 
+Spatial operation validation accepts only an optional `samples` array containing exact `{phase, normalizedTime}` objects. Phase is non-empty and bounded; time must be a finite JSON number in `[0,1]` and may not be negative zero; duplicate pairs and more than 64 samples are rejected. The latest summary contains only proposed-revision identity, controlled counts, requested phase/time entries, and a bounded safe failure when applicable. Full evaluator reports, candidate bytes, staging paths, credentials, and native stderr remain private. Native child commands have a fixed timeout, and sample reports are reduced one at a time rather than retained as an aggregate.
+
 `GET /api/spatial/attachment/evaluate` accepts `sessionId`, an existing attachment `path`, and a non-`missing` SHA-256 `baseRevision`. Sessiond stages the current animation tree, every authored content TOML, and the data-foundation manifest; binds evaluation to the selected profile; and passes the three staged roots to the native evaluator. After evaluation it compares every staged input against a sorted live revision manifest. Selected attachment drift retains `revision_conflict`; any other animation/content/foundation change returns `spatial_evaluation_inputs_changed`.
 
 `GET /api/spatial/attachment/evaluate-sample` adds required `phase` and locale-independent finite `normalizedTime` in `[0,1]`. The native loader remains authoritative for unknown phases and times not listed in the authored motion envelope. The response uses the same identity, full-input revision, cleanup, and transient-read guarantees, while its complete report validator accepts only the exact one-hand, schema-v1 pre-IK, or schema-v2 applied-IK branch and binds the returned phase/time to the request.
 
 Both GET routes require no lease because they are read-only and create no operation, journal entry, persisted evaluation, SSE event, authored write, or cooked output. Preview and the rest GET retain `pose.sampled=false`. The sampled GET returns `pose.sampled=true` and numeric IK truth, but it remains schematic, carries `not_review_evidence`, and provides no rendered capture or review packet.
 
-Rest and sampled reports may include diagnose-only joint-limit evidence. Sessiond accepts only the exact unavailable `no_joint_limits_authored` form or a complete ordered per-bone report whose roles, ranges, violations, labels, counts, and maximum agree with recomputed evaluator truth. This evidence remains transient and never becomes operation validation, a clamp request, or review evidence.
+Rest and sampled reports may include diagnose-only joint-limit evidence. Sessiond accepts only the exact unavailable `no_joint_limits_authored` form or a complete ordered per-bone report whose roles, ranges, violations, labels, counts, and maximum agree with recomputed evaluator truth. Lease-free GET responses remain transient; operation validation reduces requested sample truth to bounded counts only. Neither path is a clamp request or rendered review evidence.
 
 ## State Machine
 
@@ -197,7 +202,7 @@ MCP spatial mutation tools now wire process-owned coordinator credentials and le
 
 The implemented `engine spatial preview|approve|reject|apply|undo` commands are thin clients of these HTTP routes. Preview reads a strict BOM-free UTF-8 `--content-file` and sends full candidate content; it never writes the source file. Preview/apply/undo read the coordinator credential only from `SHADER_FORGE_AGENT_CREDENTIAL`, while agent and lease IDs remain explicit arguments. Approve/reject are lease-free review transitions. Every command uses the fixed CLI actor and prints the returned JSON.
 
-The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. `sf-mcp` now adapts the same spatial preview/review/apply/undo routes with its process-owned agent and credential; operation-scoped spatial validation, capture, diagnostics, and review packets remain deferred.
+The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. `sf-mcp` now adapts the same spatial preview/review/apply/undo routes with its process-owned agent and credential. Sessiond operation validation is implemented; its thin CLI/MCP adapters, capture, and review packets remain deferred.
 
 ## Spatial Shell Adapter
 
@@ -310,6 +315,6 @@ Invalid records are skipped. They cannot be listed as applicable operations.
 - persisted legacy session `rootIdentity` migration plus same-path root replacement
 - malformed persisted records skipped on load, including preview-schema, event-sequence, and final-event/state corruption
 
-`npm run test:spatial-operations` additionally covers the revision-safe GET, strict path/symlink and source-ID binding, exact staged baseline/candidate bytes, exact fail-closed joint-limit protocol and recomputed truth, new-file `baseline: null`, final-read revision drift, malformed or wrong-ID evaluator output, bounded unavailable/infrastructure errors, temporary cleanup, journal absence for GET, non-persistence of preview evaluations, and the post-evaluation preview lease recheck.
+`npm run test:spatial-operations` additionally covers the revision-safe GET, strict path/symlink and source-ID binding, exact staged baseline/candidate bytes, fail-closed diagnostic truth, strict operation-validation samples, controlled failure summaries, manifest drift and stale-CAS rejection, apply/undo semantic revalidation, temporary cleanup, journal absence for GET, non-persistence of preview evaluations, and the post-evaluation preview lease recheck.
 
 `npm run test:data-tool` compiles and executes the native selected-asset validator. `npm run test:scene-operations` covers save/create/duplicate context, canonical resource keys, target/source revisions, lease coverage, no-write preview, HTTP routing, mutation-lane apply/undo validation, retryable validation failure, native response binding, fail-closed validator absence, credential exclusion, and rename refusal. `npm run test:scene-authoring` asserts that World uses the typed semantic client, revision-bearing documents, exact coordination cleanup, and apply reconciliation rather than raw writes.
