@@ -101,7 +101,7 @@ export const DEFAULT_SHELL_LAYOUT: ReadonlyShellLayout = deepFreeze({
   workspaces: {
     World: createDefaultWorkspace(false, false),
     Code: createDefaultWorkspace(true, false),
-    Playtest: createDefaultWorkspace(false, true),
+    Playtest: createDefaultWorkspace(false, false),
     Assets: createDefaultWorkspace(false, false),
   },
   bottom: {
@@ -137,6 +137,40 @@ function isIntegerInRange(value: unknown, min: number, max: number): value is nu
     && Number.isInteger(value)
     && value >= min
     && value <= max;
+}
+
+function clampInteger(value: number, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+export function clampShellLayoutLeftWidth(width: number): number {
+  return clampInteger(
+    width,
+    SHELL_LAYOUT_LEFT_WIDTH_MIN,
+    SHELL_LAYOUT_LEFT_WIDTH_MAX,
+    SHELL_LAYOUT_LEFT_WIDTH_MIN,
+  );
+}
+
+export function clampShellLayoutRightWidth(width: number): number {
+  return clampInteger(
+    width,
+    SHELL_LAYOUT_RIGHT_WIDTH_MIN,
+    SHELL_LAYOUT_RIGHT_WIDTH_MAX,
+    SHELL_LAYOUT_RIGHT_WIDTH_MIN,
+  );
+}
+
+export function clampShellLayoutPreferredHeight(height: number): number {
+  return clampInteger(
+    height,
+    SHELL_LAYOUT_BOTTOM_HEIGHT_MIN,
+    SHELL_LAYOUT_BOTTOM_HEIGHT_MAX,
+    SHELL_LAYOUT_BOTTOM_PREFERRED_HEIGHT_DEFAULT,
+  );
 }
 
 function toCanonicalPane<Tab extends string>(

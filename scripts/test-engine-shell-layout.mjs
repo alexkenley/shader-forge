@@ -7,6 +7,8 @@ import { repoRootFromScript } from './lib/harness-utils.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
 const sourcePath = path.join(repoRoot, 'shell', 'engine-shell', 'src', 'shell-layout.ts');
+const appSourcePath = path.join(repoRoot, 'shell', 'engine-shell', 'src', 'App.tsx');
+const stylesSourcePath = path.join(repoRoot, 'shell', 'engine-shell', 'src', 'styles.css');
 const requireFromShell = createRequire(path.join(
   repoRoot,
   'shell',
@@ -19,7 +21,11 @@ try {
 } catch {
   throw new Error('Install shell/engine-shell dependencies before running the shell layout harness.');
 }
-const source = await fs.readFile(sourcePath, 'utf8');
+const [source, appSource, stylesSource] = await Promise.all([
+  fs.readFile(sourcePath, 'utf8'),
+  fs.readFile(appSourcePath, 'utf8'),
+  fs.readFile(stylesSourcePath, 'utf8'),
+]);
 const typescriptModule = await import(pathToFileURL(typescriptPath).href);
 const ts = typescriptModule.default || typescriptModule;
 
@@ -59,12 +65,145 @@ const {
   SHELL_LAYOUT_BOTTOM_HEIGHT_MAX,
   SHELL_LAYOUT_BOTTOM_VIEWPORT_RATIO,
   SHELL_LAYOUT_BOTTOM_PREFERRED_HEIGHT_DEFAULT,
+  clampShellLayoutLeftWidth,
+  clampShellLayoutRightWidth,
+  clampShellLayoutPreferredHeight,
   loadShellLayout,
   saveShellLayout,
   resetShellLayout,
   maxShellLayoutBottomHeightForViewport,
   deriveShellLayoutBottomHeight,
 } = layoutModule;
+
+assert.equal(clampShellLayoutLeftWidth(10), SHELL_LAYOUT_LEFT_WIDTH_MIN);
+assert.equal(clampShellLayoutLeftWidth(999), SHELL_LAYOUT_LEFT_WIDTH_MAX);
+assert.equal(clampShellLayoutLeftWidth(240.6), 241);
+assert.equal(clampShellLayoutRightWidth(10), SHELL_LAYOUT_RIGHT_WIDTH_MIN);
+assert.equal(clampShellLayoutRightWidth(999), SHELL_LAYOUT_RIGHT_WIDTH_MAX);
+assert.equal(clampShellLayoutPreferredHeight(10), SHELL_LAYOUT_BOTTOM_HEIGHT_MIN);
+assert.equal(clampShellLayoutPreferredHeight(9999), SHELL_LAYOUT_BOTTOM_HEIGHT_MAX);
+assert.equal(clampShellLayoutPreferredHeight(Number.NaN), SHELL_LAYOUT_BOTTOM_PREFERRED_HEIGHT_DEFAULT);
+
+const appSourceFile = ts.createSourceFile(
+  appSourcePath,
+  appSource,
+  ts.ScriptTarget.ES2022,
+  true,
+  ts.ScriptKind.TSX,
+);
+
+function appFunctionSource(name) {
+  const declaration = appSourceFile.statements.find(
+    (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name,
+  );
+  assert.ok(declaration, `App.tsx declares ${name}`);
+  return declaration.getText(appSourceFile).replace(/^function\s+/, 'export function ');
+}
+
+const behaviorSource = `
+  const SHELL_LAYOUT_LEFT_WIDTH_MIN = ${SHELL_LAYOUT_LEFT_WIDTH_MIN};
+  const SHELL_LAYOUT_LEFT_WIDTH_MAX = ${SHELL_LAYOUT_LEFT_WIDTH_MAX};
+  const SHELL_LAYOUT_RIGHT_WIDTH_MIN = ${SHELL_LAYOUT_RIGHT_WIDTH_MIN};
+  const SHELL_LAYOUT_RIGHT_WIDTH_MAX = ${SHELL_LAYOUT_RIGHT_WIDTH_MAX};
+  const SHELL_LAYOUT_BOTTOM_HEIGHT_MIN = ${SHELL_LAYOUT_BOTTOM_HEIGHT_MIN};
+  const SHELL_LAYOUT_BOTTOM_HEIGHT_MAX = ${SHELL_LAYOUT_BOTTOM_HEIGHT_MAX};
+  const SHELL_LAYOUT_BOTTOM_PREFERRED_HEIGHT_DEFAULT = ${SHELL_LAYOUT_BOTTOM_PREFERRED_HEIGHT_DEFAULT};
+  const SHELL_LAYOUT_CENTER_WIDTH_MIN = 360;
+  const SHELL_LAYOUT_NARROW_WIDTH_MAX = 800;
+  const SHELL_LAYOUT_SEPARATOR_WIDTH = 5;
+  function clampShellLayoutPreferredHeight(height) {
+    if (typeof height !== 'number' || !Number.isFinite(height)) {
+      return SHELL_LAYOUT_BOTTOM_PREFERRED_HEIGHT_DEFAULT;
+    }
+    return Math.max(
+      SHELL_LAYOUT_BOTTOM_HEIGHT_MIN,
+      Math.min(SHELL_LAYOUT_BOTTOM_HEIGHT_MAX, Math.round(height)),
+    );
+  }
+  ${appFunctionSource('clampShellPaneWidth')}
+  ${appFunctionSource('deriveShellPaneGeometry')}
+  ${appFunctionSource('effectiveShellBottomMinHeight')}
+  ${appFunctionSource('preferredShellBottomHeightForRenderedHeight')}
+`;
+const behaviorTranspiled = ts.transpileModule(behaviorSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+  },
+  reportDiagnostics: true,
+});
+const behaviorErrors = (behaviorTranspiled.diagnostics || []).filter(
+  (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+);
+assert.deepEqual(behaviorErrors, [], 'App layout behavior helpers transpile');
+const {
+  deriveShellPaneGeometry,
+  effectiveShellBottomMinHeight,
+  preferredShellBottomHeightForRenderedHeight,
+} = await import(
+  `data:text/javascript;base64,${Buffer.from(behaviorTranspiled.outputText).toString('base64')}`
+);
+
+const exactDesktopFit = deriveShellPaneGeometry(1370, true, true, 480, 520);
+assert.deepEqual(exactDesktopFit, {
+  left: { min: 180, max: 480, width: 480 },
+  right: { min: 220, max: 520, width: 520 },
+  narrow: false,
+});
+const constrainedDesktop = deriveShellPaneGeometry(1100, true, true, 480, 520);
+assert.equal(constrainedDesktop.left.width + constrainedDesktop.right.width + 10 + 360, 1100);
+assert.deepEqual(constrainedDesktop.left, { min: 180, max: 480, width: 480 });
+assert.deepEqual(constrainedDesktop.right, { min: 220, max: 250, width: 250 });
+const tighterDesktop = deriveShellPaneGeometry(1000, true, true, 480, 520);
+assert.equal(tighterDesktop.left.width + tighterDesktop.right.width + 10 + 360, 1000);
+assert.deepEqual(tighterDesktop.left, { min: 180, max: 410, width: 410 });
+assert.deepEqual(tighterDesktop.right, { min: 220, max: 220, width: 220 });
+const desktopBoundary = deriveShellPaneGeometry(801, true, true, 480, 520);
+assert.equal(desktopBoundary.left.width + desktopBoundary.right.width + 10 + 360, 801);
+assert.equal(desktopBoundary.left.max >= desktopBoundary.left.min, true);
+assert.equal(desktopBoundary.right.max >= desktopBoundary.right.min, true);
+const rightUsesRenderedLeft = deriveShellPaneGeometry(1000, true, true, 180, 520);
+assert.deepEqual(rightUsesRenderedLeft.right, { min: 220, max: 450, width: 450 });
+assert.equal(deriveShellPaneGeometry(800, true, true, 480, 520).narrow, true);
+assert.equal(deriveShellPaneGeometry(801, true, true, 480, 520).narrow, false);
+
+for (const gridWidth of [Number.NaN, Number.NEGATIVE_INFINITY, -1, 0, 800.9, 801, 900, 1100]) {
+  const geometry = deriveShellPaneGeometry(gridWidth, true, true, 999, 999);
+  for (const pane of [geometry.left, geometry.right]) {
+    assert.equal(Number.isFinite(pane.width), true, `finite width at ${gridWidth}`);
+    assert.equal(Number.isFinite(pane.max), true, `finite maximum at ${gridWidth}`);
+    assert.equal(pane.max >= pane.min, true, `non-inverted range at ${gridWidth}`);
+    assert.equal(pane.width >= pane.min && pane.width <= pane.max, true, `width in range at ${gridWidth}`);
+  }
+  if (!geometry.narrow) {
+    assert.equal(
+      geometry.left.width + geometry.right.width + 10 + 360 <= Math.floor(gridWidth),
+      true,
+      `center reserve at ${gridWidth}`,
+    );
+  }
+}
+
+assert.equal(effectiveShellBottomMinHeight(400), 180);
+assert.equal(effectiveShellBottomMinHeight(180), 180);
+assert.equal(effectiveShellBottomMinHeight(80), 80);
+assert.equal(effectiveShellBottomMinHeight(0), 0);
+assert.equal(effectiveShellBottomMinHeight(Number.NaN), 0);
+assert.equal(preferredShellBottomHeightForRenderedHeight(80, 80, 480), 480);
+assert.equal(preferredShellBottomHeightForRenderedHeight(180, 180, 1200), 1200);
+assert.equal(preferredShellBottomHeightForRenderedHeight(400, 400, 1200), 1200);
+assert.equal(preferredShellBottomHeightForRenderedHeight(384, 400, 1200), 384);
+assert.equal(preferredShellBottomHeightForRenderedHeight(999, 400, 260), 400);
+assert.equal(preferredShellBottomHeightForRenderedHeight(0, 0, Number.NaN), 260);
+
+assert.match(appSource, /new ResizeObserver\(handleResize\)/);
+assert.match(appSource, /aria-valuemax=\{shellPaneGeometry\.left\.max\}/);
+assert.match(appSource, /aria-valuemax=\{shellPaneGeometry\.right\.max\}/);
+assert.match(appSource, /aria-valuemin=\{bottomPaneMinHeight\}/);
+assert.match(appSource, /aria-pressed=\{rightPaneVisible\}/);
+assert.match(stylesSource, /minmax\(var\(--shell-center-min-width\), 1fr\)/);
+assert.match(stylesSource, /\.shell-grid--narrow \.side-pane\s*\{[\s\S]*?justify-self: end;/);
+assert.doesNotMatch(stylesSource, /\.layout-control--right\s*\{[^}]*display:\s*none/);
 
 function assertTypedConsumerCompiles() {
   const consumerPath = path.join(
@@ -211,7 +350,7 @@ function assertCanonicalDefaults(layout, message = 'canonical defaults') {
       },
       Playtest: {
         left: { visible: false, tab: 'Workspaces', width: 180 },
-        right: { visible: true, tab: 'Runtime', width: 220 },
+        right: { visible: false, tab: 'Runtime', width: 220 },
       },
       Assets: {
         left: { visible: false, tab: 'Workspaces', width: 180 },

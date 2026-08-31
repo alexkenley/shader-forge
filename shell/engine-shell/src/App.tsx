@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
-import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
 import { SpatialAttachmentEditorView } from './SpatialAttachmentEditorView';
@@ -64,11 +64,35 @@ import {
   writeTerminalInput,
 } from './lib/sessiond';
 import { engineReferenceGuide } from './reference-guide';
+import {
+  clampShellLayoutPreferredHeight,
+  deriveShellLayoutBottomHeight,
+  loadShellLayout,
+  maxShellLayoutBottomHeightForViewport,
+  resetShellLayout,
+  saveShellLayout,
+  SHELL_BOTTOM_TABS,
+  SHELL_LAYOUT_BOTTOM_HEIGHT_MIN,
+  SHELL_LAYOUT_LEFT_WIDTH_MAX,
+  SHELL_LAYOUT_LEFT_WIDTH_MIN,
+  SHELL_LAYOUT_RIGHT_WIDTH_MAX,
+  SHELL_LAYOUT_RIGHT_WIDTH_MIN,
+  SHELL_LEFT_TABS,
+  SHELL_RIGHT_TABS,
+  SHELL_WORKSPACES,
+  type ShellBottomTab,
+  type ShellLayout,
+  type ShellLayoutPane,
+  type ShellLayoutStorage,
+  type ShellLeftTab,
+  type ShellRightTab,
+  type ShellWorkspace,
+} from './shell-layout';
 
-const leftTabs = ['Workspaces', 'Explorer', 'Source Control'] as const;
-const centerTabs = ['World', 'Code', 'Playtest', 'Assets'] as const;
-const rightTabs = ['Runtime', 'Build', 'Workspace'] as const;
-const bottomTabs = ['Terminal', 'Logs', 'Output', 'Activity'] as const;
+const leftTabs = SHELL_LEFT_TABS;
+const centerTabs = SHELL_WORKSPACES;
+const rightTabs = SHELL_RIGHT_TABS;
+const bottomTabs = SHELL_BOTTOM_TABS;
 const unixShells = ['bash', 'zsh', 'sh'] as const;
 const windowsShells = ['powershell.exe', 'cmd.exe'] as const;
 const terminalShells = [...unixShells, ...windowsShells] as const;
@@ -104,17 +128,31 @@ const emptyGitStatus: GitStatus = {
   untracked: [],
   notARepo: true,
 };
-const DEFAULT_BOTTOM_PANE_HEIGHT = 260;
-const MIN_BOTTOM_PANE_HEIGHT = 180;
-const MAX_BOTTOM_PANE_VIEWPORT_RATIO = 0.8;
 const COLLAPSED_BOTTOM_PANE_HEIGHT = 38;
+const SHELL_RAIL_RESIZE_STEP = 16;
+const SHELL_LAYOUT_CENTER_WIDTH_MIN = 360;
+const SHELL_LAYOUT_NARROW_WIDTH_MAX = 800;
+const SHELL_LAYOUT_SEPARATOR_WIDTH = 5;
 
-type LeftTab = (typeof leftTabs)[number];
-type CenterTab = (typeof centerTabs)[number];
-type RightTab = (typeof rightTabs)[number];
-type BottomTab = (typeof bottomTabs)[number];
+type LeftTab = ShellLeftTab;
+type CenterTab = ShellWorkspace;
+type RightTab = ShellRightTab;
+type BottomTab = ShellBottomTab;
+type ShellResizeTarget = 'left' | 'right' | 'bottom';
 type TerminalShell = (typeof terminalShells)[number];
 type BuildConfig = (typeof buildConfigs)[number];
+
+interface ShellPaneRange {
+  min: number;
+  max: number;
+  width: number;
+}
+
+interface ShellPaneGeometry {
+  left: ShellPaneRange;
+  right: ShellPaneRange;
+  narrow: boolean;
+}
 
 type TerminalTabState = {
   id: string;
@@ -310,15 +348,226 @@ function trimTerminalOutput(value: string) {
   return value.slice(-maxLength);
 }
 
-function maxBottomPaneHeight() {
+function getBrowserShellLayoutStorage(): ShellLayoutStorage | null {
   if (typeof window === 'undefined') {
-    return DEFAULT_BOTTOM_PANE_HEIGHT;
+    return null;
   }
-  return Math.max(MIN_BOTTOM_PANE_HEIGHT, Math.floor(window.innerHeight * MAX_BOTTOM_PANE_VIEWPORT_RATIO));
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
-function clampBottomPaneHeight(value: number) {
-  return Math.max(MIN_BOTTOM_PANE_HEIGHT, Math.min(maxBottomPaneHeight(), Math.round(value)));
+function getBrowserViewportHeight(): number {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+  try {
+    return window.innerHeight;
+  } catch {
+    return 0;
+  }
+}
+
+function getBrowserViewportWidth(): number {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+  try {
+    return window.innerWidth;
+  } catch {
+    return 0;
+  }
+}
+
+function loadBrowserShellLayout(): ShellLayout {
+  if (typeof window === 'undefined') {
+    return loadShellLayout(null);
+  }
+  try {
+    return loadShellLayout(window.localStorage);
+  } catch {
+    return loadShellLayout(null);
+  }
+}
+
+function withActiveWorkspacePane(
+  layout: ShellLayout,
+  patch: {
+    left?: Partial<ShellLayoutPane<ShellLeftTab>>;
+    right?: Partial<ShellLayoutPane<ShellRightTab>>;
+  },
+): ShellLayout {
+  const workspace = layout.activeWorkspace;
+  const current = layout.workspaces[workspace];
+  return {
+    ...layout,
+    workspaces: {
+      ...layout.workspaces,
+      [workspace]: {
+        left: patch.left ? { ...current.left, ...patch.left } : current.left,
+        right: patch.right ? { ...current.right, ...patch.right } : current.right,
+      },
+    },
+  };
+}
+
+function withBottomLayout(
+  layout: ShellLayout,
+  patch: Partial<ShellLayout['bottom']>,
+): ShellLayout {
+  return {
+    ...layout,
+    bottom: {
+      ...layout.bottom,
+      ...patch,
+    },
+  };
+}
+
+function shellGridClass(leftVisible: boolean, rightVisible: boolean): string {
+  if (leftVisible && rightVisible) {
+    return 'shell-grid--both';
+  }
+  if (leftVisible) {
+    return 'shell-grid--left';
+  }
+  if (rightVisible) {
+    return 'shell-grid--right';
+  }
+  return 'shell-grid--center';
+}
+
+function clampShellPaneWidth(width: number, min: number, max: number): number {
+  const safeMax = Math.max(min, Math.floor(max));
+  const rounded = typeof width === 'number' && Number.isFinite(width)
+    ? Math.round(width)
+    : min;
+  return Math.max(min, Math.min(safeMax, rounded));
+}
+
+function deriveShellPaneGeometry(
+  gridWidth: number,
+  leftVisible: boolean,
+  rightVisible: boolean,
+  leftPreferredWidth: number,
+  rightPreferredWidth: number,
+): ShellPaneGeometry {
+  const normalizedGridWidth = typeof gridWidth === 'number' && Number.isFinite(gridWidth)
+    ? Math.max(0, Math.floor(gridWidth))
+    : 0;
+  const leftPreferred = clampShellPaneWidth(
+    leftPreferredWidth,
+    SHELL_LAYOUT_LEFT_WIDTH_MIN,
+    SHELL_LAYOUT_LEFT_WIDTH_MAX,
+  );
+  const rightPreferred = clampShellPaneWidth(
+    rightPreferredWidth,
+    SHELL_LAYOUT_RIGHT_WIDTH_MIN,
+    SHELL_LAYOUT_RIGHT_WIDTH_MAX,
+  );
+  const narrow = normalizedGridWidth <= SHELL_LAYOUT_NARROW_WIDTH_MAX;
+
+  if (narrow) {
+    return {
+      left: {
+        min: SHELL_LAYOUT_LEFT_WIDTH_MIN,
+        max: SHELL_LAYOUT_LEFT_WIDTH_MAX,
+        width: leftPreferred,
+      },
+      right: {
+        min: SHELL_LAYOUT_RIGHT_WIDTH_MIN,
+        max: SHELL_LAYOUT_RIGHT_WIDTH_MAX,
+        width: rightPreferred,
+      },
+      narrow,
+    };
+  }
+
+  const separatorCount = Number(leftVisible) + Number(rightVisible);
+  const railBudget = Math.max(
+    0,
+    normalizedGridWidth
+      - SHELL_LAYOUT_CENTER_WIDTH_MIN
+      - separatorCount * SHELL_LAYOUT_SEPARATOR_WIDTH,
+  );
+  const provisionalLeftMax = leftVisible
+    ? Math.max(
+        SHELL_LAYOUT_LEFT_WIDTH_MIN,
+        Math.min(
+          SHELL_LAYOUT_LEFT_WIDTH_MAX,
+          railBudget - (rightVisible ? SHELL_LAYOUT_RIGHT_WIDTH_MIN : 0),
+        ),
+      )
+    : SHELL_LAYOUT_LEFT_WIDTH_MAX;
+  const leftWidth = leftVisible
+    ? clampShellPaneWidth(leftPreferred, SHELL_LAYOUT_LEFT_WIDTH_MIN, provisionalLeftMax)
+    : leftPreferred;
+  const rightMax = rightVisible
+    ? Math.max(
+        SHELL_LAYOUT_RIGHT_WIDTH_MIN,
+        Math.min(
+          SHELL_LAYOUT_RIGHT_WIDTH_MAX,
+          railBudget - (leftVisible ? leftWidth : 0),
+        ),
+      )
+    : SHELL_LAYOUT_RIGHT_WIDTH_MAX;
+  const rightWidth = rightVisible
+    ? clampShellPaneWidth(rightPreferred, SHELL_LAYOUT_RIGHT_WIDTH_MIN, rightMax)
+    : rightPreferred;
+  const leftMax = leftVisible
+    ? Math.max(
+        SHELL_LAYOUT_LEFT_WIDTH_MIN,
+        Math.min(
+          SHELL_LAYOUT_LEFT_WIDTH_MAX,
+          railBudget - (rightVisible ? rightWidth : 0),
+        ),
+      )
+    : SHELL_LAYOUT_LEFT_WIDTH_MAX;
+
+  return {
+    left: {
+      min: SHELL_LAYOUT_LEFT_WIDTH_MIN,
+      max: leftMax,
+      width: clampShellPaneWidth(leftWidth, SHELL_LAYOUT_LEFT_WIDTH_MIN, leftMax),
+    },
+    right: {
+      min: SHELL_LAYOUT_RIGHT_WIDTH_MIN,
+      max: rightMax,
+      width: rightWidth,
+    },
+    narrow,
+  };
+}
+
+function effectiveShellBottomMinHeight(maxHeight: number): number {
+  const normalizedMax = typeof maxHeight === 'number' && Number.isFinite(maxHeight)
+    ? Math.max(0, Math.floor(maxHeight))
+    : 0;
+  return Math.min(SHELL_LAYOUT_BOTTOM_HEIGHT_MIN, normalizedMax);
+}
+
+function preferredShellBottomHeightForRenderedHeight(
+  renderedHeight: number,
+  maxHeight: number,
+  currentPreferredHeight: number,
+): number {
+  const normalizedMax = typeof maxHeight === 'number' && Number.isFinite(maxHeight)
+    ? Math.max(0, Math.floor(maxHeight))
+    : 0;
+  const normalizedCurrent = clampShellLayoutPreferredHeight(currentPreferredHeight);
+  if (normalizedMax < SHELL_LAYOUT_BOTTOM_HEIGHT_MIN) {
+    return normalizedCurrent;
+  }
+  const nextPreferred = clampShellLayoutPreferredHeight(
+    Math.max(
+      SHELL_LAYOUT_BOTTOM_HEIGHT_MIN,
+      Math.min(normalizedMax, renderedHeight),
+    ),
+  );
+  const currentRendered = Math.min(normalizedCurrent, normalizedMax);
+  return nextPreferred === currentRendered ? normalizedCurrent : nextPreferred;
 }
 
 function takeLastLogLines(value: string, count = 6) {
@@ -1720,13 +1969,14 @@ function renderCenterContent(
 }
 
 export default function App() {
-  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('Workspaces');
-  const [activeCenterTab, setActiveCenterTab] = useState<CenterTab>('World');
-  const [activeRightTab, setActiveRightTab] = useState<RightTab>('Runtime');
-  const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Terminal');
-  const [bottomPaneHeight, setBottomPaneHeight] = useState(() => clampBottomPaneHeight(DEFAULT_BOTTOM_PANE_HEIGHT));
-  const [bottomPaneCollapsed, setBottomPaneCollapsed] = useState(false);
-  const [bottomPaneResizing, setBottomPaneResizing] = useState(false);
+  const [layout, setLayout] = useState<ShellLayout>(() => loadBrowserShellLayout());
+  const [layoutPersistenceMessage, setLayoutPersistenceMessage] = useState('');
+  const [viewportHeight, setViewportHeight] = useState(() => getBrowserViewportHeight());
+  const [shellGridWidth, setShellGridWidth] = useState(() => getBrowserViewportWidth());
+  const [resizeTarget, setResizeTarget] = useState<ShellResizeTarget | null>(null);
+  const layoutRef = useRef(layout);
+  const shellGridRef = useRef<HTMLElement | null>(null);
+  layoutRef.current = layout;
   const [showGuide, setShowGuide] = useState(false);
   const [showLegacyBridge, setShowLegacyBridge] = useState(false);
   const [sessiondState, setSessiondState] = useState<'connecting' | 'connected' | 'offline'>('connecting');
@@ -1808,25 +2058,100 @@ export default function App() {
     });
   });
 
+  function commitLayout(next: ShellLayout, persist = true) {
+    if (!persist) {
+      layoutRef.current = next;
+      setLayout(next);
+      return;
+    }
+    const result = saveShellLayout(getBrowserShellLayoutStorage(), next);
+    layoutRef.current = result.layout;
+    setLayout(result.layout);
+    setLayoutPersistenceMessage(result.persisted ? '' : 'Layout not saved');
+  }
+
+  function selectBottomTab(tab: BottomTab) {
+    commitLayout(withBottomLayout(layoutRef.current, { tab }));
+  }
+
+  function selectRightTab(tab: RightTab) {
+    commitLayout(withActiveWorkspacePane(layoutRef.current, { right: { tab } }));
+  }
+
+  function activeShellPaneGeometry(
+    current: ShellLayout,
+    gridWidth = shellGridWidth,
+  ): ShellPaneGeometry {
+    const workspace = current.workspaces[current.activeWorkspace];
+    return deriveShellPaneGeometry(
+      gridWidth,
+      workspace.left.visible,
+      workspace.right.visible,
+      workspace.left.width,
+      workspace.right.width,
+    );
+  }
+
   useEffect(() => {
-    if (!bottomPaneResizing) {
+    if (!resizeTarget) {
       return;
     }
 
     const handlePointerMove = (event: PointerEvent) => {
       event.preventDefault();
-      setBottomPaneCollapsed(false);
-      setBottomPaneHeight(clampBottomPaneHeight(window.innerHeight - event.clientY));
+      const current = layoutRef.current;
+      if (resizeTarget === 'bottom') {
+        const maxHeight = maxShellLayoutBottomHeightForViewport(window.innerHeight);
+        const preferredHeight = preferredShellBottomHeightForRenderedHeight(
+          window.innerHeight - event.clientY,
+          maxHeight,
+          current.bottom.preferredHeight,
+        );
+        commitLayout(withBottomLayout(current, { collapsed: false, preferredHeight }), false);
+        return;
+      }
+
+      const bounds = shellGridRef.current?.getBoundingClientRect();
+      const paneGeometry = activeShellPaneGeometry(current, bounds?.width ?? shellGridWidth);
+      if (resizeTarget === 'left') {
+        commitLayout(
+          withActiveWorkspacePane(current, {
+            left: {
+              width: clampShellPaneWidth(
+                event.clientX - (bounds?.left ?? 0),
+                paneGeometry.left.min,
+                paneGeometry.left.max,
+              ),
+            },
+          }),
+          false,
+        );
+        return;
+      }
+
+      commitLayout(
+        withActiveWorkspacePane(current, {
+          right: {
+            width: clampShellPaneWidth(
+              (bounds?.right ?? window.innerWidth) - event.clientX,
+              paneGeometry.right.min,
+              paneGeometry.right.max,
+            ),
+          },
+        }),
+        false,
+      );
     };
 
     const stopResize = () => {
-      setBottomPaneResizing(false);
+      commitLayout(layoutRef.current);
+      setResizeTarget(null);
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
     };
 
     document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'row-resize';
+    document.body.style.cursor = resizeTarget === 'bottom' ? 'row-resize' : 'col-resize';
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', stopResize);
     window.addEventListener('pointercancel', stopResize);
@@ -1837,15 +2162,27 @@ export default function App() {
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
     };
-  }, [bottomPaneResizing]);
+  }, [resizeTarget]);
 
   useEffect(() => {
     const handleResize = () => {
-      setBottomPaneHeight((current) => clampBottomPaneHeight(current));
+      setViewportHeight(window.innerHeight);
+      const bounds = shellGridRef.current?.getBoundingClientRect();
+      setShellGridWidth(Math.max(0, Math.floor(bounds?.width ?? window.innerWidth)));
     };
 
+    handleResize();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const observer = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(handleResize)
+      : null;
+    if (observer && shellGridRef.current) {
+      observer.observe(shellGridRef.current);
+    }
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      observer?.disconnect();
+    };
   }, []);
 
   function recordViewerBridgeEvent(event: Omit<ViewerBridgeEvent, 'id'>) {
@@ -1853,38 +2190,119 @@ export default function App() {
   }
 
   function handleBottomTabSelect(tab: BottomTab) {
-    setActiveBottomTab(tab);
-    setBottomPaneCollapsed(false);
+    commitLayout(withBottomLayout(layoutRef.current, { tab, collapsed: false }));
   }
 
-  function handleBottomPaneResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+  function handlePaneResizeStart(target: ShellResizeTarget, event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) {
       return;
     }
     event.preventDefault();
-    setBottomPaneCollapsed(false);
-    setBottomPaneResizing(true);
+    if (target === 'bottom') {
+      commitLayout(withBottomLayout(layoutRef.current, { collapsed: false }), false);
+    }
+    setResizeTarget(target);
+  }
+
+  function handleBottomPaneResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    handlePaneResizeStart('bottom', event);
   }
 
   function handleBottomPaneResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    let nextHeight = bottomPaneHeight;
-    if (event.key === 'ArrowUp') nextHeight += 16;
-    else if (event.key === 'ArrowDown') nextHeight -= 16;
-    else if (event.key === 'Home') nextHeight = MIN_BOTTOM_PANE_HEIGHT;
-    else if (event.key === 'End') nextHeight = maxBottomPaneHeight();
+    const maxHeight = maxShellLayoutBottomHeightForViewport(viewportHeight);
+    const minHeight = effectiveShellBottomMinHeight(maxHeight);
+    const current = layoutRef.current;
+    let nextHeight = deriveShellLayoutBottomHeight(current.bottom.preferredHeight, viewportHeight);
+    if (event.key === 'ArrowUp') nextHeight += SHELL_RAIL_RESIZE_STEP;
+    else if (event.key === 'ArrowDown') nextHeight -= SHELL_RAIL_RESIZE_STEP;
+    else if (event.key === 'Home') nextHeight = minHeight;
+    else if (event.key === 'End') nextHeight = maxHeight;
     else return;
     event.preventDefault();
-    setBottomPaneCollapsed(false);
-    setBottomPaneHeight(clampBottomPaneHeight(nextHeight));
+    commitLayout(withBottomLayout(current, {
+      collapsed: false,
+      preferredHeight: preferredShellBottomHeightForRenderedHeight(
+        Math.max(minHeight, Math.min(nextHeight, maxHeight)),
+        maxHeight,
+        current.bottom.preferredHeight,
+      ),
+    }));
+  }
+
+  function handleLeftPaneResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const current = layoutRef.current;
+    const bounds = shellGridRef.current?.getBoundingClientRect();
+    const paneGeometry = activeShellPaneGeometry(current, bounds?.width ?? shellGridWidth);
+    let nextWidth = paneGeometry.left.width;
+    if (event.key === 'ArrowRight') nextWidth += SHELL_RAIL_RESIZE_STEP;
+    else if (event.key === 'ArrowLeft') nextWidth -= SHELL_RAIL_RESIZE_STEP;
+    else if (event.key === 'Home') nextWidth = paneGeometry.left.min;
+    else if (event.key === 'End') nextWidth = paneGeometry.left.max;
+    else return;
+    event.preventDefault();
+    commitLayout(withActiveWorkspacePane(current, {
+      left: {
+        width: clampShellPaneWidth(nextWidth, paneGeometry.left.min, paneGeometry.left.max),
+      },
+    }));
+  }
+
+  function handleRightPaneResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const current = layoutRef.current;
+    const bounds = shellGridRef.current?.getBoundingClientRect();
+    const paneGeometry = activeShellPaneGeometry(current, bounds?.width ?? shellGridWidth);
+    let nextWidth = paneGeometry.right.width;
+    if (event.key === 'ArrowLeft') nextWidth += SHELL_RAIL_RESIZE_STEP;
+    else if (event.key === 'ArrowRight') nextWidth -= SHELL_RAIL_RESIZE_STEP;
+    else if (event.key === 'Home') nextWidth = paneGeometry.right.min;
+    else if (event.key === 'End') nextWidth = paneGeometry.right.max;
+    else return;
+    event.preventDefault();
+    commitLayout(withActiveWorkspacePane(current, {
+      right: {
+        width: clampShellPaneWidth(nextWidth, paneGeometry.right.min, paneGeometry.right.max),
+      },
+    }));
   }
 
   function handleExpandBottomPane() {
-    setBottomPaneCollapsed(false);
-    setBottomPaneHeight(maxBottomPaneHeight());
+    const current = layoutRef.current;
+    const maxHeight = maxShellLayoutBottomHeightForViewport(viewportHeight);
+    commitLayout(withBottomLayout(current, {
+      collapsed: false,
+      preferredHeight: preferredShellBottomHeightForRenderedHeight(
+        maxHeight,
+        maxHeight,
+        current.bottom.preferredHeight,
+      ),
+    }));
   }
 
   function handleToggleBottomPane() {
-    setBottomPaneCollapsed((current) => !current);
+    commitLayout(withBottomLayout(layoutRef.current, {
+      collapsed: !layoutRef.current.bottom.collapsed,
+    }));
+  }
+
+  function handleToggleLeftPane() {
+    const current = layoutRef.current.workspaces[layoutRef.current.activeWorkspace].left;
+    commitLayout(withActiveWorkspacePane(layoutRef.current, {
+      left: { visible: !current.visible },
+    }));
+  }
+
+  function handleToggleRightPane() {
+    const current = layoutRef.current.workspaces[layoutRef.current.activeWorkspace].right;
+    commitLayout(withActiveWorkspacePane(layoutRef.current, {
+      right: { visible: !current.visible },
+    }));
+  }
+
+  function handleResetLayout() {
+    const result = resetShellLayout(getBrowserShellLayoutStorage());
+    layoutRef.current = result.layout;
+    setLayout(result.layout);
+    setLayoutPersistenceMessage(result.persisted ? '' : 'Layout not saved');
   }
 
   async function refreshOperations(sessionId = activeSessionIdRef.current, announce = true) {
@@ -2386,7 +2804,7 @@ export default function App() {
               tone: runtimeStateTone(nextStatus.state),
             });
             setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested after build\n`));
-            setActiveBottomTab('Logs');
+            selectBottomTab('Logs');
           })
           .catch((error) => {
             recordViewerBridgeEvent({
@@ -2412,7 +2830,7 @@ export default function App() {
             tone: runtimeStateTone(nextStatus.state),
           });
           setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested after build\n`));
-          setActiveBottomTab('Logs');
+          selectBottomTab('Logs');
         })
         .catch((error) => {
           recordViewerBridgeEvent({
@@ -2887,7 +3305,7 @@ export default function App() {
       setActiveTerminalTabId(nextTab.id);
       return [...current, nextTab];
     });
-    setActiveBottomTab('Terminal');
+    selectBottomTab('Terminal');
   }
 
   async function handleCloseTerminalTab(tabId: string) {
@@ -2991,7 +3409,7 @@ export default function App() {
         tone: runtimeStateTone(nextStatus.state),
       });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] start requested\n`));
-      setActiveBottomTab('Logs');
+      selectBottomTab('Logs');
     } catch (error) {
       recordViewerBridgeEvent({
         title: 'Runtime start failed',
@@ -3016,7 +3434,7 @@ export default function App() {
         tone: 'idle',
       });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] stop requested\n`));
-      setActiveBottomTab('Logs');
+      selectBottomTab('Logs');
     } catch (error) {
       recordViewerBridgeEvent({
         title: 'Runtime stop failed',
@@ -3041,7 +3459,7 @@ export default function App() {
         tone: 'paused',
       });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] pause requested\n`));
-      setActiveBottomTab('Logs');
+      selectBottomTab('Logs');
     } catch (error) {
       recordViewerBridgeEvent({
         title: 'Runtime pause failed',
@@ -3066,7 +3484,7 @@ export default function App() {
         tone: runtimeStateTone(nextStatus.state),
       });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] resume requested\n`));
-      setActiveBottomTab('Logs');
+      selectBottomTab('Logs');
     } catch (error) {
       recordViewerBridgeEvent({
         title: 'Runtime resume failed',
@@ -3091,7 +3509,7 @@ export default function App() {
         tone: runtimeStateTone(nextStatus.state),
       });
       setRuntimeLog((current) => trimTerminalOutput(`${current}[runtime] restart requested\n`));
-      setActiveBottomTab('Logs');
+      selectBottomTab('Logs');
     } catch (error) {
       recordViewerBridgeEvent({
         title: 'Runtime restart failed',
@@ -3119,8 +3537,8 @@ export default function App() {
         tone: buildStatusTone(nextStatus.state),
       });
       setBuildLog((current) => trimTerminalOutput(`${current}[build] runtime build requested\n`));
-      setActiveBottomTab('Output');
-      setActiveRightTab('Build');
+      selectBottomTab('Output');
+      selectRightTab('Build');
     } catch (error) {
       setPendingRunAfterBuild(false);
       const message = error instanceof Error ? error.message : String(error);
@@ -3142,7 +3560,7 @@ export default function App() {
       setBuildLog((current) =>
         trimTerminalOutput(`${current}[build] ${message}\n`),
       );
-      setActiveBottomTab('Output');
+      selectBottomTab('Output');
     }
   }
 
@@ -3167,7 +3585,7 @@ export default function App() {
         tone: 'idle',
       });
       setBuildLog((current) => trimTerminalOutput(`${current}[build] stop requested\n`));
-      setActiveBottomTab('Output');
+      selectBottomTab('Output');
     } catch (error) {
       recordViewerBridgeEvent({
         title: 'Build stop failed',
@@ -3178,7 +3596,7 @@ export default function App() {
       setBuildLog((current) =>
         trimTerminalOutput(`${current}[build] ${error instanceof Error ? error.message : String(error)}\n`),
       );
-      setActiveBottomTab('Output');
+      selectBottomTab('Output');
     }
   }
 
@@ -3219,18 +3637,42 @@ export default function App() {
   const workspaceRootPlaceholder = platformInfo?.isWSL
     ? platformInfo.defaultBrowsePath || '/mnt/c/Users'
     : '/home/user/projects/my-game';
-  const bottomPaneMaxHeight = maxBottomPaneHeight();
+  const activeWorkspace = layout.activeWorkspace;
+  const activeCenterTab = activeWorkspace;
+  const activeWorkspaceLayout = layout.workspaces[activeWorkspace];
+  const activeLeftTab = activeWorkspaceLayout.left.tab;
+  const activeRightTab = activeWorkspaceLayout.right.tab;
+  const activeBottomTab = layout.bottom.tab;
+  const leftPaneVisible = activeWorkspaceLayout.left.visible;
+  const rightPaneVisible = activeWorkspaceLayout.right.visible;
+  const shellPaneGeometry = activeShellPaneGeometry(layout);
+  const leftPaneWidth = shellPaneGeometry.left.width;
+  const rightPaneWidth = shellPaneGeometry.right.width;
+  const bottomPaneCollapsed = layout.bottom.collapsed;
+  const bottomPaneMaxHeight = maxShellLayoutBottomHeightForViewport(viewportHeight);
+  const bottomPaneMinHeight = effectiveShellBottomMinHeight(bottomPaneMaxHeight);
+  const bottomPaneHeight = deriveShellLayoutBottomHeight(layout.bottom.preferredHeight, viewportHeight);
   const bottomPaneVisibleHeight = bottomPaneCollapsed ? COLLAPSED_BOTTOM_PANE_HEIGHT : bottomPaneHeight;
+  const bottomPaneResizing = resizeTarget === 'bottom';
   const workspaceSessions = sessions.filter((session) => !isHarnessSession(session));
   const harnessSessions = sessions.filter((session) => isHarnessSession(session));
   const suggestedWorkspaceSession = findSuggestedWorkspaceSession(sessions);
   const activeSessionIsHarness = activeSession ? isHarnessSession(activeSession) : false;
 
-  const showSidePane = !showGuide && (activeCenterTab === 'Code' || activeCenterTab === 'Playtest');
-
   function handleSelectCenterTab(tab: CenterTab) {
     setShowGuide(false);
-    setActiveCenterTab(tab);
+    commitLayout({
+      ...layoutRef.current,
+      activeWorkspace: tab,
+    });
+  }
+
+  function handleSelectLeftTab(tab: LeftTab) {
+    commitLayout(withActiveWorkspacePane(layoutRef.current, { left: { tab } }));
+  }
+
+  function handleSelectRightTab(tab: RightTab) {
+    selectRightTab(tab);
   }
 
   return (
@@ -3270,6 +3712,51 @@ export default function App() {
           </button>
         </div>
         <div className="chrome-strip-meta">
+          <div aria-label="Layout controls" className="layout-controls" role="group">
+            <button
+              aria-controls="workspace-tools-panel"
+              aria-pressed={leftPaneVisible}
+              className="ghost-button ghost-button--sm"
+              onClick={handleToggleLeftPane}
+              title="Toggle left sidebar"
+              type="button"
+            >
+              Left
+            </button>
+            <button
+              aria-controls="bottom-dock-panel"
+              aria-expanded={!bottomPaneCollapsed}
+              className="ghost-button ghost-button--sm"
+              onClick={handleToggleBottomPane}
+              title="Toggle bottom dock"
+              type="button"
+            >
+              Bottom
+            </button>
+            <button
+              aria-controls="runtime-tools-panel"
+              aria-pressed={rightPaneVisible}
+              className="ghost-button ghost-button--sm layout-control--right"
+              onClick={handleToggleRightPane}
+              title="Toggle right sidebar"
+              type="button"
+            >
+              Right
+            </button>
+            <button
+              className="ghost-button ghost-button--sm"
+              onClick={handleResetLayout}
+              title="Reset all workspace layouts"
+              type="button"
+            >
+              Reset
+            </button>
+          </div>
+          {layoutPersistenceMessage ? (
+            <span className="layout-persistence-status" role="status">
+              {layoutPersistenceMessage}
+            </span>
+          ) : null}
           <span
             aria-label={`engine_sessiond ${sessiondState}: ${sessiondMessage}`}
             className={`status-indicator${sessiondState === 'connected' ? ' status-indicator--ok' : sessiondState === 'offline' ? ' status-indicator--err' : ''}`}
@@ -3283,12 +3770,21 @@ export default function App() {
         </div>
       </header>
 
-      <main className={`shell-grid${showSidePane ? '' : ' shell-grid--scene-mode'}`}>
-        <aside className="pane rail-pane">
+      <main
+        className={`shell-grid ${shellGridClass(leftPaneVisible, rightPaneVisible)}${shellPaneGeometry.narrow ? ' shell-grid--narrow' : ''}`}
+        ref={shellGridRef}
+        style={{
+          '--shell-left-width': `${leftPaneWidth}px`,
+          '--shell-right-width': `${rightPaneWidth}px`,
+          '--shell-center-min-width': `${SHELL_LAYOUT_CENTER_WIDTH_MIN}px`,
+          '--shell-separator-width': `${SHELL_LAYOUT_SEPARATOR_WIDTH}px`,
+        } as CSSProperties}
+      >
+        <aside className="pane rail-pane" hidden={!leftPaneVisible} id="workspace-tools-pane">
           <nav
             aria-label="Workspace tools"
             className="rail-tabs"
-            onKeyDown={(event) => handleTabListKeyDown(event, leftTabs, activeLeftTab, setActiveLeftTab)}
+            onKeyDown={(event) => handleTabListKeyDown(event, leftTabs, activeLeftTab, handleSelectLeftTab)}
             role="tablist"
           >
             {leftTabs.map((tab) => (
@@ -3299,7 +3795,7 @@ export default function App() {
                 data-tab-id={tab}
                 id={`workspace-tool-tab-${tab}`}
                 key={tab}
-                onClick={() => setActiveLeftTab(tab)}
+                onClick={() => handleSelectLeftTab(tab)}
                 role="tab"
                 tabIndex={activeLeftTab === tab ? 0 : -1}
                 type="button"
@@ -3653,6 +4149,21 @@ export default function App() {
           ) : null}
         </aside>
 
+        {leftPaneVisible ? (
+          <div
+            aria-label="Resize left sidebar"
+            aria-orientation="vertical"
+            aria-valuemax={shellPaneGeometry.left.max}
+            aria-valuemin={shellPaneGeometry.left.min}
+            aria-valuenow={leftPaneWidth}
+            className="shell-pane-resize-handle shell-pane-resize-handle--left"
+            onKeyDown={handleLeftPaneResizeKeyDown}
+            onPointerDown={(event) => handlePaneResizeStart('left', event)}
+            role="separator"
+            tabIndex={0}
+          />
+        ) : null}
+
         <section className="center-column">
           <div className="center-toolbar">
             <div
@@ -3745,12 +4256,25 @@ export default function App() {
           </div>
         </section>
 
-        {showSidePane ? (
-          <aside className="pane side-pane">
+        {rightPaneVisible ? (
+          <>
+            <div
+              aria-label="Resize right sidebar"
+              aria-orientation="vertical"
+              aria-valuemax={shellPaneGeometry.right.max}
+              aria-valuemin={shellPaneGeometry.right.min}
+              aria-valuenow={rightPaneWidth}
+              className="shell-pane-resize-handle shell-pane-resize-handle--right"
+              onKeyDown={handleRightPaneResizeKeyDown}
+              onPointerDown={(event) => handlePaneResizeStart('right', event)}
+              role="separator"
+              tabIndex={0}
+            />
+            <aside className="pane side-pane">
             <div
               aria-label="Runtime tools"
               className="tab-row tab-row--side"
-              onKeyDown={(event) => handleTabListKeyDown(event, rightTabs, activeRightTab, setActiveRightTab)}
+              onKeyDown={(event) => handleTabListKeyDown(event, rightTabs, activeRightTab, handleSelectRightTab)}
               role="tablist"
             >
               {rightTabs.map((tab) => (
@@ -3759,7 +4283,7 @@ export default function App() {
                   controls="runtime-tools-panel"
                   id={`runtime-tool-tab-${tab}`}
                   key={tab}
-                  onClick={() => setActiveRightTab(tab)}
+                  onClick={() => handleSelectRightTab(tab)}
                   tabId={tab}
                 >
                   {tab}
@@ -3819,7 +4343,8 @@ export default function App() {
               handleTransitionArtifact,
             )}
             </div>
-          </aside>
+            </aside>
+          </>
         ) : null}
       </main>
 
@@ -3830,7 +4355,7 @@ export default function App() {
         <div
           aria-orientation="horizontal"
           aria-valuemax={bottomPaneMaxHeight}
-          aria-valuemin={MIN_BOTTOM_PANE_HEIGHT}
+          aria-valuemin={bottomPaneMinHeight}
           aria-valuenow={bottomPaneHeight}
           aria-label="Resize bottom dock"
           className="bottom-pane__resize-handle"
