@@ -877,11 +877,8 @@ try {
       '--content-root', nonFiniteContentRoot,
       '--data-foundation', foundationPath,
     ]);
-    assert.equal(nonFiniteResult.status, 0, nonFiniteResult.stderr || nonFiniteResult.stdout);
-    assert.deepEqual(JSON.parse(nonFiniteResult.stdout).item.geometry, {
-      status: 'unavailable',
-      reason: 'item_prefab_visual_geometry_unavailable',
-    });
+    assert.notEqual(nonFiniteResult.status, 0, 'non-finite procgeo dimensions must be rejected');
+    assert.match(nonFiniteResult.stderr, /Invalid width/);
 
     const sample = (...args) => {
       const result = invoke(withContent(['evaluate-sample', ...args]));
