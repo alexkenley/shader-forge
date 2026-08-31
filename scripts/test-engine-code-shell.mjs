@@ -281,7 +281,7 @@ assert.ok(
   'current-file search must sit immediately beside Inspect',
 );
 assert.match(stylesSource, /\.code-workspace\s*\{/);
-assert.match(stylesSource, /\.code-workspace-host\s*\{[\s\S]*?display:\s*flex;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;/);
+assert.match(stylesSource, /\.code-workspace-host,\s*\.scene-editor-host\s*\{[\s\S]*?display:\s*flex;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;/);
 assert.match(stylesSource, /\.guide-toolbar-meta\s*\{[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?white-space:\s*nowrap;/);
 assert.match(stylesSource, /\.code-editor-search-match\s*\{/);
 assert.match(stylesSource, /\.code-editor-search-match\.is-current/);

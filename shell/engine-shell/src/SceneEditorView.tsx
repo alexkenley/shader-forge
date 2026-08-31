@@ -612,7 +612,7 @@ export function SceneEditorView({
 
     setMode(nextMode);
     if (nextMode === 'play') {
-      const message = 'Verify mode is read-only. Unsaved changes are still here.';
+      const message = 'Verify locks editing and keeps your changes. Play saves them before testing.';
       setStatusMessage(message);
       onBackendStatus('connected', message);
       return;
@@ -1248,9 +1248,11 @@ export function SceneEditorView({
               role="tablist"
             >
               <button
+                aria-controls="scene-sidebar-panel-scenes"
                 aria-selected={activeSidebarTab === 'scenes'}
                 className={`pill-button${activeSidebarTab === 'scenes' ? ' is-active' : ''}`}
                 data-scene-sidebar-tab="scenes"
+                id="scene-sidebar-tab-scenes"
                 onClick={() => setActiveSidebarTab('scenes')}
                 role="tab"
                 tabIndex={activeSidebarTab === 'scenes' ? 0 : -1}
@@ -1259,9 +1261,11 @@ export function SceneEditorView({
                 World
               </button>
               <button
+                aria-controls="scene-sidebar-panel-outliner"
                 aria-selected={activeSidebarTab === 'outliner'}
                 className={`pill-button${activeSidebarTab === 'outliner' ? ' is-active' : ''}`}
                 data-scene-sidebar-tab="outliner"
+                id="scene-sidebar-tab-outliner"
                 onClick={() => setActiveSidebarTab('outliner')}
                 role="tab"
                 tabIndex={activeSidebarTab === 'outliner' ? 0 : -1}
@@ -1270,9 +1274,11 @@ export function SceneEditorView({
                 Objects
               </button>
               <button
+                aria-controls="scene-sidebar-panel-inspector"
                 aria-selected={activeSidebarTab === 'inspector'}
                 className={`pill-button${activeSidebarTab === 'inspector' ? ' is-active' : ''}`}
                 data-scene-sidebar-tab="inspector"
+                id="scene-sidebar-tab-inspector"
                 onClick={() => setActiveSidebarTab('inspector')}
                 role="tab"
                 tabIndex={activeSidebarTab === 'inspector' ? 0 : -1}
@@ -1281,9 +1287,11 @@ export function SceneEditorView({
                 Selection
               </button>
               <button
+                aria-controls="scene-sidebar-panel-assets"
                 aria-selected={activeSidebarTab === 'assets'}
                 className={`pill-button${activeSidebarTab === 'assets' ? ' is-active' : ''}`}
                 data-scene-sidebar-tab="assets"
+                id="scene-sidebar-tab-assets"
                 onClick={() => setActiveSidebarTab('assets')}
                 role="tab"
                 tabIndex={activeSidebarTab === 'assets' ? 0 : -1}
@@ -1295,7 +1303,7 @@ export function SceneEditorView({
 
             <div className="scene-editor__sidebar-body">
               {activeSidebarTab === 'scenes' ? (
-                <div aria-label="Worlds" className="scene-sidebar-panel" role="tabpanel">
+                <div aria-labelledby="scene-sidebar-tab-scenes" className="scene-sidebar-panel" id="scene-sidebar-panel-scenes" role="tabpanel">
                   <div className="scene-sidebar-panel__header">
                     <div>
                       <span>World</span>
@@ -1407,7 +1415,7 @@ export function SceneEditorView({
               ) : null}
 
               {activeSidebarTab === 'outliner' ? (
-                <div aria-label="Objects" className="scene-sidebar-panel" role="tabpanel">
+                <div aria-labelledby="scene-sidebar-tab-outliner" className="scene-sidebar-panel" id="scene-sidebar-panel-outliner" role="tabpanel">
                   <div className="scene-sidebar-panel__header">
                     <div>
                       <span>Objects</span>
@@ -1473,7 +1481,7 @@ export function SceneEditorView({
               ) : null}
 
               {activeSidebarTab === 'inspector' ? (
-                <div aria-label="Selection" className="scene-sidebar-panel" role="tabpanel">
+                <div aria-labelledby="scene-sidebar-tab-inspector" className="scene-sidebar-panel" id="scene-sidebar-panel-inspector" role="tabpanel">
                   <div className="scene-sidebar-panel__header">
                     <div>
                       <span>Selection</span>
@@ -1785,7 +1793,7 @@ export function SceneEditorView({
               ) : null}
 
               {activeSidebarTab === 'assets' ? (
-                <div aria-label="Library" className="scene-sidebar-panel" role="tabpanel">
+                <div aria-labelledby="scene-sidebar-tab-assets" className="scene-sidebar-panel" id="scene-sidebar-panel-assets" role="tabpanel">
                   <div className="scene-sidebar-panel__header">
                     <div>
                       <span>Library</span>

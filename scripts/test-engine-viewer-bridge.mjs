@@ -126,8 +126,13 @@ try {
   assert.match(shellApp, /onClick=\{onBuildAndPlay\}/);
   assert.match(shellApp, /onClick=\{onResumeRuntime\}/);
   assert.match(shellApp, /onClick=\{onRestartRuntime\}/);
-  assert.match(shellApp, /buildBusy \? 'Building' : runtimeLabel/);
+  assert.match(shellApp, /buildBusy \? 'Building' : buildStatus\.state === 'failed' \? 'Play failed' : runtimeLabel/);
   assert.match(shellApp, /aria-live="polite"/);
+  assert.match(shellApp, /playtestFailureMessage/);
+  assert.match(shellApp, /role="alert"/);
+  assert.match(shellApp, /pendingRunRequestRef/);
+  assert.match(shellApp, /Play skipped after build/);
+  assert.match(shellApp, /activeSessionId !== runRequest\.sessionId \|\| launchScene !== runRequest\.scene/);
   assert.doesNotMatch(shellApp, /toolbar-cluster toolbar-cluster--center/);
   assert.doesNotMatch(shellApp, /Bridge Diagnostics/);
   assert.doesNotMatch(shellApp, /External Runtime Window/);

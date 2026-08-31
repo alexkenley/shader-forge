@@ -29,7 +29,7 @@ try {
   assert.match(shellApp, /SceneEditorView/);
   assert.match(sceneEditorView, /handleModeChange\('play'\)/);
   assert.match(sceneEditorView, /Verify/);
-  assert.match(sceneEditorView, /Verify mode is read-only\. Unsaved changes are still here\./);
+  assert.match(sceneEditorView, /Verify locks editing and keeps your changes\. Play saves them before testing\./);
   assert.doesNotMatch(sceneEditorView, /Unsaved authoring edits were discarded/);
   assert.match(sceneEditorView, /confirmDiscardChanges/);
   assert.match(sceneEditorView, /window\.confirm/);
@@ -38,7 +38,7 @@ try {
   assert.match(sceneEditorView, /Save object/);
   assert.match(sceneEditorView, /Reload/);
   assert.match(sceneEditorView, /Duplicate world/);
-  assert.match(sceneEditorView, /aria-label="Worlds"/);
+  assert.match(sceneEditorView, /id="scene-sidebar-panel-scenes"/);
   assert.match(sceneEditorView, /async function handlePlay/);
   assert.match(sceneEditorView, /sceneDirty && !\(await handleSaveScene\(\)\)/);
   assert.match(sceneEditorView, /prefabDirty && !\(await handleSavePrefab\(\)\)/);
@@ -66,6 +66,8 @@ try {
   assert.match(sceneEditorView, /role="alert"/);
   assert.match(sceneEditorView, /role="separator"/);
   assert.match(sceneEditorView, /role="tablist"/);
+  assert.match(sceneEditorView, /aria-controls="scene-sidebar-panel-scenes"/);
+  assert.match(sceneEditorView, /aria-labelledby="scene-sidebar-tab-scenes"/);
   assert.match(sceneAuthoringSource, /formatSceneAssetDocument/);
   assert.match(sceneAuthoringSource, /formatPrefabAssetDocument/);
   assert.match(sceneAuthoringSource, /\[entity\./);

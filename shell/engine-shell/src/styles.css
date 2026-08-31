@@ -1141,6 +1141,7 @@ pre {
 }
 
 .workspace-layout--playtest .surface-header,
+.workspace-layout--playtest .playtest-alert,
 .workspace-layout--playtest .scene-disclosure {
   width: min(720px, 100%);
   margin-inline: auto;
@@ -1156,6 +1157,10 @@ pre {
 
 .workspace-layout--playtest .scene-disclosure {
   padding: 4px 8px 8px;
+}
+
+.workspace-layout--playtest .playtest-alert {
+  margin-top: 10px;
 }
 
 .workspace-layout--code-game,
@@ -4034,26 +4039,12 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .scene-editor__body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .scene-run-strip {
     grid-template-columns: 1fr;
   }
 
   .scene-run-strip__facts {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .scene-editor__resize-handle {
-    display: none;
-  }
-
-  .scene-editor__sidebar {
-    width: auto !important;
-    border-left: 0;
-    border-top: 1px solid var(--border);
   }
 
   .scene-metric-grid {
@@ -4077,6 +4068,28 @@ pre {
     grid-template-columns: minmax(180px, 210px) minmax(0, 1fr);
   }
 
+}
+
+@media (max-width: 900px) {
+  .scene-editor__body {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .scene-editor__canvas-column {
+    min-height: 480px;
+  }
+
+  .scene-editor__resize-handle {
+    display: none;
+  }
+
+  .scene-editor__sidebar {
+    width: auto !important;
+    min-height: 360px;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
 }
 
 @media (max-width: 1100px) {

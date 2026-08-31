@@ -644,7 +644,7 @@ function buildStateLabel(state: BuildStatus['state']) {
 function buildSetupHint(errorMessage: string | null) {
   const message = String(errorMessage || '');
   if (/cmake is required/i.test(message)) {
-    return 'CMake is required for Build and Build + Run. The clean-start scripts now auto-detect common installs and export SHADER_FORGE_CMAKE when possible. If it still fails, install CMake or add it to PATH. If the runtime binary already exists under build/runtime/bin, use Run instead.';
+    return 'Play needs CMake. The clean-start scripts auto-detect common installs and export SHADER_FORGE_CMAKE when possible. If it still fails, install CMake or add it to PATH. If the runtime binary already exists under build/runtime/bin, use Run existing build in Diagnostics.';
   }
   return '';
 }
@@ -1757,9 +1757,14 @@ function renderCenterContent(
   const canStopOrRestart = !buildBusy && !runtimeStopped;
   const canResume = !buildBusy && runtimePaused && runtimeStatus.supportsPause;
   const canPause = !buildBusy && runtimeStatus.supportsPause && runtimeStatus.state === 'running';
-  const playtestStatus = buildBusy ? 'Building' : runtimeLabel;
+  const playtestStatus = buildBusy ? 'Building' : buildStatus.state === 'failed' ? 'Play failed' : runtimeLabel;
   const buildHint = buildSetupHint(buildStatus.error);
   const runtimeHint = nativeRuntimeSetupHint(buildLog, runtimeLog);
+  const playtestFailureMessage = buildStatus.state === 'failed'
+    ? buildHint || buildStatus.error || 'The build failed. Open Diagnostics for details.'
+    : runtimeStopped && runtimeHint
+      ? runtimeHint
+      : '';
 
   return (
     <div className="workspace-layout workspace-layout--playtest">
@@ -1820,6 +1825,12 @@ function renderCenterContent(
             )}
           </div>
         </div>
+        {playtestFailureMessage ? (
+          <div className="setup-hint playtest-alert" role="alert">
+            <strong>Play needs attention</strong>
+            <span>{playtestFailureMessage}</span>
+          </div>
+        ) : null}
         <details className="scene-disclosure">
           <summary>Diagnostics</summary>
           <div className="scene-disclosure__body">
@@ -2064,6 +2075,8 @@ export default function App() {
   const terminalTabsRef = useRef<TerminalTabState[]>([]);
   const terminalOpeningRef = useRef(new Set<string>());
   const activeSessionIdRef = useRef('');
+  const pendingRunRequestRef = useRef<{ id: number; sessionId: string; scene: string } | null>(null);
+  const runRequestCounterRef = useRef(0);
   const selectedOperationIdRef = useRef('');
   const activityListRequestRef = useRef(0);
   const activityDetailRequestRef = useRef(0);
@@ -2824,14 +2837,32 @@ export default function App() {
     }
 
     if (buildStatus.state === 'succeeded') {
+      const runRequest = pendingRunRequestRef.current;
       setPendingRunAfterBuild(false);
+      pendingRunRequestRef.current = null;
+      if (!runRequest) {
+        return;
+      }
+      if (activeSessionId !== runRequest.sessionId || launchScene !== runRequest.scene) {
+        recordViewerBridgeEvent({
+          title: 'Play skipped after build',
+          detail: 'The selected workspace or world changed while the build was running.',
+          at: new Date().toISOString(),
+          tone: 'idle',
+        });
+        setBuildLog((current) => trimTerminalOutput(`${current}[build] play skipped because the selected world changed\n`));
+        return;
+      }
+
+      const requestedScene = runRequest.scene;
+      const requestedSessionId = runRequest.sessionId || undefined;
       if (runtimeStatus.state === 'running' || runtimeStatus.state === 'paused') {
-        void restartRuntime(launchScene, activeSessionId || undefined)
+        void restartRuntime(requestedScene, requestedSessionId)
           .then((nextStatus) => {
             setRuntimeStatus(nextStatus);
             recordViewerBridgeEvent({
               title: 'Runtime restarted after build',
-              detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+              detail: `${nextStatus.scene || requestedScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
               at: new Date().toISOString(),
               tone: runtimeStateTone(nextStatus.state),
             });
@@ -2852,12 +2883,12 @@ export default function App() {
         return;
       }
 
-      void startRuntime(launchScene, activeSessionId || undefined)
+      void startRuntime(requestedScene, requestedSessionId)
         .then((nextStatus) => {
           setRuntimeStatus(nextStatus);
           recordViewerBridgeEvent({
             title: 'Runtime started after build',
-            detail: `${nextStatus.scene || launchScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
+            detail: `${nextStatus.scene || requestedScene} · ${nextStatus.pid ? `pid ${nextStatus.pid}` : 'pending pid'}`,
             at: new Date().toISOString(),
             tone: runtimeStateTone(nextStatus.state),
           });
@@ -2880,6 +2911,7 @@ export default function App() {
 
     if (buildStatus.state === 'failed' || buildStatus.state === 'stopped') {
       setPendingRunAfterBuild(false);
+      pendingRunRequestRef.current = null;
     }
   }, [activeSessionId, buildStatus.state, launchScene, pendingRunAfterBuild, runtimeStatus.state]);
 
@@ -3556,6 +3588,17 @@ export default function App() {
   }
 
   async function requestRuntimeBuild(runAfterBuild = false) {
+    const runRequest = runAfterBuild
+      ? {
+          id: runRequestCounterRef.current + 1,
+          sessionId: activeSessionId,
+          scene: launchScene,
+        }
+      : null;
+    if (runRequest) {
+      runRequestCounterRef.current = runRequest.id;
+    }
+    pendingRunRequestRef.current = runRequest;
     try {
       const nextStatus = await startRuntimeBuild(buildConfig, buildDir.trim() || undefined);
       setPendingRunAfterBuild(runAfterBuild);
@@ -3572,7 +3615,10 @@ export default function App() {
       selectBottomTab('Output');
       selectRightTab('Build');
     } catch (error) {
-      setPendingRunAfterBuild(false);
+      if (!runRequest || pendingRunRequestRef.current?.id === runRequest.id) {
+        pendingRunRequestRef.current = null;
+        setPendingRunAfterBuild(false);
+      }
       const message = error instanceof Error ? error.message : String(error);
       recordViewerBridgeEvent({
         title: 'Build request failed',
