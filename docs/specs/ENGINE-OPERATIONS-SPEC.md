@@ -200,9 +200,9 @@ MCP spatial mutation tools now wire process-owned coordinator credentials and le
 
 ## Spatial CLI Adapter
 
-The implemented `engine spatial preview|approve|reject|apply|undo` commands are thin clients of these HTTP routes. Preview reads a strict BOM-free UTF-8 `--content-file` and sends full candidate content; it never writes the source file. Preview/apply/undo read the coordinator credential only from `SHADER_FORGE_AGENT_CREDENTIAL`, while agent and lease IDs remain explicit arguments. Approve/reject are lease-free review transitions. Every command uses the fixed CLI actor and prints the returned JSON.
+The implemented `engine spatial preview|validate-operation|approve|reject|apply|undo` commands are thin clients of these HTTP routes. Preview reads a strict BOM-free UTF-8 `--content-file` and sends full candidate content; it never writes the source file. `validate-operation <id> --samples-file <path>` reads a strict BOM-free UTF-8 top-level JSON sample array and sends it unchanged to the lease-free sessiond validation route. Preview/apply/undo read the coordinator credential only from `SHADER_FORGE_AGENT_CREDENTIAL`, while agent and lease IDs remain explicit arguments. Validation and approve/reject need no credential. Every command uses the fixed CLI actor and prints the returned public JSON.
 
-The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. `sf-mcp` now adapts the same spatial preview/review/apply/undo routes with its process-owned agent and credential. Sessiond operation validation is implemented; its thin CLI/MCP adapters, capture, and review packets remain deferred.
+The CLI does not auto-register agents, acquire or renew leases, auto-approve, build the native tool, or call `/api/files/write`. `sf-mcp` adapts the same validation and spatial preview/review/apply/undo routes, using its process-owned agent and credential only for lease-gated mutations. Capture and review packets remain deferred.
 
 ## Spatial Shell Adapter
 

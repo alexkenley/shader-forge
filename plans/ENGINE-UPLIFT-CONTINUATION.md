@@ -74,6 +74,8 @@ Minimum checks: `test:spatial-operations`, `test:sessiond`, and existing spatial
 
 ### 3. Expose validation through sf-mcp and the CLI
 
+Status: completed. `spatial_attachment_validate` and `engine spatial validate-operation <id> --samples-file <path>` are thin sessiond adapters with strict bounded samples, selected-session checks, no validation credential/lease, public-only output, and real stdio/CLI harness coverage.
+
 After priority 2 works directly through sessiond, add the thin adapters only:
 
 - MCP tool: `spatial_attachment_validate`

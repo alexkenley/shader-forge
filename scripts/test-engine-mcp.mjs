@@ -311,6 +311,7 @@ async function main() {
         'project_status',
         'spatial_attachment_preview',
         'spatial_attachment_read',
+        'spatial_attachment_validate',
         'work_lease_release',
         'work_lease_request',
         'work_lease_status',
@@ -341,6 +342,35 @@ async function main() {
     assert.match(advertisedOutput, /no_joint_limits_authored/);
     assert.match(advertisedOutput, /capsule_axis_to_oriented_box_clearance/);
     assert.match(advertisedOutput, /authored_collision_box/);
+
+    const spatialValidateTool = tools.tools.find((tool) => tool.name === 'spatial_attachment_validate');
+    assert.ok(spatialValidateTool);
+    assert.deepEqual(spatialValidateTool.annotations, {
+      destructiveHint: false,
+      idempotentHint: false,
+    });
+    assert.equal(spatialValidateTool.inputSchema.additionalProperties, false);
+    assert.deepEqual(Object.keys(spatialValidateTool.inputSchema.properties).sort(), [
+      'operationId',
+      'samples',
+    ]);
+    assert.deepEqual(spatialValidateTool.inputSchema.required, ['operationId']);
+    assert.equal(spatialValidateTool.inputSchema.properties.samples.type, 'array');
+    assert.equal(spatialValidateTool.inputSchema.properties.samples.maxItems, 64);
+    assert.equal(spatialValidateTool.inputSchema.properties.samples.items.additionalProperties, false);
+    assert.deepEqual(
+      Object.keys(spatialValidateTool.inputSchema.properties.samples.items.properties).sort(),
+      ['normalizedTime', 'phase'],
+    );
+    assert.deepEqual(
+      [...spatialValidateTool.inputSchema.properties.samples.items.required].sort(),
+      ['normalizedTime', 'phase'],
+    );
+    const advertisedValidate = JSON.stringify(spatialValidateTool.inputSchema);
+    assert.equal(advertisedValidate.includes('credential'), false);
+    assert.equal(advertisedValidate.includes('leaseId'), false);
+    assert.equal(advertisedValidate.includes('agentId'), false);
+    assert.equal(advertisedValidate.includes('sessionId'), false);
 
     const call = (name, args = {}) => client.request('tools/call', { name, arguments: args });
     const status = await call('project_status');
@@ -582,6 +612,95 @@ async function main() {
     assert.equal(await fs.readFile(path.join(workspaceRoot, attachmentPath), 'utf8'), originalAttachment);
     const operationId = preview.structuredContent.operation.id;
 
+    const coordinationBeforeValidate = await call('coordination_state');
+    const validateSamples = [
+      { phase: 'idle', normalizedTime: 0.25 },
+      { phase: 'idle', normalizedTime: 0.75 },
+    ];
+    const validated = await call('spatial_attachment_validate', {
+      operationId,
+      samples: validateSamples,
+    });
+    assert.equal(validated.isError, undefined);
+    assert.equal(validated.structuredContent.operation.id, operationId);
+    assert.equal(validated.structuredContent.operation.state, 'previewed');
+    assert.equal(validated.structuredContent.operation.validation.status, 'completed');
+    assert.equal(validated.structuredContent.operation.events.at(-1).type, 'validated');
+    assert.equal(validated.structuredContent.operation.events.at(-1).actor.kind, 'mcp');
+    assert.equal(validated.structuredContent.operation.events.at(-1).actor.id, initialCoordination.agents[0].id);
+    assert.deepEqual(
+      validated.structuredContent.operation.validation.samples.map((sample) => ({
+        phase: sample.phase,
+        normalizedTime: sample.normalizedTime,
+      })),
+      validateSamples,
+    );
+    assert.deepEqual(sampledEvaluationCalls.slice(-2), [
+      { attachmentId: 'weapon.rifle', phase: 'idle', normalizedTime: 0.25 },
+      { attachmentId: 'weapon.rifle', phase: 'idle', normalizedTime: 0.75 },
+    ]);
+    assert.equal('proposedContent' in validated.structuredContent.operation, false);
+    assert.equal(JSON.stringify(validated.structuredContent).includes(holder.payload.credential), false);
+    assert.equal(JSON.stringify(validated.structuredContent).includes('native diagnostic'), false);
+    const coordinationAfterValidate = await call('coordination_state');
+    assert.deepEqual(
+      coordinationAfterValidate.structuredContent.granted,
+      coordinationBeforeValidate.structuredContent.granted,
+    );
+    assert.deepEqual(
+      coordinationAfterValidate.structuredContent.pending,
+      coordinationBeforeValidate.structuredContent.pending,
+    );
+    assert.equal(await fs.readFile(path.join(workspaceRoot, attachmentPath), 'utf8'), originalAttachment);
+
+    const omittedSamples = await call('spatial_attachment_validate', { operationId });
+    assert.equal(omittedSamples.isError, undefined);
+    assert.equal(omittedSamples.structuredContent.operation.validation.status, 'completed');
+    assert.equal(omittedSamples.structuredContent.operation.validation.sampleCount, 0);
+
+    const injectedValidateLease = await call('spatial_attachment_validate', {
+      operationId,
+      leaseId: spatialLeaseId,
+    });
+    assert.equal(injectedValidateLease.isError, true);
+
+    const extraSampleField = await call('spatial_attachment_validate', {
+      operationId,
+      samples: [{ phase: 'idle', normalizedTime: 0.5, extra: true }],
+    });
+    assert.equal(extraSampleField.isError, true);
+
+    const invalidValidateTime = await call('spatial_attachment_validate', {
+      operationId,
+      samples: [{ phase: 'idle', normalizedTime: 2 }],
+    });
+    assert.equal(invalidValidateTime.isError, true);
+
+    const duplicateValidateSample = await call('spatial_attachment_validate', {
+      operationId,
+      samples: [
+        { phase: 'idle', normalizedTime: 0.5 },
+        { phase: 'idle', normalizedTime: 0.5 },
+      ],
+    });
+    assert.equal(duplicateValidateSample.isError, true);
+    assert.equal(duplicateValidateSample.structuredContent.status, 400);
+    assert.equal(duplicateValidateSample.structuredContent.code, 'spatial_request_invalid');
+    assert.equal(JSON.stringify(duplicateValidateSample.structuredContent).includes(holder.payload.credential), false);
+
+    const unknownPhaseValidate = await call('spatial_attachment_validate', {
+      operationId,
+      samples: [{ phase: 'unknown', normalizedTime: 0.5 }],
+    });
+    assert.equal(unknownPhaseValidate.isError, undefined);
+    assert.equal(unknownPhaseValidate.structuredContent.operation.validation.status, 'failed');
+    assert.equal(
+      unknownPhaseValidate.structuredContent.operation.validation.error.code,
+      'spatial_sample_evaluation_invalid',
+    );
+    assert.equal(JSON.stringify(unknownPhaseValidate.structuredContent).includes('Unknown motion-envelope'), false);
+    assert.equal('proposedContent' in unknownPhaseValidate.structuredContent.operation, false);
+
     const operations = await call('operation_list', { state: 'previewed', limit: 1 });
     assert.deepEqual(operations.structuredContent.operations.map((operation) => operation.id), [operationId]);
     const operationRead = await call('operation_read', { operationId });
@@ -601,6 +720,11 @@ async function main() {
     const crossSessionApprove = await call('operation_approve', { operationId: foreignOperation.id });
     assert.equal(crossSessionApprove.isError, true);
     assert.equal(crossSessionApprove.structuredContent.code, 'operation_session_mismatch');
+    const crossSessionValidate = await call('spatial_attachment_validate', {
+      operationId: foreignOperation.id,
+    });
+    assert.equal(crossSessionValidate.isError, true);
+    assert.equal(crossSessionValidate.structuredContent.code, 'operation_session_mismatch');
 
     const genericOperation = await sessiond.operationStore.previewFileWrite({
       sessionId: project.session.id,

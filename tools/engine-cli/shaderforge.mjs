@@ -71,6 +71,7 @@ Usage:
   engine spatial preview --session <id> --path animation/attachments/<file>.attachment.toml --content-file <path> --base-revision <sha256:...|missing> --label <text> --agent <id> --lease <id> [--base-url <url>]
   engine spatial approve <operation-id> [--base-url <url>]
   engine spatial reject <operation-id> [--base-url <url>]
+  engine spatial validate-operation <operation-id> --samples-file <path> [--base-url <url>]
   engine spatial apply <operation-id> --agent <id> --lease <id> [--base-url <url>]
   engine spatial undo <operation-id> --agent <id> --lease <id> [--base-url <url>]
   engine bake [--content-root content] [--audio-root audio] [--animation-root animation] [--physics-root physics] [--data-foundation data/foundation/engine-data-layout.toml] [--output-root build/cooked] [--report build/cooked/asset-pipeline-report.json]
@@ -355,20 +356,35 @@ function requireSpatialAgentCredential(subcommand) {
   return credential;
 }
 
-function readStrictUtf8File(filePath) {
+function readStrictUtf8File(filePath, label = 'Spatial preview content file') {
   const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
   try {
     const bytes = fs.readFileSync(resolvedPath);
     if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-      throw new Error(`Spatial preview content file must not begin with a UTF-8 BOM: ${resolvedPath}`);
+      throw new Error(`${label} must not begin with a UTF-8 BOM: ${resolvedPath}`);
     }
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(`Spatial preview content file is not valid UTF-8: ${resolvedPath}`);
+      throw new Error(`${label} is not valid UTF-8: ${resolvedPath}`);
     }
     throw error;
   }
+}
+
+function readSpatialSamplesFile(filePath) {
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+  const text = readStrictUtf8File(filePath, 'Spatial samples file');
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`Spatial samples file is not valid JSON: ${resolvedPath}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Spatial samples file must be a JSON array: ${resolvedPath}`);
+  }
+  return parsed;
 }
 
 async function runSpatialOperation(subcommand, positionals, flags) {
@@ -395,6 +411,22 @@ async function runSpatialOperation(subcommand, positionals, flags) {
   }
 
   const operationId = positionals[0].trim();
+  if (subcommand === 'validate-operation') {
+    const payload = await requestJson(
+      baseUrl,
+      `/api/operations/${encodeURIComponent(operationId)}/validate`,
+      {
+        method: 'POST',
+        body: {
+          actor: spatialOperationActor,
+          samples: readSpatialSamplesFile(flags['samples-file']),
+        },
+      },
+    );
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
   const credential = ['apply', 'undo'].includes(subcommand)
     ? requireSpatialAgentCredential(subcommand)
     : '';
@@ -821,7 +853,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     const spatialSubcommand = argv[1];
     const { positionals, flags, duplicateFlags } = parseFlags(argv.slice(2));
     const nativeSubcommands = ['validate', 'cook', 'evaluate-rest', 'evaluate-sample'];
-    const operationSubcommands = ['preview', 'approve', 'reject', 'apply', 'undo'];
+    const operationSubcommands = ['preview', 'approve', 'reject', 'validate-operation', 'apply', 'undo'];
     if (![...nativeSubcommands, ...operationSubcommands].includes(spatialSubcommand)) {
       throw new Error(spatialSubcommand
         ? `Unknown spatial subcommand: ${spatialSubcommand}`
@@ -830,7 +862,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     if (duplicateFlags.length) {
       throw new Error(`Duplicate engine spatial ${spatialSubcommand} flag: --${duplicateFlags[0]}`);
     }
-    const positionalCount = ['approve', 'reject', 'apply', 'undo'].includes(spatialSubcommand) ? 1 : 0;
+    const positionalCount = ['approve', 'reject', 'validate-operation', 'apply', 'undo'].includes(spatialSubcommand) ? 1 : 0;
     if (positionals.length !== positionalCount) {
       throw new Error(positionalCount === 0
         ? `engine spatial ${spatialSubcommand} does not accept positional arguments.`
@@ -847,6 +879,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease', 'base-url'],
       approve: ['base-url'],
       reject: ['base-url'],
+      'validate-operation': ['samples-file', 'base-url'],
       apply: ['agent', 'lease', 'base-url'],
       undo: ['agent', 'lease', 'base-url'],
     };
@@ -854,6 +887,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       'evaluate-rest': ['attachment'],
       'evaluate-sample': ['attachment', 'phase', 'normalized-time'],
       preview: ['session', 'path', 'content-file', 'base-revision', 'label', 'agent', 'lease'],
+      'validate-operation': ['samples-file'],
       apply: ['agent', 'lease'],
       undo: ['agent', 'lease'],
     };

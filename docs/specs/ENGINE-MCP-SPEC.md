@@ -136,9 +136,9 @@ Run it with `npm run test:mcp`.
 
 The next MCP widening requires an engine-owned coordinated context for each additional operation family. Do not expose generic file apply/undo while context-free file operations lack persisted resource keys and authoritative lease checks. Scene, asset, build, runtime, validation, and review-packet tools land only after their matching sessiond operations define those keys and policies. HTTP transport remains deferred until a real remote-client requirement justifies its additional authentication and lifecycle surface. `engine_sessiond` remains loopback-only. Cooperative engine clients are covered; hostile out-of-process filesystem swaps at the OS syscall boundary are not an adversarial security guarantee.
 
-## Planned Spatial Authoring Adapter
+## Spatial Authoring Adapter
 
-Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). Exact typed rest/sample attachment reads and preview/review/apply/undo are implemented through `sf-mcp`; the sessiond operation-validation route now exists, while its thin MCP adapter, capture, immutable review packets, and their typed resources remain deferred. `sf-mcp` remains adapter-only.
+Spatial authoring is specified in [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md). Exact typed rest/sample reads, lease-free operation validation, and preview/review/apply/undo are implemented through `sf-mcp`; capture, immutable review packets, and their typed resources remain deferred. `sf-mcp` remains adapter-only.
 
 Planned resources after that gate:
 
@@ -150,6 +150,7 @@ Implemented tools:
 
 - `spatial_attachment_read`
 - `spatial_attachment_preview`
+- `spatial_attachment_validate`
 - `operation_approve`
 - `operation_reject`
 - `operation_apply`
@@ -157,10 +158,9 @@ Implemented tools:
 
 Planned after matching sessiond operations exist:
 
-- `spatial_attachment_validate`
 - `spatial_review_read`
 - `spatial_review_recapture`
 
-Current mutation tools use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. Capture will also hold the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.
+Current mutation tools use coordinator credentials and the hierarchical spatial keys in the spatial-authoring spec. `spatial_attachment_validate` first verifies the operation belongs to the MCP process's selected session, accepts only the bounded exact sample input, and calls the sessiond validation route without a lease or credential. Capture will also hold the shared `scene/prefab/<id>` and `animation/clip/<id>` read keys used by their writers. Unrelated attachment profiles may proceed concurrently; overlapping writes queue. Visual scores never apply, and MCP must not scrape a live camera or cursor to synthesize a `reviewId` packet.
 
 See [SHADER-FORGE-MCP-SETUP.md](../guides/SHADER-FORGE-MCP-SETUP.md) for Codex and Grok CLI registration and verification.

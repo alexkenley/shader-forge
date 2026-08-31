@@ -9,6 +9,7 @@ const AGENT_CREDENTIAL_HEADER = 'x-shader-forge-agent-credential';
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const SESSIOND_REQUEST_TIMEOUT_MS = 5_000;
 const SPATIAL_READ_TIMEOUT_MS = 30_000;
+const SPATIAL_VALIDATION_TIMEOUT_MS = 12 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 const MAX_OPERATION_LIST_RESULTS = 100;
 const MAX_SPATIAL_ATTACHMENT_BYTES = 1024 * 1024;
@@ -835,6 +836,41 @@ function registerSurface(server, state) {
             leaseId,
           },
         });
+        return toolResult(payload);
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+  server.registerTool(
+    'spatial_attachment_validate',
+    {
+      title: 'Validate spatial attachment operation',
+      description: 'Validate one previewed or approved spatial attachment operation through engine_sessiond without a lease or apply.',
+      inputSchema: z.object({
+        operationId: z.string().trim().min(1).max(128),
+        samples: z.array(z.object({
+          phase: z.string().min(1).max(128),
+          normalizedTime: z.number().min(0).max(1).refine((value) => !Object.is(value, -0)),
+        }).strict()).max(64).optional(),
+      }).strict(),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ operationId, samples }) => {
+      try {
+        await readOperation(operationId);
+        const payload = await requestJson(
+          state.baseUrl,
+          `/api/operations/${encodeURIComponent(operationId)}/validate`,
+          {
+            method: 'POST',
+            timeoutMs: SPATIAL_VALIDATION_TIMEOUT_MS,
+            body: {
+              actor: operationActor(),
+              ...(samples === undefined ? {} : { samples }),
+            },
+          },
+        );
         return toolResult(payload);
       } catch (error) {
         return toolFailure(error);
