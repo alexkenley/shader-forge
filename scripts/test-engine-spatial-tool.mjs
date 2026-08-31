@@ -370,6 +370,28 @@ try {
       'boneId', 'role', 'swingDegrees', 'swingLimitDegrees', 'twistDegrees',
       'twistMinDegrees', 'twistMaxDegrees', 'swingViolationDegrees', 'twistViolationDegrees', 'withinLimits',
     ];
+    const clippingKeys = [
+      'status', 'reason', 'policy', 'metric', 'evaluatedCapsuleCount', 'overlapCount',
+      'maxClearanceViolationMeters', 'hasOverlap', 'itemBox', 'capsules',
+    ];
+    const clippingItemBoxKeys = ['kind', 'prefabId', 'world', 'dimensionsMeters', 'worldCorners'];
+    const clippingCapsuleKeys = [
+      'boneId', 'role', 'centerWorld', 'axisWorld', 'radiusMeters', 'halfLengthMeters',
+      'segmentStartWorld', 'segmentEndWorld', 'axisDistanceToBoxMeters', 'surfaceClearanceMeters',
+      'clearanceViolationMeters', 'overlapping',
+    ];
+    const unavailableClipping = (reason) => ({
+      status: 'unavailable',
+      reason,
+      policy: 'diagnose',
+      metric: 'capsule_axis_to_oriented_box_clearance',
+      evaluatedCapsuleCount: 0,
+      overlapCount: 0,
+      maxClearanceViolationMeters: 0,
+      hasOverlap: null,
+      itemBox: null,
+      capsules: [],
+    });
     const restJointLimitBone = (boneId, swingLimitDegrees, twistMinDegrees, twistMaxDegrees) => ({
       boneId,
       role: boneId,
@@ -443,6 +465,44 @@ try {
         );
       });
     };
+    const assertAvailableClipping = (clipping, message) => {
+      assert.deepEqual(Object.keys(clipping), clippingKeys, `${message} keys`);
+      assert.equal(clipping.status, 'available', message);
+      assert.equal(clipping.reason, null, message);
+      assert.equal(clipping.policy, 'diagnose', message);
+      assert.equal(clipping.metric, 'capsule_axis_to_oriented_box_clearance', message);
+      assert.equal(clipping.evaluatedCapsuleCount, clipping.capsules.length, message);
+      assert.equal(clipping.overlapCount, clipping.capsules.filter((entry) => entry.overlapping).length, message);
+      assert.equal(clipping.hasOverlap, clipping.overlapCount > 0, message);
+      assert.deepEqual(Object.keys(clipping.itemBox), clippingItemBoxKeys, `${message} item box keys`);
+      assert.equal(clipping.itemBox.kind, 'authored_collision_box', message);
+      assert.equal(clipping.itemBox.worldCorners.length, 8, message);
+      assert.ok(clipping.itemBox.dimensionsMeters.every((value) => Number.isFinite(value) && value > 0), message);
+      clipping.capsules.forEach((capsule, index) => {
+        assert.deepEqual(Object.keys(capsule), clippingCapsuleKeys, `${message} capsule ${index} keys`);
+        const numeric = [
+          ...capsule.centerWorld, ...capsule.axisWorld, capsule.radiusMeters, capsule.halfLengthMeters,
+          ...capsule.segmentStartWorld, ...capsule.segmentEndWorld, capsule.axisDistanceToBoxMeters,
+          capsule.surfaceClearanceMeters, capsule.clearanceViolationMeters,
+        ];
+        assert.ok(numeric.every(Number.isFinite), `${message} capsule ${index} finite`);
+        assert.ok(Math.abs(Math.hypot(...capsule.axisWorld) - 1) <= 1e-12, `${message} capsule ${index} unit axis`);
+        assert.ok(Math.abs(
+          capsule.surfaceClearanceMeters - (capsule.axisDistanceToBoxMeters - capsule.radiusMeters)
+        ) <= 1e-12, `${message} capsule ${index} surface clearance`);
+        assert.equal(
+          capsule.clearanceViolationMeters,
+          Math.max(0, -capsule.surfaceClearanceMeters),
+          `${message} capsule ${index} violation`,
+        );
+        assert.equal(capsule.overlapping, capsule.clearanceViolationMeters > 0, `${message} capsule ${index} overlap`);
+      });
+      assert.equal(
+        clipping.maxClearanceViolationMeters,
+        clipping.capsules.reduce((current, capsule) => Math.max(current, capsule.clearanceViolationMeters), 0),
+        `${message} max violation`,
+      );
+    };
     const assertVectorClose = (actual, expected, message = 'vector mismatch') => {
       assert.equal(actual.length, expected.length, message);
       actual.forEach((value, index) => {
@@ -482,10 +542,24 @@ try {
     });
     assert.equal(rest.attachment.id, 'weapon.rifle.mk1.humanoid');
     assertAuthoredVisualBox(rest, 'rifle rest visual box');
-    assert.deepEqual(rest.diagnostics.clipping, {
-      status: 'unavailable',
-      reason: 'item_and_capsule_geometry_not_integrated',
-    });
+    assertAvailableClipping(rest.diagnostics.clipping, 'rifle rest clipping');
+    assert.equal(rest.diagnostics.clipping.itemBox.prefabId, 'weapon.rifle.mk1');
+    assertVectorClose(
+      rest.diagnostics.clipping.itemBox.dimensionsMeters,
+      [Math.fround(0.08), Math.fround(0.12), Math.fround(0.9)],
+      'collision dimensions must remain independent from render procgeo',
+    );
+    assert.deepEqual(
+      rest.diagnostics.clipping.capsules.map((entry) => entry.boneId),
+      ['chest', 'hand_l', 'hand_r', 'lower_arm_l', 'lower_arm_r', 'upper_arm_l', 'upper_arm_r'],
+      'clipping capsules must keep stable skeleton order',
+    );
+    assert.equal(rest.diagnostics.clipping.overlapCount, 2);
+    assert.equal(rest.diagnostics.clipping.hasOverlap, true);
+    const restHandRClipping = rest.diagnostics.clipping.capsules.find((entry) => entry.boneId === 'hand_r');
+    assert.equal(restHandRClipping.axisDistanceToBoxMeters, 0);
+    assert.equal(restHandRClipping.clearanceViolationMeters, 0.05);
+    assert.doesNotMatch(firstRest.stdout, /(?:[:,\[])\s*-0(?:[,}\]])/, 'rest evidence must not serialize signed zero');
     assertJointLimitObjectShape(rest.diagnostics.jointLimits, 'rifle rest jointLimits shape');
     assert.deepEqual(rest.diagnostics.jointLimits, expectedRestJointLimits);
     assert.deepEqual(
@@ -525,10 +599,7 @@ try {
     assert.ok(pistolRest.bones.length > 0, 'pistol rest must keep compatible skeletal evidence');
     assert.ok(pistolRest.limitations.includes('item_mesh_unavailable'));
     assert.ok(pistolRest.limitations.includes('not_review_evidence'));
-    assert.deepEqual(pistolRest.diagnostics.clipping, {
-      status: 'unavailable',
-      reason: 'item_and_capsule_geometry_not_integrated',
-    });
+    assert.deepEqual(pistolRest.diagnostics.clipping, unavailableClipping('item_collision_not_authored'));
     assert.deepEqual(pistolRest.diagnostics.jointLimits, expectedRestJointLimits);
     const missingItemRoot = path.join(tempRoot, 'missing item animation');
     fs.cpSync(fixtureRoot, missingItemRoot, { recursive: true });
@@ -547,6 +618,7 @@ try {
       status: 'unavailable',
       reason: 'item_prefab_not_found',
     });
+    assert.deepEqual(missingItemRest.diagnostics.clipping, unavailableClipping('item_prefab_not_found'));
     const duplicateContentRoot = path.join(tempRoot, 'duplicate prefab content');
     fs.cpSync(contentRoot, duplicateContentRoot, { recursive: true });
     fs.copyFileSync(
@@ -564,6 +636,30 @@ try {
       status: 'unavailable',
       reason: 'item_prefab_ambiguous',
     });
+    assert.deepEqual(
+      JSON.parse(duplicatePrefabResult.stdout).diagnostics.clipping,
+      unavailableClipping('item_prefab_ambiguous'),
+    );
+    const invalidPrefabContentRoot = path.join(tempRoot, 'invalid prefab content');
+    fs.cpSync(contentRoot, invalidPrefabContentRoot, { recursive: true });
+    const invalidPrefabPath = path.join(
+      invalidPrefabContentRoot, 'prefabs', 'weapon_rifle_mk1.prefab.toml',
+    );
+    fs.writeFileSync(
+      invalidPrefabPath,
+      fs.readFileSync(invalidPrefabPath, 'utf8').replace('owner_system = "scene_system"', 'owner_system = "wrong_system"'),
+    );
+    const invalidPrefabResult = invoke([
+      'evaluate-rest', '--animation-root', fixtureRoot,
+      '--attachment', 'weapon.rifle.mk1.humanoid',
+      '--content-root', invalidPrefabContentRoot,
+      '--data-foundation', foundationPath,
+    ]);
+    assert.equal(invalidPrefabResult.status, 0, invalidPrefabResult.stderr || invalidPrefabResult.stdout);
+    assert.deepEqual(
+      JSON.parse(invalidPrefabResult.stdout).diagnostics.clipping,
+      unavailableClipping('item_prefab_invalid'),
+    );
     const nonFiniteContentRoot = path.join(tempRoot, 'non-finite procgeo content');
     fs.cpSync(contentRoot, nonFiniteContentRoot, { recursive: true });
     const nonFiniteProcgeo = path.join(
@@ -622,6 +718,22 @@ try {
       findById(sampled.sockets, 'socket.hand_r.primary').world.translation,
       findById(rest.sockets, 'socket.hand_r.primary').world.translation,
       'sampled primary socket must move at idle 0.5',
+    );
+    assertAvailableClipping(sampled.diagnostics.clipping, 'rifle sampled clipping');
+    assert.deepEqual(
+      sampled.diagnostics.clipping.capsules.map((entry) => entry.boneId),
+      rest.diagnostics.clipping.capsules.map((entry) => entry.boneId),
+      'sampled clipping must keep native skeleton order',
+    );
+    assert.notDeepEqual(
+      sampled.diagnostics.clipping.capsules,
+      rest.diagnostics.clipping.capsules,
+      'sampled clipping must consume final sampled/post-IK bone poses',
+    );
+    assert.deepEqual(
+      JSON.parse(secondSample.stdout).diagnostics.clipping,
+      sampled.diagnostics.clipping,
+      'sampled clipping must be byte-stable',
     );
     assertJointLimitObjectShape(sampled.diagnostics.jointLimits, 'rifle sampled jointLimits shape');
     assert.equal(sampled.diagnostics.jointLimits.status, 'available');
@@ -948,7 +1060,142 @@ try {
       withinLimits: null,
       bones: [],
     });
+    assert.deepEqual(
+      rotated.diagnostics.clipping,
+      unavailableClipping('diagnostic_capsules_not_authored'),
+    );
     assert.equal(rotated.limitations.includes('secondary_hand_ik_unavailable'), false);
+
+    const noCollisionNoCapsulesAttachment = path.join(
+      fixtureRoot, 'attachments', 'rotation_compose_no_collision.attachment.toml',
+    );
+    fs.writeFileSync(
+      noCollisionNoCapsulesAttachment,
+      fs.readFileSync(path.join(fixtureRoot, 'attachments', 'rotation_compose.attachment.toml'), 'utf8')
+        .replace('id = "rotation.compose.one_hand"', 'id = "rotation.compose.no_collision"')
+        .replace('item_prefab = "weapon.rifle.mk1"', 'item_prefab = "weapon.pistol.mk1"'),
+    );
+    const noCollisionNoCapsules = JSON.parse(evaluate(
+      '--animation-root', fixtureRoot, '--attachment', 'rotation.compose.no_collision',
+    ).stdout);
+    assert.deepEqual(
+      noCollisionNoCapsules.diagnostics.clipping,
+      unavailableClipping('item_collision_not_authored'),
+      'missing item collision must take precedence when capsules are also absent',
+    );
+
+    const clearanceSkeletonPath = path.join(fixtureRoot, 'skeletons', 'clipping_clearance.skeleton.toml');
+    const clearanceAttachmentPath = path.join(fixtureRoot, 'attachments', 'clipping_clearance.attachment.toml');
+    const clearancePrefabPath = path.join(contentRoot, 'prefabs', 'clipping_clearance.prefab.toml');
+    const writeClearanceSkeleton = ({
+      boxCenter,
+      capsuleCenter = [0, 0, 0],
+      capsuleAxis = [1, 0, 0],
+      radius = 0.25,
+      halfLength = 1,
+    }) => {
+      fs.writeFileSync(clearanceSkeletonPath, [
+        'schema = "shader_forge.skeleton"', 'schema_version = 2', 'id = "clipping.clearance.v2"',
+        'name = "clipping_clearance"', 'owner_system = "animation_system"', 'root_bone = "chest"',
+        'units = "meters"', 'up = "y"', 'forward = "z"', 'handedness = "right"', '',
+        '[bone.chest]', 'id = "chest"', 'parent = ""', 'role = "chest"',
+        'translation = [0.0, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+        '[bone.hand_r]', 'id = "hand_r"', 'parent = "chest"', 'role = "hand_r"',
+        `translation = [${boxCenter.join(', ')}]`, 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+        '[bone.chest.diagnostic_capsule]', `center = [${capsuleCenter.join(', ')}]`,
+        `axis = [${capsuleAxis.join(', ')}]`, `radius = ${radius}`, `half_length = ${halfLength}`, '',
+        '[socket.primary]', 'id = "socket.hand_r.primary"', 'bone = "hand_r"', 'role = "primary_grip"',
+        'translation = [0.0, 0.0, 0.0]', 'rotation = [0.0, 0.0, 0.0, 1.0]', '',
+      ].join('\r\n'));
+    };
+    const writeClearanceAttachment = (translation = [0, 0, 0], rotation = [0, 0, 0, 1]) => {
+      fs.writeFileSync(clearanceAttachmentPath, [
+        'schema = "shader_forge.attachment_profile"', 'schema_version = 1',
+        'id = "clipping.clearance.one_hand"', 'name = "Clipping Clearance"',
+        'owner_system = "animation_system"', 'skeleton = "clipping.clearance.v2"',
+        'item_prefab = "clipping.clearance.box"', 'dominant_hand = "right"',
+        'mode = "one_hand"', 'perspective = "third_person"', '',
+        '[primary_grip]', 'socket = "socket.hand_r.primary"', 'space = "socket"',
+        `translation = [${translation.join(', ')}]`, `rotation = [${rotation.join(', ')}]`, '',
+      ].join('\r\n'));
+    };
+    const writeClearancePrefab = (
+      center = [0, 0, 0],
+      rotation = [0, 0, 0, 1],
+      dimensions = [1, 1, 1],
+    ) => {
+      fs.writeFileSync(clearancePrefabPath, [
+        'schema = "shader_forge.prefab"', 'schema_version = 1', 'name = "clipping.clearance.box"',
+        'owner_system = "scene_system"', 'runtime_format = "flatbuffer"', '',
+        'category = "item"', 'spawn_tag = "test"', '',
+        '[component.render]', 'procgeo = "weapon.rifle.mk1"', 'material_hint = "test"', '',
+        '[component.collision]', 'shape = "box"', `center = [${center.join(', ')}]`,
+        `rotation = [${rotation.join(', ')}]`, `dimensions = [${dimensions.join(', ')}]`, '',
+      ].join('\r\n'));
+    };
+    writeClearanceAttachment();
+    writeClearancePrefab();
+    const evaluateClearance = (boxCenter, options = {}) => {
+      writeClearanceSkeleton({ boxCenter, ...options });
+      const evaluation = JSON.parse(evaluate(
+        '--animation-root', fixtureRoot, '--attachment', 'clipping.clearance.one_hand',
+      ).stdout);
+      assertAvailableClipping(evaluation.diagnostics.clipping, `analytic clearance ${boxCenter.join(',')}`);
+      assert.equal(evaluation.diagnostics.clipping.capsules.length, 1);
+      return evaluation.diagnostics.clipping.capsules[0];
+    };
+    const assertClose = (actual, expected, message) => {
+      assert.ok(Math.abs(actual - expected) <= 1e-12, `${message}: expected ${expected}, got ${actual}`);
+    };
+
+    const faceSeparated = evaluateClearance([0, 1, 0]);
+    assertClose(faceSeparated.axisDistanceToBoxMeters, 0.5, 'interior segment-to-face distance');
+    assertClose(faceSeparated.surfaceClearanceMeters, 0.25, 'separated face clearance');
+    assert.equal(faceSeparated.overlapping, false);
+    const tangent = evaluateClearance([0, 0.75, 0]);
+    assert.equal(tangent.surfaceClearanceMeters, 0, 'exact tangency must serialize zero clearance');
+    assert.equal(tangent.clearanceViolationMeters, 0, 'tangency must remain CLEAR');
+    assert.equal(tangent.overlapping, false, 'tangency must not count as overlap');
+    const overlapping = evaluateClearance([0, 0.7, 0]);
+    assertClose(overlapping.axisDistanceToBoxMeters, 0.2, 'overlapping face axis distance');
+    assertClose(overlapping.clearanceViolationMeters, 0.05, 'overlapping face violation');
+    assert.equal(overlapping.overlapping, true);
+    const edge = evaluateClearance([0, 1, 1]);
+    assertClose(edge.axisDistanceToBoxMeters, Math.hypot(0.5, 0.5), 'interior segment-to-edge distance');
+    const corner = evaluateClearance([2, 1, 1]);
+    assertClose(corner.axisDistanceToBoxMeters, Math.sqrt(0.75), 'endpoint-to-corner distance');
+    const crossing = evaluateClearance([0, 0, 0]);
+    assert.equal(crossing.axisDistanceToBoxMeters, 0, 'centerline crossing must have zero axis distance');
+    assert.equal(crossing.clearanceViolationMeters, 0.25, 'crossing violation is the capsule radius');
+
+    writeClearanceSkeleton({ boxCenter: [1, 2, 3] });
+    writeClearanceAttachment([0.5, 0, 0], [0, 0.7071067811865475, 0, 0.7071067811865476]);
+    writeClearancePrefab([0.25, 0, 0], [0, 0, 1, 0], [2, 1, 1]);
+    const rotatedCollisionPositive = JSON.parse(evaluate(
+      '--animation-root', fixtureRoot, '--attachment', 'clipping.clearance.one_hand',
+    ).stdout).diagnostics.clipping;
+    assertAvailableClipping(rotatedCollisionPositive, 'rotated/off-center collision');
+    assertVectorClose(rotatedCollisionPositive.itemBox.world.translation, [1.5, 2, 2.75], 'collision center composition');
+    assertVectorClose(rotatedCollisionPositive.itemBox.dimensionsMeters, [2, 1, 1], 'collision dimensions, not procgeo');
+    writeClearancePrefab([0.25, 0, 0], [0, 0, -1, 0], [2, 1, 1]);
+    const rotatedCollisionNegative = JSON.parse(evaluate(
+      '--animation-root', fixtureRoot, '--attachment', 'clipping.clearance.one_hand',
+    ).stdout).diagnostics.clipping;
+    assert.deepEqual(
+      rotatedCollisionNegative,
+      rotatedCollisionPositive,
+      'legal DataFoundation w==0 q/-q collision rotations must be geometry/sign invariant',
+    );
+
+    writeClearanceAttachment();
+    writeClearancePrefab();
+    writeClearanceSkeleton({ boxCenter: [1.7e308, 0, 0], capsuleCenter: [-1.7e308, 0, 0] });
+    const nonFiniteClipping = invoke(withContent([
+      'evaluate-rest', '--animation-root', fixtureRoot, '--attachment', 'clipping.clearance.one_hand',
+    ]));
+    assert.notEqual(nonFiniteClipping.status, 0, 'non-finite clipping output must fail closed');
+    assert.equal(nonFiniteClipping.stdout, '');
+    assert.match(nonFiniteClipping.stderr, /non-finite clipping geometry/);
 
     fs.writeFileSync(path.join(fixtureRoot, 'skeletons', 'large_coordinates.skeleton.toml'), [
       'schema = "shader_forge.skeleton"', 'schema_version = 2', 'id = "large.coordinates.v2"',

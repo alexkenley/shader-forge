@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #if defined(_WIN32)
 #include <process.h>
@@ -132,6 +133,39 @@ struct ItemVisualBoxEvidence {
   std::array<SpatialVector3Snapshot, 8> worldCorners{};
 };
 
+struct ItemCollisionBoxEvidence {
+  std::string prefabId;
+  SpatialTransformSnapshot world;
+  SpatialVector3Snapshot dimensions;
+  std::array<SpatialVector3Snapshot, 8> worldCorners{};
+};
+
+struct CapsuleClippingEvidence {
+  std::string boneId;
+  std::string role;
+  SpatialVector3Snapshot centerWorld;
+  SpatialVector3Snapshot axisWorld;
+  double radiusMeters = 0.0;
+  double halfLengthMeters = 0.0;
+  SpatialVector3Snapshot segmentStartWorld;
+  SpatialVector3Snapshot segmentEndWorld;
+  double axisDistanceToBoxMeters = 0.0;
+  double surfaceClearanceMeters = 0.0;
+  double clearanceViolationMeters = 0.0;
+  bool overlapping = false;
+};
+
+struct ClippingEvidence {
+  std::string status = "unavailable";
+  std::optional<std::string> reason = "item_prefab_not_found";
+  std::size_t evaluatedCapsuleCount = 0;
+  std::size_t overlapCount = 0;
+  double maxClearanceViolationMeters = 0.0;
+  std::optional<bool> hasOverlap;
+  std::optional<ItemCollisionBoxEvidence> itemBox;
+  std::vector<CapsuleClippingEvidence> capsules;
+};
+
 SpatialVector3Snapshot transformLocalCorner(
   const SpatialTransformSnapshot& world,
   double localX,
@@ -233,6 +267,383 @@ bool resolveAuthoredVisualBox(
   return true;
 }
 
+bool safeDouble(long double value, double* result) {
+  if (!std::isfinite(value)
+      || value > static_cast<long double>(std::numeric_limits<double>::max())
+      || value < -static_cast<long double>(std::numeric_limits<double>::max())) {
+    return false;
+  }
+  *result = static_cast<double>(value);
+  if (*result == 0.0) *result = 0.0;
+  return std::isfinite(*result);
+}
+
+bool safeVector(
+  long double x,
+  long double y,
+  long double z,
+  SpatialVector3Snapshot* result) {
+  return safeDouble(x, &result->x)
+    && safeDouble(y, &result->y)
+    && safeDouble(z, &result->z);
+}
+
+bool quaternionNeedsSignFlip(const SpatialQuaternionSnapshot& value) {
+  return value.w < 0.0
+    || (value.w == 0.0
+      && (value.x < 0.0 || (value.x == 0.0 && (value.y < 0.0 || (value.y == 0.0 && value.z < 0.0)))));
+}
+
+bool normalizeQuaternion(SpatialQuaternionSnapshot* value) {
+  const double length = std::hypot(std::hypot(value->x, value->y), std::hypot(value->z, value->w));
+  if (!std::isfinite(length) || length == 0.0) return false;
+  value->x /= length;
+  value->y /= length;
+  value->z /= length;
+  value->w /= length;
+  if (quaternionNeedsSignFlip(*value)) {
+    value->x = -value->x;
+    value->y = -value->y;
+    value->z = -value->z;
+    value->w = -value->w;
+  }
+  value->x = value->x == 0.0 ? 0.0 : value->x;
+  value->y = value->y == 0.0 ? 0.0 : value->y;
+  value->z = value->z == 0.0 ? 0.0 : value->z;
+  value->w = value->w == 0.0 ? 0.0 : value->w;
+  return true;
+}
+
+SpatialQuaternionSnapshot multiplyQuaternions(
+  const SpatialQuaternionSnapshot& parent,
+  const SpatialQuaternionSnapshot& local) {
+  return {
+    parent.w * local.x + parent.x * local.w + parent.y * local.z - parent.z * local.y,
+    parent.w * local.y - parent.x * local.z + parent.y * local.w + parent.z * local.x,
+    parent.w * local.z + parent.x * local.y - parent.y * local.x + parent.z * local.w,
+    parent.w * local.w - parent.x * local.x - parent.y * local.y - parent.z * local.z,
+  };
+}
+
+SpatialVector3Snapshot rotateVector(
+  const SpatialQuaternionSnapshot& rotation,
+  const SpatialVector3Snapshot& value) {
+  const double twiceCrossX = 2.0 * (rotation.y * value.z - rotation.z * value.y);
+  const double twiceCrossY = 2.0 * (rotation.z * value.x - rotation.x * value.z);
+  const double twiceCrossZ = 2.0 * (rotation.x * value.y - rotation.y * value.x);
+  return {
+    value.x + rotation.w * twiceCrossX + rotation.y * twiceCrossZ - rotation.z * twiceCrossY,
+    value.y + rotation.w * twiceCrossY + rotation.z * twiceCrossX - rotation.x * twiceCrossZ,
+    value.z + rotation.w * twiceCrossZ + rotation.x * twiceCrossY - rotation.y * twiceCrossX,
+  };
+}
+
+bool makeTransformFromTranslationAndRotation(
+  const SpatialVector3Snapshot& translation,
+  SpatialQuaternionSnapshot rotation,
+  SpatialTransformSnapshot* transform) {
+  if (!finiteVector(translation) || !normalizeQuaternion(&rotation)) return false;
+  transform->translation = translation;
+  transform->rotation = rotation;
+  transform->axes = {
+    rotateVector(rotation, {1.0, 0.0, 0.0}),
+    rotateVector(rotation, {0.0, 1.0, 0.0}),
+    rotateVector(rotation, {0.0, 0.0, 1.0}),
+  };
+  return finiteVector(transform->axes.x)
+    && finiteVector(transform->axes.y)
+    && finiteVector(transform->axes.z);
+}
+
+bool transformPoint(
+  const SpatialTransformSnapshot& transform,
+  const SpatialVector3Snapshot& point,
+  SpatialVector3Snapshot* result) {
+  return safeVector(
+    static_cast<long double>(transform.translation.x)
+      + static_cast<long double>(point.x) * transform.axes.x.x
+      + static_cast<long double>(point.y) * transform.axes.y.x
+      + static_cast<long double>(point.z) * transform.axes.z.x,
+    static_cast<long double>(transform.translation.y)
+      + static_cast<long double>(point.x) * transform.axes.x.y
+      + static_cast<long double>(point.y) * transform.axes.y.y
+      + static_cast<long double>(point.z) * transform.axes.z.y,
+    static_cast<long double>(transform.translation.z)
+      + static_cast<long double>(point.x) * transform.axes.x.z
+      + static_cast<long double>(point.y) * transform.axes.y.z
+      + static_cast<long double>(point.z) * transform.axes.z.z,
+    result);
+}
+
+bool transformDirection(
+  const SpatialTransformSnapshot& transform,
+  const SpatialVector3Snapshot& direction,
+  SpatialVector3Snapshot* result) {
+  if (!safeVector(
+        static_cast<long double>(direction.x) * transform.axes.x.x
+          + static_cast<long double>(direction.y) * transform.axes.y.x
+          + static_cast<long double>(direction.z) * transform.axes.z.x,
+        static_cast<long double>(direction.x) * transform.axes.x.y
+          + static_cast<long double>(direction.y) * transform.axes.y.y
+          + static_cast<long double>(direction.z) * transform.axes.z.y,
+        static_cast<long double>(direction.x) * transform.axes.x.z
+          + static_cast<long double>(direction.y) * transform.axes.y.z
+          + static_cast<long double>(direction.z) * transform.axes.z.z,
+        result)) {
+    return false;
+  }
+  const double length = std::hypot(result->x, result->y, result->z);
+  if (!std::isfinite(length) || length == 0.0) return false;
+  result->x = result->x / length;
+  result->y = result->y / length;
+  result->z = result->z / length;
+  result->x = result->x == 0.0 ? 0.0 : result->x;
+  result->y = result->y == 0.0 ? 0.0 : result->y;
+  result->z = result->z == 0.0 ? 0.0 : result->z;
+  return finiteVector(*result);
+}
+
+bool capsuleEndpoint(
+  const SpatialVector3Snapshot& center,
+  const SpatialVector3Snapshot& axis,
+  double distance,
+  SpatialVector3Snapshot* result) {
+  return safeVector(
+    static_cast<long double>(center.x) + static_cast<long double>(axis.x) * distance,
+    static_cast<long double>(center.y) + static_cast<long double>(axis.y) * distance,
+    static_cast<long double>(center.z) + static_cast<long double>(axis.z) * distance,
+    result);
+}
+
+std::array<long double, 3> pointInBoxSpace(
+  const SpatialVector3Snapshot& point,
+  const SpatialTransformSnapshot& boxWorld) {
+  const std::array<long double, 3> delta{
+    static_cast<long double>(point.x) - boxWorld.translation.x,
+    static_cast<long double>(point.y) - boxWorld.translation.y,
+    static_cast<long double>(point.z) - boxWorld.translation.z,
+  };
+  const auto project = [&](const SpatialVector3Snapshot& axis) {
+    return delta[0] * axis.x + delta[1] * axis.y + delta[2] * axis.z;
+  };
+  return {project(boxWorld.axes.x), project(boxWorld.axes.y), project(boxWorld.axes.z)};
+}
+
+bool segmentDistanceToBox(
+  const SpatialVector3Snapshot& start,
+  const SpatialVector3Snapshot& end,
+  const ItemCollisionBoxEvidence& box,
+  double* distance) {
+  const auto startLocal = pointInBoxSpace(start, box.world);
+  const auto endLocal = pointInBoxSpace(end, box.world);
+  const std::array<long double, 3> direction{
+    endLocal[0] - startLocal[0],
+    endLocal[1] - startLocal[1],
+    endLocal[2] - startLocal[2],
+  };
+  const std::array<long double, 3> extents{
+    static_cast<long double>(box.dimensions.x) * 0.5L,
+    static_cast<long double>(box.dimensions.y) * 0.5L,
+    static_cast<long double>(box.dimensions.z) * 0.5L,
+  };
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (!std::isfinite(startLocal[axis]) || !std::isfinite(endLocal[axis])
+        || !std::isfinite(direction[axis]) || !std::isfinite(extents[axis])) {
+      return false;
+    }
+  }
+
+  std::vector<long double> breakpoints{0.0L, 1.0L};
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (direction[axis] == 0.0L) continue;
+    for (const long double boundary : {-extents[axis], extents[axis]}) {
+      const long double t = (boundary - startLocal[axis]) / direction[axis];
+      if (std::isfinite(t) && t > 0.0L && t < 1.0L) breakpoints.push_back(t);
+    }
+  }
+  std::sort(breakpoints.begin(), breakpoints.end());
+  breakpoints.erase(std::unique(breakpoints.begin(), breakpoints.end()), breakpoints.end());
+
+  long double minimumSquared = std::numeric_limits<long double>::infinity();
+  const auto evaluate = [&](long double t) {
+    long double squared = 0.0L;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const long double value = startLocal[axis] + direction[axis] * t;
+      const long double outside = value < -extents[axis]
+        ? value + extents[axis]
+        : (value > extents[axis] ? value - extents[axis] : 0.0L);
+      squared += outside * outside;
+    }
+    minimumSquared = std::min(minimumSquared, squared);
+  };
+
+  for (std::size_t interval = 0; interval + 1 < breakpoints.size(); ++interval) {
+    const long double begin = breakpoints[interval];
+    const long double finish = breakpoints[interval + 1];
+    evaluate(begin);
+    evaluate(finish);
+    const long double midpoint = (begin + finish) * 0.5L;
+    long double quadratic = 0.0L;
+    long double linear = 0.0L;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const long double middleValue = startLocal[axis] + direction[axis] * midpoint;
+      if (middleValue >= -extents[axis] && middleValue <= extents[axis]) continue;
+      const long double boundary = middleValue < -extents[axis] ? -extents[axis] : extents[axis];
+      quadratic += direction[axis] * direction[axis];
+      linear += direction[axis] * (startLocal[axis] - boundary);
+    }
+    if (quadratic > 0.0L) {
+      const long double stationary = -linear / quadratic;
+      if (stationary > begin && stationary < finish) evaluate(stationary);
+    }
+  }
+  if (!std::isfinite(minimumSquared) || minimumSquared < 0.0L) return false;
+  return safeDouble(std::sqrt(minimumSquared), distance);
+}
+
+bool resolveClippingEvidence(
+  const DataFoundation& foundation,
+  const SkeletonDefinitionSnapshot& skeleton,
+  const SpatialAttachmentEvaluationSnapshot& evaluation,
+  ClippingEvidence* evidence,
+  std::string* errorMessage) {
+  *evidence = {};
+  const std::optional<PrefabSourceSnapshot> prefab = foundation.prefabSource(evaluation.itemPrefabId);
+  if (!prefab) return true;
+  const auto assets = foundation.snapshotAssets();
+  const std::size_t prefabMatches = std::count_if(
+    assets.begin(),
+    assets.end(),
+    [&](const auto& asset) {
+      return asset.kind == DataAssetKind::prefab && asset.name == prefab->name;
+    });
+  if (prefabMatches != 1) {
+    evidence->reason = "item_prefab_ambiguous";
+    return true;
+  }
+  if (!prefab->valid) {
+    evidence->reason = "item_prefab_invalid";
+    return true;
+  }
+  if (!prefab->collisionComponent) {
+    evidence->reason = "item_collision_not_authored";
+    return true;
+  }
+
+  const std::size_t authoredCapsuleCount = static_cast<std::size_t>(std::count_if(
+    skeleton.boneDefinitions.begin(),
+    skeleton.boneDefinitions.end(),
+    [](const auto& bone) { return bone.diagnosticCapsule.has_value(); }));
+  if (authoredCapsuleCount == 0) {
+    evidence->reason = "diagnostic_capsules_not_authored";
+    return true;
+  }
+  if (evaluation.bones.size() != skeleton.boneDefinitions.size()) {
+    if (errorMessage) *errorMessage = "Clipping evaluation pose does not match the skeleton bone table.";
+    return false;
+  }
+
+  const auto& collision = *prefab->collisionComponent;
+  if (collision.shape != "box") {
+    evidence->reason = "item_prefab_invalid";
+    return true;
+  }
+  ItemCollisionBoxEvidence box;
+  box.prefabId = evaluation.itemPrefabId;
+  box.dimensions = {
+    static_cast<double>(collision.dimensions[0]),
+    static_cast<double>(collision.dimensions[1]),
+    static_cast<double>(collision.dimensions[2]),
+  };
+  SpatialQuaternionSnapshot collisionRotation{
+    static_cast<double>(collision.rotation[0]),
+    static_cast<double>(collision.rotation[1]),
+    static_cast<double>(collision.rotation[2]),
+    static_cast<double>(collision.rotation[3]),
+  };
+  SpatialVector3Snapshot collisionCenter{
+    static_cast<double>(collision.center[0]),
+    static_cast<double>(collision.center[1]),
+    static_cast<double>(collision.center[2]),
+  };
+  SpatialVector3Snapshot boxTranslation;
+  SpatialQuaternionSnapshot boxRotation = multiplyQuaternions(evaluation.itemWorld.rotation, collisionRotation);
+  if (!finiteVector(box.dimensions) || box.dimensions.x <= 0.0 || box.dimensions.y <= 0.0 || box.dimensions.z <= 0.0
+      || !transformPoint(evaluation.itemWorld, collisionCenter, &boxTranslation)
+      || !makeTransformFromTranslationAndRotation(boxTranslation, boxRotation, &box.world)) {
+    if (errorMessage) *errorMessage = "Authored collision box produced non-finite clipping geometry.";
+    return false;
+  }
+  const double halfX = box.dimensions.x * 0.5;
+  const double halfY = box.dimensions.y * 0.5;
+  const double halfZ = box.dimensions.z * 0.5;
+  const double localCorners[8][3] = {
+    {-halfX, -halfY, -halfZ}, {halfX, -halfY, -halfZ},
+    {halfX, halfY, -halfZ}, {-halfX, halfY, -halfZ},
+    {-halfX, -halfY, halfZ}, {halfX, -halfY, halfZ},
+    {halfX, halfY, halfZ}, {-halfX, halfY, halfZ},
+  };
+  for (std::size_t index = 0; index < box.worldCorners.size(); ++index) {
+    if (!transformPoint(
+          box.world,
+          {localCorners[index][0], localCorners[index][1], localCorners[index][2]},
+          &box.worldCorners[index])) {
+      if (errorMessage) *errorMessage = "Authored collision box produced non-finite clipping corners.";
+      return false;
+    }
+  }
+  evidence->itemBox = box;
+
+  for (std::size_t index = 0; index < skeleton.boneDefinitions.size(); ++index) {
+    const auto& authored = skeleton.boneDefinitions[index];
+    if (evaluation.bones[index].id != authored.id || evaluation.bones[index].parent != authored.parent) {
+      if (errorMessage) *errorMessage = "Clipping evaluation pose is not in stable skeleton order.";
+      return false;
+    }
+    if (!authored.diagnosticCapsule) continue;
+    const auto& capsule = *authored.diagnosticCapsule;
+    CapsuleClippingEvidence result;
+    result.boneId = authored.id;
+    result.role = authored.role;
+    result.radiusMeters = capsule.radius == 0.0 ? 0.0 : capsule.radius;
+    result.halfLengthMeters = capsule.halfLength == 0.0 ? 0.0 : capsule.halfLength;
+    if (!transformPoint(evaluation.bones[index].world, capsule.center, &result.centerWorld)
+        || !transformDirection(evaluation.bones[index].world, capsule.axis, &result.axisWorld)
+        || !capsuleEndpoint(result.centerWorld, result.axisWorld, -result.halfLengthMeters, &result.segmentStartWorld)
+        || !capsuleEndpoint(result.centerWorld, result.axisWorld, result.halfLengthMeters, &result.segmentEndWorld)
+        || !segmentDistanceToBox(result.segmentStartWorld, result.segmentEndWorld, box, &result.axisDistanceToBoxMeters)) {
+      if (errorMessage) *errorMessage = "Authored diagnostic capsule produced non-finite clipping geometry.";
+      return false;
+    }
+    const long double clearance = static_cast<long double>(result.axisDistanceToBoxMeters) - result.radiusMeters;
+    if (!safeDouble(clearance, &result.surfaceClearanceMeters)) {
+      if (errorMessage) *errorMessage = "Clipping evaluation produced non-finite surface clearance.";
+      return false;
+    }
+    result.clearanceViolationMeters = result.surfaceClearanceMeters < 0.0
+      ? -result.surfaceClearanceMeters
+      : 0.0;
+    result.clearanceViolationMeters = result.clearanceViolationMeters == 0.0
+      ? 0.0
+      : result.clearanceViolationMeters;
+    result.overlapping = result.clearanceViolationMeters > 0.0;
+    if (result.overlapping) evidence->overlapCount += 1;
+    evidence->maxClearanceViolationMeters = std::max(
+      evidence->maxClearanceViolationMeters,
+      result.clearanceViolationMeters);
+    evidence->capsules.push_back(std::move(result));
+  }
+
+  evidence->status = "available";
+  evidence->reason.reset();
+  evidence->evaluatedCapsuleCount = evidence->capsules.size();
+  evidence->maxClearanceViolationMeters = evidence->maxClearanceViolationMeters == 0.0
+    ? 0.0
+    : evidence->maxClearanceViolationMeters;
+  evidence->hasOverlap = evidence->overlapCount != 0;
+  return true;
+}
+
 void appendJointLimits(std::ostringstream& out, const SpatialJointLimitDiagnosticSnapshot& jointLimits) {
   out << "{\"status\":" << jsonString(jointLimits.status)
       << ",\"reason\":";
@@ -267,6 +678,66 @@ void appendJointLimits(std::ostringstream& out, const SpatialJointLimitDiagnosti
     out << ",\"twistViolationDegrees\":";
     appendNumber(out, bone.twistViolationDegrees);
     out << ",\"withinLimits\":" << (bone.withinLimits ? "true" : "false") << '}';
+  }
+  out << "]}";
+}
+
+void appendClipping(std::ostringstream& out, const ClippingEvidence& clipping) {
+  out << "{\"status\":" << jsonString(clipping.status)
+      << ",\"reason\":";
+  if (clipping.reason) out << jsonString(*clipping.reason);
+  else out << "null";
+  out << ",\"policy\":\"diagnose\""
+      << ",\"metric\":\"capsule_axis_to_oriented_box_clearance\""
+      << ",\"evaluatedCapsuleCount\":" << clipping.evaluatedCapsuleCount
+      << ",\"overlapCount\":" << clipping.overlapCount
+      << ",\"maxClearanceViolationMeters\":";
+  appendNumber(out, clipping.maxClearanceViolationMeters);
+  out << ",\"hasOverlap\":";
+  if (clipping.hasOverlap) out << (*clipping.hasOverlap ? "true" : "false");
+  else out << "null";
+  out << ",\"itemBox\":";
+  if (clipping.itemBox) {
+    const auto& box = *clipping.itemBox;
+    out << "{\"kind\":\"authored_collision_box\",\"prefabId\":" << jsonString(box.prefabId)
+        << ",\"world\":";
+    appendTransform(out, box.world);
+    out << ",\"dimensionsMeters\":";
+    appendVector(out, box.dimensions);
+    out << ",\"worldCorners\":[";
+    for (std::size_t index = 0; index < box.worldCorners.size(); ++index) {
+      if (index != 0) out << ',';
+      appendVector(out, box.worldCorners[index]);
+    }
+    out << "]}";
+  } else {
+    out << "null";
+  }
+  out << ",\"capsules\":[";
+  for (std::size_t index = 0; index < clipping.capsules.size(); ++index) {
+    const auto& capsule = clipping.capsules[index];
+    if (index != 0) out << ',';
+    out << "{\"boneId\":" << jsonString(capsule.boneId)
+        << ",\"role\":" << jsonString(capsule.role)
+        << ",\"centerWorld\":";
+    appendVector(out, capsule.centerWorld);
+    out << ",\"axisWorld\":";
+    appendVector(out, capsule.axisWorld);
+    out << ",\"radiusMeters\":";
+    appendNumber(out, capsule.radiusMeters);
+    out << ",\"halfLengthMeters\":";
+    appendNumber(out, capsule.halfLengthMeters);
+    out << ",\"segmentStartWorld\":";
+    appendVector(out, capsule.segmentStartWorld);
+    out << ",\"segmentEndWorld\":";
+    appendVector(out, capsule.segmentEndWorld);
+    out << ",\"axisDistanceToBoxMeters\":";
+    appendNumber(out, capsule.axisDistanceToBoxMeters);
+    out << ",\"surfaceClearanceMeters\":";
+    appendNumber(out, capsule.surfaceClearanceMeters);
+    out << ",\"clearanceViolationMeters\":";
+    appendNumber(out, capsule.clearanceViolationMeters);
+    out << ",\"overlapping\":" << (capsule.overlapping ? "true" : "false") << '}';
   }
   out << "]}";
 }
@@ -566,7 +1037,8 @@ bool writeCookedPayload(
 void appendAttachmentEvaluationFields(
   std::ostringstream& out,
   const SpatialAttachmentEvaluationSnapshot& evaluation,
-  const ItemVisualBoxEvidence& geometry) {
+  const ItemVisualBoxEvidence& geometry,
+  const ClippingEvidence& clipping) {
   out << ",\"coordinateSystem\":{\"units\":\"meters\",\"handedness\":\"right\",\"up\":\"+Y\",\"forward\":\"+Z\",\"quaternionOrder\":\"xyzw\"}"
       << ",\"skeleton\":{\"id\":" << jsonString(evaluation.skeletonId)
       << ",\"name\":" << jsonString(evaluation.skeletonName)
@@ -721,7 +1193,9 @@ void appendAttachmentEvaluationFields(
       << ','
       << "\"jointLimits\":";
   appendJointLimits(out, evaluation.jointLimits);
-  out << ",\"clipping\":{\"status\":\"unavailable\",\"reason\":\"item_and_capsule_geometry_not_integrated\"}}";
+  out << ",\"clipping\":";
+  appendClipping(out, clipping);
+  out << '}';
 }
 
 void appendEvaluationLimitations(
@@ -739,18 +1213,20 @@ void appendEvaluationLimitations(
 void appendRestEvaluation(
   std::ostringstream& out,
   const SpatialAttachmentEvaluationSnapshot& evaluation,
-  const ItemVisualBoxEvidence& geometry) {
+  const ItemVisualBoxEvidence& geometry,
+  const ClippingEvidence& clipping) {
   out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":"
       << (evaluation.attachmentSchemaVersion >= 2 ? 2 : 1)
       << ",\"pose\":{\"kind\":\"rest\",\"sampled\":false}";
-  appendAttachmentEvaluationFields(out, evaluation, geometry);
+  appendAttachmentEvaluationFields(out, evaluation, geometry, clipping);
   appendEvaluationLimitations(out, evaluation, "rest_pose_only");
 }
 
 void appendSampledEvaluation(
   std::ostringstream& out,
   const SpatialSampledAttachmentEvaluationSnapshot& sampled,
-  const ItemVisualBoxEvidence& geometry) {
+  const ItemVisualBoxEvidence& geometry,
+  const ClippingEvidence& clipping) {
   out << "{\"schema\":\"shader_forge.spatial_attachment_evaluation\",\"schemaVersion\":"
       << (sampled.evaluation.attachmentSchemaVersion >= 2 ? 2 : 1)
       << ",\"pose\":{\"kind\":\"clip_sample\",\"sampled\":true"
@@ -765,7 +1241,7 @@ void appendSampledEvaluation(
   out << ",\"proceduralLayersUnavailable\":";
   appendStringArray(out, sampled.proceduralLayersUnavailable);
   out << '}';
-  appendAttachmentEvaluationFields(out, sampled.evaluation, geometry);
+  appendAttachmentEvaluationFields(out, sampled.evaluation, geometry, clipping);
   const bool awaitsSecondaryIk = std::find(
     sampled.proceduralLayersUnavailable.begin(),
     sampled.proceduralLayersUnavailable.end(),
@@ -976,7 +1452,22 @@ int main(int argc, char** argv) {
                 << jsonString(requestedAttachmentId) << ": " << error << '\n';
       return 1;
     }
-    appendRestEvaluation(out, *evaluation, geometry);
+    const auto skeleton = std::find_if(
+      skeletons.begin(),
+      skeletons.end(),
+      [&](const auto& candidate) { return candidate.id == evaluation->skeletonId; });
+    if (skeleton == skeletons.end()) {
+      std::cerr << "shader_forge_spatial: evaluate-rest failed for "
+                << jsonString(requestedAttachmentId) << ": evaluated skeleton is unavailable\n";
+      return 1;
+    }
+    ClippingEvidence clipping;
+    if (!resolveClippingEvidence(dataFoundation, *skeleton, *evaluation, &clipping, &error)) {
+      std::cerr << "shader_forge_spatial: evaluate-rest failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    appendRestEvaluation(out, *evaluation, geometry, clipping);
     std::cout << out.str();
     return 0;
   }
@@ -1003,7 +1494,22 @@ int main(int argc, char** argv) {
                 << jsonString(requestedAttachmentId) << ": " << error << '\n';
       return 1;
     }
-    appendSampledEvaluation(out, *evaluation, geometry);
+    const auto skeleton = std::find_if(
+      skeletons.begin(),
+      skeletons.end(),
+      [&](const auto& candidate) { return candidate.id == evaluation->evaluation.skeletonId; });
+    if (skeleton == skeletons.end()) {
+      std::cerr << "shader_forge_spatial: evaluate-sample failed for "
+                << jsonString(requestedAttachmentId) << ": evaluated skeleton is unavailable\n";
+      return 1;
+    }
+    ClippingEvidence clipping;
+    if (!resolveClippingEvidence(dataFoundation, *skeleton, evaluation->evaluation, &clipping, &error)) {
+      std::cerr << "shader_forge_spatial: evaluate-sample failed for "
+                << jsonString(requestedAttachmentId) << ": " << error << '\n';
+      return 1;
+    }
+    appendSampledEvaluation(out, *evaluation, geometry, clipping);
     std::cout << out.str();
     return 0;
   }
