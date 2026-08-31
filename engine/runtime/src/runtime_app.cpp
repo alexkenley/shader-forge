@@ -162,8 +162,13 @@ struct RuntimeControlledEntityState {
   std::string effectTrigger;
   std::array<float, 3> position{0.0F, 0.0F, 0.0F};
   std::array<float, 3> rotation{0.0F, 0.0F, 0.0F};
+  std::optional<PrefabCameraComponentSnapshot> cameraComponent;
   bool valid = false;
 };
+
+constexpr float kLegacyCameraVerticalFovDegrees = 70.0F;
+constexpr float kLegacyCameraNearMeters = 0.15F;
+constexpr float kLegacyCameraFarMeters = 1000.0F;
 
 struct RuntimeSceneRenderProxy {
   std::string id;
@@ -781,6 +786,7 @@ private:
       target->effectTrigger = source.effectTrigger;
       target->position = source.worldPosition;
       target->rotation = source.worldRotation;
+      target->cameraComponent = source.spawnTag == "player_camera" ? source.cameraComponent : std::nullopt;
       target->valid = true;
     };
 
@@ -1083,6 +1089,29 @@ private:
       logRuntimeLine("Runtime quickload failed because scene '" + snapshot.sceneName + "' is not present in the current project.");
       return false;
     }
+    const auto savedSceneComposition = dataFoundation_.composeScene(snapshot.sceneName);
+    if (!savedSceneComposition.has_value() || !savedSceneComposition->valid) {
+      logRuntimeLine("Runtime quickload failed because scene '" + snapshot.sceneName + "' cannot be composed.");
+      return false;
+    }
+    const auto savedEntityIt = std::find_if(
+      savedSceneComposition->entities.begin(),
+      savedSceneComposition->entities.end(),
+      [&snapshot](const ComposedSceneEntitySnapshot& entity) {
+        return entity.id == snapshot.controlledEntityId;
+      });
+    const std::string currentAuthorityId = !savedSceneComposition->preferredPlayerEntity.empty()
+      ? savedSceneComposition->preferredPlayerEntity
+      : (savedSceneComposition->entities.empty() ? std::string{} : savedSceneComposition->entities.front().id);
+    if (savedEntityIt == savedSceneComposition->entities.end()
+        || savedEntityIt->id != currentAuthorityId
+        || savedEntityIt->prefabName != snapshot.controlledPrefabName
+        || savedEntityIt->spawnTag != snapshot.controlledSpawnTag) {
+      logRuntimeLine(
+        "Runtime quickload failed because controlled entity '" + snapshot.controlledEntityId
+        + "' is no longer compatible with the authored scene.");
+      return false;
+    }
 
     if (activeSceneName_ != snapshot.sceneName) {
       resolveDataDrivenRuntimeState(snapshot.sceneName);
@@ -1096,6 +1125,9 @@ private:
     activeControlledEntity_.spawnTag = snapshot.controlledSpawnTag;
     activeControlledEntity_.position = snapshot.controlledPosition;
     activeControlledEntity_.rotation = snapshot.controlledRotation;
+    activeControlledEntity_.cameraComponent = savedEntityIt->spawnTag == "player_camera"
+      ? savedEntityIt->cameraComponent
+      : std::nullopt;
     activeControlledEntity_.valid = true;
 
     activeControlledEntityMoveSpeed_ = 0.0F;
@@ -2462,13 +2494,25 @@ private:
     const std::array<float, 3> cameraRotation = activeControlledEntity_.valid
       ? activeControlledEntity_.rotation
       : std::array<float, 3>{0.0F, 0.0F, 0.0F};
+    const float verticalFovDegrees = activeControlledEntity_.cameraComponent.has_value()
+      ? activeControlledEntity_.cameraComponent->verticalFovDegrees
+      : kLegacyCameraVerticalFovDegrees;
+    const float nearMeters = activeControlledEntity_.cameraComponent.has_value()
+      ? activeControlledEntity_.cameraComponent->nearMeters
+      : kLegacyCameraNearMeters;
+    const float farMeters = activeControlledEntity_.cameraComponent.has_value()
+      ? activeControlledEntity_.cameraComponent->farMeters
+      : kLegacyCameraFarMeters;
 
     const float yawRadians = cameraRotation[1] * (3.1415926535F / 180.0F);
     const float pitchRadians = cameraRotation[0] * (3.1415926535F / 180.0F);
+    const float rollRadians = cameraRotation[2] * (3.1415926535F / 180.0F);
     const float cosYaw = std::cos(yawRadians);
     const float sinYaw = std::sin(yawRadians);
     const float cosPitch = std::cos(pitchRadians);
     const float sinPitch = std::sin(pitchRadians);
+    const float cosRoll = std::cos(rollRadians);
+    const float sinRoll = std::sin(rollRadians);
 
     const std::array<float, 3> delta = {
       worldPosition[0] - cameraPosition[0],
@@ -2481,15 +2525,17 @@ private:
     const float localZ = delta[0] * sinYaw + delta[2] * cosYaw;
     const float viewY = localY * cosPitch + localZ * sinPitch;
     const float viewZ = -localY * sinPitch + localZ * cosPitch;
-    if (viewZ <= 0.15F) {
+    if (viewZ <= nearMeters || viewZ > farMeters) {
       return std::nullopt;
     }
 
     const float aspect = static_cast<float>(swapchainExtent_.width) / static_cast<float>(swapchainExtent_.height);
-    const float tanHalfVertical = std::tan(70.0F * (3.1415926535F / 180.0F) * 0.5F);
+    const float tanHalfVertical = std::tan(verticalFovDegrees * (3.1415926535F / 180.0F) * 0.5F);
     const float tanHalfHorizontal = tanHalfVertical * aspect;
-    const float xNdc = localX / (viewZ * tanHalfHorizontal);
-    const float yNdc = viewY / (viewZ * tanHalfVertical);
+    const float viewX = localX * cosRoll + viewY * sinRoll;
+    const float rolledViewY = -localX * sinRoll + viewY * cosRoll;
+    const float xNdc = viewX / (viewZ * tanHalfHorizontal);
+    const float yNdc = rolledViewY / (viewZ * tanHalfVertical);
     if (xNdc < -1.35F || xNdc > 1.35F || yNdc < -1.35F || yNdc > 1.35F) {
       return std::nullopt;
     }
@@ -2498,10 +2544,10 @@ private:
     const float proxyHeight = std::max(dimensions[1], 0.35F);
     const float halfWidthPixels = std::max(
       6.0F,
-      0.5F * (proxyWidth / std::max(viewZ, 0.15F)) / tanHalfHorizontal * static_cast<float>(swapchainExtent_.width) * 0.5F);
+      0.5F * (proxyWidth / std::max(viewZ, nearMeters)) / tanHalfHorizontal * static_cast<float>(swapchainExtent_.width) * 0.5F);
     const float halfHeightPixels = std::max(
       8.0F,
-      0.5F * (proxyHeight / std::max(viewZ, 0.15F)) / tanHalfVertical * static_cast<float>(swapchainExtent_.height) * 0.5F);
+      0.5F * (proxyHeight / std::max(viewZ, nearMeters)) / tanHalfVertical * static_cast<float>(swapchainExtent_.height) * 0.5F);
 
     const float centerX = (xNdc * 0.5F + 0.5F) * static_cast<float>(swapchainExtent_.width);
     const float centerY = (0.5F - yNdc * 0.5F) * static_cast<float>(swapchainExtent_.height);

@@ -28,12 +28,15 @@ The current Phase 5.5 slice locks the first engine-wide data conventions into th
 - scene-to-prefab relationships and `runtime_bootstrap` defaults are validated across the catalog rather than treated as isolated files
 - prefab component payloads can now reference `content/procgeo/*.procgeo.toml` and `content/effects/*.effect.toml` through deterministic `[component.render]` and `[component.effect]` sections
 - prefab sources may now declare one strict optional `[component.collision]` box with finite item-local `center`, canonical unit `xyzw` `rotation`, and positive finite `dimensions`; `DataFoundation` exposes it as typed optional snapshot truth and rejects malformed, duplicate, unknown-key, or non-prefab use
+- prefab sources may now declare one strict optional `[component.camera]` perspective camera with float32-compatible vertical FOV and near/far clips; native catalog validation and `engine bake` share the same fail-closed acceptance domain and cook the same canonical float32 values
+- scene relationship validation permits at most one root `player_camera`; parented player cameras are rejected until the scene transform graph supports true parent/local TRS composition
 - the spatial evaluator reuses this same prefab-to-render-procgeo chain to expose exact authored box corners for attachment tuning; it does not create a second prefab geometry schema, and the visual box is not collision geometry
 - authored prefab collision is independent of render procgeo and is not yet consumed by runtime physics, the spatial evaluator, clipping diagnostics, or the staged prefab cook lane
 - procgeo dimensions must be finite positive numbers before a source can become valid evaluator or cook input
 - runtime startup now resolves the active scene and overlay preference from the text-backed source assets when possible
 - cooked outputs are still planning targets only in this slice, but they now target a stable `FlatBuffers` runtime-data lane under `build/cooked/`
 - the current staged cook lane now also validates prefab-component references and stages prefab component payloads into cooked prefab outputs under the same deterministic authored-data workflow
+- staged prefab output and bake summaries now retain the optional camera payload and camera-component presence instead of inferring optics from runtime constants
 - the current staged cook lane now also validates animation graph relationships and animation-to-audio event links under the same deterministic authored-data workflow
 - the current staged cook lane now also validates physics layer/material/body relationships under the same deterministic authored-data workflow
 

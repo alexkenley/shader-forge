@@ -6,3 +6,9 @@ runtime_format = "flatbuffer"
 
 category = "tools"
 spawn_tag = "player_camera"
+
+[component.camera]
+projection = "perspective"
+vertical_fov_degrees = 70.0
+near_meters = 0.15
+far_meters = 1000.0

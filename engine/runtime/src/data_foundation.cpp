@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -136,11 +137,19 @@ bool parseCompleteFiniteFloat(std::string_view token, float* result) {
   if (text.empty()) {
     return false;
   }
+  std::size_t prefixOffset = (text.front() == '+' || text.front() == '-') ? 1 : 0;
+  if (prefixOffset + 1 < text.size() && text[prefixOffset] == '0') {
+    const char radixMarker = static_cast<char>(std::tolower(static_cast<unsigned char>(text[prefixOffset + 1])));
+    if (radixMarker == 'x' || radixMarker == 'b' || radixMarker == 'o') {
+      return false;
+    }
+  }
 
   std::size_t consumed = 0;
   try {
     const float parsed = std::stof(text, &consumed);
-    if (consumed != text.size() || !std::isfinite(parsed)) {
+    if (consumed != text.size() || !std::isfinite(parsed)
+        || (parsed != 0.0F && std::abs(parsed) < std::numeric_limits<float>::min())) {
       return false;
     }
     *result = parsed;
@@ -342,6 +351,18 @@ struct ParsedAssetFields {
     std::array<float, 3> dimensions{1.0F, 1.0F, 1.0F};
   };
 
+  struct PrefabCameraComponentFields {
+    bool seenSection = false;
+    bool hasProjection = false;
+    bool hasVerticalFovDegrees = false;
+    bool hasNearMeters = false;
+    bool hasFarMeters = false;
+    std::string projection;
+    float verticalFovDegrees = 70.0F;
+    float nearMeters = 0.15F;
+    float farMeters = 1000.0F;
+  };
+
   std::string name;
   std::string schema;
   int schemaVersion = 0;
@@ -367,6 +388,7 @@ struct ParsedAssetFields {
   PrefabRenderComponentFields renderComponent;
   PrefabEffectComponentFields effectComponent;
   PrefabCollisionComponentFields collisionComponent;
+  PrefabCameraComponentFields cameraComponent;
   std::vector<SceneEntityFields> sceneEntities;
 };
 
@@ -478,6 +500,7 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
     prefabRenderComponent,
     prefabEffectComponent,
     prefabCollisionComponent,
+    prefabCameraComponent,
   };
   SectionMode currentSection = SectionMode::none;
   ParsedAssetFields::SceneEntityFields* currentSceneEntity = nullptr;
@@ -512,6 +535,20 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
         }
         asset->collisionComponent.seenSection = true;
         currentSection = SectionMode::prefabCollisionComponent;
+      } else if (sectionName == "component.camera") {
+        if (asset->cameraComponent.seenSection) {
+          if (errorMessage) {
+            *errorMessage = "Duplicate [component.camera] section in " + path.string();
+          }
+          return false;
+        }
+        asset->cameraComponent.seenSection = true;
+        currentSection = SectionMode::prefabCameraComponent;
+      } else if (sectionName.rfind("component.", 0) == 0) {
+        if (errorMessage) {
+          *errorMessage = "Unsupported component section [" + sectionName + "] in " + path.string();
+        }
+        return false;
       }
       continue;
     }
@@ -671,6 +708,76 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
       continue;
     }
 
+    if (currentSection == SectionMode::prefabCameraComponent) {
+      auto duplicateCameraKey = [&](bool alreadySet) {
+        if (!alreadySet) {
+          return false;
+        }
+        if (errorMessage) {
+          *errorMessage = "Duplicate key '" + key + "' in [component.camera] in " + path.string();
+        }
+        return true;
+      };
+      if (key == "projection") {
+        if (duplicateCameraKey(asset->cameraComponent.hasProjection)) {
+          return false;
+        }
+        if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
+          if (errorMessage) {
+            *errorMessage = "Malformed camera projection in " + path.string();
+          }
+          return false;
+        }
+        asset->cameraComponent.projection = parsedValue;
+        asset->cameraComponent.hasProjection = true;
+        if (asset->cameraComponent.projection != "perspective") {
+          if (errorMessage) {
+            *errorMessage = "camera projection must be \"perspective\" in " + path.string();
+          }
+          return false;
+        }
+      } else if (key == "vertical_fov_degrees") {
+        if (duplicateCameraKey(asset->cameraComponent.hasVerticalFovDegrees)) {
+          return false;
+        }
+        if (!parseCompleteFiniteFloat(value, &asset->cameraComponent.verticalFovDegrees)) {
+          if (errorMessage) {
+            *errorMessage = "camera vertical_fov_degrees must be finite in " + path.string();
+          }
+          return false;
+        }
+        asset->cameraComponent.hasVerticalFovDegrees = true;
+      } else if (key == "near_meters") {
+        if (duplicateCameraKey(asset->cameraComponent.hasNearMeters)) {
+          return false;
+        }
+        if (!parseCompleteFiniteFloat(value, &asset->cameraComponent.nearMeters)) {
+          if (errorMessage) {
+            *errorMessage = "camera near_meters must be finite in " + path.string();
+          }
+          return false;
+        }
+        asset->cameraComponent.hasNearMeters = true;
+      } else if (key == "far_meters") {
+        if (duplicateCameraKey(asset->cameraComponent.hasFarMeters)) {
+          return false;
+        }
+        if (!parseCompleteFiniteFloat(value, &asset->cameraComponent.farMeters)) {
+          if (errorMessage) {
+            *errorMessage = "camera far_meters must be finite in " + path.string();
+          }
+          return false;
+        }
+        asset->cameraComponent.hasFarMeters = true;
+      } else {
+        if (errorMessage) {
+          *errorMessage = "Unknown key '" + key + "' in [component.camera] in " + path.string();
+        }
+        return false;
+      }
+      continue;
+    }
+
     if (key == "name") {
       asset->name = normalizeToken(parsedValue);
     } else if (key == "schema") {
@@ -770,6 +877,30 @@ bool parseAssetFile(const std::filesystem::path& path, ParsedAssetFields* asset,
     if (!asset->collisionComponent.hasDimensions) {
       if (errorMessage) {
         *errorMessage = "Missing dimensions in [component.collision] in " + path.string();
+      }
+      return false;
+    }
+  }
+
+  if (asset->cameraComponent.seenSection) {
+    if (!asset->cameraComponent.hasProjection || !asset->cameraComponent.hasVerticalFovDegrees
+        || !asset->cameraComponent.hasNearMeters || !asset->cameraComponent.hasFarMeters) {
+      if (errorMessage) {
+        *errorMessage = "[component.camera] requires projection, vertical_fov_degrees, near_meters, and far_meters in "
+          + path.string();
+      }
+      return false;
+    }
+    if (asset->cameraComponent.verticalFovDegrees <= 0.0F || asset->cameraComponent.verticalFovDegrees >= 180.0F) {
+      if (errorMessage) {
+        *errorMessage = "camera vertical_fov_degrees must be > 0 and < 180 in " + path.string();
+      }
+      return false;
+    }
+    if (asset->cameraComponent.nearMeters <= 0.0F || asset->cameraComponent.farMeters <= 0.0F
+        || asset->cameraComponent.nearMeters >= asset->cameraComponent.farMeters) {
+      if (errorMessage) {
+        *errorMessage = "camera clip distances must be > 0 with near_meters < far_meters in " + path.string();
       }
       return false;
     }
@@ -987,6 +1118,12 @@ struct DataFoundation::Impl {
       }
       return false;
     }
+    if (parsed.cameraComponent.seenSection && kind != DataAssetKind::prefab) {
+      if (errorMessage) {
+        *errorMessage = "[component.camera] is only valid on prefab assets in " + path.string();
+      }
+      return false;
+    }
 
     const std::optional<std::string> validationError = validateAsset(parsed, kind, manifest);
     if (validationError.has_value()) {
@@ -1048,6 +1185,14 @@ struct DataFoundation::Impl {
               .center = parsed.collisionComponent.center,
               .rotation = parsed.collisionComponent.rotation,
               .dimensions = parsed.collisionComponent.dimensions,
+            }}
+          : std::nullopt,
+        .cameraComponent = parsed.cameraComponent.seenSection
+          ? std::optional<PrefabCameraComponentSnapshot>{PrefabCameraComponentSnapshot{
+              .projection = parsed.cameraComponent.projection,
+              .verticalFovDegrees = parsed.cameraComponent.verticalFovDegrees,
+              .nearMeters = parsed.cameraComponent.nearMeters,
+              .farMeters = parsed.cameraComponent.farMeters,
             }}
           : std::nullopt,
         .sourcePath = path,
@@ -1211,6 +1356,40 @@ struct DataFoundation::Impl {
       }
 
       if (!scene.valid) {
+        continue;
+      }
+
+      std::size_t playerCameraCount = 0;
+      for (const auto& entity : scene.entities) {
+        const auto prefabIt = std::find_if(
+          prefabs.begin(),
+          prefabs.end(),
+          [&entity](const PrefabSourceSnapshot& prefab) {
+            return prefab.valid && prefab.name == entity.sourcePrefab;
+          });
+        if (prefabIt != prefabs.end() && prefabIt->spawnTag == "player_camera") {
+          playerCameraCount += 1;
+          if (!entity.parent.empty()) {
+            scene.valid = false;
+            markAssetInvalid(
+              DataAssetKind::scene,
+              scene.name,
+              scene.sourcePath,
+              "entity '" + entity.id + "' with spawn_tag 'player_camera' must be a root entity");
+            break;
+          }
+        }
+      }
+      if (!scene.valid) {
+        continue;
+      }
+      if (playerCameraCount > 1) {
+        scene.valid = false;
+        markAssetInvalid(
+          DataAssetKind::scene,
+          scene.name,
+          scene.sourcePath,
+          "scene must reference at most one prefab with spawn_tag 'player_camera'");
         continue;
       }
 
@@ -1406,6 +1585,8 @@ std::optional<ComposedSceneSnapshot> DataFoundation::composeScene(std::string_vi
   };
 
   appendPrefabName(scene->primaryPrefab);
+  std::string playerCameraEntity;
+  std::string playerSpawnEntity;
 
   for (const auto& entity : scene->entities) {
     ComposedSceneEntitySnapshot composedEntity;
@@ -1429,9 +1610,11 @@ std::optional<ComposedSceneSnapshot> DataFoundation::composeScene(std::string_vi
       composedEntity.hasEffectComponent = hasPrefabEffectComponent(*prefab);
       composedEntity.effectName = prefab->effectComponent.effect;
       composedEntity.effectTrigger = prefab->effectComponent.trigger;
-      if (composed.preferredPlayerEntity.empty()
-          && (prefab->spawnTag == "player_camera" || prefab->spawnTag == "player_spawn")) {
-        composed.preferredPlayerEntity = entity.id;
+      composedEntity.cameraComponent = prefab->cameraComponent;
+      if (prefab->spawnTag == "player_camera") {
+        playerCameraEntity = entity.id;
+      } else if (playerSpawnEntity.empty() && prefab->spawnTag == "player_spawn") {
+        playerSpawnEntity = entity.id;
       }
     }
 
@@ -1439,6 +1622,8 @@ std::optional<ComposedSceneSnapshot> DataFoundation::composeScene(std::string_vi
     appendPrefabName(composedEntity.prefabName);
     composed.entities.push_back(std::move(composedEntity));
   }
+
+  composed.preferredPlayerEntity = playerCameraEntity.empty() ? playerSpawnEntity : playerCameraEntity;
 
   for (auto& entity : composed.entities) {
     if (entity.parent.empty()) {
@@ -1633,7 +1818,7 @@ std::string DataFoundation::scenePrefabComponentSummary(std::string_view sceneNa
       summary << " [spawn_tag=" << prefab->spawnTag << ']';
     }
 
-    if (!hasPrefabRenderComponent(*prefab) && !hasPrefabEffectComponent(*prefab)) {
+    if (!hasPrefabRenderComponent(*prefab) && !hasPrefabEffectComponent(*prefab) && !prefab->cameraComponent.has_value()) {
       summary << " [no explicit components]";
       continue;
     }
@@ -1650,6 +1835,12 @@ std::string DataFoundation::scenePrefabComponentSummary(std::string_view sceneNa
       if (!prefab->effectComponent.trigger.empty()) {
         summary << ", trigger=" << prefab->effectComponent.trigger;
       }
+    }
+    if (prefab->cameraComponent.has_value()) {
+      summary << "\n  - camera -> projection=" << prefab->cameraComponent->projection
+              << ", vertical_fov_degrees=" << prefab->cameraComponent->verticalFovDegrees
+              << ", near_meters=" << prefab->cameraComponent->nearMeters
+              << ", far_meters=" << prefab->cameraComponent->farMeters;
     }
   }
   return summary.str();
@@ -1701,6 +1892,12 @@ std::string DataFoundation::composedSceneSummary(std::string_view sceneName) con
         summary << ", trigger=" << entity.effectTrigger;
       }
     }
+    if (entity.cameraComponent.has_value()) {
+      summary << "\n  - camera -> projection=" << entity.cameraComponent->projection
+              << ", vertical_fov_degrees=" << entity.cameraComponent->verticalFovDegrees
+              << ", near_meters=" << entity.cameraComponent->nearMeters
+              << ", far_meters=" << entity.cameraComponent->farMeters;
+    }
   }
 
   return summary.str();
@@ -1735,6 +1932,12 @@ std::string DataFoundation::relationshipSummary() const {
       if (!prefab.effectComponent.trigger.empty()) {
         summary << ", trigger=" << prefab.effectComponent.trigger;
       }
+    }
+    if (prefab.cameraComponent.has_value()) {
+      summary << "\n  - camera -> projection=" << prefab.cameraComponent->projection
+              << ", vertical_fov_degrees=" << prefab.cameraComponent->verticalFovDegrees
+              << ", near_meters=" << prefab.cameraComponent->nearMeters
+              << ", far_meters=" << prefab.cameraComponent->farMeters;
     }
   }
 

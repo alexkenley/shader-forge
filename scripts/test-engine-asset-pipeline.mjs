@@ -19,6 +19,7 @@ const physicsMaterialPath = path.join(repoRoot, 'physics', 'materials', 'default
 const physicsBodyPath = path.join(repoRoot, 'physics', 'bodies', 'debug_crate.physics-body.toml');
 const procgeoFloorPath = path.join(repoRoot, 'content', 'procgeo', 'sandbox_floor.procgeo.toml');
 const procgeoCratePath = path.join(repoRoot, 'content', 'procgeo', 'debug_crate.procgeo.toml');
+const debugCameraPath = path.join(repoRoot, 'content', 'prefabs', 'debug_camera.prefab.toml');
 const tempRoot = path.join(repoRoot, 'tmp', 'asset-pipeline-harness');
 const reportPath = path.join(tempRoot, 'asset-pipeline-report.json');
 
@@ -36,6 +37,7 @@ const physicsMaterial = fs.readFileSync(physicsMaterialPath, 'utf8');
 const physicsBody = fs.readFileSync(physicsBodyPath, 'utf8');
 const procgeoFloor = fs.readFileSync(procgeoFloorPath, 'utf8');
 const procgeoCrate = fs.readFileSync(procgeoCratePath, 'utf8');
+const debugCamera = fs.readFileSync(debugCameraPath, 'utf8');
 
 assert.match(cliSource, /engine bake/);
 assert.match(cliSource, /--audio-root/);
@@ -62,6 +64,8 @@ assert.match(assetPipelineSource, /entity \"/);
 assert.match(assetPipelineSource, /component\.render/);
 assert.match(assetPipelineSource, /component\.effect/);
 assert.match(assetPipelineSource, /hasRenderComponent/);
+assert.match(assetPipelineSource, /hasCameraComponent/);
+assert.match(assetPipelineSource, /camera projection must be exactly/);
 assert.match(foundationManifest, /procgeo_subdir = "procgeo"/);
 assert.match(foundationManifest, /procgeo_owner = "procgeo_system"/);
 assert.match(audioBuses, /schema = "shader_forge\.audio_buses"/);
@@ -86,6 +90,8 @@ assert.match(procgeoFloor, /generator = "plane_grid"/);
 assert.match(procgeoFloor, /bake_output = "generated_mesh"/);
 assert.match(procgeoCrate, /generator = "box"/);
 assert.match(fs.readFileSync(path.join(repoRoot, 'content', 'prefabs', 'debug_crate.prefab.toml'), 'utf8'), /\[component\.render\]/);
+assert.match(debugCamera, /\[component\.camera\]/);
+assert.match(debugCamera, /projection = "perspective"/);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 fs.mkdirSync(tempRoot, { recursive: true });
@@ -163,9 +169,12 @@ assert.match(report.notes.join('\n'), /Physics currently bakes staged layer, mat
 assert.match(JSON.stringify(report.assets || report, null, 2), /entityCount/);
 assert.match(JSON.stringify(report.assets || report, null, 2), /hasRenderComponent/);
 assert.match(JSON.stringify(report.assets || report, null, 2), /hasEffectComponent/);
+const cameraReport = report.bakedAssets.find((asset) => asset.kind === 'prefab' && asset.name === 'debug_camera');
+assert.equal(cameraReport?.hasCameraComponent, true);
 
 const cookedScenePath = path.join(tempRoot, 'scenes', 'sandbox.bin');
 const cookedPrefabPath = path.join(tempRoot, 'prefabs', 'debug_crate.bin');
+const cookedCameraPath = path.join(tempRoot, 'prefabs', 'debug_camera.bin');
 const cookedProcgeoPath = path.join(tempRoot, 'procgeo', 'sandbox_floor.bin');
 const cookedAudioBusesPath = path.join(tempRoot, 'audio', 'audio-buses.bin');
 const cookedAudioSoundPath = path.join(tempRoot, 'audio', 'sounds', 'ui_confirm.bin');
@@ -181,6 +190,7 @@ const cratePreviewPath = path.join(tempRoot, 'generated-meshes', 'debug_crate.me
 
 assert.ok(fs.existsSync(cookedScenePath), 'Expected staged cooked scene payload.');
 assert.ok(fs.existsSync(cookedPrefabPath), 'Expected staged cooked prefab payload.');
+assert.ok(fs.existsSync(cookedCameraPath), 'Expected staged cooked camera prefab payload.');
 assert.ok(fs.existsSync(cookedProcgeoPath), 'Expected staged cooked procgeo payload.');
 assert.ok(fs.existsSync(cookedAudioBusesPath), 'Expected staged cooked audio buses payload.');
 assert.ok(fs.existsSync(cookedAudioSoundPath), 'Expected staged cooked audio sound payload.');
@@ -197,6 +207,7 @@ assert.ok(fs.existsSync(cratePreviewPath), 'Expected generated box preview outpu
 const floorPreview = JSON.parse(fs.readFileSync(floorPreviewPath, 'utf8'));
 const cratePreview = JSON.parse(fs.readFileSync(cratePreviewPath, 'utf8'));
 const cookedPrefab = JSON.parse(fs.readFileSync(cookedPrefabPath, 'utf8'));
+const cookedCamera = JSON.parse(fs.readFileSync(cookedCameraPath, 'utf8'));
 assert.equal(floorPreview.generator, 'plane_grid');
 assert.equal(floorPreview.mesh.vertexCount, 169);
 assert.equal(floorPreview.mesh.triangleCount, 288);
@@ -205,6 +216,143 @@ assert.equal(cratePreview.mesh.vertexCount, 8);
 assert.equal(cratePreview.mesh.triangleCount, 12);
 assert.equal(cookedPrefab.renderComponent.procgeo, 'debug_crate');
 assert.equal(cookedPrefab.effectComponent.effect, 'impact_spark');
+assert.deepEqual(cookedCamera.cameraComponent, {
+  projection: 'perspective',
+  verticalFovDegrees: 70,
+  nearMeters: Math.fround(0.15),
+  farMeters: 1000,
+});
+
+const invalidContentRoot = path.join(tempRoot, 'invalid-content');
+const invalidOutputRoot = path.join(tempRoot, 'invalid-output');
+const invalidReportPath = path.join(tempRoot, 'invalid-report.json');
+fs.cpSync(path.join(repoRoot, 'content'), invalidContentRoot, { recursive: true });
+const invalidCameraPath = path.join(invalidContentRoot, 'prefabs', 'debug_camera.prefab.toml');
+fs.writeFileSync(invalidCameraPath, fs.readFileSync(invalidCameraPath, 'utf8')
+  .replace('projection = "perspective"', 'projection = "Perspective"')
+  .replace('vertical_fov_degrees = 70.0', 'vertical_fov_degrees = 180.0')
+  .replace('far_meters = 1000.0', 'far_meters = 1000.0\nfar_meters = 0b10\nunknown = true'));
+const invalidBakeRun = spawnSync(process.execPath, [
+  cliPath,
+  'bake',
+  '--content-root', invalidContentRoot,
+  '--audio-root', 'audio',
+  '--animation-root', 'animation',
+  '--physics-root', 'physics',
+  '--data-foundation', 'data/foundation/engine-data-layout.toml',
+  '--output-root', invalidOutputRoot,
+  '--report', invalidReportPath,
+], { cwd: repoRoot, encoding: 'utf8' });
+assert.equal(invalidBakeRun.status, 1, invalidBakeRun.stderr || invalidBakeRun.stdout);
+const invalidReport = JSON.parse(fs.readFileSync(invalidReportPath, 'utf8'));
+const invalidCamera = invalidReport.invalidAssets.find((asset) => asset.kind === 'prefab' && asset.name === 'debug_camera');
+assert.match(invalidCamera?.problems.join('\n') || '', /duplicate key "far_meters"/);
+assert.match(invalidCamera?.problems.join('\n') || '', /unknown key "unknown"/);
+assert.match(invalidCamera?.problems.join('\n') || '', /projection must be exactly "perspective"/);
+assert.match(invalidCamera?.problems.join('\n') || '', /vertical_fov_degrees must be finite/);
+assert.match(invalidCamera?.problems.join('\n') || '', /clip distances must be finite/);
+assert.equal(fs.existsSync(path.join(invalidOutputRoot, 'prefabs', 'debug_camera.bin')), false);
+
+function assertRejectedCameraVariant(label, transform, expectedProblem) {
+  fs.writeFileSync(invalidCameraPath, transform(debugCamera));
+  const variantOutputRoot = path.join(tempRoot, `invalid-${label}-output`);
+  const variantReportPath = path.join(tempRoot, `invalid-${label}-report.json`);
+  const run = spawnSync(process.execPath, [
+    cliPath,
+    'bake',
+    '--content-root', invalidContentRoot,
+    '--audio-root', 'audio',
+    '--animation-root', 'animation',
+    '--physics-root', 'physics',
+    '--data-foundation', 'data/foundation/engine-data-layout.toml',
+    '--output-root', variantOutputRoot,
+    '--report', variantReportPath,
+  ], { cwd: repoRoot, encoding: 'utf8' });
+  assert.equal(run.status, 1, run.stderr || run.stdout);
+  const variantReport = JSON.parse(fs.readFileSync(variantReportPath, 'utf8'));
+  const cameraAsset = variantReport.invalidAssets.find((asset) => asset.kind === 'prefab' && asset.name === 'debug_camera');
+  assert.match(cameraAsset?.problems.join('\n') || '', expectedProblem);
+  assert.equal(fs.existsSync(path.join(variantOutputRoot, 'prefabs', 'debug_camera.bin')), false);
+}
+
+assertRejectedCameraVariant(
+  'fov-float32-rounding',
+  (source) => source.replace('vertical_fov_degrees = 70.0', 'vertical_fov_degrees = 179.999999'),
+  /vertical_fov_degrees must be finite/,
+);
+assertRejectedCameraVariant(
+  'clip-float32-rounding',
+  (source) => source
+    .replace('near_meters = 0.15', 'near_meters = 1.00000001')
+    .replace('far_meters = 1000.0', 'far_meters = 1.00000002'),
+  /clip distances must be finite/,
+);
+assertRejectedCameraVariant(
+  'float32-overflow',
+  (source) => source.replace('far_meters = 1000.0', 'far_meters = 1e100'),
+  /clip distances must be finite/,
+);
+assertRejectedCameraVariant(
+  'float32-subnormal',
+  (source) => source.replace('near_meters = 0.15', 'near_meters = 1e-40'),
+  /clip distances must be finite/,
+);
+assertRejectedCameraVariant(
+  'malformed-line',
+  (source) => source.replace('far_meters = 1000.0', 'far_meters = 1000.0\ngarbage'),
+  /malformed TOML line/,
+);
+assertRejectedCameraVariant(
+  'misspelled-component',
+  (source) => source.replace('[component.camera]', '[component.camer]'),
+  /unsupported prefab component section "component\.camer"/,
+);
+
+fs.writeFileSync(invalidCameraPath, debugCamera.replace('vertical_fov_degrees = 70.0', 'vertical_fov_degrees = 70.1'));
+const precisionOutputRoot = path.join(tempRoot, 'source-precision-output');
+const precisionReportPath = path.join(tempRoot, 'source-precision-report.json');
+const precisionRun = spawnSync(process.execPath, [
+  cliPath,
+  'bake',
+  '--content-root', invalidContentRoot,
+  '--audio-root', 'audio',
+  '--animation-root', 'animation',
+  '--physics-root', 'physics',
+  '--data-foundation', 'data/foundation/engine-data-layout.toml',
+  '--output-root', precisionOutputRoot,
+  '--report', precisionReportPath,
+], { cwd: repoRoot, encoding: 'utf8' });
+assert.equal(precisionRun.status, 0, precisionRun.stderr || precisionRun.stdout);
+const precisionCamera = JSON.parse(fs.readFileSync(path.join(precisionOutputRoot, 'prefabs', 'debug_camera.bin'), 'utf8'));
+assert.equal(
+  precisionCamera.cameraComponent.verticalFovDegrees,
+  Math.fround(70.1),
+  'Staged JSON cook must match the native float32 camera value.',
+);
+
+fs.writeFileSync(invalidCameraPath, debugCamera);
+const parentedScenePath = path.join(invalidContentRoot, 'scenes', 'sandbox.scene.toml');
+fs.writeFileSync(parentedScenePath, fs.readFileSync(parentedScenePath, 'utf8').replace(
+  'parent = ""',
+  'parent = "crate_focus"',
+));
+const parentedOutputRoot = path.join(tempRoot, 'parented-camera-output');
+const parentedReportPath = path.join(tempRoot, 'parented-camera-report.json');
+const parentedRun = spawnSync(process.execPath, [
+  cliPath,
+  'bake',
+  '--content-root', invalidContentRoot,
+  '--audio-root', 'audio',
+  '--animation-root', 'animation',
+  '--physics-root', 'physics',
+  '--data-foundation', 'data/foundation/engine-data-layout.toml',
+  '--output-root', parentedOutputRoot,
+  '--report', parentedReportPath,
+], { cwd: repoRoot, encoding: 'utf8' });
+assert.equal(parentedRun.status, 1, parentedRun.stderr || parentedRun.stdout);
+const parentedReport = JSON.parse(fs.readFileSync(parentedReportPath, 'utf8'));
+const parentedScene = parentedReport.invalidAssets.find((asset) => asset.kind === 'scene' && asset.name === 'sandbox');
+assert.match(parentedScene?.problems.join('\n') || '', /player_camera.*root entity/);
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 

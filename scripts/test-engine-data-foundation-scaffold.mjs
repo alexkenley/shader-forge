@@ -53,6 +53,8 @@ assert.match(foundationHeader, /struct PrefabRenderComponentSnapshot/);
 assert.match(foundationHeader, /struct PrefabEffectComponentSnapshot/);
 assert.match(foundationHeader, /struct PrefabCollisionComponentSnapshot/);
 assert.match(foundationHeader, /std::optional<PrefabCollisionComponentSnapshot> collisionComponent/);
+assert.match(foundationHeader, /struct PrefabCameraComponentSnapshot/);
+assert.match(foundationHeader, /std::optional<PrefabCameraComponentSnapshot> cameraComponent/);
 assert.match(foundationHeader, /struct ComposedSceneEntitySnapshot/);
 assert.match(foundationHeader, /struct ComposedSceneSnapshot/);
 assert.match(foundationHeader, /struct RuntimeBootstrapSnapshot/);
@@ -81,6 +83,10 @@ assert.match(foundationSource, /source_prefab/);
 assert.match(foundationSource, /component\.render/);
 assert.match(foundationSource, /component\.effect/);
 assert.match(foundationSource, /component\.collision/);
+assert.match(foundationSource, /component\.camera/);
+assert.match(foundationSource, /at most one prefab with spawn_tag 'player_camera'/);
+assert.match(foundationSource, /with spawn_tag 'player_camera' must be a root entity/);
+assert.match(foundationSource, /camera -> projection=/);
 assert.match(foundationSource, /Scene entity layout:/);
 assert.match(foundationSource, /Scene prefab components:/);
 assert.match(foundationSource, /Composed scene:/);
@@ -123,6 +129,11 @@ assert.match(sceneAsset, /\[entity\.crate_satellite\]/);
 assert.match(sceneAsset, /parent = "crate_focus"/);
 assert.match(prefabAsset, /schema = "shader_forge\.prefab"/);
 assert.match(prefabAsset, /spawn_tag = "player_camera"/);
+assert.match(prefabAsset, /\[component\.camera\]/);
+assert.match(prefabAsset, /projection = "perspective"/);
+assert.match(prefabAsset, /vertical_fov_degrees = 70\.0/);
+assert.match(prefabAsset, /near_meters = 0\.15/);
+assert.match(prefabAsset, /far_meters = 1000\.0/);
 assert.match(prefabCrateAsset, /\[component\.render\]/);
 assert.match(prefabCrateAsset, /procgeo = "debug_crate"/);
 assert.match(prefabCrateAsset, /\[component\.effect\]/);
@@ -167,6 +178,8 @@ for (const directory of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
 }
 fs.cpSync(path.join(spatialFixtureRoot, 'content', 'prefabs'), path.join(collisionContentRoot, 'prefabs'), { recursive: true });
 fs.cpSync(path.join(spatialFixtureRoot, 'content', 'procgeo'), path.join(collisionContentRoot, 'procgeo'), { recursive: true });
+fs.copyFileSync(prefabPath, path.join(collisionContentRoot, 'prefabs', 'debug_camera.prefab.toml'));
+fs.writeFileSync(path.join(collisionContentRoot, 'scenes', 'camera.scene.toml'), `schema = "shader_forge.scene"\nschema_version = 1\nruntime_format = "flatbuffer"\nowner_system = "scene_system"\nname = "camera_scene"\ntitle = "Camera"\n\n[entity.camera]\ndisplay_name = "Camera"\nsource_prefab = "debug_camera"\nposition = "1, 2, 3"\nrotation = "4, 5, 6"\nscale = "1, 1, 1"\n`);
 fs.writeFileSync(collisionDriverPath, String.raw`
 #include "shader_forge/runtime/data_foundation.hpp"
 
@@ -221,6 +234,64 @@ int main(int argc, char** argv) {
       || collision.dimensions != std::array<float, 3>{0.08F, 0.12F, 0.9F}) return 5;
   const auto pistol = foundation.prefabSource("weapon.pistol.mk1");
   if (!pistol || !pistol->valid || pistol->collisionComponent) return 6;
+  const auto camera = foundation.prefabSource("debug_camera");
+  if (!camera || !camera->valid || !camera->cameraComponent) return 12;
+  if (camera->cameraComponent->projection != "perspective"
+      || camera->cameraComponent->verticalFovDegrees != 70.0F
+      || camera->cameraComponent->nearMeters != 0.15F
+      || camera->cameraComponent->farMeters != 1000.0F) return 13;
+  const auto composed = foundation.composeScene("camera_scene");
+  if (!composed || !composed->valid || composed->preferredPlayerEntity != "camera" || composed->entities.size() != 1) return 14;
+  if (!composed->entities[0].cameraComponent
+      || composed->entities[0].worldPosition != std::array<float, 3>{1.0F, 2.0F, 3.0F}
+      || composed->entities[0].worldRotation != std::array<float, 3>{4.0F, 5.0F, 6.0F}) return 15;
+
+  const std::filesystem::path cameraPath = std::filesystem::path(argv[1]) / "prefabs/debug_camera.prefab.toml";
+  const std::string originalCamera = readFile(cameraPath);
+  const std::vector<std::pair<std::string, std::string>> cameraMutations{
+    {"projection = \"perspective\"", "projection = \"orthographic\""},
+    {"projection = \"perspective\"", "projection = perspective"},
+    {"vertical_fov_degrees = 70.0", "vertical_fov_degrees = 180.0"},
+    {"vertical_fov_degrees = 70.0", "vertical_fov_degrees = 179.999999"},
+    {"vertical_fov_degrees = 70.0", "vertical_fov_degrees = nan"},
+    {"near_meters = 0.15", "near_meters = 0.0"},
+    {"near_meters = 0.15", "near_meters = 1e-40"},
+    {"near_meters = 0.15", "near_meters = 1000.0"},
+    {"near_meters = 0.15\nfar_meters = 1000.0", "near_meters = 1.00000001\nfar_meters = 1.00000002"},
+    {"far_meters = 1000.0", "far_meters = 1e100"},
+    {"far_meters = 1000.0", "far_meters = 1000.0junk"},
+    {"far_meters = 1000.0", "far_meters = 0b10"},
+    {"far_meters = 1000.0", ""},
+    {"far_meters = 1000.0", "far_meters = 1000.0\nunknown = true"},
+    {"far_meters = 1000.0", "far_meters = 1000.0\ngarbage"},
+    {"[component.camera]", "[component.camer]"},
+    {"far_meters = 1000.0", "far_meters = 1000.0\nfar_meters = 1000.0"},
+    {"far_meters = 1000.0", "far_meters = 1000.0\n\n[component.camera]"},
+  };
+  for (const auto& [from, to] : cameraMutations) {
+    std::string candidate = originalCamera;
+    if (!replaceOnce(&candidate, from, to)) return 16;
+    writeFile(cameraPath, candidate);
+    DataFoundation rejectedCamera;
+    error.clear();
+    if (rejectedCamera.loadFromDisk(config, &error) || error.empty()) return 17;
+  }
+  writeFile(cameraPath, originalCamera);
+  const std::filesystem::path cameraScenePath = std::filesystem::path(argv[1]) / "scenes/camera.scene.toml";
+  const std::string originalCameraScene = readFile(cameraScenePath);
+  writeFile(cameraScenePath, originalCameraScene + "\n[entity.camera_two]\ndisplay_name = \"Camera Two\"\nsource_prefab = \"debug_camera\"\nposition = \"0, 0, 0\"\nrotation = \"0, 0, 0\"\nscale = \"1, 1, 1\"\n");
+  DataFoundation duplicateCameraScene;
+  error.clear();
+  if (!duplicateCameraScene.loadFromDisk(config, &error) || duplicateCameraScene.hasScene("camera_scene")) return 19;
+  writeFile(cameraScenePath, originalCameraScene);
+  std::string parentedCameraScene = originalCameraScene;
+  if (!replaceOnce(&parentedCameraScene, "source_prefab = \"debug_camera\"", "source_prefab = \"debug_camera\"\nparent = \"anchor\"")) return 20;
+  parentedCameraScene += "\n[entity.anchor]\ndisplay_name = \"Anchor\"\nsource_prefab = \"weapon.pistol.mk1\"\nposition = \"0, 0, 0\"\nrotation = \"0, 0, 0\"\nscale = \"1, 1, 1\"\n";
+  writeFile(cameraScenePath, parentedCameraScene);
+  DataFoundation parentedCamera;
+  error.clear();
+  if (!parentedCamera.loadFromDisk(config, &error) || parentedCamera.hasScene("camera_scene")) return 21;
+  writeFile(cameraScenePath, originalCameraScene);
 
   const std::filesystem::path riflePath = std::filesystem::path(argv[1]) / "prefabs/weapon_rifle_mk1.prefab.toml";
   const std::string original = readFile(riflePath);
@@ -256,6 +327,11 @@ int main(int argc, char** argv) {
   DataFoundation wrongKind;
   error.clear();
   if (wrongKind.loadFromDisk(config, &error) || error.find("only valid on prefab assets") == std::string::npos) return 11;
+  std::filesystem::remove(nonPrefabPath);
+  writeFile(nonPrefabPath, originalCamera);
+  DataFoundation wrongCameraKind;
+  error.clear();
+  if (wrongCameraKind.loadFromDisk(config, &error) || error.find("only valid on prefab assets") == std::string::npos) return 18;
   std::filesystem::remove(nonPrefabPath);
   return 0;
 }
@@ -322,8 +398,8 @@ console.log(`- Verified format manifest under ${path.join(repoRoot, 'data', 'fou
 console.log(`- Verified native data foundation sources under ${runtimeRoot}`);
 console.log('- Verified TOML source, FlatBuffers cooked-output planning, SQLite tooling-db decisions, and effect descriptor metadata are represented in code and assets');
 console.log(collisionChecked
-  ? '- Compiled and ran strict optional prefab collision parsing and rejection coverage'
-  : '- SKIPPED native prefab collision probe: no supported g++ compiler was available');
+  ? '- Compiled and ran strict optional prefab collision and camera parsing, composition, and rejection coverage'
+  : '- SKIPPED native prefab collision/camera probe: no supported g++ compiler was available');
 console.log(syntaxChecked
   ? '- Verified native data foundation C++ sources pass fallback syntax-only compilation'
   : '- Skipped g++ syntax check (not available on Windows — use WSL or CI for native compilation)');

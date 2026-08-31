@@ -45,6 +45,8 @@ The current runtime slice is the first real native bring-up pass:
 - authored scenes and prefabs can now compose into a first runtime scene snapshot with resolved hierarchy-derived world transforms
 - authored prefab render components now also drive a first projected debug-proxy scene pass in the Vulkan window so operators can see the composed scene while the full shader/material pipeline is still ahead
 - the runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`
+- one valid root `player_camera` takes priority over `player_spawn` and drives projection from its composed world position/rotation, including roll, plus authored vertical FOV and near/far clips
+- scenes without an authored camera component retain the ordinary-runtime fallback of 70 degrees, 0.15 meters near, and 1000 meters far; that convenience fallback is not spatial-review capture evidence
 - named `move_*` and `look_*` actions now drive that controlled entity position and orientation at runtime
 - the runtime now exposes a first authored-content reload lane for manual iteration: `reload_runtime_content` is bound to `F7`, and content/audio/animation/physics/data changes are also detected through a simple saved-file polling pass
 - authored-content reload now stages replacement audio, animation, data-foundation, and physics state before swap-in so broken edits do not destroy the previous live runtime state
@@ -54,6 +56,7 @@ The current runtime slice is the first real native bring-up pass:
 - authored `on_overlap` effect triggers can now activate automatically from query-only scene bodies during runtime movement instead of requiring every effect-capable entity to be manually targeted with `ui_accept`
 - movement now also drives a first runtime animation-state lane with authored `idle`/`walk` state selection, active clip context in the window title, and movement-triggered clip-event audio requests
 - the runtime now owns a first widened save-system lane: `F8` writes the current quick-save slot, `F9` reloads it, `F11`/`F12` cycle `quickslot_01` through `quickslot_03`, and shell/sessiond launch still scopes that save root to the active project/session workspace
+- quickload rejects a controlled entity that no longer matches the current scene's preferred authority, prefab, or spawn tag instead of reviving stale camera semantics
 - the runtime now also exposes a first projected physics-debug lane for manual testing: authored blocking bodies and query-only trigger bodies can be visualized in the external window, active trigger overlaps are highlighted, and `toggle_physics_debug` is bound to `F10`
 - the native tooling overlay now also surfaces live controlled-entity, movement-speed, animation-state, movement-block, active save slot, interaction-target, and physics-debug context during manual runtime testing
 - physics query origins and runtime interaction logs now follow the composed scene entity state instead of staying hard-coded at world zero
@@ -64,6 +67,7 @@ Current boundary:
 
 - the runtime now has first visible composed-scene rendering through projected debug proxies, but not a full mesh/material/shader pipeline yet
 - those debug-proxy cards are not spatial-review evidence and must not be captured as attachment-tuning screenshots
+- authored camera projection exists, but native frame capture, deterministic review-camera staging, and immutable review packets remain deferred
 - spatial authoring still needs a later sampling/IK/capture path in this native process; the current validate/cook tool is one short-lived executable and does not add a daemon
 - the runtime now has a first shell-to-runtime project-root handoff, first polling/manual authored-content reload, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, first projected physics-debug lane, first multi-slot quick-save/quick-load lane, and first interaction-target/effect feedback for manual testing, but not shader reload, watcher-backed hot reload, full world-state persistence, or deeper mounted-project/package layering yet
 - Dear ImGui-native panels, real asset-backed geometry submission, and player-facing game UI are still later widening passes

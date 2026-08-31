@@ -81,6 +81,13 @@ struct PrefabCollisionComponentSnapshot {
   std::array<float, 3> dimensions{1.0F, 1.0F, 1.0F};
 };
 
+struct PrefabCameraComponentSnapshot {
+  std::string projection;
+  float verticalFovDegrees = 70.0F;
+  float nearMeters = 0.15F;
+  float farMeters = 1000.0F;
+};
+
 struct PrefabSourceSnapshot {
   std::string name;
   std::string category;
@@ -88,6 +95,7 @@ struct PrefabSourceSnapshot {
   PrefabRenderComponentSnapshot renderComponent;
   PrefabEffectComponentSnapshot effectComponent;
   std::optional<PrefabCollisionComponentSnapshot> collisionComponent;
+  std::optional<PrefabCameraComponentSnapshot> cameraComponent;
   std::filesystem::path sourcePath;
   std::filesystem::path cookedPath;
   bool valid = false;
@@ -113,6 +121,7 @@ struct ComposedSceneEntitySnapshot {
   bool hasEffectComponent = false;
   std::string effectName;
   std::string effectTrigger;
+  std::optional<PrefabCameraComponentSnapshot> cameraComponent;
 };
 
 struct ComposedSceneSnapshot {

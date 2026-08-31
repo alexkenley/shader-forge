@@ -70,6 +70,30 @@ function parseNumberValue(rawValue) {
   return Number.isFinite(value) ? value : null;
 }
 
+function parseStrictFiniteNumberValue(rawValue) {
+  const value = trim(rawValue);
+  if (!value || value.startsWith('"') || value.endsWith('"')) {
+    return null;
+  }
+  if (/^[+-]?0[xbo]/i.test(value)) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function finiteFloat32Value(value) {
+  if (value === null) {
+    return null;
+  }
+  const rounded = Math.fround(value);
+  if (!Number.isFinite(rounded)
+      || (value !== 0 && (rounded === 0 || Math.abs(rounded) < 1.1754943508222875e-38))) {
+    return null;
+  }
+  return rounded;
+}
+
 function parseIntegerValue(rawValue) {
   const value = Number.parseInt(parseStringValue(rawValue), 10);
   return Number.isInteger(value) ? value : null;
@@ -128,6 +152,7 @@ function parseTomlStructuredDocument(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
   const fields = {};
   const sections = [];
+  const problems = [];
   const lines = content.split(/\r?\n/);
   let currentSection = null;
 
@@ -140,6 +165,7 @@ function parseTomlStructuredDocument(filePath) {
       currentSection = {
         name: trim(cleaned.slice(1, -1)),
         fields: {},
+        duplicateKeys: [],
       };
       sections.push(currentSection);
       continue;
@@ -147,16 +173,20 @@ function parseTomlStructuredDocument(filePath) {
 
     const pair = parseKeyValue(cleaned);
     if (!pair) {
+      problems.push(`malformed TOML line: ${cleaned}`);
       continue;
     }
     if (currentSection) {
+      if (Object.hasOwn(currentSection.fields, pair.key)) {
+        currentSection.duplicateKeys.push(pair.key);
+      }
       currentSection.fields[pair.key] = pair.value;
     } else {
       fields[pair.key] = pair.value;
     }
   }
 
-  return { fields, sections };
+  return { fields, sections, problems };
 }
 
 function parseListValue(rawValue) {
@@ -359,6 +389,13 @@ function loadSceneEntitySections(sections, problems) {
 function loadPrefabComponentSections(sections, problems) {
   const renderSection = sections.find((section) => section.name === 'component.render');
   const effectSection = sections.find((section) => section.name === 'component.effect');
+  const cameraSections = sections.filter((section) => section.name === 'component.camera');
+  const knownComponentSections = new Set(['component.render', 'component.effect', 'component.collision', 'component.camera']);
+  for (const section of sections) {
+    if (section.name.startsWith('component.') && !knownComponentSections.has(section.name)) {
+      problems.push(`unsupported prefab component section "${section.name}"`);
+    }
+  }
 
   const renderComponent = {
     procgeo: normalizeToken(parseStringValue(renderSection?.fields.procgeo || '')),
@@ -376,7 +413,58 @@ function loadPrefabComponentSections(sections, problems) {
     problems.push('effect component trigger requires effect');
   }
 
-  return { renderComponent, effectComponent };
+
+  let cameraComponent = null;
+  if (cameraSections.length > 1) {
+    problems.push('duplicate [component.camera] section');
+  } else if (cameraSections.length === 1) {
+    const cameraSection = cameraSections[0];
+    const requiredKeys = ['projection', 'vertical_fov_degrees', 'near_meters', 'far_meters'];
+    const allowedKeys = new Set(requiredKeys);
+    for (const key of cameraSection.duplicateKeys) {
+      problems.push(`duplicate key "${key}" in [component.camera]`);
+    }
+    for (const key of Object.keys(cameraSection.fields)) {
+      if (!allowedKeys.has(key)) {
+        problems.push(`unknown key "${key}" in [component.camera]`);
+      }
+    }
+    for (const key of requiredKeys) {
+      if (!Object.hasOwn(cameraSection.fields, key)) {
+        problems.push(`[component.camera] must declare ${key}`);
+      }
+    }
+
+    const rawProjection = trim(cameraSection.fields.projection || '');
+    const projection = rawProjection.length >= 2 && rawProjection.startsWith('"') && rawProjection.endsWith('"')
+      ? parseStringValue(rawProjection)
+      : '';
+    const verticalFovDegrees = parseStrictFiniteNumberValue(cameraSection.fields.vertical_fov_degrees || '');
+    const nearMeters = parseStrictFiniteNumberValue(cameraSection.fields.near_meters || '');
+    const farMeters = parseStrictFiniteNumberValue(cameraSection.fields.far_meters || '');
+    const verticalFovFloat32 = finiteFloat32Value(verticalFovDegrees);
+    const nearFloat32 = finiteFloat32Value(nearMeters);
+    const farFloat32 = finiteFloat32Value(farMeters);
+    if (projection !== 'perspective') {
+      problems.push('camera projection must be exactly "perspective"');
+    }
+    if (verticalFovFloat32 === null || verticalFovFloat32 <= 0 || verticalFovFloat32 >= 180) {
+      problems.push('camera vertical_fov_degrees must be finite, > 0, and < 180');
+    }
+    if (nearFloat32 === null || farFloat32 === null || nearFloat32 <= 0 || farFloat32 <= 0 || nearFloat32 >= farFloat32) {
+      problems.push('camera clip distances must be finite and > 0 with near_meters < far_meters');
+    }
+    if (problems.length === 0) {
+      cameraComponent = {
+        projection,
+        verticalFovDegrees: verticalFovFloat32,
+        nearMeters: nearFloat32,
+        farMeters: farFloat32,
+      };
+    }
+  }
+
+  return { renderComponent, effectComponent, cameraComponent };
 }
 
 function loadPrefabAsset(repoRoot, outputRoot, filePath, fields, sections, config, manifest) {
@@ -384,13 +472,14 @@ function loadPrefabAsset(repoRoot, outputRoot, filePath, fields, sections, confi
   const category = normalizeToken(parseStringValue(fields.category || ''));
   const spawnTag = normalizeToken(parseStringValue(fields.spawn_tag || ''));
   const problems = validateCommonAsset(asset, config, manifest);
-  const { renderComponent, effectComponent } = loadPrefabComponentSections(sections, problems);
+  const { renderComponent, effectComponent, cameraComponent } = loadPrefabComponentSections(sections, problems);
   return {
     ...asset,
     category,
     spawnTag,
     renderComponent,
     effectComponent,
+    cameraComponent,
     valid: problems.length === 0,
     problems,
   };
@@ -1568,6 +1657,23 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
       } else {
         asset = loadProcgeoAsset(repoRoot, outputRoot, filePath, fields, config, manifest);
       }
+      if (config.kind !== 'prefab' && structuredDocument.sections.some((section) => section.name === 'component.camera')) {
+        asset.problems.push('[component.camera] is only valid on prefab assets');
+        asset.valid = false;
+      }
+      for (const problem of structuredDocument.problems) {
+        asset.problems.push(problem);
+        asset.valid = false;
+      }
+      for (const section of structuredDocument.sections) {
+        if (section.name.startsWith('component.')
+            && !['component.render', 'component.effect', 'component.collision', 'component.camera'].includes(section.name)) {
+          if (!asset.problems.includes(`unsupported prefab component section "${section.name}"`)) {
+            asset.problems.push(`unsupported component section "${section.name}"`);
+          }
+          asset.valid = false;
+        }
+      }
       assets.push(asset);
     }
   }
@@ -1612,6 +1718,7 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
     }
     if (asset.kind === 'scene' && Array.isArray(asset.entities)) {
       const entityIds = new Set(asset.entities.map((entity) => entity.id));
+      let playerCameraCount = 0;
       for (const entity of asset.entities) {
         const prefab = prefabs.get(entity.sourcePrefab);
         if (!prefab || !prefab.valid) {
@@ -1619,6 +1726,13 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
           asset.problems.push(`entity "${entity.id}" source_prefab references missing prefab "${entity.sourcePrefab}"`);
         } else {
           relationships.push(`scene ${asset.name} entity ${entity.id} -> prefab ${entity.sourcePrefab}`);
+          if (prefab.spawnTag === 'player_camera') {
+            playerCameraCount += 1;
+            if (entity.parent) {
+              asset.valid = false;
+              asset.problems.push(`entity "${entity.id}" with spawn_tag "player_camera" must be a root entity`);
+            }
+          }
         }
         if (entity.parent) {
           if (entity.parent === entity.id) {
@@ -1630,9 +1744,14 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
           }
         }
       }
+      if (playerCameraCount > 1) {
+        asset.valid = false;
+        asset.problems.push('scene must reference at most one prefab with spawn_tag "player_camera"');
+      }
     }
     if (asset.kind === 'data' && asset.name === 'runtime_bootstrap' && asset.defaultScene) {
-      if (!scenes.has(asset.defaultScene)) {
+      const defaultScene = scenes.get(asset.defaultScene);
+      if (!defaultScene || !defaultScene.valid) {
         asset.valid = false;
         asset.problems.push(`default_scene references missing scene "${asset.defaultScene}"`);
       } else {
@@ -1659,6 +1778,7 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
             spawnTag: asset.spawnTag,
             renderComponent: asset.renderComponent,
             effectComponent: asset.effectComponent,
+            cameraComponent: asset.cameraComponent,
           }
         : asset.kind === 'data'
           ? { defaultScene: asset.defaultScene, toolingOverlay: asset.toolingOverlay }
@@ -1863,6 +1983,7 @@ export async function bakeAssetPipeline(options) {
           ? {
               hasRenderComponent: Boolean(asset.renderComponent?.procgeo || asset.renderComponent?.materialHint),
               hasEffectComponent: Boolean(asset.effectComponent?.effect || asset.effectComponent?.trigger),
+              hasCameraComponent: Boolean(asset.cameraComponent),
             }
         : {}),
     }));
