@@ -43,7 +43,7 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - the shared data foundation validates those scene-to-prefab references
 - prefab assets can now declare first-pass `[component.render]` and `[component.effect]` sections that reference authored `procgeo` and `effect` assets
 - prefab assets can optionally declare one strict `[component.camera]` with `projection = "perspective"`, finite float32-compatible `vertical_fov_degrees`, `near_meters`, and `far_meters`, a field of view strictly between 0 and 180 degrees, and `0 < near_meters < far_meters`
-- scenes may reference at most one `player_camera`; it must be a root entity until the transform graph supports true parent/local TRS composition, and it takes deterministic control priority over `player_spawn`
+- scenes may reference at most one `player_camera`; root or parented cameras take deterministic control priority over `player_spawn`
 - camera acceptance and cooking use the same native float32 values in both catalog and bake lanes, so replacing the staged JSON payload with FlatBuffers will not alter camera optics
 - the shared data foundation now validates scene-entity prefab references plus parent relationships inside those authored scenes
 - the shared data foundation now also rejects authored parent cycles before runtime composition continues
@@ -51,7 +51,7 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - the runtime can now resolve its selected scene against those authored scene assets, surface that choice in logs and window state, and print an authored scene-entity layout summary
 - the runtime can now print referenced prefab component summaries for the active scene instead of leaving authored prefab payloads disconnected from startup diagnostics
 - the runtime can now compose authored scene entities and prefab payloads into a first runtime scene snapshot with resolved world transforms, root-entity tracking, and preferred player-entity selection from prefab spawn tags
-- the selected root `player_camera` now carries its composed world position/rotation plus authored perspective optics into runtime projection; scenes without an authored camera component retain the legacy `70 / 0.15 / 1000` FOV/near/far behavior
+- the selected `player_camera` now carries its composed world position/rotation plus authored perspective optics into runtime projection; scenes without an authored camera component retain the legacy `70 / 0.15 / 1000` FOV/near/far behavior
 - runtime quickload rejects a save when its controlled entity no longer matches the scene's current preferred authority, prefab, or spawn tag instead of silently reviving stale camera state
 - the runtime can now project authored prefab render components into first visible debug-proxy scene rendering so composed scene content is no longer invisible during manual runtime testing
 - named runtime input now drives that composed controlled entity instead of leaving authored transforms entirely passive at startup
@@ -70,7 +70,7 @@ Current boundary:
 
 - this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, first prefab component payloads, a first runtime composition path, first projected debug-proxy visibility, first session-root editor/runtime handoff, first authored-content reload/manual iteration, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, and first interaction-trigger feedback on effect-capable entities, but not full rendered mesh/material instancing yet
 - transform gizmos, broader scene/component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
-- parented `player_camera` entities remain intentionally invalid until the transform graph performs real parent/local TRS composition rather than additive Euler/translation composition
+- parented entities now use real parent/local TRS composition: parent scale affects local translation, parent rotation rotates that scaled translation, rotations compose in the runtime's yaw-pitch-roll convention, and scales multiply component-wise
 - the current Scene shell still uses its existing direct-save workflow; routing that UI through semantic operations is a separate integration slice
 - scene/prefab rename remains deferred until an atomic multi-file change set can update referers; sessiond returns `multi_file_operation_required` instead of presenting a single-file rename as safe
 - planned spatial attachment profiles reference prefabs by ID; prefabs must not copy grip values. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).

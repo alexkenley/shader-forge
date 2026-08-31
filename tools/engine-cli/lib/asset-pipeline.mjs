@@ -1728,10 +1728,6 @@ function scanSourceAssets(repoRoot, contentRoot, outputRoot, manifest) {
           relationships.push(`scene ${asset.name} entity ${entity.id} -> prefab ${entity.sourcePrefab}`);
           if (prefab.spawnTag === 'player_camera') {
             playerCameraCount += 1;
-            if (entity.parent) {
-              asset.valid = false;
-              asset.problems.push(`entity "${entity.id}" with spawn_tag "player_camera" must be a root entity`);
-            }
           }
         }
         if (entity.parent) {

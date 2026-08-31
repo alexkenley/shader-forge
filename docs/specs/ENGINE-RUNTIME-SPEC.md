@@ -45,7 +45,7 @@ The current runtime slice is the first real native bring-up pass:
 - authored scenes and prefabs can now compose into a first runtime scene snapshot with resolved hierarchy-derived world transforms
 - authored prefab render components now also drive a first projected debug-proxy scene pass in the Vulkan window so operators can see the composed scene while the full shader/material pipeline is still ahead
 - the runtime now selects a preferred controlled entity from authored spawn tags such as `player_camera`
-- one valid root `player_camera` takes priority over `player_spawn` and drives projection from its composed world position/rotation, including roll, plus authored vertical FOV and near/far clips
+- one valid root or parented `player_camera` takes priority over `player_spawn` and drives projection from its true composed world position/rotation, including roll, plus authored vertical FOV and near/far clips
 - scenes without an authored camera component retain the ordinary-runtime fallback of 70 degrees, 0.15 meters near, and 1000 meters far; that convenience fallback is not spatial-review capture evidence
 - named `move_*` and `look_*` actions now drive that controlled entity position and orientation at runtime
 - the runtime now exposes a first authored-content reload lane for manual iteration: `reload_runtime_content` is bound to `F7`, and content/audio/animation/physics/data changes are also detected through a simple saved-file polling pass

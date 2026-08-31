@@ -349,10 +349,14 @@ const parentedRun = spawnSync(process.execPath, [
   '--output-root', parentedOutputRoot,
   '--report', parentedReportPath,
 ], { cwd: repoRoot, encoding: 'utf8' });
-assert.equal(parentedRun.status, 1, parentedRun.stderr || parentedRun.stdout);
+assert.equal(parentedRun.status, 0, parentedRun.stderr || parentedRun.stdout);
 const parentedReport = JSON.parse(fs.readFileSync(parentedReportPath, 'utf8'));
-const parentedScene = parentedReport.invalidAssets.find((asset) => asset.kind === 'scene' && asset.name === 'sandbox');
-assert.match(parentedScene?.problems.join('\n') || '', /player_camera.*root entity/);
+assert.equal(
+  parentedReport.invalidAssets.some((asset) => asset.kind === 'scene' && asset.name === 'sandbox'),
+  false,
+  'Parented player cameras must pass the production bake relationship checks.',
+);
+assert.ok(fs.existsSync(path.join(parentedOutputRoot, 'scenes', 'sandbox.bin')));
 
 fs.rmSync(tempRoot, { recursive: true, force: true });
 

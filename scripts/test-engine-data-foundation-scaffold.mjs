@@ -85,7 +85,8 @@ assert.match(foundationSource, /component\.effect/);
 assert.match(foundationSource, /component\.collision/);
 assert.match(foundationSource, /component\.camera/);
 assert.match(foundationSource, /at most one prefab with spawn_tag 'player_camera'/);
-assert.match(foundationSource, /with spawn_tag 'player_camera' must be a root entity/);
+assert.match(foundationSource, /rotationMatrixFromEulerDegrees/);
+assert.match(foundationSource, /multiplyRotationMatrices/);
 assert.match(foundationSource, /camera -> projection=/);
 assert.match(foundationSource, /Scene entity layout:/);
 assert.match(foundationSource, /Scene prefab components:/);
@@ -187,6 +188,7 @@ fs.writeFileSync(path.join(collisionContentRoot, 'scenes', 'camera.scene.toml'),
 fs.writeFileSync(collisionDriverPath, String.raw`
 #include "shader_forge/runtime/data_foundation.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -215,6 +217,14 @@ bool replaceOnce(std::string* value, const std::string& from, const std::string&
   if (position == std::string::npos) return false;
   value->replace(position, from.size(), to);
   return true;
+}
+
+bool near(float actual, float expected) {
+  return std::abs(actual - expected) <= 1e-5F;
+}
+
+bool nearVector3(const std::array<float, 3>& actual, const std::array<float, 3>& expected) {
+  return near(actual[0], expected[0]) && near(actual[1], expected[1]) && near(actual[2], expected[2]);
 }
 
 int main(int argc, char** argv) {
@@ -290,11 +300,20 @@ int main(int argc, char** argv) {
   writeFile(cameraScenePath, originalCameraScene);
   std::string parentedCameraScene = originalCameraScene;
   if (!replaceOnce(&parentedCameraScene, "source_prefab = \"debug_camera\"", "source_prefab = \"debug_camera\"\nparent = \"anchor\"")) return 20;
-  parentedCameraScene += "\n[entity.anchor]\ndisplay_name = \"Anchor\"\nsource_prefab = \"weapon.pistol.mk1\"\nposition = \"0, 0, 0\"\nrotation = \"0, 0, 0\"\nscale = \"1, 1, 1\"\n";
+  if (!replaceOnce(&parentedCameraScene, "rotation = \"4, 5, 6\"", "rotation = \"90, 0, 0\"")) return 21;
+  parentedCameraScene += "\n[entity.anchor]\ndisplay_name = \"Anchor\"\nsource_prefab = \"weapon.pistol.mk1\"\nparent = \"\"\nposition = \"10, 20, 30\"\nrotation = \"0, 0, 90\"\nscale = \"2, 2, 2\"\n";
   writeFile(cameraScenePath, parentedCameraScene);
   DataFoundation parentedCamera;
   error.clear();
-  if (!parentedCamera.loadFromDisk(config, &error) || parentedCamera.hasScene("camera_scene")) return 21;
+  if (!parentedCamera.loadFromDisk(config, &error) || !parentedCamera.hasScene("camera_scene")) return 22;
+  const auto parentedComposition = parentedCamera.composeScene("camera_scene");
+  if (!parentedComposition || !parentedComposition->valid
+      || parentedComposition->preferredPlayerEntity != "camera"
+      || parentedComposition->entities.size() != 2) return 23;
+  const auto& parentedCameraEntity = parentedComposition->entities[0];
+  if (!nearVector3(parentedCameraEntity.worldPosition, {6.0F, 22.0F, 36.0F})
+      || !nearVector3(parentedCameraEntity.worldRotation, {0.0F, 90.0F, 90.0F})
+      || !nearVector3(parentedCameraEntity.worldScale, {2.0F, 2.0F, 2.0F})) return 24;
   writeFile(cameraScenePath, originalCameraScene);
 
   const std::filesystem::path riflePath = std::filesystem::path(argv[1]) / "prefabs/weapon_rifle_mk1.prefab.toml";

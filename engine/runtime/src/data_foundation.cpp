@@ -310,6 +310,68 @@ std::array<float, 3> multiplyVector3(const std::array<float, 3>& left, const std
   };
 }
 
+using RotationMatrix = std::array<std::array<double, 3>, 3>;
+
+RotationMatrix rotationMatrixFromEulerDegrees(const std::array<float, 3>& rotation) {
+  constexpr double kDegreesToRadians = 3.14159265358979323846 / 180.0;
+  const double pitch = static_cast<double>(rotation[0]) * kDegreesToRadians;
+  const double yaw = static_cast<double>(rotation[1]) * kDegreesToRadians;
+  const double roll = static_cast<double>(rotation[2]) * kDegreesToRadians;
+  const double cx = std::cos(pitch);
+  const double sx = std::sin(pitch);
+  const double cy = std::cos(yaw);
+  const double sy = std::sin(yaw);
+  const double cz = std::cos(roll);
+  const double sz = std::sin(roll);
+  return {{
+    {{cy * cz + sy * sx * sz, -cy * sz + sy * sx * cz, sy * cx}},
+    {{cx * sz, cx * cz, -sx}},
+    {{-sy * cz + cy * sx * sz, sy * sz + cy * sx * cz, cy * cx}},
+  }};
+}
+
+RotationMatrix multiplyRotationMatrices(const RotationMatrix& left, const RotationMatrix& right) {
+  RotationMatrix result{};
+  for (std::size_t row = 0; row < 3; row += 1) {
+    for (std::size_t column = 0; column < 3; column += 1) {
+      for (std::size_t index = 0; index < 3; index += 1) {
+        result[row][column] += left[row][index] * right[index][column];
+      }
+    }
+  }
+  return result;
+}
+
+std::array<float, 3> rotateVector3(const RotationMatrix& rotation, const std::array<float, 3>& value) {
+  std::array<float, 3> result{};
+  for (std::size_t row = 0; row < 3; row += 1) {
+    double component = 0.0;
+    for (std::size_t column = 0; column < 3; column += 1) {
+      component += rotation[row][column] * static_cast<double>(value[column]);
+    }
+    result[row] = static_cast<float>(component);
+  }
+  return result;
+}
+
+std::array<float, 3> eulerDegreesFromRotationMatrix(const RotationMatrix& rotation) {
+  constexpr double kRadiansToDegrees = 180.0 / 3.14159265358979323846;
+  const double pitch = std::asin(std::clamp(-rotation[1][2], -1.0, 1.0));
+  double yaw = 0.0;
+  double roll = 0.0;
+  if (std::abs(std::cos(pitch)) > 1e-8) {
+    yaw = std::atan2(rotation[0][2], rotation[2][2]);
+    roll = std::atan2(rotation[1][0], rotation[1][1]);
+  } else {
+    yaw = std::atan2(-rotation[2][0], rotation[0][0]);
+  }
+  return {
+    static_cast<float>(pitch * kRadiansToDegrees),
+    static_cast<float>(yaw * kRadiansToDegrees),
+    static_cast<float>(roll * kRadiansToDegrees),
+  };
+}
+
 bool hasPrefabRenderComponent(const PrefabSourceSnapshot& prefab) {
   return !prefab.renderComponent.procgeo.empty() || !prefab.renderComponent.materialHint.empty();
 }
@@ -1369,15 +1431,6 @@ struct DataFoundation::Impl {
           });
         if (prefabIt != prefabs.end() && prefabIt->spawnTag == "player_camera") {
           playerCameraCount += 1;
-          if (!entity.parent.empty()) {
-            scene.valid = false;
-            markAssetInvalid(
-              DataAssetKind::scene,
-              scene.name,
-              scene.sourcePath,
-              "entity '" + entity.id + "' with spawn_tag 'player_camera' must be a root entity");
-            break;
-          }
         }
       }
       if (!scene.valid) {
@@ -1638,6 +1691,7 @@ std::optional<ComposedSceneSnapshot> DataFoundation::composeScene(std::string_vi
   }
 
   std::vector<std::uint8_t> state(composed.entities.size(), 0);
+  std::vector<RotationMatrix> worldRotations(composed.entities.size());
   std::function<void(std::size_t)> resolveWorldTransform = [&](std::size_t entityIndex) {
     if (entityIndex >= composed.entities.size() || state[entityIndex] == 2) {
       return;
@@ -1649,15 +1703,21 @@ std::optional<ComposedSceneSnapshot> DataFoundation::composeScene(std::string_vi
 
     state[entityIndex] = 1;
     auto& entity = composed.entities[entityIndex];
+    const RotationMatrix localRotation = rotationMatrixFromEulerDegrees(entity.localRotation);
     if (!entity.parent.empty()) {
       const auto parentIt = entityIndices.find(entity.parent);
       if (parentIt != entityIndices.end()) {
         resolveWorldTransform(parentIt->second);
         const auto& parent = composed.entities[parentIt->second];
-        entity.worldPosition = addVector3(parent.worldPosition, entity.localPosition);
-        entity.worldRotation = addVector3(parent.worldRotation, entity.localRotation);
+        worldRotations[entityIndex] = multiplyRotationMatrices(worldRotations[parentIt->second], localRotation);
+        entity.worldPosition = addVector3(
+          parent.worldPosition,
+          rotateVector3(worldRotations[parentIt->second], multiplyVector3(parent.worldScale, entity.localPosition)));
+        entity.worldRotation = eulerDegreesFromRotationMatrix(worldRotations[entityIndex]);
         entity.worldScale = multiplyVector3(parent.worldScale, entity.localScale);
       }
+    } else {
+      worldRotations[entityIndex] = localRotation;
     }
     state[entityIndex] = 2;
   };

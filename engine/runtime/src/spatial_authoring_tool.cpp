@@ -317,9 +317,8 @@ bool resolveAuthoredPlayerCamera(
     if (errorMessage) *errorMessage = "Authored scene must contain exactly one player_camera.";
     return false;
   }
-  if (!playerCamera->parent.empty() || !playerCamera->cameraComponent
-      || playerCamera->cameraComponent->projection != "perspective") {
-    if (errorMessage) *errorMessage = "Authored player_camera must be a root perspective camera.";
+  if (!playerCamera->cameraComponent || playerCamera->cameraComponent->projection != "perspective") {
+    if (errorMessage) *errorMessage = "Authored player_camera must be a perspective camera.";
     return false;
   }
 

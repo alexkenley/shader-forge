@@ -144,6 +144,13 @@ const rifleLocalCorners = [
   [-rifleBox.width / 2, rifleBox.height / 2, rifleBox.depth / 2],
 ];
 
+function assertVectorNear(actual, expected, label) {
+  assert.equal(actual.length, expected.length, `${label} length`);
+  actual.forEach((value, index) => {
+    assert.ok(Math.abs(value - expected[index]) <= 1e-5, `${label}[${index}] expected ${expected[index]}, received ${value}`);
+  });
+}
+
 for (const directory of ['skeletons', 'clips', 'graphs']) {
   fs.cpSync(path.join(animationRoot, directory), path.join(fixtureRoot, directory), { recursive: true });
 }
@@ -172,12 +179,20 @@ fs.writeFileSync(path.join(contentRoot, 'scenes', 'capture_camera.scene.toml'), 
   'title = "Capture Camera"',
   'primary_prefab = "debug_camera"',
   '',
+  '[entity.rig]',
+  'display_name = "Camera Rig"',
+  'source_prefab = "weapon.pistol.mk1"',
+  'parent = ""',
+  'position = "0, 0, 0"',
+  'rotation = "0, 90, 0"',
+  'scale = "2, 2, 2"',
+  '',
   '[entity.camera]',
   'display_name = "Camera"',
   'source_prefab = "debug_camera"',
-  'parent = ""',
-  'position = "0, 1.6, -4"',
-  'rotation = "0, 0, 0"',
+  'parent = "rig"',
+  'position = "2, 0.8, 0"',
+  'rotation = "0, -90, 0"',
   'scale = "1, 1, 1"',
   '',
 ].join('\n'));
@@ -1078,9 +1093,9 @@ try {
       id: 'debug_camera', path: 'prefabs/debug_camera.prefab.toml',
     });
     const authoredCamera = playerCapture.cameras.at(-1);
-    assert.deepEqual(authoredCamera.position, [0, 1.600000023841858, -4]);
-    assert.deepEqual(authoredCamera.target, [0, 1.600000023841858, -3]);
-    assert.deepEqual(authoredCamera.up, [0, 1, 0]);
+    assertVectorNear(authoredCamera.position, [0, 1.6, -4], 'parented authored camera position');
+    assertVectorNear(authoredCamera.target, [0, 1.6, -3], 'parented authored camera target');
+    assertVectorNear(authoredCamera.up, [0, 1, 0], 'parented authored camera up');
     assert.equal(authoredCamera.fovDegrees, 70);
     assert.ok(Math.abs(authoredCamera.nearMeters - 0.15) <= 1e-6);
     assert.equal(authoredCamera.farMeters, 1000);

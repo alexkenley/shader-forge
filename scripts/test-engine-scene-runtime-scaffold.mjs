@@ -60,7 +60,7 @@ assert.match(runtimeApp, /viewZ <= nearMeters \|\| viewZ > farMeters/);
 assert.match(runtimeApp, /rollRadians = cameraRotation\[2\]/);
 assert.match(runtimeApp, /is no longer compatible with the authored scene/);
 assert.match(runtimeApp, /savedEntityIt->id != currentAuthorityId/);
-assert.match(dataFoundationSource, /with spawn_tag 'player_camera' must be a root entity/);
+assert.match(dataFoundationSource, /rotationMatrixFromEulerDegrees/);
 assert.match(runtimeApp, /cameraComponent->verticalFovDegrees/);
 assert.match(runtimeApp, /source\.spawnTag == "player_camera" \? source\.cameraComponent : std::nullopt/);
 assert.match(runtimeApp, /projectSceneRenderProxy/);
