@@ -1571,7 +1571,23 @@ int main(int argc, char** argv) {
         << ",\"mode\":" << jsonString(profile.mode)
         << ",\"perspective\":" << jsonString(profile.perspective)
         << ",\"motionEnvelopePhaseCount\":" << profile.motionEnvelopes.size()
-        << ",\"motionEnvelopeSampleCount\":" << sampleCount << '}';
+        << ",\"motionEnvelopeSampleCount\":" << sampleCount
+        << ",\"motionEnvelopes\":[";
+    for (std::size_t envelopeIndex = 0; envelopeIndex < profile.motionEnvelopes.size(); ++envelopeIndex) {
+      const auto& envelope = profile.motionEnvelopes[envelopeIndex];
+      if (envelopeIndex != 0) out << ',';
+      out << "{\"phase\":" << jsonString(envelope.phase)
+          << ",\"clip\":" << jsonString(envelope.clip)
+          << ",\"normalizedTimes\":[";
+      for (std::size_t sampleIndex = 0; sampleIndex < envelope.normalizedTimes.size(); ++sampleIndex) {
+        if (sampleIndex != 0) out << ',';
+        appendNumber(out, envelope.normalizedTimes[sampleIndex]);
+      }
+      out << "],\"proceduralLayers\":";
+      appendStringArray(out, envelope.proceduralLayers);
+      out << '}';
+    }
+    out << "]}";
   }
   out << "]}\n";
   std::cout << out.str();

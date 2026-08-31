@@ -114,6 +114,8 @@ try {
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shader-forge-spatial-tool-'));
 const fixtureRoot = path.join(tempRoot, 'animation fixture');
 const invalidRoot = path.join(tempRoot, 'invalid animation');
+const oneEnvelopeRoot = path.join(tempRoot, 'one envelope animation');
+const invalidEnvelopeRoot = path.join(tempRoot, 'invalid envelope animation');
 const invalidUtf8Root = path.join(tempRoot, 'invalid utf8 animation');
 const cookedRoot = path.join(tempRoot, 'cooked output');
 const executablePath = path.join(tempRoot, 'shader_forge_spatial');
@@ -158,12 +160,34 @@ fs.cpSync(
 );
 fs.writeFileSync(path.join(contentRoot, 'prefabs', 'README.txt'), 'this is not authored TOML');
 fs.cpSync(fixtureRoot, invalidRoot, { recursive: true });
+fs.cpSync(fixtureRoot, oneEnvelopeRoot, { recursive: true });
+fs.cpSync(fixtureRoot, invalidEnvelopeRoot, { recursive: true });
 fs.cpSync(fixtureRoot, invalidUtf8Root, { recursive: true });
 const invalidAttachment = path.join(invalidRoot, 'attachments', 'rifle_mk1_humanoid.attachment.toml');
 fs.writeFileSync(
   invalidAttachment,
   fs.readFileSync(invalidAttachment, 'utf8').replace('mode = "two_hand"', 'mode = "three_hand"'),
 );
+const oneEnvelopeAttachment = path.join(oneEnvelopeRoot, 'attachments', 'rifle_mk1_humanoid.attachment.toml');
+const oneEnvelopeSource = fs.readFileSync(oneEnvelopeAttachment, 'utf8');
+const oneEnvelopeOnly = oneEnvelopeSource.replace(
+  /\r?\n\[motion_envelope\.idle\]\r?\nclip = "rifle_ready"\r?\nnormalized_times = \[0\.0, 0\.5, 1\.0\]\r?\nprocedural_layers = \["primary_attachment", "secondary_hand_ik"\]\r?\n/,
+  '\n',
+);
+assert.notEqual(oneEnvelopeOnly, oneEnvelopeSource, 'one-envelope fixture must remove the authored idle phase');
+fs.writeFileSync(oneEnvelopeAttachment, oneEnvelopeOnly);
+const invalidEnvelopeAttachment = path.join(
+  invalidEnvelopeRoot,
+  'attachments',
+  'rifle_mk1_humanoid.attachment.toml',
+);
+const validEnvelopeSource = fs.readFileSync(invalidEnvelopeAttachment, 'utf8');
+const invalidEnvelopeSource = validEnvelopeSource.replace(
+  'normalized_times = [0.0, 0.5, 1.0]',
+  'normalized_times = [0.0, 1.25]',
+);
+assert.notEqual(invalidEnvelopeSource, validEnvelopeSource, 'invalid-envelope fixture must alter an authored sample');
+fs.writeFileSync(invalidEnvelopeAttachment, invalidEnvelopeSource);
 fs.appendFileSync(
   path.join(invalidUtf8Root, 'attachments', 'rifle_mk1_humanoid.attachment.toml'),
   Buffer.from([0x0a, 0x23, 0x20, 0xc3, 0x28, 0x0a]),
@@ -250,6 +274,24 @@ try {
         'attachments/rifle_mk1_humanoid.attachment.toml',
       ],
     );
+    const attachmentProfileKeys = [
+      'id',
+      'schemaVersion',
+      'source',
+      'skeleton',
+      'itemPrefab',
+      'mode',
+      'perspective',
+      'motionEnvelopePhaseCount',
+      'motionEnvelopeSampleCount',
+      'motionEnvelopes',
+    ];
+    for (const profile of report.attachmentProfiles) {
+      assert.deepEqual(Object.keys(profile), attachmentProfileKeys);
+    }
+    assert.equal(report.attachmentProfiles[0].motionEnvelopePhaseCount, 0);
+    assert.equal(report.attachmentProfiles[0].motionEnvelopeSampleCount, 0);
+    assert.deepEqual(report.attachmentProfiles[0].motionEnvelopes, []);
     assert.equal(report.attachmentProfiles[1].schemaVersion, 2);
     assert.equal(report.attachmentProfiles[1].skeleton, 'humanoid.standard.v2');
     assert.equal(report.attachmentProfiles[1].itemPrefab, 'weapon.rifle.mk1');
@@ -257,6 +299,53 @@ try {
     assert.equal(report.attachmentProfiles[1].perspective, 'both');
     assert.equal(report.attachmentProfiles[1].motionEnvelopePhaseCount, 2);
     assert.equal(report.attachmentProfiles[1].motionEnvelopeSampleCount, 6);
+    assert.deepEqual(report.attachmentProfiles[1].motionEnvelopes, [
+      {
+        phase: 'aim',
+        clip: 'rifle_aim',
+        normalizedTimes: [0, 0.5, 1],
+        proceduralLayers: ['primary_attachment', 'secondary_hand_ik'],
+      },
+      {
+        phase: 'idle',
+        clip: 'rifle_ready',
+        normalizedTimes: [0, 0.5, 1],
+        proceduralLayers: ['primary_attachment', 'secondary_hand_ik'],
+      },
+    ]);
+    for (const envelope of report.attachmentProfiles[1].motionEnvelopes) {
+      assert.deepEqual(Object.keys(envelope), ['phase', 'clip', 'normalizedTimes', 'proceduralLayers']);
+    }
+
+    const oneEnvelopeFirst = invoke(['validate', '--animation-root', oneEnvelopeRoot]);
+    const oneEnvelopeSecond = invoke(['validate', '--animation-root', oneEnvelopeRoot]);
+    assert.equal(oneEnvelopeFirst.status, 0, oneEnvelopeFirst.stderr || oneEnvelopeFirst.stdout);
+    assert.equal(oneEnvelopeSecond.status, 0, oneEnvelopeSecond.stderr || oneEnvelopeSecond.stdout);
+    assert.equal(
+      oneEnvelopeSecond.stdout,
+      oneEnvelopeFirst.stdout,
+      'single-envelope validation JSON must be byte-stable across repeated runs',
+    );
+    const oneEnvelopeReport = JSON.parse(oneEnvelopeFirst.stdout);
+    const oneEnvelopeRifle = oneEnvelopeReport.attachmentProfiles.find(
+      (entry) => entry.id === 'weapon.rifle.mk1.humanoid',
+    );
+    assert.ok(oneEnvelopeRifle);
+    assert.equal(oneEnvelopeRifle.motionEnvelopePhaseCount, 1);
+    assert.equal(oneEnvelopeRifle.motionEnvelopeSampleCount, 3);
+    assert.deepEqual(oneEnvelopeRifle.motionEnvelopes, [
+      {
+        phase: 'aim',
+        clip: 'rifle_aim',
+        normalizedTimes: [0, 0.5, 1],
+        proceduralLayers: ['primary_attachment', 'secondary_hand_ik'],
+      },
+    ]);
+
+    const invalidEnvelope = invoke(['validate', '--animation-root', invalidEnvelopeRoot]);
+    assert.notEqual(invalidEnvelope.status, 0, 'out-of-range authored envelope samples must fail validation');
+    assert.equal(invalidEnvelope.stdout, '');
+    assert.match(invalidEnvelope.stderr, /normalized_times must be between 0 and 1 in motion_envelope\.(aim|idle)/);
 
     const cookedPath = path.join(cookedRoot, 'animation', 'spatial-authoring.bin');
     const firstCook = invoke(['cook', '--animation-root', fixtureRoot, '--output-root', cookedRoot]);
