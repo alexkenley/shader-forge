@@ -85,6 +85,10 @@ const SPATIAL_CONTEXT_FIELDS = new Set([
   'resourceKeys',
   'leaseId',
 ]);
+const DIFF_CONTEXT_LINES = 3;
+const MAX_DIFF_INPUT_BYTES = 256 * 1024;
+const MAX_DIFF_MATRIX_CELLS = 1_000_000;
+const MAX_DIFF_OUTPUT_LINES = 400;
 
 function createStoreError(statusCode, message, extras = {}) {
   const error = new Error(message);
@@ -697,6 +701,205 @@ function summarizeLinePreview(beforeText, afterText, { created = false } = {}) {
   };
 }
 
+function splitDiffLines(text) {
+  if (!text) {
+    return [];
+  }
+  const lines = [];
+  const matcher = /([^\r\n]*)(\r\n|\r|\n|$)/g;
+  for (let match = matcher.exec(text); match && match[0]; match = matcher.exec(text)) {
+    lines.push({
+      text: match[1],
+      ending: match[2] === '\r\n'
+        ? 'crlf'
+        : match[2] === '\r'
+          ? 'cr'
+          : match[2] === '\n'
+            ? 'lf'
+            : 'none',
+    });
+  }
+  return lines;
+}
+
+function diffLinesEqual(left, right) {
+  return left.text === right.text && left.ending === right.ending;
+}
+
+function summaryOnlyDiff(record, reason, { truncated = false } = {}) {
+  return {
+    operationId: record.id,
+    path: record.path,
+    beforeRevision: record.baseRevision,
+    afterRevision: record.proposedRevision,
+    status: 'summary_only',
+    reason,
+    truncated,
+    summary: structuredClone(record.preview),
+    hunks: [],
+  };
+}
+
+function operationDiff(record) {
+  const beforeText = record.baseRevision === MISSING_FILE_REVISION
+    ? ''
+    : record.beforeContent;
+  const afterText = record.proposedContent;
+  if (typeof beforeText !== 'string' || typeof afterText !== 'string') {
+    return summaryOnlyDiff(record, 'unavailable');
+  }
+  if (beforeText.length + afterText.length > MAX_DIFF_INPUT_BYTES) {
+    return summaryOnlyDiff(record, 'too_large', { truncated: true });
+  }
+  const binaryLike = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
+  if (binaryLike.test(beforeText) || binaryLike.test(afterText)) {
+    return summaryOnlyDiff(record, 'binary');
+  }
+  if (
+    Buffer.byteLength(beforeText, 'utf8') + Buffer.byteLength(afterText, 'utf8')
+      > MAX_DIFF_INPUT_BYTES
+  ) {
+    return summaryOnlyDiff(record, 'too_large', { truncated: true });
+  }
+
+  const beforeLines = splitDiffLines(beforeText);
+  const afterLines = splitDiffLines(afterText);
+  const rowLength = afterLines.length + 1;
+  const cellCount = (beforeLines.length + 1) * rowLength;
+  if (cellCount > MAX_DIFF_MATRIX_CELLS) {
+    return summaryOnlyDiff(record, 'too_large', { truncated: true });
+  }
+
+  const longestCommonSubsequence = new Uint32Array(cellCount);
+  for (let beforeIndex = beforeLines.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
+    for (let afterIndex = afterLines.length - 1; afterIndex >= 0; afterIndex -= 1) {
+      const index = beforeIndex * rowLength + afterIndex;
+      longestCommonSubsequence[index] = diffLinesEqual(
+        beforeLines[beforeIndex],
+        afterLines[afterIndex],
+      )
+        ? longestCommonSubsequence[(beforeIndex + 1) * rowLength + afterIndex + 1] + 1
+        : Math.max(
+          longestCommonSubsequence[(beforeIndex + 1) * rowLength + afterIndex],
+          longestCommonSubsequence[index + 1],
+        );
+    }
+  }
+
+  const lines = [];
+  let beforeIndex = 0;
+  let afterIndex = 0;
+  let oldLine = 1;
+  let newLine = 1;
+  while (beforeIndex < beforeLines.length || afterIndex < afterLines.length) {
+    const oldPosition = oldLine;
+    const newPosition = newLine;
+    if (
+      beforeIndex < beforeLines.length
+      && afterIndex < afterLines.length
+      && diffLinesEqual(beforeLines[beforeIndex], afterLines[afterIndex])
+    ) {
+      lines.push({
+        type: 'context',
+        oldLine,
+        newLine,
+        oldPosition,
+        newPosition,
+        ...beforeLines[beforeIndex],
+      });
+      beforeIndex += 1;
+      afterIndex += 1;
+      oldLine += 1;
+      newLine += 1;
+    } else if (
+      beforeIndex < beforeLines.length
+      && (
+        afterIndex >= afterLines.length
+        || longestCommonSubsequence[(beforeIndex + 1) * rowLength + afterIndex]
+          >= longestCommonSubsequence[beforeIndex * rowLength + afterIndex + 1]
+      )
+    ) {
+      lines.push({
+        type: 'removed',
+        oldLine,
+        newLine: null,
+        oldPosition,
+        newPosition,
+        ...beforeLines[beforeIndex],
+      });
+      beforeIndex += 1;
+      oldLine += 1;
+    } else {
+      lines.push({
+        type: 'added',
+        oldLine: null,
+        newLine,
+        oldPosition,
+        newPosition,
+        ...afterLines[afterIndex],
+      });
+      afterIndex += 1;
+      newLine += 1;
+    }
+  }
+
+  const ranges = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].type === 'context') {
+      continue;
+    }
+    const start = Math.max(0, index - DIFF_CONTEXT_LINES);
+    const end = Math.min(lines.length, index + DIFF_CONTEXT_LINES + 1);
+    const prior = ranges.at(-1);
+    if (prior && start <= prior.end) {
+      prior.end = Math.max(prior.end, end);
+    } else {
+      ranges.push({ start, end });
+    }
+  }
+
+  const hunks = [];
+  let remaining = MAX_DIFF_OUTPUT_LINES;
+  let truncated = false;
+  for (const range of ranges) {
+    if (remaining === 0) {
+      truncated = true;
+      break;
+    }
+    const completeLines = lines.slice(range.start, range.end);
+    const selectedLines = completeLines.slice(0, remaining);
+    if (selectedLines.length < completeLines.length) {
+      truncated = true;
+    }
+    const first = selectedLines[0];
+    const oldLines = selectedLines.filter((line) => line.oldLine !== null).length;
+    const newLines = selectedLines.filter((line) => line.newLine !== null).length;
+    hunks.push({
+      oldStart: oldLines === 0 ? Math.max(0, first.oldPosition - 1) : first.oldPosition,
+      oldLines,
+      newStart: newLines === 0 ? Math.max(0, first.newPosition - 1) : first.newPosition,
+      newLines,
+      lines: selectedLines.map(({ oldPosition: _, newPosition: __, ...line }) => line),
+    });
+    remaining -= selectedLines.length;
+    if (truncated) {
+      break;
+    }
+  }
+
+  return {
+    operationId: record.id,
+    path: record.path,
+    beforeRevision: record.baseRevision,
+    afterRevision: record.proposedRevision,
+    status: 'available',
+    reason: null,
+    truncated,
+    summary: structuredClone(record.preview),
+    hunks,
+  };
+}
+
 function revisionConflict({
   path: filePath,
   expectedRevision,
@@ -1159,6 +1362,10 @@ export class OperationStore {
 
   getOperation(operationId) {
     return structuredClone(operationView(this.#requireOperation(operationId)));
+  }
+
+  getOperationDiff(operationId) {
+    return structuredClone(operationDiff(this.#requireOperation(operationId)));
   }
 
   async previewFileWrite({

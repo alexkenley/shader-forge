@@ -26,14 +26,24 @@ assert.match(app, /aria-valuenow=\{bottomPaneHeight\}/);
 assert.match(activity, /title="Needs review"/);
 assert.match(activity, /title="In progress"/);
 assert.match(activity, /title="History"/);
-assert.match(activity, /Exact proposed content is not exposed in Activity/);
+assert.match(activity, /fetchOperationDiff\(operation\.id\)/);
+assert.match(activity, /aria-label="Exact operation changes"/);
+assert.match(activity, /nextDiff\.beforeRevision !== operation\.baseRevision/);
+assert.match(activity, /nextDiff\.afterRevision !== operation\.proposedRevision/);
+assert.match(activity, /requestError\.status === 404/);
+assert.match(activity, /requestError\.status === 409/);
+assert.match(activity, /line\.oldLine/);
+assert.match(activity, /line\.newLine/);
+assert.match(activity, /line\.ending/);
+assert.match(activity, /Diff output is truncated/);
 assert.match(activity, /onApprove/);
 assert.match(activity, /onReject/);
-assert.doesNotMatch(activity, /beforeContent|proposedContent|lineDiff|credential|leaseId|requestCoordinationLease/);
+assert.doesNotMatch(activity, /beforeContent|proposedContent|credential|leaseId|requestCoordinationLease/);
 assert.doesNotMatch(activity, /transitionOperation|onApply|onUndo/);
 
 assert.match(client, /export async function listOperations/);
 assert.match(client, /export async function fetchOperation/);
+assert.match(client, /export async function fetchOperationDiff/);
 assert.match(client, /export async function transitionOperation/);
 for (const eventType of ['previewed', 'approved', 'rejected', 'applied', 'undone', 'conflicted']) {
   assert.match(client, new RegExp(`operation\\.${eventType}`));
@@ -50,13 +60,20 @@ for (const eventType of ['apply_failed', 'undo_failed', 'recovered']) {
 }
 assert.match(operationStore, /preview:\s*structuredClone\(record\.preview\)/);
 assert.match(operationStore, /events:\s*structuredClone\(record\.events\)/);
+assert.match(operationStore, /getOperationDiff\(operationId\)/);
+assert.match(operationStore, /MAX_DIFF_INPUT_BYTES/);
+assert.match(operationStore, /MAX_DIFF_MATRIX_CELLS/);
+assert.match(operationStore, /MAX_DIFF_OUTPUT_LINES/);
 
 assert.match(styles, /\.activity-dock__layout\s*\{/);
 assert.match(styles, /\.activity-row:focus-visible/);
+assert.match(styles, /\.activity-diff:focus-visible/);
+assert.match(styles, /\.activity-diff__hunk/);
 assert.match(styles, /@media \(max-width: 800px\)[\s\S]*\.activity-dock__layout/);
 assert.match(styles, /\.bottom-pane__resize-handle:focus-visible/);
 
 console.log('Engine Activity shell passed.');
-console.log('- Verified the global bottom-dock history and summary-review surface');
+console.log('- Verified the global bottom-dock history and selected-operation exact diff surface');
 console.log('- Verified one SSE subscription, authoritative list/detail refresh, and 409 recovery');
-console.log('- Verified Activity cannot apply, undo, coordinate, or expose private operation bytes');
+console.log('- Verified bounded structured diff rendering and truthful summary-only degradation');
+console.log('- Verified Activity cannot apply, undo, coordinate, or expose private journal fields');

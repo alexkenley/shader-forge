@@ -127,6 +127,7 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - coordination lifecycle changes stream through the existing SSE event bus without exposing agent credentials
 - sessiond now owns a revision-safe text-file write operation workflow with preview, approval, reject, apply, undo, durable applying/undoing journal states, and restart reconciliation
 - file-write operations persist atomically in the sessiond state directory as `operations.json` so Activity/Changes history survives backend restart
+- `GET /api/operations/:id/diff` derives only the selected operation's exact structured text hunks from private journal bytes. It binds path and before/after revisions, preserves line coordinates and endings, and caps combined UTF-8 input at 256 KiB, comparison work at 1,000,000 cells, response output at 400 lines, and context at three lines. Binary-like, too-large, or unavailable input degrades to a public summary plus a typed reason and no hunks; list/detail/SSE shapes remain unchanged
 - each operation stores the canonical workspace-root identity captured at preview; apply/undo/recovery reject a mismatched live session root
 - persisted operations are validated on load, including preview schema, the full event type/state sequence, and coherent applying/apply plus undoing/undo effect shapes; invalid records are skipped and cannot become applicable
 - a fabricated `applying` record marked `recorded` without an evaluation and artifact is rejected on load and cannot recover to `applied`

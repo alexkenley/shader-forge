@@ -218,8 +218,8 @@
                 "Spatial preview validates and evaluates exact staged baseline/candidate bytes, binds evaluator output to the validator-selected ID/schema/skeleton/item/mode/perspective contract, and rechecks its write lease after evaluation immediately before operation creation. A new-file baseline is null. Evaluation reports are immediate response data only and remain `pose.sampled=false`, not review evidence.",
                 "Assets binds authored evaluations to active session/path/revision and candidate evaluations to operation/base/proposed/state. Draft edits mark cached geometry stale instead of moving it. The complete report is bounded and deep-validated before rendering; malformed nested data or unsafe projection bounds make the schematic unavailable.",
                 "`App` retains one sessiond SSE subscription. Assets receives an active-session operation epoch and authoritatively refetches its current operation with session/selection/operation guards. Approval updates actions. Conflict rereads authored bytes, keeps the candidate visibly stale, and retains its captured connection only after successful parse and refreshed resource coverage. Reject/apply/undo clear and reread evidence while releasing/disconnecting only the connection captured by that event/action, never a newer one. Undo after apply requests a fresh lease.",
-                "The shell `Activity` bottom-dock tab lists durable operations for the active workspace, reads selected public detail, refreshes from operation SSE events, and supports fixed-shell-actor Approve/Reject. It has no Apply, Undo, lease, registration, or credential path.",
-                "Activity shows only public preview counts/summary, revisions, context, actor provenance, code-trust effect status, and lifecycle. Exact before/proposed bytes, exact diff, and validation/test evidence are not public and are not claimed by the UI.",
+                "The shell `Activity` bottom-dock tab lists durable operations for the active workspace, reads selected public detail and a selected-only bounded structured text diff, refreshes from operation SSE events, and supports fixed-shell-actor Approve/Reject. It has no Apply, Undo, lease, registration, or credential path.",
+                "Activity binds each diff to the selected operation id, path, and before/after revisions, then shows exact old/new line coordinates, line endings, three-line context, truncation, or a truthful binary/too-large/unavailable summary-only reason. Raw journal fields and validation/test evidence are not published.",
                 "See `docs/specs/ENGINE-OPERATIONS-SPEC.md` for the canonical contract.",
                 "Runtime start and restart can now launch against the selected session root so shell authoring and runtime testing point at the same project files.",
                 "Runtime start and restart now also derive a save root under `<session-root>/saved/runtime` so quick-saves persist with the active project instead of the backend process directory.",
@@ -246,7 +246,7 @@
                 "Create or edit workspaces from the `Workspaces` rail.",
                 "Browse files and preview text content from the `Explorer` rail.",
                 "Inspect branch state and working tree changes from `Source Control`.",
-                "Open `Activity` in the bottom dock to inspect durable operation provenance and approve or reject pending summary reviews."
+                "Open `Activity` in the bottom dock to inspect durable operation provenance and selected exact text changes, then approve or reject pending reviews."
               ]
             }
           ]
@@ -777,7 +777,7 @@
               "keywords": ["npm test", "sessiond", "viewer bridge", "runtime scaffold", "animation scaffold", "physics scaffold"],
               "items": [
                 "`npm test` runs the preserved shell smoke harness.",
-                "`npm run test:sessiond` validates local backend session/file flows, revision-safe file-write operations, journal recovery, writer serialization, loopback-only bind, immutable session roots, journaled code-trust effects, undo-vs-promote mutation-lane barriers, persisted `rootIdentity` migration, Origin/actor/code-trust gates, plus multi-agent leases, queue promotion, expiry, credential ownership, workspace cleanup, and isolation.",
+                "`npm run test:sessiond` validates local backend session/file flows, revision-safe file-write operations, bounded selected-operation exact diffs and summary-only degradation, journal recovery, writer serialization, loopback-only bind, immutable session roots, journaled code-trust effects, undo-vs-promote mutation-lane barriers, persisted `rootIdentity` migration, Origin/actor/code-trust gates, plus multi-agent leases, queue promotion, expiry, credential ownership, workspace cleanup, and isolation.",
                 "`npm run test:viewer-bridge` validates build/runtime bridge events.",
                 "`npm run test:packaging-scaffold` validates export-preset inspection, visible prep state, auto-bake packaging, and release-layout generation through the CLI and `engine_sessiond`.",
                 "`npm run test:profiling-scaffold` validates live diagnostics snapshots, persisted capture reports, and capture-history listing through the CLI and `engine_sessiond`.",
@@ -847,7 +847,7 @@
                 "Physics still needs the real backend integration, sweeps, joints, character support, and richer debug gizmos/capture on top of the new authored query-definition lane.",
                 "Migration still needs actual scene, prefab, asset, and gameplay conversion lanes on top of the new detect/report foundation.",
                 "Code trust still needs stronger artifact verification, trust-promotion workflows, and real code hot-reload contracts beyond the current policy-and-approval slice.",
-                "Activity still needs an explicit public exact-diff/evidence contract and safe coordination before it can apply or undo. Non-spatial MCP mutation likewise needs engine-owned resource keys and lease enforcement; scene and general asset operations are not in this slice.",
+                "Activity still needs safe explicit coordination before it can apply or undo. Non-spatial MCP mutation likewise needs engine-owned resource keys and lease enforcement; scene and general asset operations are not in this slice.",
                 "Profiling still needs Tracy/RenderDoc integration, GPU and memory diagnostics, native profiling panels, and deeper performance-regression workflows beyond the current diagnostics snapshot lane.",
                 "Tooling UI still needs the full Dear ImGui frontend and deeper authoring/profiling panels."
               ]

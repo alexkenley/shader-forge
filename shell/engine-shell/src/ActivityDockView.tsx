@@ -1,4 +1,12 @@
-import type { EngineOperation, EngineOperationEvent, EngineSession } from './lib/sessiond';
+import { useEffect, useState } from 'react';
+import {
+  fetchOperationDiff,
+  SessiondRequestError,
+  type EngineOperation,
+  type EngineOperationDiff,
+  type EngineOperationEvent,
+  type EngineSession,
+} from './lib/sessiond';
 
 const reviewStates = new Set(['previewed', 'approved']);
 const inProgressStates = new Set(['applying', 'undoing']);
@@ -14,6 +22,107 @@ function operationLabel(operation: EngineOperation) {
 
 function actorLabel(actor: EngineOperation['actor'] | EngineOperationEvent['actor']) {
   return actor ? `${actor.name} · ${actor.kind}/${actor.id}` : 'system recovery';
+}
+
+function diffUnavailableMessage(reason: EngineOperationDiff['reason']) {
+  if (reason === 'binary') {
+    return 'Exact text changes are unavailable because this operation contains binary-like data.';
+  }
+  if (reason === 'too_large') {
+    return 'Exact text changes exceed the bounded Activity diff limit. The summary remains available.';
+  }
+  return 'Exact text changes are unavailable for this operation. The summary remains available.';
+}
+
+function OperationChanges({ operation }: { operation: EngineOperation }) {
+  const [diff, setDiff] = useState<EngineOperationDiff | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let current = true;
+    setDiff(null);
+    setError('');
+    setLoading(true);
+    void fetchOperationDiff(operation.id)
+      .then((nextDiff) => {
+        if (!current) return;
+        if (
+          nextDiff.operationId !== operation.id
+          || nextDiff.path !== operation.path
+          || nextDiff.beforeRevision !== operation.baseRevision
+          || nextDiff.afterRevision !== operation.proposedRevision
+        ) {
+          setError('Operation changes no longer match the selected authoritative operation. Refresh Activity.');
+          return;
+        }
+        setDiff(nextDiff);
+      })
+      .catch((requestError: unknown) => {
+        if (!current) return;
+        if (requestError instanceof SessiondRequestError && requestError.status === 404) {
+          setError('This operation is no longer available. Refresh Activity.');
+        } else if (requestError instanceof SessiondRequestError && requestError.status === 409) {
+          setError('This operation changed while its changes were loading. Refresh Activity.');
+        } else {
+          setError(requestError instanceof Error ? requestError.message : 'Could not load operation changes.');
+        }
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [operation.baseRevision, operation.id, operation.path, operation.proposedRevision]);
+
+  return (
+    <section aria-label="Exact operation changes" className="activity-changes">
+      <h4>Changes</h4>
+      {loading ? <p aria-live="polite">Loading exact changes...</p> : null}
+      {error ? <p className="activity-changes__error" role="alert">{error}</p> : null}
+      {!loading && !error && diff?.status === 'summary_only' ? (
+        <p className="activity-changes__notice">{diffUnavailableMessage(diff.reason)}</p>
+      ) : null}
+      {!loading && !error && diff?.status === 'available' && diff.hunks.length === 0 ? (
+        <p>No text changes.</p>
+      ) : null}
+      {!loading && !error && diff?.status === 'available' ? (
+        <div className="activity-diff" role="region" aria-label={`Exact changes for ${diff.path}`} tabIndex={0}>
+          {diff.hunks.map((hunk, hunkIndex) => (
+            <table className="activity-diff__hunk" key={`${hunk.oldStart}-${hunk.newStart}-${hunkIndex}`}>
+              <caption>
+                {`Hunk ${hunkIndex + 1}: -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines}`}
+              </caption>
+              <thead>
+                <tr><th scope="col">Before</th><th scope="col">After</th><th scope="col">Change</th></tr>
+              </thead>
+              <tbody>
+                {hunk.lines.map((line, lineIndex) => (
+                  <tr className={`activity-diff__line activity-diff__line--${line.type}`} key={`${line.oldLine}-${line.newLine}-${lineIndex}`}>
+                    <td>{line.oldLine ?? ''}</td>
+                    <td>{line.newLine ?? ''}</td>
+                    <td>
+                      <span className="activity-diff__marker" aria-label={line.type}>
+                        {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
+                      </span>
+                      <code>{line.text}</code>
+                      <span className="activity-diff__ending" aria-label={`line ending ${line.ending}`}>
+                        {line.ending === 'none' ? 'EOF' : line.ending.toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ))}
+          {diff.truncated ? (
+            <p className="activity-changes__notice">Diff output is truncated at the bounded Activity display limit.</p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 function OperationRow({
@@ -110,8 +219,8 @@ function OperationDetail({
         <p>{operation.preview.summary}</p>
         <p>{operation.preview.beforeLineCount} lines before · {operation.preview.afterLineCount} after</p>
         <p>{operation.preview.created ? 'Creates a new file.' : 'Changes an existing file.'}</p>
-        <p className="activity-caveat">Exact proposed content is not exposed in Activity.</p>
       </section>
+      <OperationChanges operation={operation} />
       <section aria-label="Lifecycle events" className="activity-lifecycle">
         <h4>Lifecycle</h4>
         <ol>

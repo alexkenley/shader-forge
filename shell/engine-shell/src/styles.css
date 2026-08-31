@@ -2743,6 +2743,7 @@ pre {
 
 .activity-detail dl div,
 .activity-preview,
+.activity-changes,
 .activity-lifecycle {
   min-width: 0;
   padding: 8px 10px;
@@ -2763,19 +2764,92 @@ pre {
 }
 
 .activity-preview,
+.activity-changes,
 .activity-lifecycle {
   display: grid;
   gap: 6px;
 }
 
 .activity-preview p,
+.activity-changes p,
 .activity-lifecycle ol {
   margin: 0;
 }
 
-.activity-caveat {
+.activity-changes__notice {
   color: #f7d37b;
 }
+
+.activity-changes__error {
+  color: #fecaca;
+}
+
+.activity-diff {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  background: #11151a;
+}
+
+.activity-diff:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.activity-diff__hunk {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.activity-diff__hunk + .activity-diff__hunk {
+  border-top: 1px solid var(--border);
+}
+
+.activity-diff__hunk caption {
+  padding: 6px 8px;
+  background: rgba(14, 165, 233, 0.1);
+  color: #b9dcf4;
+  text-align: left;
+}
+
+.activity-diff__hunk th,
+.activity-diff__hunk td {
+  padding: 3px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: top;
+  text-align: left;
+}
+
+.activity-diff__hunk th:first-child,
+.activity-diff__hunk th:nth-child(2),
+.activity-diff__hunk td:first-child,
+.activity-diff__hunk td:nth-child(2) {
+  width: 48px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+
+.activity-diff__hunk td:last-child {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
+.activity-diff__hunk code {
+  flex: 1;
+  color: inherit;
+  white-space: pre;
+}
+
+.activity-diff__line--added { background: rgba(16, 185, 129, 0.1); color: #b7f7d8; }
+.activity-diff__line--removed { background: rgba(248, 113, 113, 0.1); color: #fecaca; }
+.activity-diff__marker { width: 8px; flex: 0 0 8px; user-select: none; }
+.activity-diff__ending { color: #718096; font-size: 9px; user-select: none; }
 
 .activity-lifecycle ol {
   display: grid;

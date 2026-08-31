@@ -1295,6 +1295,15 @@ function createRouter({
         return;
       }
 
+      const operationDiffMatch = request.method === 'GET'
+        ? pathname.match(/^\/api\/operations\/([^/]+)\/diff$/)
+        : null;
+      if (operationDiffMatch) {
+        const operationId = decodeURIComponent(operationDiffMatch[1]);
+        writeJson(response, 200, { diff: operationStore.getOperationDiff(operationId) });
+        return;
+      }
+
       if (request.method === 'GET' && pathname.startsWith('/api/operations/')) {
         const operationId = decodeURIComponent(pathname.slice('/api/operations/'.length));
         if (!operationId || operationId.includes('/')) {

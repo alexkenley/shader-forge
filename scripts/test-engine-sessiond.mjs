@@ -1081,6 +1081,97 @@ try {
   assert.equal(previewedEvent.data.state, 'previewed');
   assert.equal(JSON.stringify(previewedEvent.data).includes('must-never-persist'), false);
 
+  const exactDiff = await requestOperation(
+    `/api/operations/${encodeURIComponent(previewed.id)}/diff`,
+  );
+  assert.equal(exactDiff.status, 200, exactDiff.payload.error || 'operation diff should succeed');
+  assert.equal(exactDiff.payload.diff.operationId, previewed.id);
+  assert.equal(exactDiff.payload.diff.path, existingFilePath);
+  assert.equal(exactDiff.payload.diff.beforeRevision, existingRevision);
+  assert.equal(exactDiff.payload.diff.afterRevision, proposedRevision);
+  assert.equal(exactDiff.payload.diff.status, 'available');
+  assert.equal(exactDiff.payload.diff.reason, null);
+  assert.equal(exactDiff.payload.diff.truncated, false);
+  assert.equal(exactDiff.payload.diff.summary.summary, previewed.preview.summary);
+  assert.deepEqual(
+    exactDiff.payload.diff.hunks.flatMap((hunk) => hunk.lines).map((line) => ({
+      type: line.type,
+      oldLine: line.oldLine,
+      newLine: line.newLine,
+      text: line.text,
+      ending: line.ending,
+    })),
+    [
+      { type: 'context', oldLine: 1, newLine: 1, text: 'alpha', ending: 'lf' },
+      { type: 'context', oldLine: 2, newLine: 2, text: 'beta', ending: 'lf' },
+      { type: 'added', oldLine: null, newLine: 3, text: 'gamma', ending: 'lf' },
+    ],
+  );
+  assert.equal(JSON.stringify(exactDiff.payload).includes('beforeContent'), false);
+  assert.equal(JSON.stringify(exactDiff.payload).includes('proposedContent'), false);
+  assert.equal(JSON.stringify(exactDiff.payload).includes('must-never-persist'), false);
+
+  const binaryPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: 'notes/binary-like.txt',
+    content: 'not-text\u0001payload',
+    baseRevision: 'missing',
+    actor: humanActor,
+  });
+  assert.equal(binaryPreview.status, 201);
+  const binaryDiff = await requestOperation(
+    `/api/operations/${encodeURIComponent(binaryPreview.payload.operation.id)}/diff`,
+  );
+  assert.equal(binaryDiff.status, 200);
+  assert.equal(binaryDiff.payload.diff.status, 'summary_only');
+  assert.equal(binaryDiff.payload.diff.reason, 'binary');
+  assert.equal(binaryDiff.payload.diff.truncated, false);
+  assert.deepEqual(binaryDiff.payload.diff.hunks, []);
+
+  const largePreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: 'notes/too-large.txt',
+    content: 'x'.repeat(270 * 1024),
+    baseRevision: 'missing',
+    actor: humanActor,
+  });
+  assert.equal(largePreview.status, 201);
+  const largeDiff = await requestOperation(
+    `/api/operations/${encodeURIComponent(largePreview.payload.operation.id)}/diff`,
+  );
+  assert.equal(largeDiff.status, 200);
+  assert.equal(largeDiff.payload.diff.status, 'summary_only');
+  assert.equal(largeDiff.payload.diff.reason, 'too_large');
+  assert.equal(largeDiff.payload.diff.truncated, true);
+  assert.deepEqual(largeDiff.payload.diff.hunks, []);
+
+  const truncatedPreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
+    sessionId: operationSessionId,
+    path: 'notes/truncated.txt',
+    content: `${Array.from({ length: 450 }, (_, index) => `line-${index + 1}`).join('\n')}\n`,
+    baseRevision: 'missing',
+    actor: humanActor,
+  });
+  assert.equal(truncatedPreview.status, 201);
+  const truncatedDiff = await requestOperation(
+    `/api/operations/${encodeURIComponent(truncatedPreview.payload.operation.id)}/diff`,
+  );
+  assert.equal(truncatedDiff.status, 200);
+  assert.equal(truncatedDiff.payload.diff.status, 'available');
+  assert.equal(truncatedDiff.payload.diff.truncated, true);
+  assert.equal(
+    truncatedDiff.payload.diff.hunks.reduce((count, hunk) => count + hunk.lines.length, 0),
+    400,
+  );
+  assert.equal(truncatedDiff.payload.diff.hunks[0].oldStart, 0);
+  assert.equal(truncatedDiff.payload.diff.hunks[0].oldLines, 0);
+  assert.equal(truncatedDiff.payload.diff.hunks[0].newStart, 1);
+  assert.equal(truncatedDiff.payload.diff.hunks[0].newLines, 400);
+
+  const missingDiff = await requestOperation('/api/operations/op_missing/diff');
+  assert.equal(missingDiff.status, 404);
+  assert.match(missingDiff.payload.error, /unknown operation/i);
+
   const stalePreview = await requestOperation('/api/operations/file-write/preview', 'POST', {
     sessionId: operationSessionId,
     path: existingFilePath,
@@ -1418,7 +1509,6 @@ try {
   assert.equal(fetched.payload.operation.state, 'undone');
   assert.equal('beforeContent' in fetched.payload.operation, false);
   assert.equal('proposedContent' in fetched.payload.operation, false);
-
   const persistedOperations = JSON.parse(
     await fs.readFile(path.join(sessionStateDir, 'operations.json'), 'utf8'),
   );
@@ -1445,6 +1535,13 @@ try {
   );
   assert.equal(restoredCreated.state, 'undone');
   assert.equal(restoredCreated.baseRevision, 'missing');
+  const restoredReadableDiff = await requestOperation(
+    `/api/operations/${encodeURIComponent(applyOperationId)}/diff`,
+  );
+  assert.equal(restoredReadableDiff.status, 200);
+  assert.equal(restoredReadableDiff.payload.diff.status, 'available');
+  assert.equal(restoredReadableDiff.payload.diff.beforeRevision, existingRevision);
+  assert.equal(restoredReadableDiff.payload.diff.afterRevision, proposedRevision);
 
   const blockedOrigin = await fetch(`${service.baseUrl}/health`, {
     headers: { Origin: 'https://example.com' },
@@ -2793,6 +2890,7 @@ try {
   console.log('- Verified runtime build start/log/completion lifecycle');
   console.log('- Verified in-process multi-agent coordination leases, queue promotion, expiry, and isolation');
   console.log('- Verified revision-safe file-write preview, approval, apply, undo, conflict, persistence, and path-boundary enforcement');
+  console.log('- Verified bounded selected-operation exact diffs, line coordinates/endings, restart readability, degradation, truncation, and 404s');
   console.log('- Verified serialized writers, journal recovery, UTF-8/mode replacement, Origin/actor gates, code-trust apply, and invalid operation records');
   console.log('- Verified loopback-only bind, immutable session roots, journaled code-trust effects, append-only recovery provenance, and deterministic rename-barrier serialization');
   console.log('- Verified SessionStore beforeMutation snapshot/provenance, CLI/sessiond one mutation authority, applying/undoing effect-state validation, and persisted legacy rootIdentity migration');

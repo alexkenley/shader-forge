@@ -1,6 +1,6 @@
 # Engine Operations Spec
 
-Status: hardened text-file write slice plus transient spatial evaluation, attachment preview context, and CLI adapter implemented
+Status: hardened text-file write slice plus bounded selected-operation diff, transient spatial evaluation, attachment preview context, and CLI adapter implemented
 
 Date: 2026-08-31
 
@@ -71,6 +71,7 @@ A stale base revision returns HTTP 409 with a structured conflict:
 - `GET /api/spatial/attachment/evaluate-sample`
 - `GET /api/operations`
 - `GET /api/operations/:id`
+- `GET /api/operations/:id/diff`
 - `POST /api/operations/:id/approve`
 - `POST /api/operations/:id/reject`
 - `POST /api/operations/:id/apply`
@@ -85,6 +86,10 @@ Preview body:
 - `actor.kind` / `actor.id` / `actor.name`
 
 Preview does not mutate the workspace file.
+
+The selected-operation diff route derives a structured line diff from the operation journal without widening list, detail, or SSE operation views. Its response binds `operationId` and `path` to `beforeRevision` / `afterRevision`, repeats the public preview summary, and returns bounded hunks. Every hunk has old/new start and line counts. Every returned line is exactly one `context`, `removed`, or `added` line with nullable old/new line coordinates, text, and an explicit `lf`, `crlf`, `cr`, or `none` ending.
+
+Diff construction is deliberately bounded before dynamic-programming work: combined source text may be at most 256 KiB, the line comparison matrix may contain at most 1,000,000 cells, and the response may contain at most 400 hunk lines with three context lines around changes. A partial exact response sets `truncated: true`. Binary-like data, oversized input/comparison work, or unavailable journal bytes return `status: "summary_only"`, an exact `binary`, `too_large`, or `unavailable` reason, the public summary, and no hunks. The endpoint never returns the private journal byte fields or coordinator credentials. Unknown operation ids return HTTP 404.
 
 Spatial attachment preview accepts only `animation/attachments/*.attachment.toml`. It requires full `content`, `baseRevision`, non-empty `label`, `actor`, `agentId`, `leaseId`, and the coordinator credential. Sessiond rejects stale revisions, stages a fresh animation/content/foundation snapshot exclusively through strict `SessionStore` reads, rejects symbolic sources, and validates baseline/candidate. The stable source mapping selects authoritative profile identities. Evaluator geometry must be either an exact typed unavailable reason or one eight-corner authored visual box that recomposes from the item frame. One granted write lease covers old/new IDs on rename; sessiond rechecks the complete input manifest and lease before operation creation. The temporary root is always removed.
 
@@ -205,9 +210,9 @@ Generic file-write apply/undo remains unavailable through MCP because context-fr
 
 ## Activity Shell Adapter
 
-The global shell `Activity` bottom-dock tab lists the active session through `GET /api/operations`, reads selected detail through `GET /api/operations/:id`, and refreshes from the public operation SSE notifications. It uses the fixed shell actor for lease-free approve/reject only. A 409 transition race causes an authoritative detail/list refetch.
+The global shell `Activity` bottom-dock tab lists the active session through `GET /api/operations`, reads selected detail through `GET /api/operations/:id`, loads exact bounded changes only for that selection through `GET /api/operations/:id/diff`, and refreshes from the public operation SSE notifications. It uses the fixed shell actor for lease-free approve/reject only. A 409 transition race causes an authoritative detail/list refetch.
 
-Activity renders only the public operation view: preview counts/summary, revisions, context, actor provenance, state, code-trust effect status, and lifecycle events. It never reads persisted `beforeContent` or `proposedContent` and does not claim an exact diff exists. Apply, Undo, agent registration, leases, and credentials are absent until a later explicit coordination workflow can safely own them.
+Activity renders the public operation view plus the selected structured diff. It rejects a diff whose operation id, path, or revisions do not match the current selection, renders exact line coordinates and endings in a keyboard-scrollable table, labels truncated output, and explains summary-only degradation truthfully. It never receives the journal's private raw-content fields. Apply, Undo, agent registration, leases, and credentials are absent until a later explicit coordination workflow can safely own them.
 
 ## Events
 
@@ -226,7 +231,7 @@ Payloads are operation views. They do not include file contents or credentials.
 
 Operations reuse `SessionStore` path resolution. Symlinks and junctions cannot escape the session root. This slice does not introduce a second path resolver.
 
-`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, exact public diffs, Activity apply/undo coordination, and non-spatial MCP mutation tools are later slices.
+`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, Activity apply/undo coordination, and non-spatial MCP mutation tools are later slices.
 
 ## Persistence Validation
 
@@ -261,6 +266,7 @@ Invalid records are skipped. They cannot be listed as applicable operations.
 `npm run test:sessiond` covers the first-pass workflow plus:
 
 - preview without mutation
+- selected-operation exact diff coordinates/endings, restart readability, output truncation, binary/too-large summary-only degradation, 404 handling, and exclusion of private journal field names and actor credentials
 - approval plus apply
 - stale-base conflict
 - external-change conflict before apply

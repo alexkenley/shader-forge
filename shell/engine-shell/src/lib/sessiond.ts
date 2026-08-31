@@ -153,6 +153,34 @@ export type EngineOperation = {
   events: EngineOperationEvent[];
 };
 
+export type EngineOperationDiffLine = {
+  type: 'context' | 'removed' | 'added';
+  oldLine: number | null;
+  newLine: number | null;
+  text: string;
+  ending: 'lf' | 'crlf' | 'cr' | 'none';
+};
+
+export type EngineOperationDiffHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: EngineOperationDiffLine[];
+};
+
+export type EngineOperationDiff = {
+  operationId: string;
+  path: string;
+  beforeRevision: string;
+  afterRevision: string;
+  status: 'available' | 'summary_only';
+  reason: 'binary' | 'too_large' | 'unavailable' | null;
+  truncated: boolean;
+  summary: EngineOperation['preview'];
+  hunks: EngineOperationDiffHunk[];
+};
+
 export const engineShellActor = {
   kind: 'shell',
   id: 'engine-shell',
@@ -1187,6 +1215,13 @@ export async function fetchOperation(operationId: string) {
     `/api/operations/${encodeURIComponent(operationId)}`,
   );
   return payload.operation;
+}
+
+export async function fetchOperationDiff(operationId: string) {
+  const payload = await requestJson<{ diff: EngineOperationDiff }>(
+    `/api/operations/${encodeURIComponent(operationId)}/diff`,
+  );
+  return payload.diff;
 }
 
 export async function writeFile(sessionId: string, relativePath: string, content: string) {
