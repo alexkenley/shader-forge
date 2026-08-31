@@ -624,27 +624,60 @@ try {
   let listFilesHook = null;
   const readFile = sessionStore.readFile.bind(sessionStore);
   const listFiles = sessionStore.listFiles.bind(sessionStore);
-  sessionStore.readFile = async (sessionId, relativePath, options) => {
+  const pendingSessionStoreCalls = new Set();
+  const trackSessionStoreCall = (run) => {
+    const pending = Promise.resolve().then(run);
+    pendingSessionStoreCalls.add(pending);
+    pending.then(
+      () => pendingSessionStoreCalls.delete(pending),
+      () => pendingSessionStoreCalls.delete(pending),
+    );
+    return pending;
+  };
+  const waitForSessionStoreCallsToSettle = async () => {
+    // A failed Promise.all branch does not cancel sibling reads; drain them before arming a hook.
+    do {
+      if (pendingSessionStoreCalls.size > 0) {
+        await Promise.allSettled([...pendingSessionStoreCalls]);
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    } while (pendingSessionStoreCalls.size > 0);
+  };
+  sessionStore.readFile = (sessionId, relativePath, options) => trackSessionStoreCall(async () => {
     if (readFileHook?.path === relativePath) {
       const hook = readFileHook;
       readFileHook = null;
+      hook.hitCount += 1;
       await hook.run();
     }
     return readFile(sessionId, relativePath, options);
-  };
-  sessionStore.listFiles = async (sessionId, relativePath, options) => {
+  });
+  sessionStore.listFiles = (sessionId, relativePath, options) => trackSessionStoreCall(async () => {
     if (listFilesHook?.path === relativePath) {
       const hook = listFilesHook;
       listFilesHook = null;
+      hook.hitCount += 1;
       await hook.run();
     }
     return listFiles(sessionId, relativePath, options);
-  };
+  });
   const removeThenNotFound = (remove) => async () => {
     await remove();
     const error = new Error('source removed during test read');
     error.code = 'ENOENT';
     throw error;
+  };
+  const armReadFileHook = async (relativePath, run) => {
+    await waitForSessionStoreCallsToSettle();
+    const hook = { path: relativePath, run, hitCount: 0 };
+    readFileHook = hook;
+    return hook;
+  };
+  const armListFilesHook = async (relativePath, run) => {
+    await waitForSessionStoreCallsToSettle();
+    const hook = { path: relativePath, run, hitCount: 0 };
+    listFilesHook = hook;
+    return hook;
   };
   service = await startEngineSessiond({
     port: 0,
@@ -758,36 +791,42 @@ try {
   const procgeoRelativePath = 'content/procgeo/weapon_rifle_mk1.procgeo.toml';
   const procgeoPath = path.join(projectRoot, ...procgeoRelativePath.split('/'));
   const procgeoSource = await fs.readFile(procgeoPath, 'utf8');
-  readFileHook = { path: procgeoRelativePath, run: removeThenNotFound(() => fs.rm(procgeoPath)) };
+  const procgeoReadHook = await armReadFileHook(
+    procgeoRelativePath,
+    removeThenNotFound(() => fs.rm(procgeoPath)),
+  );
   assertSnapshotRace(
     await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery)),
     procgeoRelativePath,
   );
+  assert.equal(procgeoReadHook.hitCount, 1);
   await fs.writeFile(procgeoPath, procgeoSource, 'utf8');
 
   const procgeoDirectory = path.join(projectRoot, 'content', 'procgeo');
   const procgeoBackup = path.join(projectRoot, 'content', 'procgeo-race-backup');
-  listFilesHook = {
-    path: 'content/procgeo',
-    run: removeThenNotFound(() => fs.rename(procgeoDirectory, procgeoBackup)),
-  };
+  const procgeoListHook = await armListFilesHook(
+    'content/procgeo',
+    removeThenNotFound(() => fs.rename(procgeoDirectory, procgeoBackup)),
+  );
   assertSnapshotRace(
     await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery)),
     'content/procgeo',
   );
+  assert.equal(procgeoListHook.hitCount, 1);
   await fs.rename(procgeoBackup, procgeoDirectory);
 
   const foundationRelativePath = 'data/foundation/engine-data-layout.toml';
   const foundationRacePath = path.join(projectRoot, ...foundationRelativePath.split('/'));
   const foundationSource = await fs.readFile(foundationRacePath, 'utf8');
-  readFileHook = {
-    path: foundationRelativePath,
-    run: removeThenNotFound(() => fs.rm(foundationRacePath)),
-  };
+  const foundationReadHook = await armReadFileHook(
+    foundationRelativePath,
+    removeThenNotFound(() => fs.rm(foundationRacePath)),
+  );
   assertSnapshotRace(
     await request(service.baseUrl, attachmentEvaluatePath(evaluateQuery)),
     foundationRelativePath,
   );
+  assert.equal(foundationReadHook.hitCount, 1);
   await fs.writeFile(foundationRacePath, foundationSource, 'utf8');
   assert.equal(evaluatedCalls.length, callsBeforeEvaluateGates);
   assert.deepEqual(service.operationStore.listOperations(), []);
