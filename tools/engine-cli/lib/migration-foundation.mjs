@@ -531,7 +531,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
       engine === 'godot'
         ? `Review mapped Godot text-scene hierarchy and explicit position, rotation, and scale fields under ${targetRoots.content_scenes}; transform matrices, instanced resources, and component payloads remain manual.`
         : engine === 'unity'
-          ? `Review mapped Unity text-YAML GameObject hierarchy, local transforms, and supported perspective Camera optics under ${targetRoots.content_scenes}; prefab instances, other component payloads, assets, and coordinate-system remediation remain manual.`
+          ? `Review mapped Unity text-YAML hierarchy, local transforms, perspective Camera optics, and BoxCollider geometry under ${targetRoots.content_scenes}; prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
       `Review generated prefabs under ${targetRoots.content_prefabs} and map real render, collision, audio, animation, and gameplay payloads before claiming parity.`,
       `Populate real imported art and cooked assets under ${targetRoots.assets_src} and ${targetRoots.assets_cooked}; this slice only emits structure placeholders.`,
@@ -570,7 +570,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     warnings.push('Converted outputs are first-pass Shader Forge project skeletons, not runtime-parity imports.');
     if (detection.engine === 'unity') {
-      warnings.push('Unity conversion maps text-YAML GameObject and Transform/RectTransform hierarchy plus valid perspective Camera optics; orthographic and enabled-state camera semantics, prefab instances, other component payloads, assets, and coordinate-system remediation are still manual.');
+      warnings.push('Unity conversion maps text-YAML hierarchy, valid perspective Camera optics, and valid BoxCollider center/size geometry; prefab instances, other component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, assets, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
       warnings.push('Godot conversion maps text-scene node hierarchy plus explicit Vector3 position, rotation, and scale fields; transform matrices, resource instances, and component payload translation are still ahead.');
     }
@@ -776,6 +776,21 @@ function parseUnitySceneNodes(source) {
       } : null];
     })
     .filter(([gameObjectId, camera]) => gameObjectId && camera));
+  const boxColliderByGameObject = new Map(documents
+    .filter((document) => document.classId === 65)
+    .map((document) => {
+      const gameObjectId = parseUnityFileId(document.lines, 'm_GameObject');
+      const center = parseUnityInlineNumbers(document.lines, 'm_Center', ['x', 'y', 'z'], null);
+      const dimensions = parseUnityInlineNumbers(document.lines, 'm_Size', ['x', 'y', 'z'], null);
+      const valid = center?.every((value) => Number.isFinite(Math.fround(value)))
+        && dimensions?.every((value) => Number.isFinite(Math.fround(value)) && value > 0);
+      return [gameObjectId, valid ? {
+        sourceComponentId: document.fileId,
+        center,
+        dimensions,
+      } : null];
+    })
+    .filter(([gameObjectId, collision]) => gameObjectId && collision));
   const nodes = documents
     .filter((document) => document.classId === 1)
     .map((document) => {
@@ -791,6 +806,7 @@ function parseUnitySceneNodes(source) {
         rotation: unityQuaternionToEuler(transform?.rotation || [0, 0, 0, 1]),
         scale: (transform?.scale || [1, 1, 1]).map(formatSceneNumber).join(', '),
         camera: cameraByGameObject.get(document.fileId) || null,
+        collision: boxColliderByGameObject.get(document.fileId) || null,
       };
     });
   const nodeByFileId = new Map(nodes.map((node) => [node.fileId, node]));
@@ -1025,7 +1041,8 @@ function buildPrefabToml(prefab) {
     ...(prefab.sourceNodePath ? [`# migration_source_node = ${quoteTomlString(prefab.sourceNodePath)}`] : []),
     ...(prefab.sourceNodeType ? [`# migration_source_type = ${quoteTomlString(prefab.sourceNodeType)}`] : []),
     ...(prefab.sourceObjectId ? [`# migration_source_object_id = ${quoteTomlString(prefab.sourceObjectId)}`] : []),
-    ...(prefab.camera?.sourceComponentId ? [`# migration_source_component_id = ${quoteTomlString(prefab.camera.sourceComponentId)}`] : []),
+    ...(prefab.camera?.sourceComponentId ? [`# migration_source_camera_component_id = ${quoteTomlString(prefab.camera.sourceComponentId)}`] : []),
+    ...(prefab.collision?.sourceComponentId ? [`# migration_source_box_collider_component_id = ${quoteTomlString(prefab.collision.sourceComponentId)}`] : []),
     '',
     `category = ${quoteTomlString(prefab.category)}`,
     `spawn_tag = ${quoteTomlString(prefab.spawnTag)}`,
@@ -1036,6 +1053,14 @@ function buildPrefabToml(prefab) {
       `vertical_fov_degrees = ${formatSceneNumber(prefab.camera.verticalFovDegrees)}`,
       `near_meters = ${formatSceneNumber(prefab.camera.nearMeters)}`,
       `far_meters = ${formatSceneNumber(prefab.camera.farMeters)}`,
+    ] : []),
+    ...(prefab.collision ? [
+      '',
+      '[component.collision]',
+      'shape = "box"',
+      `center = [${prefab.collision.center.map(formatSceneNumber).join(', ')}]`,
+      'rotation = [0, 0, 0, 1]',
+      `dimensions = [${prefab.collision.dimensions.map(formatSceneNumber).join(', ')}]`,
     ] : []),
     '',
   ].join('\n');
@@ -1235,6 +1260,7 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
         sourceNodeType: node.sourceNodeType,
         sourceObjectId: node.fileId,
         camera: node.camera,
+        collision: node.collision,
       });
     }
     const entities = scene.nodes.map((node) => ({

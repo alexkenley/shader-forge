@@ -154,10 +154,13 @@ assert.match(unityScene, /# migration_source_object_id = "2"[\s\S]*\[entity\.san
 assert.match(unityScene, /\[entity\.sandbox_sandbox_root_player_instance\][\s\S]*parent = "sandbox_root_instance"[\s\S]*position = "1, 0\.5, -2"[\s\S]*rotation = "0, 90, 0"/);
 assert.match(unityScene, /\[entity\.sandbox_sandbox_root_player_camera_instance\][\s\S]*parent = "sandbox_sandbox_root_player_instance"[\s\S]*position = "0, 1\.6, 3"/);
 assert.match(fs.readFileSync(unityPrefabPath, 'utf8'), /category = "migrated_unity"/);
-assert.match(fs.readFileSync(unityPlayerPrefabPath, 'utf8'), /# migration_source_node = "SandboxRoot\/Player"[\s\S]*# migration_source_object_id = "2"/);
+assert.match(
+  fs.readFileSync(unityPlayerPrefabPath, 'utf8'),
+  /# migration_source_node = "SandboxRoot\/Player"[\s\S]*# migration_source_object_id = "2"[\s\S]*# migration_source_box_collider_component_id = "8"[\s\S]*\[component\.collision\][\s\S]*shape = "box"[\s\S]*center = \[0, 0\.9, 0\][\s\S]*rotation = \[0, 0, 0, 1\][\s\S]*dimensions = \[0\.8, 1\.8, 0\.6\]/,
+);
 assert.match(
   fs.readFileSync(unityCameraPrefabPath, 'utf8'),
-  /# migration_source_component_id = "7"[\s\S]*spawn_tag = "unity_camera"[\s\S]*\[component\.camera\][\s\S]*vertical_fov_degrees = 60[\s\S]*near_meters = 0\.3[\s\S]*far_meters = 500/,
+  /# migration_source_camera_component_id = "7"[\s\S]*spawn_tag = "unity_camera"[\s\S]*\[component\.camera\][\s\S]*vertical_fov_degrees = 60[\s\S]*near_meters = 0\.3[\s\S]*far_meters = 500/,
 );
 assert.match(fs.readFileSync(unityDataPath, 'utf8'), /default_scene = "sandbox"/);
 assert.ok(
