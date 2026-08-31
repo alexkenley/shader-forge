@@ -1,9 +1,6 @@
-import { FitAddon } from '@xterm/addon-fit';
-import { Terminal as XTerm } from '@xterm/xterm';
-import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ReferenceGuideView } from './ReferenceGuideView';
 import { SceneEditorView } from './SceneEditorView';
-import { SpatialAttachmentEditorView } from './SpatialAttachmentEditorView';
 import { ActivityDockView } from './ActivityDockView';
 import { CodeWorkspaceView } from './CodeWorkspaceView';
 import {
@@ -88,6 +85,10 @@ import {
   type ShellRightTab,
   type ShellWorkspace,
 } from './shell-layout';
+
+const SpatialAttachmentEditorView = lazy(() => import('./SpatialAttachmentEditorView').then((module) => ({
+  default: module.SpatialAttachmentEditorView,
+})));
 
 const leftTabs = SHELL_LEFT_TABS;
 const centerTabs = SHELL_WORKSPACES;
@@ -188,6 +189,27 @@ type TerminalDockProps = {
   onTerminalInput: (tabId: string, input: string) => void;
   onTerminalResize: (tabId: string, cols: number, rows: number) => void;
 };
+
+type TerminalModules = {
+  Terminal: typeof import('@xterm/xterm').Terminal;
+  FitAddon: typeof import('@xterm/addon-fit').FitAddon;
+};
+
+let terminalModulesPromise: Promise<TerminalModules> | null = null;
+
+function loadTerminalModules() {
+  terminalModulesPromise ??= Promise.all([
+    import('@xterm/xterm'),
+    import('@xterm/addon-fit'),
+  ]).then(([terminalModule, fitModule]) => ({
+    Terminal: terminalModule.Terminal,
+    FitAddon: fitModule.FitAddon,
+  })).catch((error) => {
+    terminalModulesPromise = null;
+    throw error;
+  });
+  return terminalModulesPromise;
+}
 
 function TabButton({
   active,
@@ -1363,10 +1385,12 @@ function TerminalDock({
   onTerminalResize,
 }: TerminalDockProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const [terminalModules, setTerminalModules] = useState<TerminalModules | null>(null);
+  const [terminalLoadError, setTerminalLoadError] = useState('');
   const terminalInstanceRef = useRef<{
     tabId: string;
-    terminal: XTerm;
-    fitAddon: FitAddon;
+    terminal: InstanceType<TerminalModules['Terminal']>;
+    fitAddon: InstanceType<TerminalModules['FitAddon']>;
     resizeObserver: ResizeObserver;
     writtenOutput: string;
     disposeDomListeners: () => void;
@@ -1380,7 +1404,23 @@ function TerminalDock({
   });
 
   useEffect(() => {
-    if (!activeTab || !hostRef.current) {
+    if (!activeTab || terminalModules) return;
+    let cancelled = false;
+    setTerminalLoadError('');
+    void loadTerminalModules()
+      .then((modules) => {
+        if (!cancelled) setTerminalModules(modules);
+      })
+      .catch((error) => {
+        if (!cancelled) setTerminalLoadError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [Boolean(activeTab), terminalModules]);
+
+  useEffect(() => {
+    if (!activeTab || !hostRef.current || !terminalModules) {
       return;
     }
 
@@ -1402,7 +1442,7 @@ function TerminalDock({
       hostRef.current.innerHTML = '';
       const terminalHost = hostRef.current;
 
-      const terminal = new XTerm({
+      const terminal = new terminalModules.Terminal({
         cursorBlink: true,
         fontFamily: '"JetBrains Mono", "Cascadia Mono", monospace',
         fontSize: 13,
@@ -1413,7 +1453,7 @@ function TerminalDock({
           selectionBackground: 'rgba(240, 163, 65, 0.24)',
         },
       });
-      const fitAddon = new FitAddon();
+      const fitAddon = new terminalModules.FitAddon();
       terminal.loadAddon(fitAddon);
       terminal.open(terminalHost);
       const helperTextarea = terminalHost.querySelector('textarea');
@@ -1548,7 +1588,7 @@ function TerminalDock({
         disposeTerminal();
       }
     };
-  }, [activeTab, tabs.length]);
+  }, [activeTab, tabs.length, terminalModules]);
 
   useEffect(() => {
     return () => {
@@ -1648,6 +1688,7 @@ function TerminalDock({
         </div>
       </div>
       {activeTab.openError ? <div className="terminal-error">{activeTab.openError}</div> : null}
+      {terminalLoadError ? <div className="terminal-error">Terminal renderer failed to load: {terminalLoadError}</div> : null}
       <div
         aria-labelledby={`terminal-tab-${activeTab.id}`}
         className="terminal-viewport"
@@ -1758,10 +1799,12 @@ function renderCenterContent(
 ) {
   if (activeTab === 'Assets') {
     return (
-      <SpatialAttachmentEditorView
-        activeSession={activeSession}
-        operationEventEpoch={operationEventEpoch}
-      />
+      <Suspense fallback={<div className="bridge-empty" role="status">Loading Assets workspace…</div>}>
+        <SpatialAttachmentEditorView
+          activeSession={activeSession}
+          operationEventEpoch={operationEventEpoch}
+        />
+      </Suspense>
     );
   }
 

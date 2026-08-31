@@ -94,7 +94,7 @@ Build Shader Forge as a reusable open-source, code-first game engine with:
 
 Current implementation status:
 
-- Phase 1 is substantially underway, with strict per-workspace browser-persisted layout, accessible pane controls, responsive right-drawer behavior, mounted draft-preserving Code/World workspaces, and streamlined World/Playtest surfaces implemented.
+- Phase 1 is substantially underway, with strict per-workspace browser-persisted layout, accessible pane controls, responsive right-drawer behavior, mounted draft-preserving Code/World workspaces, on-demand Assets/terminal JavaScript, and streamlined World/Playtest surfaces implemented.
 - Phase 2 has a working first implementation and is the main active backend surface; its durable operation journal now includes semantic scene/prefab operations, the bounded restart-safe validation-summary/event storage boundary for spatial operations, streaming 1 MiB JSON request enforcement, and the `operations:scene-asset` health capability.
 - Phase 3 now has a first real native runtime slice in the repo, with native SDL3/Vulkan verification and follow-on renderer expansion still ahead.
 - Phase 4 now has workspace-scoped runtime build/run/pause controls and a compact plain-language `Playtest` surface with collapsed diagnostics, but not a full embedded viewer yet.
@@ -122,6 +122,7 @@ What is already done:
 - `shell/engine-shell` exists as a React + TypeScript + Vite shell scaffold.
 - The default Code workspace is now shell-native: bounded file browsing, revision-bound Monaco source/diff tabs, inline search beside `Inspect`, dirty-draft retention, typed state/revision/code-trust conflicts, and explicit operation preview/review/apply/undo are implemented. Async request/session/tab/path/operation authority rejects late work; detached dirty tabs survive active project-session changes; apply/undo baseline refresh cannot erase a newer draft. The preserved `web/` editor remains an optional compatibility bridge.
 - The shell has one strict v1 browser-persisted layout record with per-workspace left/right visibility, tabs and preferred widths, one shared bottom dock, header toggles, bounded pointer/keyboard resizing, reset, and a narrow right overlay drawer. `Playtest` side panes are off by default, persisted layout contains no workspace/session/path/credential/draft/operation/terminal state, and ordinary shell navigation keeps the draft-owning `Code` and `World` surfaces mounted.
+- The production shell keeps its startup JavaScript below Vite's default chunk-warning threshold by loading the optional Assets implementation and xterm renderer only when those surfaces open.
 - A real multi-tab PTY terminal dock is wired through `engine_sessiond` and the shell.
 - Windows and Unix clean-start scripts exist in `scripts/start-dev-clean.ps1` and `scripts/start-dev-clean.sh`.
 - `engine_sessiond` exists and currently provides session create/list/get/update/delete, safe file list/read/write, host filesystem directory listing for the session root picker, git status/init, PTY terminal lifecycle, runtime lifecycle, and build lifecycle surfaces.

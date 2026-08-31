@@ -36,6 +36,9 @@ try {
   assert.match(codeJs, /setEditorSearchQuery\(/);
   assert.match(shellPackageJson, /"react"/);
   assert.match(shellPackageJson, /"vite"/);
+  assert.match(shellApp, /lazy\(\(\) => import\('\.\/SpatialAttachmentEditorView'\)/);
+  assert.match(shellApp, /import\('@xterm\/xterm'\)/);
+  assert.doesNotMatch(shellApp, /^import .*from '@xterm\//m);
   assert.match(shellApp, /const centerTabs = SHELL_WORKSPACES;/);
   assert.doesNotMatch(shellApp, /const centerTabs = \['Scene', 'Game', 'Preview', 'Code', 'Guide'\] as const;/);
   assert.match(shellApp, /useState<ShellLayout>\(\(\) => loadBrowserShellLayout\(\)\)/);
@@ -160,7 +163,7 @@ try {
   console.log(`- Served shell from ${server.rootDir}`);
   console.log('- Verified index, style sheet, and preserved code workspace module');
   console.log('- Verified inline editor search UI and Monaco match-finding hooks are present');
-  console.log('- Verified the React/Vite shell frame, terminal tab semantics, and World mode states');
+  console.log('- Verified the React/Vite shell frame, optional renderer splitting, terminal tab semantics, and World mode states');
   console.log('- Verified the React shell exposes an in-app guide backed by repo-native markdown and structured reference sources');
   console.log('- Verified the React shell references the session backend bridge contract');
   console.log('- Verified the Explorer tab references backend file list/read flows');
