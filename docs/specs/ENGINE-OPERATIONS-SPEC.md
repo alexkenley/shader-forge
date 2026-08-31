@@ -1,6 +1,6 @@
 # Engine Operations Spec
 
-Status: hardened text-file write slice plus bounded selected-operation diff, transient spatial evaluation, attachment preview context, and CLI adapter implemented
+Status: hardened text-file write slice plus bounded selected-operation diff, transient spatial evaluation, attachment preview context, semantic scene/prefab backend operations, and CLI adapter implemented
 
 Date: 2026-08-31
 
@@ -67,6 +67,7 @@ A stale base revision returns HTTP 409 with a structured conflict:
 
 - `POST /api/operations/file-write/preview`
 - `POST /api/operations/spatial-attachment/preview`
+- `POST /api/operations/scene-asset/preview`
 - `GET /api/spatial/attachment/evaluate`
 - `GET /api/spatial/attachment/evaluate-sample`
 - `GET /api/operations`
@@ -92,6 +93,10 @@ The selected-operation diff route derives a structured line diff from the operat
 Diff construction is deliberately bounded before dynamic-programming work: combined source text may be at most 256 KiB, the line comparison matrix may contain at most 1,000,000 cells, and the response may contain at most 400 hunk lines with three context lines around changes. A partial exact response sets `truncated: true`. Binary-like data, oversized input/comparison work, or unavailable journal bytes return `status: "summary_only"`, an exact `binary`, `too_large`, or `unavailable` reason, the public summary, and no hunks. The endpoint never returns the private journal byte fields or coordinator credentials. Unknown operation ids return HTTP 404.
 
 Spatial attachment preview accepts only `animation/attachments/*.attachment.toml`. It requires full `content`, `baseRevision`, non-empty `label`, `actor`, `agentId`, `leaseId`, and the coordinator credential. Sessiond rejects stale revisions, stages a fresh animation/content/foundation snapshot exclusively through strict `SessionStore` reads, rejects symbolic sources, and validates baseline/candidate. The stable source mapping selects authoritative profile identities. Evaluator geometry must be either an exact typed unavailable reason or one eight-corner authored visual box that recomposes from the item frame. One granted write lease covers old/new IDs on rename; sessiond rechecks the complete input manifest and lease before operation creation. The temporary root is always removed.
+
+Semantic scene assets use `scene/world/<id>` and prefabs use `scene/prefab/<id>`. `save`, `create`, and `duplicate` stage the full authored `content/**/*.toml` tree plus `data/foundation/engine-data-layout.toml`, then invoke the native `shader_forge_data validate-asset` command. Staging rejects symbolic paths and caps traversal at 16,384 entries, included sources at 4,096 files, total included UTF-8 source at 32 MiB, and the candidate at 1 MiB; the foundation file counts toward both file and byte limits. The native `DataFoundation` catalog is the schema and relationship authority; sessiond only checks the bounded protocol response and request binding. Preview rechecks the target revision, duplicate source revision, complete staged manifest, and one granted write lease covering the target plus duplicate source before it journals a generic file-write operation. Apply and undo bind the operation path back to its semantic subject, then repeat native validation, manifest checks, duplicate-source revision checks, and lease authentication from inside the serialized `SessionStore` mutation lane. Validator failure restores the stable `approved` or `applied` state without writing candidate bytes. Credentials and transient validation reports are not journaled.
+
+Scene/prefab `rename` is rejected with stable code `multi_file_operation_required`: changing an asset ID can require bootstrap, scene, prefab, and other referer edits that the single-file journal cannot represent atomically. Duplicate content is not arbitrary cloning under a label; native validation requires its authored `name` and canonical staged path to bind to the target ID.
 
 `GET /api/spatial/attachment/evaluate` accepts `sessionId`, an existing attachment `path`, and a non-`missing` SHA-256 `baseRevision`. Sessiond stages the current animation tree, every authored content TOML, and the data-foundation manifest; binds evaluation to the selected profile; and passes the three staged roots to the native evaluator. After evaluation it compares every staged input against a sorted live revision manifest. Selected attachment drift retains `revision_conflict`; any other animation/content/foundation change returns `spatial_evaluation_inputs_changed`.
 
@@ -231,7 +236,7 @@ Payloads are operation views. They do not include file contents or credentials.
 
 Operations reuse `SessionStore` path resolution. Symlinks and junctions cannot escape the session root. This slice does not introduce a second path resolver.
 
-`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, scene/asset operations, Activity apply/undo coordination, and non-spatial MCP mutation tools are later slices.
+`POST /api/files/write` remains available and still runs the same code-trust policy. Operation apply uses that same evaluate/review-queue path, then records the artifact through the operation journal's recoverable effect lane rather than bypassing policy or recording after the operation is already durable. Multi-file change sets, shell scene-operation integration, Activity apply/undo coordination, and non-spatial MCP mutation tools are later slices.
 
 ## Persistence Validation
 
@@ -294,3 +299,5 @@ Invalid records are skipped. They cannot be listed as applicable operations.
 - malformed persisted records skipped on load, including preview-schema, event-sequence, and final-event/state corruption
 
 `npm run test:spatial-operations` additionally covers the revision-safe GET, strict path/symlink and source-ID binding, exact staged baseline/candidate bytes, exact fail-closed joint-limit protocol and recomputed truth, new-file `baseline: null`, final-read revision drift, malformed or wrong-ID evaluator output, bounded unavailable/infrastructure errors, temporary cleanup, journal absence for GET, non-persistence of preview evaluations, and the post-evaluation preview lease recheck.
+
+`npm run test:data-tool` compiles and executes the native selected-asset validator. `npm run test:scene-operations` covers save/create/duplicate context, canonical resource keys, target/source revisions, lease coverage, no-write preview, HTTP routing, mutation-lane apply/undo validation, retryable validation failure, native response binding, credential exclusion, and rename refusal.

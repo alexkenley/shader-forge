@@ -49,6 +49,7 @@ Current implemented surfaces:
 - `POST /api/coordination/leases/:id/release`
 - `POST /api/operations/file-write/preview`
 - `POST /api/operations/spatial-attachment/preview`
+- `POST /api/operations/scene-asset/preview`
 - `GET /api/spatial/attachment/evaluate`
 - `GET /api/spatial/attachment/evaluate-sample`
 - `GET /api/operations`
@@ -79,6 +80,8 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - existing persisted session IDs remain loadable; available roots are canonicalized when restored, while temporarily unavailable roots retain their persisted record
 - legacy session records that lack `rootIdentity` are migrated during load with the existing atomic session-store persist before load returns
 - file list/read/write operations enforce the canonical physical workspace boundary: existing targets are resolved with `realpath`, created targets use a verified physical parent, and symlinks or junctions cannot escape the session root
+- internal bounded list/read variants reuse that same canonical and symbolic-path authority while stopping directory iteration at a caller cap and rejecting files by handle size before bounded chunked UTF-8 decoding; scene staging uses these variants instead of materializing untrusted trees before enforcing its limits
+- public `GET /api/files/list` and `GET /api/files/read` use server-owned fixed limits of 4,096 entries and 1 MiB respectively; clients cannot widen them, and oversized inputs return HTTP 413 with `directory_entry_limit_exceeded` or `file_size_limit_exceeded`
 - directory listings inspect link entries without following them; a link may be listed from its safe parent, but using an outside-target link as the list/read/write target is rejected
 - directory listings identify symbolic-link entries explicitly so isolated staging workflows can reject them without following them
 - strict UTF-8 file reads that reject invalid byte sequences instead of inserting replacement characters
@@ -147,6 +150,8 @@ This gives the shell and harnesses a real backend-owned session and file model b
 - the initial released operation-store format is internally consistent; operation records were unshipped on main `37b862c`, so this slice does not migrate intermediate WIP operation schemas
 - non-loopback browser Origins are rejected at the HTTP boundary; no-Origin native CLI/MCP requests and loopback shell Origins remain allowed. This is a local trust boundary, not client authentication
 - operation lifecycle events stream through the existing SSE bus; credentials and file contents are not persisted in public views
+- semantic scene/prefab preview uses canonical lease resources `scene/world/<id>` and `scene/prefab/<id>` for save/create/duplicate; duplicate covers and revision-binds both source and target, while rename fails with `multi_file_operation_required`
+- preview and mutation-lane apply/undo stage bounded full authored content plus the foundation manifest and delegate schema/relationship truth to native `DataFoundation`; target/source revisions, full input manifest, and granted lease are rechecked before journaling or mutation
 - `GET /api/spatial/attachment/evaluate` accepts an existing `animation/attachments/*.attachment.toml` path plus its exact SHA-256 `baseRevision`; `GET /api/spatial/attachment/evaluate-sample` additionally requires `phase` and finite `normalizedTime` in `[0,1]`
 - both routes reject links and stale revisions through strict `SessionStore` reads; stage the current animation tree, every authored `content/**/*.toml`, and `data/foundation/engine-data-layout.toml`; bind the selected profile; validate independent exact authored visual-box and collision-box/capsule evidence; and compare the complete sorted revision manifest against the live tree before returning `{ evaluation, path, revision, sourceRevisions }`
 - selected attachment drift returns `revision_conflict`; another added, removed, or changed animation/content/foundation input returns `spatial_evaluation_inputs_changed` with the first sorted differing path and expected/actual revision. A file or directory deleted while the initial snapshot is being read fails closed with the same code and a bounded relative path only, because no truthful expected revision exists yet
@@ -165,6 +170,6 @@ This gives the shell and harnesses a real backend-owned session and file model b
 ## Future AI APIs
 
 - a process-scoped MCP adapter over the engine-owned coordination and mutation contracts
-- MCP exposure of the existing file-write operation workflow, plus later scene/asset/multi-file change sets
+- MCP exposure of the existing file-write and semantic scene-asset operation workflows, plus later multi-file change sets
 - MCP resources for project, scene, asset, code, runtime, test, diagnostics, coordination, and activity state
 - later spatial-authoring resources and tools only as an adapter over sessiond spatial operations, after those operations exist for shell and CLI. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](/mnt/s/Development/AI-Game-Engine/docs/specs/ENGINE-SPATIAL-AUTHORING-SPEC.md).

@@ -404,6 +404,41 @@ try {
   assert.match(fileReadPayload.content, /Shader Forge/);
   assert.ok(fileReadPayload.size > 0);
   assert.equal(fileReadPayload.revision, textContentRevision(fileReadPayload.content));
+  await assert.rejects(
+    service.sessionStore.listFilesBounded(createPayload.session.id, '.', { maxEntries: 1 }),
+    (error) => error.statusCode === 413 && error.code === 'directory_entry_limit_exceeded',
+  );
+  await assert.rejects(
+    service.sessionStore.readFileBounded(createPayload.session.id, 'README.md', { maxBytes: 1 }),
+    (error) => error.statusCode === 413 && error.code === 'file_size_limit_exceeded',
+  );
+  const boundedRouteRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shader-forge-bounded-files-'));
+  await fs.writeFile(path.join(boundedRouteRoot, 'oversized.txt'), 'x'.repeat(1024 * 1024 + 1));
+  const crowdedDirectory = path.join(boundedRouteRoot, 'crowded');
+  await fs.mkdir(crowdedDirectory);
+  for (let start = 0; start < 4097; start += 128) {
+    await Promise.all(Array.from({ length: Math.min(128, 4097 - start) }, (_, offset) => (
+      fs.writeFile(path.join(crowdedDirectory, `${start + offset}.txt`), '')
+    )));
+  }
+  const boundedRouteSession = await requestJsonNoAuth(`${service.baseUrl}/api/sessions`, 'POST', {
+    name: 'bounded-files', rootPath: boundedRouteRoot,
+  });
+  const oversizedResponse = await fetch(
+    `${service.baseUrl}/api/files/read?sessionId=${encodeURIComponent(boundedRouteSession.session.id)}&path=oversized.txt`,
+  );
+  assert.equal(oversizedResponse.status, 413);
+  assert.equal((await oversizedResponse.json()).code, 'file_size_limit_exceeded');
+  const crowdedResponse = await fetch(
+    `${service.baseUrl}/api/files/list?sessionId=${encodeURIComponent(boundedRouteSession.session.id)}&path=crowded`,
+  );
+  assert.equal(crowdedResponse.status, 413);
+  assert.equal((await crowdedResponse.json()).code, 'directory_entry_limit_exceeded');
+  await requestJsonNoAuth(
+    `${service.baseUrl}/api/sessions/${encodeURIComponent(boundedRouteSession.session.id)}`,
+    'DELETE',
+  );
+  await fs.rm(boundedRouteRoot, { recursive: true, force: true });
 
   const fileWritePayload = await requestJsonNoAuth(`${service.baseUrl}/api/files/write`, 'POST', {
     sessionId: createPayload.session.id,
@@ -798,8 +833,8 @@ try {
 
   const readerA = await registerAgent(workspaceAId, 'reader-a');
   const readerB = await registerAgent(workspaceAId, 'reader-b');
-  const sharedReadA = await requestLease(readerA, ['scene/overworld'], 'read');
-  const sharedReadB = await requestLease(readerB, ['scene/overworld'], 'read');
+  const sharedReadA = await requestLease(readerA, ['scene/world/overworld'], 'read');
+  const sharedReadB = await requestLease(readerB, ['scene/world/overworld'], 'read');
   assert.equal(sharedReadA.status, 'granted');
   assert.equal(sharedReadB.status, 'granted');
 

@@ -58,12 +58,15 @@ Before the full scene-system phase lands, the repo now has a first authored scen
 - authored overlap-trigger scene entities can now activate effects automatically from query-only scene bodies during runtime movement, widening the slice beyond manual `ui_accept` interaction alone
 - scene movement now also drives a first authored animation-state lane, so the active runtime graph can switch between named states such as `idle` and `walk` and emit clip-event audio hooks during traversal
 - `engine_sessiond` now provides safe session-root file writes so shell workflows and future assistants can mutate the same scene/prefab assets without relying on hidden editor-only state
+- `engine_sessiond` now also owns a semantic backend preview for scene `save`, `create`, and `duplicate` operations. It journals `scene/world/<id>` or `scene/prefab/<id>` lease context, stages full authored truth, and delegates validation to the native `DataFoundation` catalog at preview and again inside apply/undo's serialized mutation lane
 - `engine bake` now stages scene-entity summaries plus prefab component payloads into the cooked outputs and bake report so authored scene structure is visible outside the shell
 
 Current boundary:
 
 - this slice now covers scene metadata, first-pass entity hierarchy plus transform editing, first prefab component payloads, a first runtime composition path, first projected debug-proxy visibility, first session-root editor/runtime handoff, first authored-content reload/manual iteration, first authored-physics movement blocking, first overlap-triggered effect activation, first movement-driven animation-state playback, and first interaction-trigger feedback on effect-capable entities, but not full rendered mesh/material instancing yet
 - transform gizmos, broader scene/component payload editing, and procedural subtree bake/apply flows still remain for later widening passes
+- the current Scene shell still uses its existing direct-save workflow; routing that UI through semantic operations is a separate integration slice
+- scene/prefab rename remains deferred until an atomic multi-file change set can update referers; sessiond returns `multi_file_operation_required` instead of presenting a single-file rename as safe
 - planned spatial attachment profiles reference prefabs by ID; prefabs must not copy grip values. See [ENGINE-SPATIAL-AUTHORING-SPEC.md](ENGINE-SPATIAL-AUTHORING-SPEC.md).
 
 ## Non-Goals

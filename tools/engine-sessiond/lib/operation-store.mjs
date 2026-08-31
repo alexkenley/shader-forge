@@ -85,6 +85,11 @@ const SPATIAL_CONTEXT_FIELDS = new Set([
   'resourceKeys',
   'leaseId',
 ]);
+const SCENE_CONTEXT_FIELDS = new Set([
+  'type', 'assetKind', 'intent', 'label', 'subjectId', 'sourceSubjectId',
+  'sourceRevision', 'resourceKeys', 'leaseId',
+]);
+const SCENE_ASSET_ID = /^[a-z0-9][a-z0-9_]*$/;
 const DIFF_CONTEXT_LINES = 3;
 const MAX_DIFF_INPUT_BYTES = 256 * 1024;
 const MAX_DIFF_MATRIX_CELLS = 1_000_000;
@@ -139,19 +144,22 @@ function normalizeOperationContext(value) {
   if (typeof value !== 'object' || Array.isArray(value)) {
     throw createStoreError(400, 'context must be an object.');
   }
+  const allowedFields = value.type === 'scene_asset' ? SCENE_CONTEXT_FIELDS : SPATIAL_CONTEXT_FIELDS;
   for (const key of Object.keys(value)) {
-    if (!SPATIAL_CONTEXT_FIELDS.has(key)) {
+    if (!allowedFields.has(key)) {
       throw createStoreError(400, `Unsupported operation context field: ${key}`);
     }
   }
-  if (value.type !== 'spatial_attachment') {
-    throw createStoreError(400, 'context.type must be spatial_attachment.');
+  if (!['spatial_attachment', 'scene_asset'].includes(value.type)) {
+    throw createStoreError(400, 'context.type must be spatial_attachment or scene_asset.');
   }
   const label = requireTrimmedString(value.label, 'context.label');
   const subjectId = requireTrimmedString(value.subjectId, 'context.subjectId').toLowerCase();
   const leaseId = requireTrimmedString(value.leaseId, 'context.leaseId');
-  if (!SPATIAL_SUBJECT_ID.test(subjectId)) {
-    throw createStoreError(400, 'context.subjectId is not a canonical spatial attachment id.');
+  if (!(value.type === 'scene_asset' ? SCENE_ASSET_ID : SPATIAL_SUBJECT_ID).test(subjectId)) {
+    throw createStoreError(400, value.type === 'scene_asset'
+      ? 'context.subjectId is not a canonical scene asset id.'
+      : 'context.subjectId is not a canonical spatial attachment id.');
   }
   if (!Array.isArray(value.resourceKeys) || value.resourceKeys.length === 0) {
     throw createStoreError(400, 'context.resourceKeys must be a non-empty array.');
@@ -165,12 +173,34 @@ function normalizeOperationContext(value) {
     }
     return normalized;
   }))].sort();
+  if (value.type === 'spatial_attachment') {
+    return { type: 'spatial_attachment', label, subjectId, resourceKeys, leaseId };
+  }
+  const assetKind = requireTrimmedString(value.assetKind, 'context.assetKind');
+  const intent = requireTrimmedString(value.intent, 'context.intent');
+  if (!['scene', 'prefab'].includes(assetKind)) throw createStoreError(400, 'context.assetKind must be scene or prefab.');
+  if (!['save', 'create', 'duplicate'].includes(intent)) throw createStoreError(400, 'context.intent must be save, create, or duplicate.');
+  const prefix = assetKind === 'scene' ? 'scene/world' : 'scene/prefab';
+  const expectedResources = [`${prefix}/${subjectId}`];
+  let sourceSubjectId;
+  let sourceRevision;
+  if (intent === 'duplicate') {
+    sourceSubjectId = requireTrimmedString(value.sourceSubjectId, 'context.sourceSubjectId').toLowerCase();
+    sourceRevision = normalizeRevision(value.sourceRevision, 'context.sourceRevision');
+    if (!SCENE_ASSET_ID.test(sourceSubjectId) || sourceSubjectId === subjectId || sourceRevision === MISSING_FILE_REVISION) {
+      throw createStoreError(400, 'context duplicate source is invalid.');
+    }
+    expectedResources.push(`${prefix}/${sourceSubjectId}`);
+  } else if (value.sourceSubjectId != null || value.sourceRevision != null) {
+    throw createStoreError(400, 'context source fields are only valid for duplicate.');
+  }
+  expectedResources.sort();
+  if (JSON.stringify(resourceKeys) !== JSON.stringify(expectedResources)) {
+    throw createStoreError(400, 'context.resourceKeys do not match the semantic scene asset subjects.');
+  }
   return {
-    type: 'spatial_attachment',
-    label,
-    subjectId,
-    resourceKeys,
-    leaseId,
+    type: 'scene_asset', assetKind, intent, label, subjectId,
+    ...(sourceSubjectId ? { sourceSubjectId, sourceRevision } : {}), resourceKeys, leaseId,
   };
 }
 
@@ -1375,6 +1405,7 @@ export class OperationStore {
     baseRevision,
     actor,
     context = null,
+    beforePreview,
   } = {}) {
     return this.#serializeMutation(async () => {
       if (!this.#sessionStore) {
@@ -1387,22 +1418,26 @@ export class OperationStore {
       const expectedBase = normalizeRevision(baseRevision, 'baseRevision');
       const resolvedActor = normalizeActor(actor);
       const resolvedContext = normalizeOperationContext(context);
-      const workspaceIdentity = await this.#sessionStore.captureWorkspaceIdentity(resolvedSessionId);
-      const workspaceRoot = workspaceIdentity.canonicalPath;
-      const inspection = await this.#sessionStore.inspectTextFile(resolvedSessionId, requestedPath);
+      return this.#sessionStore.runSerializedFileMutation(async () => {
+        if (typeof beforePreview === 'function') {
+          await beforePreview();
+        }
+        const workspaceIdentity = await this.#sessionStore.captureWorkspaceIdentity(resolvedSessionId);
+        const workspaceRoot = workspaceIdentity.canonicalPath;
+        const inspection = await this.#sessionStore.inspectTextFile(resolvedSessionId, requestedPath);
 
-      if (inspection.revision !== expectedBase) {
-        throw createStoreError(409, 'File revision conflict.', {
-          conflict: revisionConflict({
-            path: inspection.path,
-            expectedRevision: expectedBase,
-            actualRevision: inspection.revision,
-          }),
-        });
-      }
+        if (inspection.revision !== expectedBase) {
+          throw createStoreError(409, 'File revision conflict.', {
+            conflict: revisionConflict({
+              path: inspection.path,
+              expectedRevision: expectedBase,
+              actualRevision: inspection.revision,
+            }),
+          });
+        }
 
-      const timestamp = new Date().toISOString();
-      const record = {
+        const timestamp = new Date().toISOString();
+        const record = {
         id: `op_${randomUUID()}`,
         kind: 'file_write',
         sessionId: resolvedSessionId,
@@ -1425,15 +1460,16 @@ export class OperationStore {
         createdAt: timestamp,
         updatedAt: timestamp,
         events: [],
-      };
-      appendEvent(record, 'previewed', resolvedActor);
+        };
+        appendEvent(record, 'previewed', resolvedActor);
 
-      await this.#commit(() => {
-        this.#operations.set(record.id, record);
-      });
-      const view = operationView(record);
-      this.#emitEvent('operation.previewed', view);
-      return structuredClone(view);
+        await this.#commit(() => {
+          this.#operations.set(record.id, record);
+        });
+        const view = operationView(record);
+        this.#emitEvent('operation.previewed', view);
+        return structuredClone(view);
+      }, { sessionId: resolvedSessionId });
     });
   }
 
@@ -1457,7 +1493,7 @@ export class OperationStore {
     });
   }
 
-  async apply(operationId, { actor, codeTrust, authorize } = {}) {
+  async apply(operationId, { actor, codeTrust, authorize, validateMutation } = {}) {
     return this.#serializeMutation(async () => {
       const resolvedActor = normalizeActor(actor);
       const incomingTrust = normalizeCodeTrustInput(codeTrust);
@@ -1512,6 +1548,14 @@ export class OperationStore {
             expectedRevision: applying.baseRevision,
             content: applying.proposedContent,
             beforeMutation: async () => {
+              if (typeof validateMutation === 'function') {
+                await validateMutation({
+                  phase: 'apply', sessionId: applying.sessionId, path: applying.path,
+                  baseRevision: applying.baseRevision, proposedRevision: applying.proposedRevision,
+                  appliedRevision: applying.appliedRevision, content: applying.proposedContent,
+                  context: structuredClone(applying.context),
+                });
+              }
               await this.#persistPriorArtifactSnapshot(applying);
             },
             afterMutation: async () => {
@@ -1577,7 +1621,7 @@ export class OperationStore {
     });
   }
 
-  async undo(operationId, { actor, authorize } = {}) {
+  async undo(operationId, { actor, authorize, validateMutation } = {}) {
     return this.#serializeMutation(async () => {
       const resolvedActor = normalizeActor(actor);
       let record = this.#requireOperation(operationId);
@@ -1645,6 +1689,14 @@ export class OperationStore {
           await this.#sessionStore.compareAndRemoveTextFile(undoing.sessionId, undoing.path, {
             expectedRevision: undoing.appliedRevision,
             beforeMutation: async () => {
+              if (typeof validateMutation === 'function') {
+                await validateMutation({
+                  phase: 'undo', sessionId: undoing.sessionId, path: undoing.path,
+                  baseRevision: undoing.baseRevision, proposedRevision: undoing.proposedRevision,
+                  appliedRevision: undoing.appliedRevision, content: null,
+                  context: structuredClone(undoing.context),
+                });
+              }
               await this.#assertUndoArtifactProvenance(undoing);
             },
             afterMutation: restoreArtifactAfterMutation,
@@ -1657,6 +1709,14 @@ export class OperationStore {
               expectedRevision: undoing.appliedRevision,
               content: undoing.beforeContent ?? '',
               beforeMutation: async () => {
+                if (typeof validateMutation === 'function') {
+                  await validateMutation({
+                    phase: 'undo', sessionId: undoing.sessionId, path: undoing.path,
+                    baseRevision: undoing.baseRevision, proposedRevision: undoing.proposedRevision,
+                    appliedRevision: undoing.appliedRevision, content: undoing.beforeContent ?? '',
+                    context: structuredClone(undoing.context),
+                  });
+                }
                 await this.#assertUndoArtifactProvenance(undoing);
               },
               afterMutation: restoreArtifactAfterMutation,

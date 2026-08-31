@@ -29,6 +29,8 @@
     "test:mcp": "node scripts/test-engine-mcp.mjs",
     "test:runtime-scaffold": "node scripts/test-engine-runtime-scaffold.mjs",
     "test:data-foundation-scaffold": "node scripts/test-engine-data-foundation-scaffold.mjs",
+    "test:data-tool": "node scripts/test-engine-data-tool.mjs",
+    "test:scene-operations": "node scripts/test-engine-scene-operations.mjs",
     "test:asset-pipeline": "node scripts/test-engine-asset-pipeline.mjs",
     "test:migration-fixtures": "node scripts/test-engine-migration-fixtures.mjs",
     "test:audio-scaffold": "node scripts/test-engine-audio-scaffold.mjs",

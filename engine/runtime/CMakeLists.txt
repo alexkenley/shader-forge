@@ -21,6 +21,12 @@ add_executable(
   src/data_foundation.cpp
 )
 
+add_executable(
+  shader_forge_data
+  src/data_foundation_tool.cpp
+  src/data_foundation.cpp
+)
+
 target_include_directories(
   shader_forge_runtime
   PRIVATE
@@ -33,8 +39,15 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+target_include_directories(
+  shader_forge_data
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
 target_compile_features(shader_forge_runtime PRIVATE cxx_std_20)
 target_compile_features(shader_forge_spatial PRIVATE cxx_std_20)
+target_compile_features(shader_forge_data PRIVATE cxx_std_20)
 
 set_target_properties(
   shader_forge_runtime
@@ -51,6 +64,17 @@ set_target_properties(
   shader_forge_spatial
   PROPERTIES
     OUTPUT_NAME "shader_forge_spatial"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin"
+)
+
+set_target_properties(
+  shader_forge_data
+  PROPERTIES
+    OUTPUT_NAME "shader_forge_data"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin"

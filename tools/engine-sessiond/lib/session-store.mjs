@@ -429,6 +429,46 @@ export class SessionStore {
     };
   }
 
+  async listFilesBounded(
+    sessionId,
+    relativePath = '.',
+    { rejectSymbolicPath = false, maxEntries = 4096 } = {},
+  ) {
+    if (!Number.isInteger(maxEntries) || maxEntries < 0) {
+      throw createSessionError(400, 'maxEntries must be a non-negative integer.');
+    }
+    const session = this.#requireSession(sessionId);
+    const displayPath = this.#resolveWithinSession(session, relativePath);
+    if (rejectSymbolicPath) await this.#assertNoSymbolicPath(session, displayPath, relativePath);
+    const targetPath = await this.#resolveExistingPhysicalPath(session, displayPath, relativePath);
+    const stat = await fs.stat(targetPath);
+    if (!stat.isDirectory()) throw new Error(`Path is not a directory: ${relativePath}`);
+
+    const records = [];
+    const directory = await fs.opendir(targetPath);
+    try {
+      for await (const entry of directory) {
+        if (records.length >= maxEntries) {
+          throw createSessionError(413, `Directory exceeds the ${maxEntries}-entry limit.`, {
+            code: 'directory_entry_limit_exceeded',
+          });
+        }
+        const entryStat = await fs.lstat(path.join(targetPath, entry.name));
+        records.push({
+          name: entry.name,
+          path: normalizeDisplayPath(session.rootPath, path.join(displayPath, entry.name)),
+          kind: entryStat.isSymbolicLink() ? 'symlink' : entryStat.isDirectory() ? 'directory' : 'file',
+          size: entryStat.isDirectory() ? 0 : entryStat.size,
+          modifiedAt: entryStat.mtime.toISOString(),
+        });
+      }
+    } finally {
+      await directory.close().catch(() => {});
+    }
+    records.sort((left, right) => left.name.localeCompare(right.name));
+    return { session, path: normalizeDisplayPath(session.rootPath, displayPath), entries: records };
+  }
+
   async readFile(sessionId, relativePath, { rejectSymbolicPath = false } = {}) {
     if (!relativePath) {
       throw new Error('File path is required.');
@@ -455,6 +495,60 @@ export class SessionStore {
       revision: textContentRevision(content),
       content,
     };
+  }
+
+  async readFileBounded(
+    sessionId,
+    relativePath,
+    { rejectSymbolicPath = false, maxBytes = 1024 * 1024 } = {},
+  ) {
+    if (!relativePath) throw new Error('File path is required.');
+    if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+      throw createSessionError(400, 'maxBytes must be a non-negative integer.');
+    }
+    const session = this.#requireSession(sessionId);
+    const displayPath = this.#resolveWithinSession(session, relativePath);
+    if (rejectSymbolicPath) await this.#assertNoSymbolicPath(session, displayPath, relativePath);
+    const targetPath = await this.#resolveExistingPhysicalPath(session, displayPath, relativePath);
+    const handle = await fs.open(targetPath, 'r');
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile()) throw new Error(`Path is not a file: ${relativePath}`);
+      if (stat.size > maxBytes) {
+        throw createSessionError(413, `File exceeds the ${maxBytes}-byte limit.`, {
+          code: 'file_size_limit_exceeded',
+        });
+      }
+      const chunks = [];
+      let size = 0;
+      while (true) {
+        const remaining = maxBytes - size;
+        const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
+        const { bytesRead } = await handle.read(chunk, 0, chunk.length, size);
+        if (bytesRead === 0) break;
+        size += bytesRead;
+        if (size > maxBytes) {
+          throw createSessionError(413, `File exceeds the ${maxBytes}-byte limit.`, {
+            code: 'file_size_limit_exceeded',
+          });
+        }
+        chunks.push(chunk.subarray(0, bytesRead));
+      }
+      const content = decodeUtf8Strict(
+        Buffer.concat(chunks, size),
+        normalizeDisplayPath(session.rootPath, displayPath),
+      );
+      return {
+        session,
+        path: normalizeDisplayPath(session.rootPath, displayPath),
+        size,
+        modifiedAt: stat.mtime.toISOString(),
+        revision: textContentRevision(content),
+        content,
+      };
+    } finally {
+      await handle.close();
+    }
   }
 
   async writeFile(sessionId, relativePath, content = '') {
