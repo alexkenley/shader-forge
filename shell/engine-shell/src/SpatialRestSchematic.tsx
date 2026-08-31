@@ -350,13 +350,15 @@ function validJointLimits(value: unknown, evaluationBones: unknown, budget: Vali
     || !finiteBoundedNoNegZero(value.maxViolationDegrees, 0, JOINT_LIMIT_DEGREE_BOUND * 2)
   ) return false;
 
-  const identities: Array<{ id: string; role: string }> = [];
-  for (const entry of evaluationBones) {
+  const identityById = new Map<string, { index: number; role: string }>();
+  for (let index = 0; index < evaluationBones.length; index += 1) {
+    const entry = evaluationBones[index];
     if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.role !== 'string') return false;
-    identities.push({ id: entry.id, role: entry.role });
+    if (identityById.has(entry.id)) return false;
+    identityById.set(entry.id, { index, role: entry.role });
   }
 
-  let cursor = 0;
+  let previousIdentityIndex = -1;
   let computedViolations = 0;
   let computedMax = 0;
   for (const entry of value.bones) {
@@ -373,24 +375,34 @@ function validJointLimits(value: unknown, evaluationBones: unknown, budget: Vali
       || !finiteBoundedNoNegZero(entry.twistViolationDegrees, 0, JOINT_LIMIT_DEGREE_BOUND * 2)
       || typeof entry.withinLimits !== 'boolean'
     ) return false;
-    while (cursor < identities.length && identities[cursor].id !== entry.boneId) cursor += 1;
-    if (cursor >= identities.length || identities[cursor].role !== entry.role) return false;
-    cursor += 1;
+    const identity = identityById.get(String(entry.boneId));
+    if (!identity || identity.index <= previousIdentityIndex || identity.role !== entry.role) return false;
+    previousIdentityIndex = identity.index;
+    if (entry.twistMinDegrees > entry.twistMaxDegrees) return false;
     const expectedSwing = expectedSwingViolation(entry.swingDegrees, entry.swingLimitDegrees);
     const expectedTwist = expectedTwistViolation(
       entry.twistDegrees,
       entry.twistMinDegrees,
       entry.twistMaxDegrees,
     );
-    if (!near(entry.swingViolationDegrees, expectedSwing) || !near(entry.twistViolationDegrees, expectedTwist)) {
+    if (
+      !near(entry.swingViolationDegrees, expectedSwing)
+      || !near(entry.twistViolationDegrees, expectedTwist)
+      || (entry.swingViolationDegrees === 0) !== (expectedSwing === 0)
+      || (entry.twistViolationDegrees === 0) !== (expectedTwist === 0)
+    ) {
       return false;
     }
-    const within = near(expectedSwing, 0) && near(expectedTwist, 0);
+    const within = expectedSwing === 0 && expectedTwist === 0;
     if (entry.withinLimits !== within) return false;
     if (!within) computedViolations += 1;
     computedMax = Math.max(computedMax, expectedSwing, expectedTwist);
   }
-  if (value.violationCount !== computedViolations || !near(value.maxViolationDegrees, computedMax)) {
+  if (
+    value.violationCount !== computedViolations
+    || !near(value.maxViolationDegrees, computedMax)
+    || (value.maxViolationDegrees === 0) !== (computedMax === 0)
+  ) {
     return false;
   }
   if (value.status === 'available') {
@@ -1392,6 +1404,7 @@ export function SpatialRestSchematic({
                       <th>Twist</th>
                       <th>Range</th>
                       <th>Twist violation</th>
+                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1405,6 +1418,7 @@ export function SpatialRestSchematic({
                         <td><code>{String(bone.twistDegrees)} deg</code></td>
                         <td><code>[{String(bone.twistMinDegrees)}, {String(bone.twistMaxDegrees)}] deg</code></td>
                         <td><code>{String(bone.twistViolationDegrees)} deg</code></td>
+                        <td>{bone.withinLimits ? 'PASS' : 'FAIL'}</td>
                       </tr>
                     ))}
                   </tbody>

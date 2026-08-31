@@ -394,14 +394,20 @@ function requireItemGeometry(value, itemWorld) {
 }
 
 function requireFiniteNumber(value, { min = -Infinity, max = Infinity } = {}) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+  if (
+    typeof value !== 'number'
+    || !Number.isFinite(value)
+    || Object.is(value, -0)
+    || value < min
+    || value > max
+  ) {
     evaluationProtocolError();
   }
   return value;
 }
 
 function requireNonnegativeInteger(value) {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || Object.is(value, -0) || value < 0) {
     evaluationProtocolError();
   }
   return value;
@@ -477,6 +483,8 @@ function requireJointLimits(value, skeletonBones) {
     if (
       Math.abs(swingViolationDegrees - expectedSwingViolation) > unitTolerance
       || Math.abs(twistViolationDegrees - expectedTwistViolation) > unitTolerance
+      || (swingViolationDegrees === 0) !== (expectedSwingViolation === 0)
+      || (twistViolationDegrees === 0) !== (expectedTwistViolation === 0)
     ) {
       evaluationProtocolError();
     }
@@ -489,7 +497,10 @@ function requireJointLimits(value, skeletonBones) {
     computedMax = Math.max(computedMax, expectedSwingViolation, expectedTwistViolation);
   }
   if (violationCount !== computedViolations) evaluationProtocolError();
-  if (Math.abs(maxViolationDegrees - computedMax) > unitTolerance) evaluationProtocolError();
+  if (
+    Math.abs(maxViolationDegrees - computedMax) > unitTolerance
+    || (maxViolationDegrees === 0) !== (computedMax === 0)
+  ) evaluationProtocolError();
 
   if (diagnostic.status === 'available') {
     if (diagnostic.reason !== null || diagnostic.bones.length === 0) evaluationProtocolError();

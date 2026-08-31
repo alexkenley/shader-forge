@@ -1010,6 +1010,9 @@ try {
     ['jointLimits nonfinite maxViolationDegrees', (id) => mutateRestEvaluation(id, (evaluation) => {
       evaluation.diagnostics.jointLimits.maxViolationDegrees = Number.POSITIVE_INFINITY;
     })],
+    ['jointLimits negative-zero maxViolationDegrees', (id) => mutateRestEvaluation(id, (evaluation) => {
+      evaluation.diagnostics.jointLimits.maxViolationDegrees = -0;
+    })],
     ['jointLimits nonfinite swingDegrees', (id) => withJointLimits(
       restEvaluation(id),
       availableJointLimits([jointLimitBone('hand_r', { swingDegrees: Number.NaN })]),
@@ -1039,6 +1042,28 @@ try {
         swingViolationDegrees: 0.0000005,
         withinLimits: false,
       })]),
+    )],
+    ['jointLimits sub-tolerance nonzero reported as pass', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r', {
+          swingViolationDegrees: 0.0000005,
+          withinLimits: true,
+        })]),
+        maxViolationDegrees: 0.0000005,
+        withinLimits: true,
+      },
+    )],
+    ['jointLimits aggregate sub-tolerance nonzero', (id) => withJointLimits(
+      restEvaluation(id),
+      {
+        ...availableJointLimits([jointLimitBone('hand_r')]),
+        maxViolationDegrees: 0.0000005,
+      },
+    )],
+    ['jointLimits negative-zero twist degrees', (id) => withJointLimits(
+      restEvaluation(id),
+      availableJointLimits([jointLimitBone('hand_r', { twistDegrees: -0 })]),
     )],
     ['jointLimits bone violation does not match angles', (id) => withJointLimits(
       restEvaluation(id),

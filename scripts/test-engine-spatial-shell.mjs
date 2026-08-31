@@ -750,6 +750,26 @@ for (const [label, mutate] of [
   ['jointLimits twistMin out of bounds', (report) => {
     report.diagnostics.jointLimits.bones[0].twistMinDegrees = -181;
   }],
+  ['jointLimits reversed twist range', (report) => {
+    report.diagnostics.jointLimits.bones[0].twistMinDegrees = 80;
+    report.diagnostics.jointLimits.bones[0].twistMaxDegrees = -80;
+  }],
+  ['jointLimits sub-tolerance label flip', (report) => {
+    report.diagnostics.jointLimits.bones[0].swingViolationDegrees = 0.0000005;
+    report.diagnostics.jointLimits.bones[0].withinLimits = false;
+    report.diagnostics.jointLimits.violationCount = 1;
+    report.diagnostics.jointLimits.maxViolationDegrees = 0.0000005;
+    report.diagnostics.jointLimits.withinLimits = false;
+  }],
+  ['jointLimits sub-tolerance nonzero reported as pass', (report) => {
+    report.diagnostics.jointLimits.bones[0].swingViolationDegrees = 0.0000005;
+    report.diagnostics.jointLimits.bones[0].withinLimits = true;
+    report.diagnostics.jointLimits.maxViolationDegrees = 0.0000005;
+    report.diagnostics.jointLimits.withinLimits = true;
+  }],
+  ['jointLimits aggregate sub-tolerance nonzero', (report) => {
+    report.diagnostics.jointLimits.maxViolationDegrees = 0.0000005;
+  }],
   ['jointLimits oversized bones', (report) => {
     report.diagnostics.jointLimits = availableJointLimits([
       jointLimitBone('root'),
@@ -782,6 +802,18 @@ assert.equal(
   schematic.isSpatialAttachmentEvaluation(skippedOrderJointLimits),
   false,
   'joint-limit ids must consume evaluation.bones in stable order',
+);
+const duplicateEvaluationBone = twoBoneRestEvaluation();
+duplicateEvaluationBone.bones[1].id = 'root';
+duplicateEvaluationBone.bones[1].role = 'root';
+duplicateEvaluationBone.diagnostics.jointLimits = availableJointLimits([
+  jointLimitBone('root'),
+  jointLimitBone('root'),
+]);
+assert.equal(
+  schematic.isSpatialAttachmentEvaluation(duplicateEvaluationBone),
+  false,
+  'duplicate evaluation bone ids must fail closed',
 );
 
 assert.match(appSource, /activeTab === 'Assets'[\s\S]*SpatialAttachmentEditorView/);
@@ -887,6 +919,8 @@ assert.match(schematicSource, /no_joint_limits_authored/);
 assert.match(schematicSource, /Joint-limit bone diagnostics/);
 assert.match(schematicSource, /Swing violation/);
 assert.match(schematicSource, /Twist violation/);
+assert.match(schematicSource, /<th>Status<\/th>/);
+assert.match(schematicSource, /bone\.withinLimits \? 'PASS' : 'FAIL'/);
 assert.doesNotMatch(schematicSource, /joint_limit_evaluation_not_integrated/);
 assert.match(clientSource, /type SpatialBoneJointLimitDiagnostic/);
 assert.match(clientSource, /type SpatialUnavailableJointLimitsDiagnostic/);
