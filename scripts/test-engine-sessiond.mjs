@@ -1242,6 +1242,10 @@ try {
   );
   assert.equal(applyBeforeApprove.status, 409);
   assert.match(applyBeforeApprove.payload.error, /cannot be applied from state previewed/i);
+  assert.equal(applyBeforeApprove.payload.code, 'operation_state_conflict');
+  assert.equal(applyBeforeApprove.payload.operation.id, previewed.id);
+  assert.equal(applyBeforeApprove.payload.operation.state, 'previewed');
+  assert.equal('proposedContent' in applyBeforeApprove.payload.operation, false);
 
   const undoBeforeApply = await requestOperation(
     `/api/operations/${encodeURIComponent(previewed.id)}/undo`,
@@ -1250,6 +1254,9 @@ try {
   );
   assert.equal(undoBeforeApply.status, 409);
   assert.match(undoBeforeApply.payload.error, /cannot be undone from state previewed/i);
+  assert.equal(undoBeforeApply.payload.code, 'operation_state_conflict');
+  assert.equal(undoBeforeApply.payload.operation.id, previewed.id);
+  assert.equal(undoBeforeApply.payload.operation.state, 'previewed');
 
   const approvedResult = await requestOperation(
     `/api/operations/${encodeURIComponent(previewed.id)}/approve`,
@@ -1269,6 +1276,9 @@ try {
   );
   assert.equal(approveAgain.status, 409);
   assert.match(approveAgain.payload.error, /cannot be approved from state approved/i);
+  assert.equal(approveAgain.payload.code, 'operation_state_conflict');
+  assert.equal(approveAgain.payload.operation.id, previewed.id);
+  assert.equal(approveAgain.payload.operation.state, 'approved');
 
   const conflictWorkspaceFile = path.join(operationRoot, existingFilePath);
   await fs.writeFile(conflictWorkspaceFile, 'external change\n', 'utf8');

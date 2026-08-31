@@ -1840,6 +1840,7 @@ export class OperationStore {
         throw createStoreError(
           409,
           `Operation ${record.id} cannot be applied from state ${record.state}.`,
+          { code: 'operation_state_conflict', operation: operationView(record) },
         );
       }
 
@@ -1970,6 +1971,7 @@ export class OperationStore {
         throw createStoreError(
           409,
           `Operation ${record.id} cannot be undone from state ${record.state}.`,
+          { code: 'operation_state_conflict', operation: operationView(record) },
         );
       }
 
@@ -2134,6 +2136,7 @@ export class OperationStore {
         throw createStoreError(
           409,
           `Operation ${record.id} cannot be ${eventType} from state ${record.state}.`,
+          { code: 'operation_state_conflict', operation: operationView(record) },
         );
       }
 

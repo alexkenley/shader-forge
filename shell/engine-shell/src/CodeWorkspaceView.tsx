@@ -5,9 +5,11 @@ import {
   bindCodeTab,
   canMutateCodeTab,
   codeTabId,
+  hasCodeWorkspaceAuthority,
   previewAuthority,
   retainTabsForSessionChange,
   shouldAcceptCodeRead,
+  typedCodeOperationFromConflict,
   type CodeWorkspaceTab,
 } from './code-workspace-state';
 import {
@@ -97,22 +99,34 @@ function updateTreeNode(nodes: TreeNode[], path: string, updater: (node: TreeNod
   });
 }
 
-function revisionConflictFromError(error: unknown, tabId: string, operationId: string): CodeRevisionConflict | null {
+function revisionConflictFromError(
+  error: unknown,
+  { tabId, operationId, path }: { tabId: string; operationId: string; path: string },
+): CodeRevisionConflict | null {
   if (!(error instanceof SessiondRequestError) || error.status !== 409) {
     return null;
   }
   if (!error.conflict || typeof error.conflict !== 'object') {
     return null;
   }
-  const conflict = error.conflict as { code?: string; type?: string; path?: string; expectedRevision?: string; actualRevision?: string };
-  const conflictCode = conflict.code || conflict.type || error.code;
-  if (conflictCode !== 'revision_conflict') {
+  const conflict = error.conflict as {
+    code?: string;
+    path?: string;
+    expectedRevision?: string;
+    actualRevision?: string;
+    operationId?: string;
+  };
+  if (
+    conflict.code !== 'revision_conflict'
+    || (conflict.path && conflict.path !== path)
+    || (conflict.operationId && operationId && conflict.operationId !== operationId)
+  ) {
     return null;
   }
   return {
     tabId,
-    operationId,
-    code: conflictCode,
+    operationId: conflict.operationId || operationId,
+    code: conflict.code,
     path: conflict.path || '',
     expectedRevision: conflict.expectedRevision || '',
     actualRevision: conflict.actualRevision || '',
@@ -217,6 +231,17 @@ export function CodeWorkspaceView({
     setTabs((current) => current.map((tab) => (tab.id === tabId ? updater(tab) : tab)));
   }
 
+  function activateTab(tabId: string) {
+    intendedOpenRef.current = tabId;
+    if (activeTabIdRef.current !== tabId) {
+      activeTabIdRef.current = tabId;
+      actionRequestRef.current += 1;
+      operationEventRequestRef.current += 1;
+      setBusy(false);
+    }
+    setActiveTabId(tabId);
+  }
+
   function handleDraftChange(tabId: string, draft: string) {
     setTabs((current) => current.map((tab) => {
       if (tab.id !== tabId) {
@@ -297,7 +322,7 @@ export function CodeWorkspaceView({
     intendedOpenRef.current = tabId;
     const existing = tabsRef.current.find((tab) => tab.id === tabId);
     if (existing) {
-      setActiveTabId(existing.id);
+      activateTab(existing.id);
       setStatus(existing.detached
         ? 'Detached unsaved tab kept until closed. It cannot preview under the current workspace.'
         : `Opened ${path}.`);
@@ -306,11 +331,12 @@ export function CodeWorkspaceView({
 
     const requestId = (readRequestRef.current.get(tabId) || 0) + 1;
     readRequestRef.current.set(tabId, requestId);
+    const actionGeneration = ++actionRequestRef.current;
     setBusy(true);
     setError('');
     try {
       const result = await readFile(sessionId, path);
-      if (activeSessionIdRef.current !== sessionId) {
+      if (activeSessionIdRef.current !== sessionId || intendedOpenRef.current !== tabId) {
         return;
       }
       const openTabIds = tabsRef.current.map((tab) => tab.id).concat(tabId);
@@ -343,20 +369,21 @@ export function CodeWorkspaceView({
         }
         return [...current, nextTab];
       });
-      if (intendedOpenRef.current !== tabId) {
-        return;
-      }
-      setActiveTabId(nextTab.id);
+      activateTab(nextTab.id);
       setCursor({ line: 1, column: 1, lineCount: countLines(result.content) });
       setStatus(`Loaded ${result.path} at ${result.revision}.`);
     } catch (caught) {
-      if (readRequestRef.current.get(tabId) !== requestId) {
+      if (
+        readRequestRef.current.get(tabId) !== requestId
+        || activeSessionIdRef.current !== sessionId
+        || intendedOpenRef.current !== tabId
+      ) {
         return;
       }
       setError(errorMessage(caught));
       setStatus('The selected file could not be opened.');
     } finally {
-      if (readRequestRef.current.get(tabId) === requestId) {
+      if (actionRequestRef.current === actionGeneration) {
         setBusy(false);
       }
     }
@@ -383,6 +410,7 @@ export function CodeWorkspaceView({
       resultPath: result.path,
       expectedPath: tab.path,
       activeTabId: activeTabIdRef.current,
+      requireActiveTab: true,
     })) {
       return null;
     }
@@ -403,7 +431,9 @@ export function CodeWorkspaceView({
   }
 
   function closeTab(tabId: string) {
+    readRequestRef.current.set(tabId, (readRequestRef.current.get(tabId) || 0) + 1);
     const remaining = tabsRef.current.filter((tab) => tab.id !== tabId);
+    tabsRef.current = remaining;
     const nextActiveTabId = activeTabIdRef.current === tabId
       ? remaining[remaining.length - 1]?.id || ''
       : activeTabIdRef.current;
@@ -412,7 +442,7 @@ export function CodeWorkspaceView({
     if (operationRef.current && codeTabId(operationRef.current.sessionId, operationRef.current.path) === tabId) {
       setActiveOperation(null);
     }
-    setActiveTabId(nextActiveTabId);
+    activateTab(nextActiveTabId);
     if (conflict?.tabId === tabId) {
       setConflict(null);
     }
@@ -427,11 +457,18 @@ export function CodeWorkspaceView({
     const requestId = ++actionRequestRef.current;
     const authoritySessionId = activeSessionIdRef.current;
     const authorityTabId = activeTabIdRef.current;
-    const stillCurrent = () => (
-      actionRequestRef.current === requestId
-      && activeSessionIdRef.current === authoritySessionId
-      && activeTabIdRef.current === authorityTabId
-    );
+    const authorityTab = tabsRef.current.find((tab) => tab.id === authorityTabId) || null;
+    const authorityOperationId = operationRef.current?.id || '';
+    const stillCurrent = () => hasCodeWorkspaceAuthority({
+      requestId,
+      latestRequestId: actionRequestRef.current,
+      sessionId: authoritySessionId,
+      activeSessionId: activeSessionIdRef.current,
+      tabId: authorityTabId,
+      activeTabId: activeTabIdRef.current,
+      operationId: authorityOperationId,
+      activeOperationId: operationRef.current?.id || '',
+    });
     setBusy(true);
     setError('');
     try {
@@ -440,25 +477,22 @@ export function CodeWorkspaceView({
       if (!stillCurrent()) {
         return;
       }
-      const nextConflict = revisionConflictFromError(
-        caught,
-        authorityTabId,
-        operationRef.current?.id || '',
-      );
+      const nextConflict = revisionConflictFromError(caught, {
+        tabId: authorityTabId,
+        operationId: authorityOperationId,
+        path: authorityTab?.path || '',
+      });
       if (nextConflict) {
         setConflict(nextConflict);
         setStatus('Revision conflict. The unsaved draft was preserved. Reload the baseline, then Re-preview. The editor was not overwritten.');
       }
-      if (caught instanceof SessiondRequestError && caught.operation) {
-        setActiveOperation(caught.operation);
-      } else if (caught instanceof SessiondRequestError && caught.status === 409 && operationRef.current) {
-        const authoritative = await fetchOperation(operationRef.current.id).catch(() => null);
-        if (!stillCurrent()) {
-          return;
-        }
-        if (authoritative) {
-          setActiveOperation(authoritative);
-        }
+      const authoritative = typedCodeOperationFromConflict<EngineOperation>(caught, {
+        operationId: authorityOperationId,
+        sessionId: authoritySessionId,
+        path: authorityTab?.path || '',
+      });
+      if (authoritative) {
+        setActiveOperation(authoritative);
       }
       setError(errorMessage(caught));
     } finally {
@@ -529,7 +563,10 @@ export function CodeWorkspaceView({
         throw new Error('Detached or foreign-session tabs cannot mutate under the current workspace authority.');
       }
       const expectedDraft = action === 'apply'
-        ? operationBindingRef.current?.previewDraft || ''
+        ? operationBindingRef.current?.operationId === current.id
+          && operationBindingRef.current.tabId === tab?.id
+          ? operationBindingRef.current.previewDraft
+          : ''
         : tab?.baseline || '';
       const result = await transitionOperation(current.id, action, { actor: engineShellActor });
       if (!stillCurrent() || operationRef.current?.id !== current.id) {
@@ -584,8 +621,11 @@ export function CodeWorkspaceView({
     setError('');
     setActiveOperation(null);
     const retained = retainTabsForSessionChange(tabsRef.current, nextSessionId);
+    tabsRef.current = retained;
     setTabs(retained);
-    setActiveTabId(retained.find((tab) => tab.id === activeTabIdRef.current)?.id || retained[0]?.id || '');
+    const nextActiveTabId = retained.find((tab) => tab.id === activeTabIdRef.current)?.id || retained[0]?.id || '';
+    activeTabIdRef.current = nextActiveTabId;
+    setActiveTabId(nextActiveTabId);
     if (!nextSessionId) {
       setTree([]);
       setStatus('Select a workspace to browse and edit files.');
@@ -639,8 +679,22 @@ export function CodeWorkspaceView({
     const expectedOperationId = current.id;
     const expectedSessionId = current.sessionId;
     const expectedPath = current.path;
+    const expectedTabId = codeTabId(expectedSessionId, expectedPath);
+    const stillCurrent = () => hasCodeWorkspaceAuthority({
+      requestId,
+      latestRequestId: operationEventRequestRef.current,
+      sessionId: expectedSessionId,
+      activeSessionId: activeSessionIdRef.current,
+      tabId: expectedTabId,
+      activeTabId: activeTabIdRef.current,
+      operationId: expectedOperationId,
+      activeOperationId: operationRef.current?.id || '',
+    });
+    if (!stillCurrent()) {
+      return;
+    }
     void fetchOperation(expectedOperationId).then(async (authoritative) => {
-      if (operationEventRequestRef.current !== requestId || operationRef.current?.id !== expectedOperationId) {
+      if (!stillCurrent()) {
         return;
       }
       if (
@@ -691,22 +745,29 @@ export function CodeWorkspaceView({
         return;
       }
       const expectedDraft = authoritative.state === 'applied'
-        ? operationBindingRef.current?.previewDraft ?? tab.baseline
+        && operationBindingRef.current?.operationId === expectedOperationId
+        && operationBindingRef.current.tabId === expectedTabId
+        ? operationBindingRef.current.previewDraft
         : tab.baseline;
       await rereadTab(tab, { replaceDraft: true, expectedDraft });
-      if (operationEventRequestRef.current !== requestId || operationRef.current?.id !== expectedOperationId) {
+      if (!stillCurrent()) {
         return;
       }
       if (authoritative.state === 'undone') {
         setActiveOperation(null);
       }
     }).catch((caught) => {
-      if (operationEventRequestRef.current !== requestId) {
+      if (!stillCurrent()) {
         return;
       }
       setError(`Could not refresh the active file operation: ${errorMessage(caught)}`);
     });
-  }, [operationEventEpoch]);
+    return () => {
+      if (operationEventRequestRef.current === requestId) {
+        operationEventRequestRef.current += 1;
+      }
+    };
+  }, [operationEventEpoch, activeTabId]);
 
   function handleTreeActivate(node: TreeNode) {
     if (!activeSession) {
@@ -749,7 +810,7 @@ export function CodeWorkspaceView({
     event.preventDefault();
     const next = tabs[nextIndex];
     intendedOpenRef.current = next.id;
-    setActiveTabId(next.id);
+    activateTab(next.id);
     const button = event.currentTarget.querySelector<HTMLElement>(`[data-code-tab-id="${CSS.escape(next.id)}"]`);
     button?.focus();
   }
@@ -849,8 +910,7 @@ export function CodeWorkspaceView({
                   className="code-workspace__tab-button"
                   data-code-tab-id={tab.id}
                   onClick={() => {
-                    intendedOpenRef.current = tab.id;
-                    setActiveTabId(tab.id);
+                    activateTab(tab.id);
                   }}
                   role="tab"
                   tabIndex={selected ? 0 : -1}

@@ -95,6 +95,61 @@ assert.equal(helper.shouldAcceptCodeRead({
   expectedPath: 'new.md',
   activeTabId: 'sess-b:new.md',
 }), false, 'late reads from another file/session must not replace the active tab');
+assert.equal(helper.shouldAcceptCodeRead({
+  requestId: 2,
+  latestRequestId: 2,
+  tabId: 'sess-a:notes/readme.md',
+  openTabIds: ['sess-a:notes/readme.md'],
+  resultSessionId: 'sess-a',
+  expectedSessionId: 'sess-a',
+  resultPath: 'notes/readme.md',
+  expectedPath: 'notes/readme.md',
+  activeTabId: 'sess-a:other.md',
+  requireActiveTab: true,
+}), false, 'action readbacks must not update an inactive tab');
+
+const codeAuthority = {
+  requestId: 7,
+  latestRequestId: 7,
+  sessionId: 'sess-a',
+  activeSessionId: 'sess-a',
+  tabId: 'sess-a:notes/readme.md',
+  activeTabId: 'sess-a:notes/readme.md',
+  operationId: 'op-a',
+  activeOperationId: 'op-a',
+};
+assert.equal(helper.hasCodeWorkspaceAuthority(codeAuthority), true);
+assert.equal(helper.hasCodeWorkspaceAuthority({ ...codeAuthority, latestRequestId: 8 }), false);
+assert.equal(helper.hasCodeWorkspaceAuthority({ ...codeAuthority, activeSessionId: 'sess-b' }), false);
+assert.equal(helper.hasCodeWorkspaceAuthority({ ...codeAuthority, activeTabId: 'sess-a:other.md' }), false);
+assert.equal(helper.hasCodeWorkspaceAuthority({ ...codeAuthority, activeOperationId: 'op-b' }), false);
+
+const authoritativeOperation = { id: 'op-a', sessionId: 'sess-a', path: 'notes/readme.md', state: 'approved' };
+const expectedOperationAuthority = { operationId: 'op-a', sessionId: 'sess-a', path: 'notes/readme.md' };
+assert.deepEqual(helper.typedCodeOperationFromConflict({
+  status: 409,
+  code: 'operation_state_conflict',
+  operation: authoritativeOperation,
+}, expectedOperationAuthority), authoritativeOperation);
+assert.deepEqual(helper.typedCodeOperationFromConflict({
+  status: 409,
+  conflict: { code: 'revision_conflict' },
+  operation: authoritativeOperation,
+}, expectedOperationAuthority), authoritativeOperation);
+assert.equal(helper.typedCodeOperationFromConflict({
+  status: 409,
+  operation: authoritativeOperation,
+}, expectedOperationAuthority), null, 'an untyped 409 must not replace operation state');
+assert.equal(helper.typedCodeOperationFromConflict({
+  status: 409,
+  code: 'operation_state_conflict',
+  operation: { ...authoritativeOperation, id: 'op-b' },
+}, expectedOperationAuthority), null, 'a conflict for another operation must not replace the active operation');
+assert.equal(helper.typedCodeOperationFromConflict({
+  status: 409,
+  code: 'operation_state_conflict',
+  operation: { ...authoritativeOperation, path: 'notes/other.md' },
+}, expectedOperationAuthority), null, 'a conflict for another path must not cross tab authority');
 
 const edited = { ...dirty, draft: 'newer unsaved' };
 assert.equal(helper.shouldRefreshCodeBaseline(edited, 'hello world\n'), false);
@@ -171,9 +226,16 @@ assert.match(viewSource, /listFiles\(sessionId, '\.'\)/);
 assert.match(viewSource, /expandDirectory/);
 assert.match(viewSource, /listFiles\(sessionId, path\)/);
 assert.match(viewSource, /readFile\(sessionId, path\)/);
-assert.match(viewSource, /status === 409/);
+assert.match(viewSource, /status !== 409/);
 assert.match(viewSource, /!error\.conflict \|\| typeof error\.conflict !== 'object'/);
-assert.match(viewSource, /conflictCode !== 'revision_conflict'/);
+assert.match(viewSource, /conflict\.code !== 'revision_conflict'/);
+assert.match(stateSource, /record\.code !== 'operation_state_conflict'/);
+assert.doesNotMatch(viewSource, /error\.status === 409 && operationRef\.current/);
+assert.match(viewSource, /hasCodeWorkspaceAuthority/);
+assert.match(viewSource, /typedCodeOperationFromConflict<EngineOperation>/);
+assert.match(viewSource, /requireActiveTab: true/);
+assert.match(viewSource, /function activateTab\(tabId: string\)/);
+assert.match(viewSource, /operationEventRequestRef\.current \+= 1/);
 assert.match(viewSource, /Reload/);
 assert.match(viewSource, /Re-preview/);
 assert.match(viewSource, /The unsaved draft was preserved/);
@@ -228,7 +290,7 @@ assert.match(rootPackage, /"test:code-shell": "node scripts\/test-engine-code-sh
 assert.doesNotMatch(shellPackage, /monaco-editor/);
 assert.doesNotMatch(rootPackage, /monaco-editor/);
 assert.doesNotMatch(viewSource, /xterm|Terminal/);
-assert.match(appSource, /const bottomTabs = \['Terminal', 'Logs', 'Output', 'Activity'\] as const;/);
+assert.match(appSource, /const bottomTabs = SHELL_BOTTOM_TABS;/);
 
 console.log('Engine Code shell passed.');
 console.log('- Verified native Code workspace mount, Monaco AMD loader, and no extra editor dependency');

@@ -61,14 +61,72 @@ export function shouldAcceptCodeRead(options: {
   resultPath: string;
   expectedPath: string;
   activeTabId: string;
+  requireActiveTab?: boolean;
 }) {
   if (options.requestId !== options.latestRequestId) {
     return false;
   }
-  if (options.tabId && options.openTabIds.length > 0 && !options.openTabIds.includes(options.tabId) && options.tabId !== options.activeTabId) {
+  if (options.requireActiveTab && options.activeTabId !== options.tabId) {
+    return false;
+  }
+  if (options.tabId && !options.openTabIds.includes(options.tabId)) {
     return false;
   }
   return options.resultSessionId === options.expectedSessionId && options.resultPath === options.expectedPath;
+}
+
+export function hasCodeWorkspaceAuthority(options: {
+  requestId: number;
+  latestRequestId: number;
+  sessionId: string;
+  activeSessionId: string;
+  tabId: string;
+  activeTabId: string;
+  operationId: string;
+  activeOperationId: string;
+}) {
+  return options.requestId === options.latestRequestId
+    && options.sessionId === options.activeSessionId
+    && options.tabId === options.activeTabId
+    && options.operationId === options.activeOperationId;
+}
+
+export function typedCodeOperationFromConflict<T extends { id: string; sessionId: string; path: string }>(
+  error: unknown,
+  expected: { operationId: string; sessionId: string; path: string },
+): T | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  const record = error as {
+    status?: number;
+    code?: string;
+    conflict?: unknown;
+    operation?: T | null;
+  };
+  if (record.status !== 409 || !expected.operationId) {
+    return null;
+  }
+  const conflictCode = record.conflict && typeof record.conflict === 'object'
+    ? (record.conflict as { code?: string }).code
+    : '';
+  if (
+    record.code !== 'operation_state_conflict'
+    && conflictCode !== 'revision_conflict'
+    && conflictCode !== 'code_trust_artifact_conflict'
+  ) {
+    return null;
+  }
+  const candidate = record.operation;
+  if (
+    !candidate
+    || candidate.id !== expected.operationId
+    || candidate.sessionId !== expected.sessionId
+    || candidate.path !== expected.path
+  ) {
+    return null;
+  }
+  return candidate;
 }
 
 export function applyFileReadToTabs(
