@@ -27,7 +27,7 @@ It exists so Shader Forge can ship projects through explicit engine workflows ra
 The first Phase 6.2 checkpoint is now real:
 
 - `tooling/export-presets/default.export-preset.toml` and `release.export-preset.toml` provide source-controlled Debug and Release desktop presets
-- `engine export inspect` resolves that preset, validates the required runtime/authored/cooked roots, reports cooked-asset counts, surfaces last-package metadata, and now calls out whether a runtime build or cooked-asset bake is still needed
+- `engine export inspect` resolves that preset, validates the required runtime/authored/cooked roots, reports cooked-asset counts, surfaces last-package and safe archive-existence metadata, and calls out whether a runtime build or cooked-asset bake is still needed
 - `engine package` now emits a reproducible release-layout scaffold under `build/package/<preset>/`
 - `engine package` now also auto-bakes missing cooked outputs by default, and the package report records those prerequisite actions explicitly
 - the current package layout bundles the runtime binary, packaged authored runtime roots, cooked outputs, launch scripts, the resolved export preset, a runtime-launch manifest, and a package report

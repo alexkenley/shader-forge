@@ -579,6 +579,20 @@ export async function inspectPackagingPreset(rootPath, options = {}) {
   const assetReport = await readJsonIfExists(assetReportPath);
   const lastPackageReport = await readJsonIfExists(packageReportPath);
   const assetSummary = summarizeCookedAssetReport(assetReport);
+  const lastArchiveHook = Array.isArray(lastPackageReport?.hookResults)
+    ? lastPackageReport.hookResults.find((hook) => hook?.id === archiveZipHookId && hook.status === 'completed')
+    : null;
+  let lastPackageArchivePath = null;
+  let lastPackageArchiveExists = false;
+  if (typeof lastArchiveHook?.outputPath === 'string' && trim(lastArchiveHook.outputPath)) {
+    try {
+      const archiveOutput = normalizePackageRoot(resolvedRoot, lastArchiveHook.outputPath, lastArchiveHook.outputPath);
+      lastPackageArchivePath = archiveOutput.relativePath;
+      lastPackageArchiveExists = await pathExists(archiveOutput.absolutePath);
+    } catch {
+      // Ignore an unsafe or malformed path from an edited historical report.
+    }
+  }
 
   const checks = [
     { key: 'runtimeBinaryExists', label: 'runtime binary', path: runtimeBinaryPath },
@@ -639,6 +653,8 @@ export async function inspectPackagingPreset(rootPath, options = {}) {
     physicsBodyCount: assetSummary.physicsBodyCount,
     lastPackageAt: typeof lastPackageReport?.packagedAt === 'string' ? lastPackageReport.packagedAt : null,
     lastPackageFileCount: Number.isFinite(lastPackageReport?.fileCount) ? Number(lastPackageReport.fileCount) : 0,
+    lastPackageArchivePath,
+    lastPackageArchiveExists,
     needsRuntimeBuild: !existence.runtimeBinaryExists,
     needsAssetBake: !existence.cookedRootExists || !assetReport,
     ready: warnings.length === 0,

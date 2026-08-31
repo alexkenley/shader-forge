@@ -950,6 +950,12 @@ function renderRightPanel(
                   <dt>Last package</dt>
                   <dd>{packageSummary.lastPackageAt ? `${formatSessionTimestamp(packageSummary.lastPackageAt)} · ${packageSummary.lastPackageFileCount} files` : 'not packaged yet'}</dd>
                 </div>
+                <div>
+                  <dt>Archive</dt>
+                  <dd>{packageSummary.lastPackageArchivePath
+                    ? `${packageSummary.lastPackageArchiveExists ? 'ready' : 'missing'} · ${packageSummary.lastPackageArchivePath}`
+                    : 'not generated yet'}</dd>
+                </div>
               </dl>
               <div className="inline-actions">
                 <button className="ghost-button ghost-button--sm" disabled={!activeSession || packageBusy} onClick={onRefreshPackaging} type="button">

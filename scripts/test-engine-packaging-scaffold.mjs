@@ -95,6 +95,18 @@ assert.equal(writtenPackageReport.prerequisiteActions.length, 1);
 const inspectAfterBake = await runCli(['export', 'inspect', '--root', tempProjectRoot]);
 assert.equal(inspectAfterBake.ready, true);
 assert.equal(inspectAfterBake.needsAssetBake, false);
+assert.equal(inspectAfterBake.lastPackageArchivePath, 'build/package/default.zip');
+assert.equal(inspectAfterBake.lastPackageArchiveExists, true);
+
+await fs.rm(path.join(tempProjectRoot, inspectAfterBake.lastPackageArchivePath));
+const inspectAfterArchiveRemoval = await runCli(['export', 'inspect', '--root', tempProjectRoot]);
+assert.equal(inspectAfterArchiveRemoval.lastPackageArchivePath, 'build/package/default.zip');
+assert.equal(inspectAfterArchiveRemoval.lastPackageArchiveExists, false);
+writtenPackageReport.hookResults.find((hook) => hook.id === 'archive_zip').outputPath = '../../outside.zip';
+await fs.writeFile(path.join(tempProjectRoot, packageReport.reportPath), JSON.stringify(writtenPackageReport, null, 2), 'utf8');
+const inspectAfterUnsafeArchivePath = await runCli(['export', 'inspect', '--root', tempProjectRoot]);
+assert.equal(inspectAfterUnsafeArchivePath.lastPackageArchivePath, null);
+assert.equal(inspectAfterUnsafeArchivePath.lastPackageArchiveExists, false);
 
 const releaseInspect = await runCli(['export', 'inspect', '--root', tempProjectRoot, '--preset', 'release']);
 assert.equal(releaseInspect.ready, true);
@@ -148,7 +160,7 @@ try {
 
   console.log('Engine packaging scaffold passed.');
   console.log('- Verified default and release export presets plus missing cooked-output prep state through the engine CLI and engine_sessiond');
-  console.log('- Verified packaging auto-bakes cooked outputs when needed, records prerequisite actions, emits the release layout, and executes the default ZIP archive hook');
+  console.log('- Verified packaging auto-bakes cooked outputs, executes ZIP hooks, and safely reports present, missing, or malformed historical archives');
 } finally {
   await service.close();
 }

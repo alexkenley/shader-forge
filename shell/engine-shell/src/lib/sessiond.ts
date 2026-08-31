@@ -385,6 +385,8 @@ export type PackageInspectSummary = {
   physicsBodyCount: number;
   lastPackageAt: string | null;
   lastPackageFileCount: number;
+  lastPackageArchivePath: string | null;
+  lastPackageArchiveExists: boolean;
   needsRuntimeBuild: boolean;
   needsAssetBake: boolean;
   ready: boolean;

@@ -925,7 +925,7 @@ Scope:
 
 Current checkpoint:
 - source-controlled `default` and `release` export presets now provide Debug and Release desktop package configurations
-- `engine export inspect` now resolves the effective preset, validates runtime/authored/cooked prerequisites, reports cooked-asset counts, surfaces the last package summary, and explicitly reports whether runtime build or asset-bake prep is still needed
+- `engine export inspect` now resolves the effective preset, validates runtime/authored/cooked prerequisites, reports cooked-asset counts, surfaces the last package plus safe archive-existence summary, and explicitly reports whether runtime build or asset-bake prep is still needed
 - `engine package` now emits the first reproducible release-layout scaffold under `build/package/<preset>/`
 - `engine package` now auto-bakes missing cooked outputs by default and records those prerequisite actions in the package report
 - the current release layout bundles the runtime binary, packaged authored runtime roots, bundled cooked outputs, launch scripts, the resolved export preset, a runtime-launch manifest, and a package report
