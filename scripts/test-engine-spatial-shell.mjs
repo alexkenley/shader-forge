@@ -38,7 +38,7 @@ const schematicCompiled = ts.transpileModule(schematicSource, {
 );
 const schematic = await import(`data:text/javascript;base64,${Buffer.from(schematicCompiled).toString('base64')}`);
 const evaluateClientSource = /export async function evaluateSpatialAttachment\([\s\S]*?(?=export async function evaluateSpatialAttachmentSample)/.exec(clientSource)?.[0] || '';
-const evaluateSampleClientSource = /export async function evaluateSpatialAttachmentSample[\s\S]*?(?=export async function previewSpatialAttachment)/.exec(clientSource)?.[0] || '';
+const evaluateSampleClientSource = /export async function evaluateSpatialAttachmentSample[\s\S]*?(?=export async function )/.exec(clientSource)?.[0] || '';
 const rereadSource = /async function reread[\s\S]*?(?=\n  async function closeConnection)/.exec(viewSource)?.[0] || '';
 const sampledFetchSource = /async function refreshSampledEvaluation[\s\S]*?(?=\n  async function reread)/.exec(viewSource)?.[0] || '';
 const evaluationPointsSource = /function evaluationPoints[\s\S]*?(?=\nfunction CoordinateMarker)/.exec(schematicSource)?.[0] || '';
@@ -1009,7 +1009,7 @@ assert.equal(
 );
 
 assert.match(appSource, /activeTab === 'Assets'[\s\S]*SpatialAttachmentEditorView/);
-assert.match(appSource, /activeTab === 'World'[\s\S]*SceneEditorView/);
+assert.match(appSource, /className="scene-editor-host" hidden=\{showGuide \|\| activeCenterTab !== 'World'\}[\s\S]*SceneEditorView/);
 assert.equal((appSource.match(/subscribeSessiondEvents\(/g) || []).length, 1, 'App must retain one shared SSE subscription');
 assert.match(appSource, /const \[operationEventEpoch, setOperationEventEpoch\] = useState\(0\)/);
 assert.match(appSource, /setOperationEventEpoch\(\(current\) => current \+ 1\)/);
@@ -1202,7 +1202,7 @@ assert.match(stylesSource, /@media \(max-width: 1100px\)[\s\S]*?\.spatial-editor
 assert.match(stylesSource, /@media \(max-width: 1100px\)[\s\S]*?\.spatial-actions\s*\{[^}]*position:\s*static;/s);
 const schematicStyles = stylesSource.slice(
   stylesSource.indexOf('.spatial-rest-schematic {'),
-  stylesSource.indexOf('/* Activity */'),
+  stylesSource.indexOf('/* Native Code workspace */'),
 );
 assert.doesNotMatch(schematicStyles, /font-size:\s*(?:9|10)px/, 'schematic user-facing text must be at least 11px');
 
