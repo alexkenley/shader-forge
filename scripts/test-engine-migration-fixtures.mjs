@@ -289,7 +289,8 @@ const godotRun = runCli([
 ]);
 assert.match(godotRun.stdout, /Source engine: godot/);
 assert.match(godotRun.stdout, /Migration conversion run complete\./);
-assert.match(godotRun.stdout, /Mapped scene entities: 3/);
+assert.match(godotRun.stdout, /Mapped scene entities: 4/);
+assert.match(godotRun.stdout, /Mapped prefab components: 2/);
 const godotRoot = path.join(tempRoot, 'godot-lane');
 const godotManifest = fs.readFileSync(path.join(godotRoot, 'migration-manifest.toml'), 'utf8');
 const godotReport = fs.readFileSync(path.join(godotRoot, 'report.toml'), 'utf8');
@@ -303,16 +304,17 @@ assert.match(godotManifest, /conversion_mode = "project_skeleton_conversion"/);
 assert.match(godotManifest, /\[startup_scene\][\s\S]*source_value = "res:\/\/scenes\/main\.tscn"/);
 assert.match(godotManifest, /\[startup_scene\][\s\S]*resolved_source_path = "scenes\/main\.tscn"/);
 assert.match(godotManifest, /\[startup_scene\][\s\S]*status = "converted"/);
-assert.match(godotManifest, /mapped_scene_entities = 3/);
-assert.match(godotReport, /mapped_scene_entities = 3/);
-assert.match(godotManifest, /mapped_prefab_components = 1/);
-assert.match(godotReport, /mapped_prefab_components = 1/);
+assert.match(godotManifest, /mapped_scene_entities = 4/);
+assert.match(godotReport, /mapped_scene_entities = 4/);
+assert.match(godotManifest, /mapped_prefab_components = 2/);
+assert.match(godotReport, /mapped_prefab_components = 2/);
 assert.match(godotScene, /# migration_source_node = "Main\/Player"[\s\S]*\[entity\.main_main_player_instance\]/);
 assert.match(godotScene, /\[entity\.main_main_player_instance\][\s\S]*parent = "main_root_instance"/);
 assert.match(godotScene, /\[entity\.main_main_player_instance\][\s\S]*position = "1, 0\.5, -2"/);
 assert.match(godotScene, /\[entity\.main_main_player_instance\][\s\S]*rotation = "0, 90, 0"/);
 assert.match(godotScene, /\[entity\.main_main_player_camera_instance\][\s\S]*parent = "main_main_player_instance"/);
 assert.match(godotScene, /\[entity\.main_main_player_camera_instance\][\s\S]*position = "0, 1\.6, 3"/);
+assert.match(godotScene, /\[entity\.main_main_player_collider_instance\][\s\S]*parent = "main_main_player_instance"[\s\S]*position = "0, 0\.9, 0"/);
 assert.ok(
   fs.readdirSync(path.join(godotRoot, 'shader-forge-project', 'content', 'scenes', 'migrated', 'godot')).some((name) => name.endsWith('.scene.toml')),
   'Expected Godot migrated scene output.',
@@ -328,6 +330,10 @@ assert.match(
 assert.match(
   fs.readFileSync(path.join(godotRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'godot', 'main_main_player_camera.prefab.toml'), 'utf8'),
   /# migration_source_type = "Camera3D"[\s\S]*spawn_tag = "camera3d"[\s\S]*\[component\.camera\][\s\S]*vertical_fov_degrees = 75[\s\S]*near_meters = 0\.05[\s\S]*far_meters = 4000/,
+);
+assert.match(
+  fs.readFileSync(path.join(godotRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'godot', 'main_main_player_collider.prefab.toml'), 'utf8'),
+  /# migration_source_type = "CollisionShape3D"[\s\S]*# migration_source_collision_resource_id = "BoxShape3D_player"[\s\S]*spawn_tag = "collisionshape3d"[\s\S]*\[component\.collision\][\s\S]*center = \[0, 0, 0\][\s\S]*dimensions = \[0\.8, 1\.8, 0\.6\]/,
 );
 assert.match(
   fs.readFileSync(path.join(godotRoot, 'shader-forge-project', 'content', 'data', 'migrated', 'godot', 'runtime_bootstrap.data.toml'), 'utf8'),
@@ -373,7 +379,7 @@ const collidingGodotEntityIds = [...collidingGodotScene.matchAll(/^\[entity\.(ma
 assert.equal(collidingGodotPrefabNames.length, 2, 'Normalized Godot node-name collisions must retain both prefabs.');
 assert.equal(collidingGodotEntityIds.length, 2, 'Normalized Godot node-name collisions must retain both entities.');
 assert.equal(new Set(collidingGodotEntityIds).size, 2, 'Colliding Godot node names must receive distinct deterministic entity ids.');
-assert.match(fs.readFileSync(path.join(collidingGodotRoot, 'migration-manifest.toml'), 'utf8'), /mapped_scene_entities = 5/);
+assert.match(fs.readFileSync(path.join(collidingGodotRoot, 'migration-manifest.toml'), 'utf8'), /mapped_scene_entities = 6/);
 assert.ok(
   fs.existsSync(path.join(collidingGodotProjectRoot, 'content', 'scenes', 'migrated', 'godot', 'binary.scene.toml')),
   'Binary Godot scenes must retain the existing reviewable placeholder without inflating mapped entity coverage.',
@@ -516,4 +522,4 @@ fs.rmSync(tempRoot, { recursive: true, force: true });
 console.log('Engine migration fixtures harness passed.');
 console.log(`- Verified migration fixtures under ${path.join(repoRoot, 'fixtures', 'migration')}`);
 console.log(`- Verified CLI migration detect/report surfaces through ${cliPath}`);
-console.log('- Verified normalized migration outputs, Unity/Godot hierarchy and transforms, Unity component/script provenance, and both Unreal conversion lanes');
+console.log('- Verified normalized migration outputs, Unity/Godot hierarchy, transforms, component provenance, Unity script bindings, and both Unreal conversion lanes');

@@ -529,7 +529,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     return [
       engine === 'godot'
-        ? `Review mapped Godot text-scene hierarchy, explicit transforms, and supported perspective Camera3D optics under ${targetRoots.content_scenes}; transform matrices, instanced resources, and non-camera component payloads remain manual.`
+        ? `Review mapped Godot text-scene hierarchy, explicit transforms, perspective Camera3D optics, and CollisionShape3D BoxShape3D geometry under ${targetRoots.content_scenes}; transform matrices, instanced resources, other components, and physics semantics remain manual.`
         : engine === 'unity'
           ? `Review mapped Unity text-YAML hierarchy, local transforms, perspective Camera optics, and BoxCollider geometry under ${targetRoots.content_scenes}; prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
@@ -572,7 +572,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
     if (detection.engine === 'unity') {
       warnings.push('Unity conversion maps text-YAML hierarchy, valid perspective Camera optics, valid BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
-      warnings.push('Godot conversion maps text-scene node hierarchy, explicit Vector3 transforms, and valid perspective Camera3D optics; transform matrices, resource instances, non-camera component payloads, and camera enabled/current semantics are still ahead.');
+      warnings.push('Godot conversion maps text-scene hierarchy, explicit Vector3 transforms, valid perspective Camera3D optics, and valid CollisionShape3D BoxShape3D geometry; transform matrices, resource instances, other component payloads, camera enabled/current semantics, and physics-body/disabled/layer/material semantics are still ahead.');
     }
   }
   return warnings;
@@ -629,7 +629,32 @@ function parseGodotNumber(line, key, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function parseGodotBoxShapes(source) {
+  const shapes = new Map();
+  let resourceId = '';
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = trim(rawLine);
+    if (line.startsWith('[sub_resource ')) {
+      const type = line.match(/\btype="([^"]+)"/)?.[1] || '';
+      resourceId = type === 'BoxShape3D' ? line.match(/\bid="([^"]+)"/)?.[1] || '' : '';
+      continue;
+    }
+    if (line.startsWith('[')) {
+      resourceId = '';
+      continue;
+    }
+    if (!resourceId) continue;
+    const match = line.match(/^size\s*=\s*Vector3\(([^)]+)\)$/);
+    const dimensions = match?.[1].split(',').map((value) => Number(value.trim())) || [];
+    if (dimensions.length === 3 && dimensions.every((value) => Number.isFinite(Math.fround(value)) && value > 0)) {
+      shapes.set(resourceId, { sourceResourceId: resourceId, center: [0, 0, 0], dimensions });
+    }
+  }
+  return shapes;
+}
+
 function parseGodotSceneNodes(source) {
+  const boxShapes = parseGodotBoxShapes(source);
   const nodes = [];
   let current = null;
   for (const rawLine of source.split(/\r?\n/)) {
@@ -653,6 +678,7 @@ function parseGodotSceneNodes(source) {
         camera: attributes.type === 'Camera3D'
           ? { projection: 0, verticalFovDegrees: null, nearMeters: null, farMeters: null }
           : null,
+        collisionShapeId: '',
       };
       nodes.push(current);
       continue;
@@ -670,6 +696,10 @@ function parseGodotSceneNodes(source) {
       current.camera.nearMeters = parseGodotNumber(line, 'near', current.camera.nearMeters);
       current.camera.farMeters = parseGodotNumber(line, 'far', current.camera.farMeters);
     }
+    if (current.type === 'CollisionShape3D') {
+      current.collisionShapeId = line.match(/^shape\s*=\s*SubResource\("([^"]+)"\)$/)?.[1]
+        || current.collisionShapeId;
+    }
   }
 
   const rootName = nodes.find((node) => !node.parent)?.name || nodes[0]?.name || 'Root';
@@ -685,6 +715,7 @@ function parseGodotSceneNodes(source) {
       && node.camera.farMeters > node.camera.nearMeters
       ? node.camera
       : null,
+    collision: boxShapes.get(node.collisionShapeId) || null,
     sourceNodePath: !node.parent
       ? node.name
       : node.parent === '.'
@@ -1083,6 +1114,7 @@ function buildPrefabToml(prefab) {
     ...(prefab.sourceObjectId ? [`# migration_source_object_id = ${quoteTomlString(prefab.sourceObjectId)}`] : []),
     ...(prefab.camera?.sourceComponentId ? [`# migration_source_camera_component_id = ${quoteTomlString(prefab.camera.sourceComponentId)}`] : []),
     ...(prefab.collision?.sourceComponentId ? [`# migration_source_box_collider_component_id = ${quoteTomlString(prefab.collision.sourceComponentId)}`] : []),
+    ...(prefab.collision?.sourceResourceId ? [`# migration_source_collision_resource_id = ${quoteTomlString(prefab.collision.sourceResourceId)}`] : []),
     '',
     `category = ${quoteTomlString(prefab.category)}`,
     `spawn_tag = ${quoteTomlString(prefab.spawnTag)}`,
@@ -1450,6 +1482,7 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
       sourceNodePath: node.sourceNodePath,
       sourceNodeType: node.type,
       camera: node.camera,
+      collision: node.collision,
     }));
     const rootEntity = entities[0];
     return {
@@ -1470,6 +1503,7 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
     sourceNodePath: entity.sourceNodePath,
     sourceNodeType: entity.sourceNodeType,
     camera: entity.camera,
+    collision: entity.collision,
   }))), (item) => item.name);
 
   const scriptManifests = uniqueBy(scriptFiles.flatMap((filePath) =>

@@ -46,7 +46,7 @@ Implemented now:
 - when no startup scene is declared, the first source-relative converted scene is selected deterministically and the setting is marked `approximated`
 - manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
 - Unity text-YAML scenes now map `GameObject` plus `Transform`/`RectTransform` documents into parent-linked scene entities and scene-owned prefabs, preserving source file IDs and local position/quaternion rotation/scale provenance; valid perspective `Camera` optics and valid `BoxCollider` center/size geometry map into the existing strict prefab components
-- Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, preserve source paths/types as generated comments, and map valid explicit perspective `Camera3D` optics into the strict prefab camera component
+- Godot text scenes now map every declared node into a parent-linked scene entity, carry explicit `Vector3` position/rotation/scale into Shader Forge transforms, derive prefab spawn tags from source node types, preserve source paths/types as generated comments, and map valid explicit perspective `Camera3D` optics plus `CollisionShape3D`-referenced `BoxShape3D` geometry into strict prefab components
 - migration manifests and reports include `mapped_scene_entities`, `mapped_prefab_components`, and `mapped_script_bindings`; normalized Unity and Godot object-name collisions receive deterministic source-derived target names instead of overwriting output
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
 - Unity `MonoBehaviour` records now resolve script GUIDs through `.cs.meta` files and emit per-component binding manifests with source scene, node path, GameObject file ID, component file ID, and resolution confidence; C# behavior and serialized fields remain manual
@@ -63,7 +63,7 @@ Current boundaries:
 - project-setting support is currently limited to startup-scene selection; other engine settings remain manual even when detection finds them
 - `asset_conversion` remains `Manual`: placeholder asset directories are not payload import, conversion, or runtime fidelity
 - the Unreal lane is currently explicit about its fallback status: Blueprint package outputs are low-confidence manifests derived from package names rather than parsed graphs
-- art assets, materials, animation, audio, Unity prefab instances/other components/camera and collider enabled state/orthographic cameras/trigger-layer-material collider semantics/coordinate-system remediation, Unreal hierarchy extraction, Godot transform matrices/resource instances/non-camera component payloads/camera enabled-current semantics, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
+- art assets, materials, animation, audio, Unity prefab instances/other components/camera and collider enabled state/orthographic cameras/trigger-layer-material collider semantics/coordinate-system remediation, Unreal hierarchy extraction, Godot transform matrices/resource instances/other component payloads/camera enabled-current semantics/physics-body-disabled-layer-material semantics, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
 
 ## Primary Targets
 
@@ -193,9 +193,10 @@ Current implemented pass:
 - `.tscn` node headers map to stable scene entities and generated prefabs with parent links
 - explicit `Vector3` position, rotation, and scale fields map to Shader Forge transforms; rotation is converted from radians to degrees
 - valid explicit perspective `Camera3D` `fov`, `near`, and `far` values map into `[component.camera]`
+- `CollisionShape3D` nodes that reference valid `BoxShape3D` subresources map size into `[component.collision]`; the node transform preserves the collider offset/orientation
 - generated scene and prefab comments retain source node paths and node types for review
 - binary `.scn` files retain the existing placeholder path; their serialized contents are not parsed
-- matrices, instanced resources, non-camera component payloads, and camera enabled/current semantics remain manual and are reported as such
+- matrices, instanced resources, other component payloads, camera enabled/current semantics, and physics-body/disabled/layer/material semantics remain manual and are reported as such
 
 ## Shader Forge Output
 
@@ -286,7 +287,7 @@ Required harnesses:
 
 - Unity fixture migration smoke, including enabled build-scene selection, duplicate-basename disambiguation, text-YAML hierarchy/local transforms, source file IDs, perspective Camera optics, BoxCollider geometry, MonoBehaviour-to-`.cs.meta` GUID binding provenance, and production-bakeable generated prefabs
 - Unreal offline fallback migration smoke, including `GameDefaultMap` binding for both C++ and package-only fixtures
-- Godot text-scene migration smoke, including exact `res://` binding, explicit perspective Camera3D optics, explicit-unresolved fail-closed behavior, and no-declaration approximation
+- Godot text-scene migration smoke, including exact `res://` binding, explicit perspective Camera3D optics, CollisionShape3D/BoxShape3D geometry, explicit-unresolved fail-closed behavior, and no-declaration approximation
 - migration manifest/report provenance and project-setting count validation
 - production asset-pipeline bake validation for the generated scene, prefab, and optional runtime-bootstrap records
 
