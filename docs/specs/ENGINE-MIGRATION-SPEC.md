@@ -40,6 +40,11 @@ Implemented now:
 - `engine migrate unity|godot` now emit a self-contained `shader-forge-project/` skeleton under each run root
 - `engine migrate unreal` now marks the active lane as `unreal_offline_fallback`, emits the same target-project skeleton shape, and records lower conversion confidence instead of pretending exporter-assisted parity
 - the current fixture lanes now generate first-pass `content/scenes/migrated/<engine>/*.scene.toml`, `content/prefabs/migrated/<engine>/*.prefab.toml`, and `content/data/migrated/<engine>/runtime_bootstrap.data.toml`
+- startup-scene translation is implemented for Unity's first enabled `EditorBuildSettings` scene, Unreal's `GameDefaultMap`, and Godot's `res://` `run/main_scene`
+- startup-scene settings resolve against exact source-project-relative scene records; duplicate scene basenames receive deterministic path-derived target names so the bootstrap remains unambiguous
+- a declared startup scene that cannot be resolved is fail-closed: no plausible-looking bootstrap is emitted, the setting is marked `skipped`, and the report carries a manual task
+- when no startup scene is declared, the first source-relative converted scene is selected deterministically and the setting is marked `approximated`
+- manifest and report output includes `[startup_scene]` source/target provenance plus converted, approximated, and skipped project-setting counts
 - pinned engine lanes now emit first-pass script porting manifests under `migration/<run-id>/script-porting/*.port.toml`
 - the Unreal offline fallback now derives scene/prefab/script outputs from `.uproject`, `.umap`, `.uasset` package names, and C++ class symbols when no exporter-assisted data is available
 - deterministic Unity, Unreal, Unreal offline fallback, and Godot fixture projects under `fixtures/migration/`
@@ -50,6 +55,8 @@ Current boundaries:
 - target layout intent and provenance are captured in the emitted manifest/report files
 - engine-specific lanes now perform a real first conversion pass, but only to project skeleton depth rather than full parity
 - generated scenes, prefabs, and script manifests are first-pass approximations based on minimal fixture/source inspection rather than full source-engine graph extraction
+- project-setting support is currently limited to startup-scene selection; other engine settings remain manual even when detection finds them
+- `asset_conversion` remains `Manual`: placeholder asset directories are not payload import, conversion, or runtime fidelity
 - the Unreal lane is currently explicit about its fallback status: Blueprint package outputs are low-confidence manifests derived from package names rather than parsed graphs
 - art assets, materials, animation, audio, detailed hierarchy/component graphs, exported Unreal actor data, and real exporter-manifest ingestion are still ahead
 
@@ -192,6 +199,9 @@ Every run must emit a structured report with:
 - unsupported project features
 - code/script translation output
 - manual tasks remaining
+- setting-level source file, source key/value, resolved source-relative path, target file/key/value, status, and reason for startup-scene translation
+
+The project-setting counts are separate from generated-file counts. A startup setting is exactly one of `converted`, `approximated`, or `skipped`; an explicit unresolved value must never silently fall back to another scene.
 
 ## AI-Assisted Porting
 
@@ -249,11 +259,13 @@ The migration subsystem needs deterministic fixture-based coverage.
 
 Required harnesses:
 
-- Unity fixture migration smoke
-- Unreal exporter-manifest migration smoke
-- Unreal offline fallback migration smoke
-- Godot text-scene migration smoke
-- migration-report validation harness
+- Unity fixture migration smoke, including enabled build-scene selection and duplicate-basename disambiguation
+- Unreal offline fallback migration smoke, including `GameDefaultMap` binding for both C++ and package-only fixtures
+- Godot text-scene migration smoke, including exact `res://` binding, explicit-unresolved fail-closed behavior, and no-declaration approximation
+- migration manifest/report provenance and project-setting count validation
+- production asset-pipeline bake validation for the generated scene, prefab, and optional runtime-bootstrap records
+
+An Unreal exporter-manifest migration smoke remains required when real exporter-manifest ingestion lands; the current lane only detects exporter evidence and otherwise performs the explicit offline fallback.
 
 ## Non-Goals
 

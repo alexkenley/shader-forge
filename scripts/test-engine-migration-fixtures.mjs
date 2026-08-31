@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { bakeAssetPipeline } from '../tools/engine-cli/lib/asset-pipeline.mjs';
 import { repoRootFromScript } from './lib/harness-utils.mjs';
 
 const repoRoot = repoRootFromScript(import.meta.url);
@@ -16,6 +17,7 @@ const tempRoot = path.join(repoRoot, 'tmp', 'migration-harness');
 const cliSource = fs.readFileSync(cliPath, 'utf8');
 const migrationSource = fs.readFileSync(migrationModulePath, 'utf8');
 const unityVersionFile = fs.readFileSync(path.join(unityFixtureRoot, 'ProjectSettings', 'ProjectVersion.txt'), 'utf8');
+const unityBuildSettingsFile = fs.readFileSync(path.join(unityFixtureRoot, 'ProjectSettings', 'EditorBuildSettings.asset'), 'utf8');
 const unrealProjectFile = fs.readFileSync(path.join(unrealFixtureRoot, 'ExampleProject.uproject'), 'utf8');
 const unrealOfflineProjectFile = fs.readFileSync(path.join(unrealOfflineFixtureRoot, 'ExampleOfflineProject.uproject'), 'utf8');
 const godotProjectFile = fs.readFileSync(path.join(godotFixtureRoot, 'project.godot'), 'utf8');
@@ -28,6 +30,8 @@ assert.match(migrationSource, /shader_forge\.migration_report/);
 assert.match(migrationSource, /detect_and_manifest_only/);
 assert.match(migrationSource, /project_skeleton_conversion/);
 assert.match(unityVersionFile, /m_EditorVersion:/);
+assert.match(unityBuildSettingsFile, /enabled: 0[\s\S]*path: Assets\/Scenes\/Disabled\.unity/);
+assert.match(unityBuildSettingsFile, /path: Assets\/Scenes\/Sandbox\.unity/);
 assert.match(unrealProjectFile, /EngineAssociation/);
 assert.match(unrealOfflineProjectFile, /EngineAssociation/);
 assert.match(godotProjectFile, /config\/name/);
@@ -45,6 +49,39 @@ function runCli(args) {
   }
   assert.equal(result.status, 0, `Migration CLI failed.\nCommand: ${args.join(' ')}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`);
   return result;
+}
+
+async function assertMigratedProjectBakes(projectRoot, engine, label, expectedData = true) {
+  const contentRoot = path.join(tempRoot, 'bake-input', label);
+  for (const kind of ['scenes', 'prefabs', 'data', 'effects', 'procgeo']) {
+    const targetDirectory = path.join(contentRoot, kind);
+    fs.mkdirSync(targetDirectory, { recursive: true });
+    const sourceDirectory = path.join(projectRoot, 'content', kind, 'migrated', engine);
+    if (!fs.existsSync(sourceDirectory)) {
+      continue;
+    }
+    for (const entry of fs.readdirSync(sourceDirectory, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        fs.copyFileSync(path.join(sourceDirectory, entry.name), path.join(targetDirectory, entry.name));
+      }
+    }
+  }
+
+  const outputRoot = path.join(tempRoot, 'bake-output', label);
+  const report = await bakeAssetPipeline({
+    repoRoot,
+    contentRoot,
+    audioRoot: path.join(repoRoot, 'audio'),
+    animationRoot: path.join(repoRoot, 'animation'),
+    physicsRoot: path.join(repoRoot, 'physics'),
+    foundationPath: path.join(repoRoot, 'data', 'foundation', 'engine-data-layout.toml'),
+    outputRoot,
+    reportPath: path.join(outputRoot, 'asset-pipeline-report.json'),
+  });
+  assert.equal(report.invalidAssets.length, 0, `${label} migration outputs must pass the production asset bake.`);
+  assert.ok(report.bakedAssets.some((asset) => asset.kind === 'scene'), `${label} bake must include a scene.`);
+  assert.ok(report.bakedAssets.some((asset) => asset.kind === 'prefab'), `${label} bake must include a prefab.`);
+  assert.equal(report.bakedAssets.some((asset) => asset.kind === 'data'), expectedData, `${label} bootstrap bake mismatch.`);
 }
 
 const unityRun = runCli([
@@ -112,10 +149,17 @@ assert.ok(
   'Expected Unity script-porting manifest.',
 );
 const unityConvertReport = fs.readFileSync(path.join(unityConvertRoot, 'report.toml'), 'utf8');
+const unityConvertManifest = fs.readFileSync(path.join(unityConvertRoot, 'migration-manifest.toml'), 'utf8');
 assert.match(unityConvertReport, /current_slice = "project_skeleton_conversion"/);
-assert.match(unityConvertReport, /asset_conversion = "BestEffort"/);
+assert.match(unityConvertReport, /asset_conversion = "Manual"/);
 assert.match(unityConvertReport, /scene_conversion = "BestEffort"/);
 assert.match(unityConvertReport, /converted_items = 3/);
+assert.match(unityConvertReport, /converted_project_settings = 1/);
+assert.match(unityConvertReport, /\[startup_scene\][\s\S]*source_file = "ProjectSettings\/EditorBuildSettings\.asset"/);
+assert.match(unityConvertReport, /\[startup_scene\][\s\S]*resolved_source_path = "Assets\/Scenes\/Sandbox\.unity"/);
+assert.match(unityConvertReport, /\[startup_scene\][\s\S]*status = "converted"/);
+assert.match(unityConvertManifest, /\[startup_scene\][\s\S]*target_value = "sandbox"/);
+await assertMigratedProjectBakes(unityProjectRoot, 'unity', 'unity-convert');
 
 const unrealRun = runCli([
   'migrate',
@@ -139,6 +183,9 @@ assert.match(unrealManifest, /\[migration_lane\]/);
 assert.match(unrealManifest, /active = "unreal_offline_fallback"/);
 assert.match(unrealManifest, /preferred = "unreal_exporter_assisted"/);
 assert.match(fs.readFileSync(path.join(unrealRoot, 'report.toml'), 'utf8'), /current_slice = "unreal_offline_fallback"/);
+assert.match(unrealManifest, /\[startup_scene\][\s\S]*source_value = "\/Game\/Maps\/TestMap"/);
+assert.match(unrealManifest, /\[startup_scene\][\s\S]*resolved_source_path = "Content\/Maps\/TestMap\.umap"/);
+assert.match(unrealManifest, /\[startup_scene\][\s\S]*status = "converted"/);
 assert.ok(
   fs.readdirSync(path.join(unrealRoot, 'shader-forge-project', 'content', 'scenes', 'migrated', 'unreal')).some((name) => name.endsWith('.scene.toml')),
   'Expected Unreal migrated scene output.',
@@ -147,6 +194,11 @@ assert.ok(
   fs.readdirSync(path.join(unrealRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'unreal')).some((name) => name.endsWith('.prefab.toml')),
   'Expected Unreal migrated prefab output.',
 );
+assert.match(
+  fs.readFileSync(path.join(unrealRoot, 'shader-forge-project', 'content', 'data', 'migrated', 'unreal', 'runtime_bootstrap.data.toml'), 'utf8'),
+  /default_scene = "testmap"/,
+);
+await assertMigratedProjectBakes(path.join(unrealRoot, 'shader-forge-project'), 'unreal', 'unreal-lane');
 
 const unrealOfflineRun = runCli([
   'migrate',
@@ -169,6 +221,8 @@ assert.match(unrealOfflineManifest, /blueprint_package_files = 3/);
 assert.match(unrealOfflineReport, /current_slice = "unreal_offline_fallback"/);
 assert.match(unrealOfflineReport, /converted_items = 4/);
 assert.match(unrealOfflineReport, /approximated_items = 3/);
+assert.match(unrealOfflineManifest, /\[startup_scene\][\s\S]*source_value = "\/Game\/Maps\/offline_fallback"/);
+assert.match(unrealOfflineManifest, /\[startup_scene\][\s\S]*status = "converted"/);
 assert.ok(
   fs.existsSync(path.join(unrealOfflineRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'unreal', 'bp_playerpawn.prefab.toml')),
   'Expected Unreal offline fallback prefab output for BP_PlayerPawn.',
@@ -180,6 +234,11 @@ assert.ok(
 assert.ok(fs.existsSync(unrealOfflineBlueprintPortPath), 'Expected offline Blueprint script-porting manifest.');
 assert.match(fs.readFileSync(unrealOfflineBlueprintPortPath, 'utf8'), /strategy = "offline_low_confidence_blueprint_manifest"/);
 assert.match(fs.readFileSync(unrealOfflineBlueprintPortPath, 'utf8'), /extraction_confidence = "low"/);
+assert.match(
+  fs.readFileSync(path.join(unrealOfflineRoot, 'shader-forge-project', 'content', 'data', 'migrated', 'unreal', 'runtime_bootstrap.data.toml'), 'utf8'),
+  /default_scene = "offline_fallback"/,
+);
+await assertMigratedProjectBakes(path.join(unrealOfflineRoot, 'shader-forge-project'), 'unreal', 'unreal-offline-lane');
 
 const godotRun = runCli([
   'migrate',
@@ -197,6 +256,9 @@ const godotManifest = fs.readFileSync(path.join(godotRoot, 'migration-manifest.t
 assert.match(godotManifest, /requested_engine = "godot"/);
 assert.match(godotManifest, /detected_version = "4\.2"/);
 assert.match(godotManifest, /conversion_mode = "project_skeleton_conversion"/);
+assert.match(godotManifest, /\[startup_scene\][\s\S]*source_value = "res:\/\/scenes\/main\.tscn"/);
+assert.match(godotManifest, /\[startup_scene\][\s\S]*resolved_source_path = "scenes\/main\.tscn"/);
+assert.match(godotManifest, /\[startup_scene\][\s\S]*status = "converted"/);
 assert.ok(
   fs.readdirSync(path.join(godotRoot, 'shader-forge-project', 'content', 'scenes', 'migrated', 'godot')).some((name) => name.endsWith('.scene.toml')),
   'Expected Godot migrated scene output.',
@@ -205,6 +267,127 @@ assert.ok(
   fs.readdirSync(path.join(godotRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'godot')).some((name) => name.endsWith('.prefab.toml')),
   'Expected Godot migrated prefab output.',
 );
+assert.match(
+  fs.readFileSync(path.join(godotRoot, 'shader-forge-project', 'content', 'data', 'migrated', 'godot', 'runtime_bootstrap.data.toml'), 'utf8'),
+  /default_scene = "main"/,
+);
+await assertMigratedProjectBakes(path.join(godotRoot, 'shader-forge-project'), 'godot', 'godot-lane');
+
+const duplicateUnityFixtureRoot = path.join(tempRoot, 'source-fixtures', 'unity-duplicate-scenes');
+fs.cpSync(unityFixtureRoot, duplicateUnityFixtureRoot, { recursive: true });
+const duplicateUnityScenePath = path.join(duplicateUnityFixtureRoot, 'Assets', 'Bonus', 'Sandbox.unity');
+fs.mkdirSync(path.dirname(duplicateUnityScenePath), { recursive: true });
+fs.writeFileSync(duplicateUnityScenePath, '%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: BonusSandbox\n', 'utf8');
+fs.writeFileSync(
+  path.join(duplicateUnityFixtureRoot, 'ProjectSettings', 'EditorBuildSettings.asset'),
+  [
+    '%YAML 1.1',
+    '--- !u!1045 &1',
+    'EditorBuildSettings:',
+    '  m_Scenes:',
+    '  - enabled: 1',
+    '    path: Assets/Bonus/Sandbox.unity',
+    '    guid: 22222222222222222222222222222222',
+    '  - enabled: 1',
+    '    path: Assets/Scenes/Sandbox.unity',
+    '    guid: 11111111111111111111111111111111',
+    '',
+  ].join('\n'),
+  'utf8',
+);
+runCli([
+  'migrate',
+  'unity',
+  duplicateUnityFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'unity-duplicate-scenes',
+]);
+const duplicateUnityRoot = path.join(tempRoot, 'unity-duplicate-scenes');
+const duplicateUnityProjectRoot = path.join(duplicateUnityRoot, 'shader-forge-project');
+const duplicateUnitySceneDirectory = path.join(duplicateUnityProjectRoot, 'content', 'scenes', 'migrated', 'unity');
+const duplicateUnitySceneFiles = fs.readdirSync(duplicateUnitySceneDirectory).filter((name) => name.endsWith('.scene.toml'));
+assert.equal(duplicateUnitySceneFiles.length, 2, 'Duplicate Unity scene basenames must both be retained.');
+assert.equal(new Set(duplicateUnitySceneFiles).size, 2, 'Duplicate Unity scene basenames must receive distinct deterministic target names.');
+const selectedDuplicateScene = duplicateUnitySceneFiles
+  .map((name) => ({ name, content: fs.readFileSync(path.join(duplicateUnitySceneDirectory, name), 'utf8') }))
+  .find((scene) => /title = "BonusSandbox"/.test(scene.content));
+assert.ok(selectedDuplicateScene, 'Expected the explicitly selected duplicate Unity scene output.');
+const selectedDuplicateSceneName = selectedDuplicateScene.content.match(/^name = "([^"]+)"/m)?.[1];
+assert.ok(selectedDuplicateSceneName, 'Expected a stable target name for the selected duplicate scene.');
+assert.match(
+  fs.readFileSync(path.join(duplicateUnityProjectRoot, 'content', 'data', 'migrated', 'unity', 'runtime_bootstrap.data.toml'), 'utf8'),
+  new RegExp(`default_scene = "${selectedDuplicateSceneName}"`),
+);
+const duplicateUnityManifest = fs.readFileSync(path.join(duplicateUnityRoot, 'migration-manifest.toml'), 'utf8');
+assert.match(duplicateUnityManifest, /\[startup_scene\][\s\S]*resolved_source_path = "Assets\/Bonus\/Sandbox\.unity"/);
+assert.match(duplicateUnityManifest, /\[startup_scene\][\s\S]*status = "converted"/);
+await assertMigratedProjectBakes(duplicateUnityProjectRoot, 'unity', 'unity-duplicate-scenes');
+
+const unresolvedGodotFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-unresolved-startup');
+fs.cpSync(godotFixtureRoot, unresolvedGodotFixtureRoot, { recursive: true });
+const unresolvedGodotProjectPath = path.join(unresolvedGodotFixtureRoot, 'project.godot');
+fs.writeFileSync(
+  unresolvedGodotProjectPath,
+  fs.readFileSync(unresolvedGodotProjectPath, 'utf8').replace('res://scenes/main.tscn', 'res://scenes/missing.tscn'),
+  'utf8',
+);
+runCli([
+  'migrate',
+  'godot',
+  unresolvedGodotFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'godot-unresolved-startup',
+]);
+const unresolvedGodotRoot = path.join(tempRoot, 'godot-unresolved-startup');
+const unresolvedGodotProjectRoot = path.join(unresolvedGodotRoot, 'shader-forge-project');
+assert.ok(
+  !fs.existsSync(path.join(unresolvedGodotProjectRoot, 'content', 'data', 'migrated', 'godot', 'runtime_bootstrap.data.toml')),
+  'An explicit unresolved startup scene must not produce an incorrect bootstrap.',
+);
+const unresolvedGodotManifest = fs.readFileSync(path.join(unresolvedGodotRoot, 'migration-manifest.toml'), 'utf8');
+const unresolvedGodotReport = fs.readFileSync(path.join(unresolvedGodotRoot, 'report.toml'), 'utf8');
+const unresolvedGodotWarnings = fs.readFileSync(path.join(unresolvedGodotRoot, 'warnings.toml'), 'utf8');
+assert.match(unresolvedGodotManifest, /skipped_project_settings = 1/);
+assert.match(unresolvedGodotManifest, /\[startup_scene\][\s\S]*source_value = "res:\/\/scenes\/missing\.tscn"/);
+assert.match(unresolvedGodotManifest, /\[startup_scene\][\s\S]*target_value = ""/);
+assert.match(unresolvedGodotManifest, /\[startup_scene\][\s\S]*status = "skipped"/);
+assert.match(unresolvedGodotReport, /Resolve the declared startup scene res:\/\/scenes\/missing\.tscn/);
+assert.match(unresolvedGodotWarnings, /No runtime bootstrap was generated/);
+await assertMigratedProjectBakes(unresolvedGodotProjectRoot, 'godot', 'godot-unresolved-startup', false);
+
+const fallbackGodotFixtureRoot = path.join(tempRoot, 'source-fixtures', 'godot-no-startup');
+fs.cpSync(godotFixtureRoot, fallbackGodotFixtureRoot, { recursive: true });
+const fallbackGodotProjectPath = path.join(fallbackGodotFixtureRoot, 'project.godot');
+fs.writeFileSync(
+  fallbackGodotProjectPath,
+  fs.readFileSync(fallbackGodotProjectPath, 'utf8').replace(/^run\/main_scene=.*\r?\n/m, ''),
+  'utf8',
+);
+runCli([
+  'migrate',
+  'godot',
+  fallbackGodotFixtureRoot,
+  '--output-root',
+  tempRoot,
+  '--run-id',
+  'godot-no-startup',
+]);
+const fallbackGodotRoot = path.join(tempRoot, 'godot-no-startup');
+const fallbackGodotProjectRoot = path.join(fallbackGodotRoot, 'shader-forge-project');
+const fallbackGodotManifest = fs.readFileSync(path.join(fallbackGodotRoot, 'migration-manifest.toml'), 'utf8');
+assert.match(fallbackGodotManifest, /approximated_project_settings = 1/);
+assert.match(fallbackGodotManifest, /\[startup_scene\][\s\S]*source_value = ""/);
+assert.match(fallbackGodotManifest, /\[startup_scene\][\s\S]*target_value = "main"/);
+assert.match(fallbackGodotManifest, /\[startup_scene\][\s\S]*status = "approximated"/);
+assert.match(
+  fs.readFileSync(path.join(fallbackGodotProjectRoot, 'content', 'data', 'migrated', 'godot', 'runtime_bootstrap.data.toml'), 'utf8'),
+  /default_scene = "main"/,
+);
+await assertMigratedProjectBakes(fallbackGodotProjectRoot, 'godot', 'godot-no-startup');
 
 const reportRun = runCli([
   'migrate',

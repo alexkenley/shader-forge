@@ -3,3 +3,4 @@ config_version=5
 [application]
 config/name="Godot Minimal Fixture"
 config/features=PackedStringArray("4.2")
+run/main_scene="res://scenes/main.tscn"

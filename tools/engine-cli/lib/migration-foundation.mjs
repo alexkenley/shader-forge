@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 function trim(value) {
   return String(value || '').trim();
@@ -281,7 +282,7 @@ function detectGodotProject(projectRoot) {
   let version = '';
   if (projectContent) {
     reasons.push('Found project.godot.');
-    const featureMatch = projectContent.match(/config\/features=.*"([^"]+)"/);
+    const featureMatch = projectContent.match(/^config\/features\s*=.*?"([^"\r\n]+)"/m);
     version = featureMatch?.[1]?.trim() || '';
   }
   if (hasDirectory(projectRoot, 'scenes')) {
@@ -495,7 +496,7 @@ function buildSupportLevels(slice) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     return {
       detection: 'Supported',
-      asset_conversion: 'BestEffort',
+      asset_conversion: 'Manual',
       scene_conversion: 'BestEffort',
       script_porting: 'BestEffort',
       project_settings: 'BestEffort',
@@ -588,6 +589,163 @@ function displayNameFromToken(value) {
 function firstRegexGroup(content, regex, fallback = '') {
   const match = content.match(regex);
   return trim(match?.[1] || fallback);
+}
+
+function unquoteSourceValue(value) {
+  const normalized = trim(value);
+  if (normalized.length >= 2 && normalized.startsWith('"') && normalized.endsWith('"')) {
+    return normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+function sourceProjectPath(projectRoot, filePath) {
+  return path.relative(projectRoot, filePath).split(path.sep).join('/');
+}
+
+function stableSceneNames(scenes) {
+  const counts = new Map();
+  for (const scene of scenes) {
+    counts.set(scene.name, (counts.get(scene.name) || 0) + 1);
+  }
+  return scenes.map((scene) => {
+    if (counts.get(scene.name) === 1) {
+      return scene;
+    }
+    const suffix = createHash('sha256').update(scene.sourceProjectPath).digest('hex').slice(0, 8);
+    return { ...scene, name: `${scene.name}_${suffix}` };
+  });
+}
+
+function readUnityStartupScene(projectRoot) {
+  const sourceFile = 'ProjectSettings/EditorBuildSettings.asset';
+  const content = readFileIfPresent(path.join(projectRoot, ...sourceFile.split('/')));
+  let enabled = false;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = trim(rawLine);
+    const enabledMatch = line.match(/^-\s+enabled:\s*(\d+)$/);
+    if (enabledMatch) {
+      enabled = enabledMatch[1] === '1';
+      continue;
+    }
+    const pathMatch = line.match(/^path:\s*(.+)$/);
+    if (enabled && pathMatch) {
+      const sourceValue = unquoteSourceValue(pathMatch[1]).split('\\').join('/');
+      return {
+        declared: true,
+        sourceFile,
+        sourceKey: 'm_Scenes[first_enabled].path',
+        sourceValue,
+        resolvedSourcePath: sourceValue,
+        reason: '',
+      };
+    }
+  }
+  return { declared: false, sourceFile, sourceKey: 'm_Scenes[first_enabled].path', sourceValue: '', resolvedSourcePath: '', reason: '' };
+}
+
+function readUnrealStartupScene(projectRoot) {
+  const sourceFile = 'Config/DefaultEngine.ini';
+  const content = readFileIfPresent(path.join(projectRoot, ...sourceFile.split('/')));
+  let inGameMapsSettings = false;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = trim(rawLine);
+    if (!line || line.startsWith(';') || line.startsWith('#')) {
+      continue;
+    }
+    if (line.startsWith('[') && line.endsWith(']')) {
+      inGameMapsSettings = line.slice(1, -1).toLowerCase() === '/script/enginesettings.gamemapssettings';
+      continue;
+    }
+    if (!inGameMapsSettings) {
+      continue;
+    }
+    const match = line.match(/^GameDefaultMap\s*=\s*(.+)$/i);
+    if (!match) {
+      continue;
+    }
+    const sourceValue = unquoteSourceValue(match[1]);
+    const packagePath = sourceValue.split('.')[0];
+    const resolvedSourcePath = packagePath.startsWith('/Game/')
+      ? `Content/${packagePath.slice('/Game/'.length)}.umap`
+      : '';
+    return {
+      declared: true,
+      sourceFile,
+      sourceKey: '[/Script/EngineSettings.GameMapsSettings].GameDefaultMap',
+      sourceValue,
+      resolvedSourcePath,
+      reason: resolvedSourcePath ? '' : 'Only /Game/ Unreal startup maps are supported by the offline migration lane.',
+    };
+  }
+  return { declared: false, sourceFile, sourceKey: '[/Script/EngineSettings.GameMapsSettings].GameDefaultMap', sourceValue: '', resolvedSourcePath: '', reason: '' };
+}
+
+function readGodotStartupScene(projectRoot) {
+  const sourceFile = 'project.godot';
+  const content = readFileIfPresent(path.join(projectRoot, sourceFile));
+  let inApplication = false;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = trim(rawLine);
+    if (!line || line.startsWith(';') || line.startsWith('#')) {
+      continue;
+    }
+    if (line.startsWith('[') && line.endsWith(']')) {
+      inApplication = line.slice(1, -1).toLowerCase() === 'application';
+      continue;
+    }
+    if (!inApplication) {
+      continue;
+    }
+    const match = line.match(/^run\/main_scene\s*=\s*(.+)$/);
+    if (!match) {
+      continue;
+    }
+    const sourceValue = unquoteSourceValue(match[1]);
+    const resolvedSourcePath = sourceValue.startsWith('res://') ? sourceValue.slice('res://'.length) : '';
+    return {
+      declared: true,
+      sourceFile,
+      sourceKey: '[application].run/main_scene',
+      sourceValue,
+      resolvedSourcePath,
+      reason: resolvedSourcePath ? '' : 'Godot uid:// startup scenes require UID resolution and are not converted in this slice.',
+    };
+  }
+  return { declared: false, sourceFile, sourceKey: '[application].run/main_scene', sourceValue: '', resolvedSourcePath: '', reason: '' };
+}
+
+function bindStartupScene(setting, scenes) {
+  const sortedScenes = [...scenes].sort((left, right) => {
+    if (left.sourceProjectPath === right.sourceProjectPath) {
+      return 0;
+    }
+    return left.sourceProjectPath < right.sourceProjectPath ? -1 : 1;
+  });
+  if (!setting.declared) {
+    const fallback = sortedScenes[0];
+    return {
+      ...setting,
+      status: fallback ? 'approximated' : 'skipped',
+      targetScene: fallback?.name || '',
+      reason: fallback
+        ? 'The source project did not declare a startup scene; the first source-relative scene was selected deterministically.'
+        : 'The source project did not declare a startup scene and no converted scene was available.',
+    };
+  }
+
+  const expected = setting.resolvedSourcePath;
+  const match = expected
+    ? scenes.find((scene) => scene.sourceProjectPath === expected)
+    : null;
+  return {
+    ...setting,
+    status: match ? 'converted' : 'skipped',
+    targetScene: match?.name || '',
+    reason: match
+      ? ''
+      : setting.reason || `The declared startup scene ${setting.sourceValue} was not found among converted source scenes.`,
+  };
 }
 
 function uniqueBy(items, keySelector) {
@@ -776,7 +934,7 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
     };
   }), (item) => item.name);
 
-  let scenes = sceneFiles.map((filePath, index) => {
+  let scenes = stableSceneNames(sceneFiles.map((filePath, index) => {
     const source = fs.readFileSync(filePath, 'utf8');
     const rootName = firstRegexGroup(source, /m_Name:\s*(.+)/, basenameWithoutExtension(filePath));
     const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `unity_scene_${index + 1}`;
@@ -788,8 +946,9 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
       entityId: normalizeToken(`${chosenPrefab?.name || sceneName}_instance`) || 'primary_instance',
       entityDisplayName: chosenPrefab?.displayName || rootName || displayNameFromToken(sceneName),
       sourcePath: relativePathFromRepo(repoRoot, filePath),
+      sourceProjectPath: sourceProjectPath(projectRoot, filePath),
     };
-  });
+  }));
 
   prefabs = ensureFallbackPrefabsForScenes(scenes, prefabs, 'unity');
   scenes = ensureFallbackScenesForPrefabs(scenes, prefabs, 'unity').map((scene) => ({
@@ -808,7 +967,12 @@ function collectUnityConversionPlan(repoRoot, projectRoot) {
       sourceKind: 'source_class',
     }))), (item) => item.name);
 
-  return { scenes, prefabs, scriptManifests };
+  return {
+    scenes,
+    prefabs,
+    scriptManifests,
+    startupScene: bindStartupScene(readUnityStartupScene(projectRoot), scenes),
+  };
 }
 
 function collectGodotConversionPlan(repoRoot, projectRoot) {
@@ -816,7 +980,7 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
   const sceneFiles = files.filter((filePath) => filePath.endsWith('.tscn') || filePath.endsWith('.scn'));
   const scriptFiles = files.filter((filePath) => filePath.endsWith('.gd') || filePath.endsWith('.cs'));
 
-  const scenes = sceneFiles.map((filePath, index) => {
+  const scenes = stableSceneNames(sceneFiles.map((filePath, index) => {
     const source = fs.readFileSync(filePath, 'utf8');
     const rootName = firstRegexGroup(source, /\[node\s+name="([^"]+)"/, basenameWithoutExtension(filePath));
     const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `godot_scene_${index + 1}`;
@@ -828,9 +992,10 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
       entityId: normalizeToken(`${prefabName}_instance`) || 'primary_instance',
       entityDisplayName: rootName || displayNameFromToken(prefabName),
       sourcePath: relativePathFromRepo(repoRoot, filePath),
+      sourceProjectPath: sourceProjectPath(projectRoot, filePath),
       sourceNodeType: firstRegexGroup(source, /type="([^"]+)"/, 'Node'),
     };
-  });
+  }));
 
   const prefabs = uniqueBy(scenes.map((scene) => ({
     name: scene.primaryPrefab,
@@ -853,6 +1018,7 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
     scenes: ensureFallbackScenesForPrefabs(scenes, prefabs, 'godot'),
     prefabs: ensureFallbackPrefabsForScenes(scenes, prefabs, 'godot'),
     scriptManifests,
+    startupScene: bindStartupScene(readGodotStartupScene(projectRoot), scenes),
   };
 }
 
@@ -893,7 +1059,7 @@ function collectUnrealOfflineFallbackPlan(repoRoot, projectRoot) {
       }),
   ], (item) => item.name);
 
-  let scenes = mapFiles.map((filePath, index) => {
+  let scenes = stableSceneNames(mapFiles.map((filePath, index) => {
     const source = fs.readFileSync(filePath, 'utf8');
     const sceneName = normalizeToken(basenameWithoutExtension(filePath)) || `unreal_level_${index + 1}`;
     const chosenPrefab = prefabs[Math.min(index, Math.max(prefabs.length - 1, 0))];
@@ -905,8 +1071,9 @@ function collectUnrealOfflineFallbackPlan(repoRoot, projectRoot) {
       entityId: normalizeToken(`${chosenPrefab?.name || sceneName}_instance`) || 'primary_instance',
       entityDisplayName: chosenPrefab?.displayName || mapTitle,
       sourcePath: relativePathFromRepo(repoRoot, filePath),
+      sourceProjectPath: sourceProjectPath(projectRoot, filePath),
     };
-  });
+  }));
 
   prefabs = ensureFallbackPrefabsForScenes(scenes, prefabs, 'unreal');
   scenes = ensureFallbackScenesForPrefabs(scenes, prefabs, 'unreal').map((scene) => ({
@@ -951,6 +1118,7 @@ function collectUnrealOfflineFallbackPlan(repoRoot, projectRoot) {
     scenes,
     prefabs,
     scriptManifests: uniqueBy([...scriptManifests, ...blueprintScriptManifests], (item) => item.name),
+    startupScene: bindStartupScene(readUnrealStartupScene(projectRoot), scenes),
   };
 }
 
@@ -988,8 +1156,6 @@ function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan
     assetPlaceholderFiles: [],
   };
 
-  const firstSceneName = plan.scenes[0]?.name || `${detection.engine}_migration`;
-
   for (const scene of plan.scenes) {
     const outputPath = path.join(targetProjectRoot, targetRoots.content_scenes, `${scene.name}.scene.toml`);
     writeTextFile(outputPath, buildSceneToml(scene));
@@ -1002,9 +1168,12 @@ function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan
     conversionOutputs.prefabFiles.push(relativePathFromRepo(repoRoot, outputPath));
   }
 
-  const bootstrapPath = path.join(targetProjectRoot, targetRoots.content_data, 'runtime_bootstrap.data.toml');
-  writeTextFile(bootstrapPath, buildDataToml(firstSceneName));
-  conversionOutputs.dataFiles.push(relativePathFromRepo(repoRoot, bootstrapPath));
+  const bootstrapRelativePath = `${targetRoots.content_data}/runtime_bootstrap.data.toml`;
+  if (plan.startupScene.targetScene) {
+    const bootstrapPath = path.join(targetProjectRoot, ...bootstrapRelativePath.split('/'));
+    writeTextFile(bootstrapPath, buildDataToml(plan.startupScene.targetScene));
+    conversionOutputs.dataFiles.push(relativePathFromRepo(repoRoot, bootstrapPath));
+  }
 
   const assetsSrcReadme = path.join(targetProjectRoot, targetRoots.assets_src, 'README.md');
   const assetsCookedReadme = path.join(targetProjectRoot, targetRoots.assets_cooked, 'README.md');
@@ -1048,7 +1217,18 @@ function writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, plan
     targetProjectRoot: conversionOutputs.targetProjectRoot,
     outputs: conversionOutputs,
     convertedItems: conversionOutputs.sceneFiles.length + conversionOutputs.prefabFiles.length + conversionOutputs.dataFiles.length,
-    approximatedItems: conversionOutputs.scriptManifestFiles.length,
+    approximatedItems: conversionOutputs.scriptManifestFiles.length + (plan.startupScene.status === 'approximated' ? 1 : 0),
+    startupScene: {
+      source_file: plan.startupScene.sourceFile,
+      source_key: plan.startupScene.sourceKey,
+      source_value: plan.startupScene.sourceValue,
+      resolved_source_path: plan.startupScene.resolvedSourcePath,
+      target_file: plan.startupScene.targetScene ? bootstrapRelativePath : '',
+      target_key: plan.startupScene.targetScene ? 'default_scene' : '',
+      target_value: plan.startupScene.targetScene,
+      status: plan.startupScene.status,
+      reason: plan.startupScene.reason,
+    },
   };
 }
 
@@ -1087,14 +1267,25 @@ export async function createMigrationRun(options) {
   const targetRoots = buildTargetRoots(detection.engine);
   const support = buildSupportLevels(slice);
   const counts = collectSourceCounts(projectRoot, detection.engine);
+  const conversionPlan = slice.generatedProjectSkeleton
+    ? collectConversionPlan(repoRoot, projectRoot, detection)
+    : null;
   const warnings = buildWarnings(detection, requestedEngine, slice, counts, repoRoot);
   const manualTasks = buildManualTasks(detection.engine, targetRoots, slice, counts);
+
+  if (conversionPlan?.startupScene.status === 'approximated') {
+    warnings.push(`${conversionPlan.startupScene.reason} Review the generated runtime bootstrap before treating it as source-authoritative.`);
+  }
+  if (conversionPlan?.startupScene.declared && conversionPlan.startupScene.status === 'skipped') {
+    warnings.push(`${conversionPlan.startupScene.reason} No runtime bootstrap was generated.`);
+    manualTasks.push(`Resolve the declared startup scene ${conversionPlan.startupScene.sourceValue} from ${conversionPlan.startupScene.sourceFile}, then author ${targetRoots.content_data}/runtime_bootstrap.data.toml.`);
+  }
 
   ensureDirectory(reportRoot);
   ensureDirectory(path.join(reportRoot, 'script-porting'));
 
   const conversion = slice.generatedProjectSkeleton
-    ? writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, collectConversionPlan(repoRoot, projectRoot, detection), slice)
+    ? writeProjectSkeleton(repoRoot, reportRoot, detection, targetRoots, conversionPlan, slice)
     : {
         targetProjectRoot: '',
         outputs: {
@@ -1107,7 +1298,23 @@ export async function createMigrationRun(options) {
         },
         convertedItems: 0,
         approximatedItems: 0,
+        startupScene: {
+          source_file: '',
+          source_key: '',
+          source_value: '',
+          resolved_source_path: '',
+          target_file: '',
+          target_key: '',
+          target_value: '',
+          status: 'not_applicable',
+          reason: 'Detection-only migration runs do not convert project startup settings.',
+        },
       };
+
+  const convertedProjectSettings = conversion.startupScene.status === 'converted' ? 1 : 0;
+  const approximatedProjectSettings = conversion.startupScene.status === 'approximated' ? 1 : 0;
+  const skippedProjectSettings = conversion.startupScene.status === 'skipped' ? 1 : 0;
+  const skippedItems = estimateSkippedItems(counts, detection.engine, slice) + skippedProjectSettings;
 
   const manifestPath = path.join(reportRoot, 'migration-manifest.toml');
   const reportPath = path.join(reportRoot, 'report.toml');
@@ -1138,7 +1345,10 @@ export async function createMigrationRun(options) {
     conversion_counts: {
       converted_items: conversion.convertedItems,
       approximated_items: conversion.approximatedItems,
-      skipped_items: estimateSkippedItems(counts, detection.engine, slice),
+      skipped_items: skippedItems,
+      converted_project_settings: convertedProjectSettings,
+      approximated_project_settings: approximatedProjectSettings,
+      skipped_project_settings: skippedProjectSettings,
       scene_files: conversion.outputs.sceneFiles.length,
       prefab_files: conversion.outputs.prefabFiles.length,
       data_files: conversion.outputs.dataFiles.length,
@@ -1151,6 +1361,7 @@ export async function createMigrationRun(options) {
       script_manifest_files: conversion.outputs.scriptManifestFiles,
       asset_placeholder_files: conversion.outputs.assetPlaceholderFiles,
     },
+    startup_scene: conversion.startupScene,
     target_roots: targetRoots,
     migration_lane: {
       active: slice.activeLane,
@@ -1181,7 +1392,10 @@ export async function createMigrationRun(options) {
     target_project_root: conversion.targetProjectRoot,
     converted_items: conversion.convertedItems,
     approximated_items: conversion.approximatedItems,
-    skipped_items: estimateSkippedItems(counts, detection.engine, slice),
+    skipped_items: skippedItems,
+    converted_project_settings: convertedProjectSettings,
+    approximated_project_settings: approximatedProjectSettings,
+    skipped_project_settings: skippedProjectSettings,
     manual_items: manualTasks.length,
     warning_count: warnings.length,
     migration_lane: {
@@ -1216,6 +1430,7 @@ export async function createMigrationRun(options) {
       data_files: conversion.outputs.dataFiles,
       script_manifest_files: conversion.outputs.scriptManifestFiles,
     },
+    startup_scene: conversion.startupScene,
     manual_tasks: {
       items: manualTasks,
     },
@@ -1275,7 +1490,8 @@ export async function createMigrationRun(options) {
     targetProjectRoot: conversion.targetProjectRoot,
     convertedItems: conversion.convertedItems,
     approximatedItems: conversion.approximatedItems,
-    skippedItems: estimateSkippedItems(counts, detection.engine, slice),
+    skippedItems,
+    startupScene: conversion.startupScene,
     conversionOutputs: conversion.outputs,
     reportRoot: relativePathFromRepo(repoRoot, reportRoot),
     manifestPath: relativePathFromRepo(repoRoot, manifestPath),
