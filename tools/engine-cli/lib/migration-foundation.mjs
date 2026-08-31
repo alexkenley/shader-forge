@@ -529,7 +529,7 @@ function buildManualTasks(engine, targetRoots, slice, counts) {
   if (slice.conversionMode === 'project_skeleton_conversion') {
     return [
       engine === 'godot'
-        ? `Review mapped Godot text-scene hierarchy and explicit position, rotation, and scale fields under ${targetRoots.content_scenes}; transform matrices, instanced resources, and component payloads remain manual.`
+        ? `Review mapped Godot text-scene hierarchy, explicit transforms, and supported perspective Camera3D optics under ${targetRoots.content_scenes}; transform matrices, instanced resources, and non-camera component payloads remain manual.`
         : engine === 'unity'
           ? `Review mapped Unity text-YAML hierarchy, local transforms, perspective Camera optics, and BoxCollider geometry under ${targetRoots.content_scenes}; prefab instances, other component payloads, collider semantics, assets, and coordinate-system remediation remain manual.`
         : `Review generated scenes under ${targetRoots.content_scenes} and expand the first-pass hierarchy, transforms, plus component payloads beyond the current skeleton output.`,
@@ -572,7 +572,7 @@ function buildWarnings(detection, requestedEngine, slice, counts, repoRoot) {
     if (detection.engine === 'unity') {
       warnings.push('Unity conversion maps text-YAML hierarchy, valid perspective Camera optics, valid BoxCollider center/size geometry, and MonoBehaviour GUID bindings; prefab instances, other component payloads, camera/collider enabled state, orthographic cameras, trigger/layer/material collider semantics, assets, script behavior, and coordinate-system remediation are still manual.');
     } else if (detection.engine === 'godot') {
-      warnings.push('Godot conversion maps text-scene node hierarchy plus explicit Vector3 position, rotation, and scale fields; transform matrices, resource instances, and component payload translation are still ahead.');
+      warnings.push('Godot conversion maps text-scene node hierarchy, explicit Vector3 transforms, and valid perspective Camera3D optics; transform matrices, resource instances, non-camera component payloads, and camera enabled/current semantics are still ahead.');
     }
   }
   return warnings;
@@ -623,6 +623,12 @@ function parseGodotVector(line, key, fallback, scale = 1) {
     : fallback;
 }
 
+function parseGodotNumber(line, key, fallback) {
+  const match = line.match(new RegExp(`^${key}\\s*=\\s*([^\\s]+)\\s*$`));
+  const value = Number(match?.[1]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function parseGodotSceneNodes(source) {
   const nodes = [];
   let current = null;
@@ -644,6 +650,9 @@ function parseGodotSceneNodes(source) {
         position: '0, 0, 0',
         rotation: '0, 0, 0',
         scale: '1, 1, 1',
+        camera: attributes.type === 'Camera3D'
+          ? { projection: 0, verticalFovDegrees: null, nearMeters: null, farMeters: null }
+          : null,
       };
       nodes.push(current);
       continue;
@@ -655,11 +664,27 @@ function parseGodotSceneNodes(source) {
     current.position = parseGodotVector(line, 'position', current.position);
     current.rotation = parseGodotVector(line, 'rotation', current.rotation, 180 / Math.PI);
     current.scale = parseGodotVector(line, 'scale', current.scale);
+    if (current.camera) {
+      current.camera.projection = parseGodotNumber(line, 'projection', current.camera.projection);
+      current.camera.verticalFovDegrees = parseGodotNumber(line, 'fov', current.camera.verticalFovDegrees);
+      current.camera.nearMeters = parseGodotNumber(line, 'near', current.camera.nearMeters);
+      current.camera.farMeters = parseGodotNumber(line, 'far', current.camera.farMeters);
+    }
   }
 
   const rootName = nodes.find((node) => !node.parent)?.name || nodes[0]?.name || 'Root';
   return nodes.map((node) => ({
     ...node,
+    camera: node.camera
+      && node.camera.projection === 0
+      && [node.camera.verticalFovDegrees, node.camera.nearMeters, node.camera.farMeters]
+        .every((value) => Number.isFinite(value) && Number.isFinite(Math.fround(value)))
+      && node.camera.verticalFovDegrees > 0
+      && node.camera.verticalFovDegrees < 180
+      && node.camera.nearMeters > 0
+      && node.camera.farMeters > node.camera.nearMeters
+      ? node.camera
+      : null,
     sourceNodePath: !node.parent
       ? node.name
       : node.parent === '.'
@@ -1424,6 +1449,7 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
       scale: node.scale,
       sourceNodePath: node.sourceNodePath,
       sourceNodeType: node.type,
+      camera: node.camera,
     }));
     const rootEntity = entities[0];
     return {
@@ -1443,6 +1469,7 @@ function collectGodotConversionPlan(repoRoot, projectRoot) {
     sourcePath: scene.sourcePath,
     sourceNodePath: entity.sourceNodePath,
     sourceNodeType: entity.sourceNodeType,
+    camera: entity.camera,
   }))), (item) => item.name);
 
   const scriptManifests = uniqueBy(scriptFiles.flatMap((filePath) =>

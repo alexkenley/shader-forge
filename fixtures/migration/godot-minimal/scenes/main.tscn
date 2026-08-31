@@ -9,3 +9,7 @@ scale = Vector3(1, 1, 1)
 
 [node name="Camera" type="Camera3D" parent="Player"]
 position = Vector3(0, 1.6, 3)
+projection = 0
+fov = 75
+near = 0.05
+far = 4000

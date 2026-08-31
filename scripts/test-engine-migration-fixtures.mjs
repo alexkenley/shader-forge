@@ -305,6 +305,8 @@ assert.match(godotManifest, /\[startup_scene\][\s\S]*resolved_source_path = "sce
 assert.match(godotManifest, /\[startup_scene\][\s\S]*status = "converted"/);
 assert.match(godotManifest, /mapped_scene_entities = 3/);
 assert.match(godotReport, /mapped_scene_entities = 3/);
+assert.match(godotManifest, /mapped_prefab_components = 1/);
+assert.match(godotReport, /mapped_prefab_components = 1/);
 assert.match(godotScene, /# migration_source_node = "Main\/Player"[\s\S]*\[entity\.main_main_player_instance\]/);
 assert.match(godotScene, /\[entity\.main_main_player_instance\][\s\S]*parent = "main_root_instance"/);
 assert.match(godotScene, /\[entity\.main_main_player_instance\][\s\S]*position = "1, 0\.5, -2"/);
@@ -325,7 +327,7 @@ assert.match(
 );
 assert.match(
   fs.readFileSync(path.join(godotRoot, 'shader-forge-project', 'content', 'prefabs', 'migrated', 'godot', 'main_main_player_camera.prefab.toml'), 'utf8'),
-  /# migration_source_type = "Camera3D"[\s\S]*spawn_tag = "camera3d"/,
+  /# migration_source_type = "Camera3D"[\s\S]*spawn_tag = "camera3d"[\s\S]*\[component\.camera\][\s\S]*vertical_fov_degrees = 75[\s\S]*near_meters = 0\.05[\s\S]*far_meters = 4000/,
 );
 assert.match(
   fs.readFileSync(path.join(godotRoot, 'shader-forge-project', 'content', 'data', 'migrated', 'godot', 'runtime_bootstrap.data.toml'), 'utf8'),
